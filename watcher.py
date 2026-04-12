@@ -130,17 +130,48 @@ class _CodeGraphHandler(FileSystemEventHandler):
             self._schedule(event.dest_path)
 
 
+# Module-level handles so MCP tools can hot-extend the watcher to new dirs
+_active_observer: Observer | None = None
+_active_handler: _CodeGraphHandler | None = None
+
+
 def start_watcher(repo_root: str | Path) -> Observer:
     """
     Start a background file watcher for `repo_root`.
     Returns the Observer so the caller can stop it with observer.stop().
+    Also loads extra_dirs from config.toml and watches them too.
     """
+    global _active_observer, _active_handler
+
     root = Path(repo_root).resolve()
     handler = _CodeGraphHandler(root)
     observer = Observer()
     observer.schedule(handler, str(root), recursive=True)
+
+    # Also watch extra_dirs from config
+    extra_paths: list[Path] = []
+    try:
+        import tomllib
+
+        cfg = root / ".codegraph" / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                data = tomllib.load(f)
+            for rel in data.get("codegraph", {}).get("extra_dirs", []):
+                p = (root / rel).resolve()
+                if p.exists() and p.is_dir():
+                    observer.schedule(handler, str(p), recursive=True)
+                    extra_paths.append(p)
+    except Exception:
+        pass
+
     observer.start()
     print(f"[codegraph] watching {root}", flush=True)
+    for p in extra_paths:
+        print(f"[codegraph] watching {p} (extra_dir)", flush=True)
+
+    _active_observer = observer
+    _active_handler = handler
     return observer
 
 

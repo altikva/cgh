@@ -620,8 +620,42 @@ def index_repo(
                 elif verbose:
                     print(f"  + {full_path.relative_to(repo_root)}")
 
+    # Also index extra_dirs from config.toml
+    extra_dirs: list[str] = []
+    try:
+        import tomllib
+
+        cfg = repo_root / ".codegraph" / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                cfg_data = tomllib.load(f)
+            extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
+    except Exception:
+        pass
+
+    for rel in extra_dirs:
+        extra_root = (repo_root / rel).resolve()
+        if not extra_root.exists() or not extra_root.is_dir():
+            continue
+        _activity_log(repo_root, "extra_dir_scan", str(extra_root))
+        for dirpath, dirnames, filenames in os.walk(extra_root):
+            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+            for filename in filenames:
+                full_path = Path(dirpath) / filename
+                if not is_supported(full_path):
+                    continue
+                try:
+                    ok = index_file(full_path, repo_root)
+                    if ok:
+                        stats["indexed"] += 1
+                    else:
+                        stats["skipped"] += 1
+                except Exception:
+                    stats["errors"] += 1
+
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["method"] = "git_ls_files" if git_files is not None else "os_walk"
+    stats["extra_dirs"] = extra_dirs
     _activity_log(
         repo_root,
         "scan_end",

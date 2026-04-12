@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "python",
+      "args": [
+        "-m", "codegraph",
+        "serve",
+        "--root", ".",
+        "--watch",
+        "--reindex"
+      ],
+      "description": "Local code graph — symbol lookup, call graph, import graph. Use before reading files."
+    }
+  }
+}

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codegraph"
+version = "0.3.0"
+description = "Local code graph index — symbol lookup, call graphs, doc search. Works with Claude Code, Cursor, any MCP client."
+readme = "README.md"
+authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["code-graph", "mcp", "claude", "code-index", "symbol-lookup", "call-graph"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "kuzu>=0.7",
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "watchdog>=4.0",
+    "fastmcp>=2.0",
+    "rank-bm25>=0.2",
+    "rich>=13.0",
+    "questionary>=2.0",
+]
+
+[project.optional-dependencies]
+# Extra language parsers (future)
+rust = ["tree-sitter-rust>=0.23"]
+go = ["tree-sitter-go>=0.23"]
+java = ["tree-sitter-java>=0.23"]
+all = ["codegraph[rust,go,java]"]
+
+[project.urls]
+Homepage = "https://github.com/altikva/codegraph"
+Repository = "https://github.com/altikva/codegraph"
+Issues = "https://github.com/altikva/codegraph/issues"
+
+[project.scripts]
+codegraph = "codegraph.__main__:main"
+cgh = "codegraph.__main__:main"
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["codegraph", "codegraph.*"]

@@ -26,6 +26,34 @@ from pathlib import Path
 _BLOCK_START = "<!-- codegraph-skills:start -->"
 _BLOCK_END = "<!-- codegraph-skills:end -->"
 
+_USAGE_BLOCK_START = "<!-- codegraph-usage:start -->"
+_USAGE_BLOCK_END = "<!-- codegraph-usage:end -->"
+
+# Canonical "when to use codegraph" guidance — injected into the agent's
+# root rules file (CLAUDE.md / AGENTS.md / GEMINI.md) when the user opts in.
+_USAGE_BODY = """## codegraph — use MCP tools before Read/Grep
+
+This project is indexed by **codegraph** — a local code graph exposed via
+MCP. Always prefer codegraph tools over reading files directly. They
+return exact paths + line numbers, saving 60–90% of exploration tokens.
+
+**Workflow matrix**
+
+- **Architecture / new feature** (*"how does X work"*, *"where to add Y"*):
+  1. `mcp__codegraph__context_for_task(task)`
+  2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
+  3. `mcp__codegraph__endpoints(path_pattern)` if it's an API question
+- **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
+  1. `symbol_lookup` / `find_callers` / `find_callees`
+  2. `search_symbols` for fuzzy names, `fts_search` for docstrings
+- **After `git pull` / `checkout` / `rebase`**:
+  1. `scan_status` → `incremental_reindex` if stale
+- **Including a sibling repo**: `add_directory(path)` (hot, no restart)
+
+Only use `Read` on the exact line ranges returned by a codegraph tool.
+Never `ls`/`find`/`tree` for structure — `architecture_overview` has it.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Source discovery
@@ -208,6 +236,62 @@ def _install_agents_md(target: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Convenience: install for a chosen set of tools
 # ---------------------------------------------------------------------------
+
+
+def install_usage_guidelines(project_root: Path, tool: str) -> str | None:
+    """
+    Inject a "when to use codegraph" block into the agent's root rules file.
+    The block is marked with delimiters so repeated installs update in place.
+
+    Targets:
+      claude  → ./CLAUDE.md   (or ./.claude/CLAUDE.md if the project uses that)
+      codex   → ./AGENTS.md
+      gemini  → ./GEMINI.md
+      cursor  → ./.cursor/rules/codegraph-usage.mdc
+
+    Returns the path written (as str) or None if skipped.
+    """
+    if tool == "cursor":
+        target = project_root / ".cursor" / "rules" / "codegraph-usage.mdc"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        mdc = (
+            "---\n"
+            "description: When and how to use the codegraph MCP tools for this repo.\n"
+            "alwaysApply: true\n"
+            "---\n\n" + _USAGE_BODY
+        )
+        target.write_text(mdc, encoding="utf-8")
+        return str(target)
+
+    # Pick the root file per tool
+    if tool == "claude":
+        target = project_root / "CLAUDE.md"
+    elif tool == "codex":
+        target = project_root / "AGENTS.md"
+    elif tool == "gemini":
+        target = project_root / "GEMINI.md"
+    else:
+        return None
+
+    block = _USAGE_BLOCK_START + "\n\n" + _USAGE_BODY.rstrip() + "\n\n" + _USAGE_BLOCK_END + "\n"
+
+    if target.exists():
+        existing = target.read_text(encoding="utf-8")
+        pattern = re.compile(
+            re.escape(_USAGE_BLOCK_START) + r".*?" + re.escape(_USAGE_BLOCK_END) + r"\n?",
+            re.DOTALL,
+        )
+        if pattern.search(existing):
+            new = pattern.sub(block, existing)
+        else:
+            sep = "\n" if existing.endswith("\n") else "\n\n"
+            new = existing + sep + "\n" + block
+        target.write_text(new, encoding="utf-8")
+    else:
+        header = "# Agent instructions for this repository\n\n"
+        target.write_text(header + block, encoding="utf-8")
+
+    return str(target)
 
 
 def install_for_tools(project_root: Path, tools: list[str]) -> dict[str, list[str]]:

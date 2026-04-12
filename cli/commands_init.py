@@ -189,6 +189,36 @@ def cmd_init(args) -> None:
                 console.print("    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]")
             console.print()
 
+    # -- Step 3c: offer to inject codegraph usage guidelines into agent rules --
+    if selected_keys:
+        from codegraph.skill_installer import install_usage_guidelines
+
+        target_files = {
+            "claude": "CLAUDE.md",
+            "codex": "AGENTS.md",
+            "gemini": "GEMINI.md",
+            "cursor": ".cursor/rules/codegraph-usage.mdc",
+        }
+        inject_targets = [(k, target_files[k]) for k in selected_keys if k in target_files]
+        if inject_targets:
+            targets_str = ", ".join(f for _, f in inject_targets)
+            inject = (
+                args.yes
+                or questionary.confirm(
+                    f"Append codegraph usage guidelines to {targets_str}? "
+                    "(Helps agents pick the right tool instead of reading files blindly)",
+                    default=True,
+                    style=cg_style,
+                ).ask()
+            )
+            if inject:
+                for tool_key, label in inject_targets:
+                    written = install_usage_guidelines(root, tool_key)
+                    if written:
+                        rel = written.replace(str(root) + "/", "")
+                        console.print(f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]")
+                console.print()
+
     # -- Step 4: Detect parseable files --
     # Use git ls-files to match what the real indexer will process
     # (respects .gitignore). Fall back to glob if not a git repo.
@@ -476,6 +506,15 @@ def cmd_setup(args) -> None:
         if added:
             created.append((".claude/settings.local.json", f"permissions += {', '.join(added)}"))
 
+        # Usage guidelines in CLAUDE.md
+        from codegraph.skill_installer import install_usage_guidelines
+
+        path = install_usage_guidelines(root, "claude")
+        if path:
+            created.append(("CLAUDE.md", "codegraph usage block"))
+
+    from codegraph.skill_installer import install_usage_guidelines as _install_usage
+
     if target in ("cursor", "all"):
         cursor_dir = root / ".cursor"
         cursor_dir.mkdir(exist_ok=True)
@@ -484,12 +523,18 @@ def cmd_setup(args) -> None:
 
         cursor_mcp.write_text(_json.dumps(mcp_config, indent=2) + "\n")
         created.append((".cursor/mcp.json", "Cursor MCP server"))
+        if _install_usage(root, "cursor"):
+            created.append((".cursor/rules/codegraph-usage.mdc", "codegraph usage rule"))
 
     if target in ("codex", "all"):
         created.append(("(same .mcp.json)", "Codex CLI MCP server"))
+        if _install_usage(root, "codex"):
+            created.append(("AGENTS.md", "codegraph usage block"))
 
     if target in ("gemini", "all"):
         created.append(("(same .mcp.json)", "Gemini CLI MCP server"))
+        if _install_usage(root, "gemini"):
+            created.append(("GEMINI.md", "codegraph usage block"))
 
     if created:
         panel_lines = [f"  [green]+[/green] {f} [dim]({desc})[/dim]" for f, desc in created]

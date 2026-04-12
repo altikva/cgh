@@ -19,6 +19,49 @@ from rich.table import Table
 
 from codegraph.cli import LOGO, console
 
+# Wildcards that cover every codegraph MCP tool (current + future). The
+# two-form shape matches what both older and current Claude Code builds
+# accept.
+_CODEGRAPH_ALLOW_PATTERNS = ("mcp__codegraph", "mcp__codegraph__*")
+
+
+def _configure_claude_auto_accept(root: Path) -> list[str]:
+    """
+    Add codegraph MCP wildcards to .claude/settings.local.json so
+    Claude Code doesn't prompt for every tool call. Also removes any
+    redundant per-tool entries previously added via the "don't ask
+    again" dialog. Returns the list of patterns that were newly added.
+    """
+    import json as _json
+
+    settings_dir = root / ".claude"
+    settings_dir.mkdir(exist_ok=True)
+    settings_path = settings_dir / "settings.local.json"
+
+    if settings_path.exists():
+        try:
+            data = _json.loads(settings_path.read_text() or "{}")
+        except Exception:
+            data = {}
+    else:
+        data = {}
+
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+
+    # Drop redundant per-tool entries
+    allow[:] = [item for item in allow if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")]
+
+    # Add wildcards if missing
+    added: list[str] = []
+    for pattern in _CODEGRAPH_ALLOW_PATTERNS:
+        if pattern not in allow:
+            allow.append(pattern)
+            added.append(pattern)
+
+    settings_path.write_text(_json.dumps(data, indent=2) + "\n")
+    return added
+
+
 # ---------------------------------------------------------------------------
 # cmd_init
 # ---------------------------------------------------------------------------
@@ -124,6 +167,27 @@ def cmd_init(args) -> None:
 
     if selected_keys:
         console.print()
+
+    # -- Step 3b: offer to auto-accept codegraph MCP tools in Claude Code --
+    if "claude" in selected_keys:
+        auto_accept = (
+            args.yes
+            or questionary.confirm(
+                "Auto-accept codegraph MCP tool calls in Claude Code (skip the per-call permission prompt)?",
+                default=True,
+                style=cg_style,
+            ).ask()
+        )
+        if auto_accept:
+            added = _configure_claude_auto_accept(root)
+            if added:
+                console.print(
+                    f"    [green]+[/green] .claude/settings.local.json "
+                    f"[dim](permissions.allow += {', '.join(added)})[/dim]"
+                )
+            else:
+                console.print("    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]")
+            console.print()
 
     # -- Step 4: Detect parseable files --
     # Use git ls-files to match what the real indexer will process
@@ -406,6 +470,11 @@ def cmd_setup(args) -> None:
 
             mcp_path.write_text(_json.dumps(mcp_config, indent=2) + "\n")
         created.append((".mcp.json", "Claude Code MCP server"))
+
+        # Auto-accept codegraph MCP tools (non-interactive path)
+        added = _configure_claude_auto_accept(root)
+        if added:
+            created.append((".claude/settings.local.json", f"permissions += {', '.join(added)}"))
 
     if target in ("cursor", "all"):
         cursor_dir = root / ".cursor"

@@ -128,69 +128,157 @@ _register_meta(mcp)
 
 
 def main() -> None:
+    """
+    Proxy entrypoint: every `cgh serve` invocation acts as a stdio<->HTTP
+    bridge to a single shared "owner" backend. The first caller lazily
+    spawns the owner; subsequent callers reuse it.
+
+    This is what Claude Code launches per session. The owner holds the
+    Kuzu write lock; proxies are stateless bridges with no DB access.
+    """
     global _root
 
-    ap = argparse.ArgumentParser(description="codegraph MCP server")
+    ap = argparse.ArgumentParser(description="codegraph MCP server (proxy mode)")
     ap.add_argument("--root", default=os.getcwd(), help="Repo root (default: CWD)")
-    ap.add_argument("--watch", action="store_true", help="Also start the file watcher in a background thread")
-    ap.add_argument("--reindex", action="store_true", help="Run a full re-index before starting the server")
+    ap.add_argument("--watch", action="store_true", help="Request file watcher in the owner")
+    ap.add_argument("--reindex", action="store_true", help="Request a full re-index in the owner")
     args = ap.parse_args()
 
     _root = Path(args.root).resolve()
 
-    # Single-writer guard — refuse to start if another cgh serve holds the
-    # pidfile for this repo. Kuzu can't share its write lock across
-    # processes, so competing servers cause opaque lock errors on every
-    # MCP tool call. Fail fast with a clear message instead.
+    from codegraph.ipc import (
+        is_owner_alive,
+        proxy_stdio_to_http,
+        read_owner_port,
+        spawn_owner,
+    )
+
+    # Start (or reuse) the shared owner
+    if is_owner_alive(_root):
+        port = read_owner_port(_root)
+        print(f"[codegraph] attaching to existing owner on port {port}", file=sys.stderr)
+    else:
+        print("[codegraph] no owner running — launching one", file=sys.stderr)
+        port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
+        if port is None:
+            print(
+                "[codegraph] failed to start owner (see .codegraph/owner.log)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"[codegraph] owner up on port {port}", file=sys.stderr)
+
+    # Act as the stdio <-> HTTP bridge for this Claude session
+    exit_code = proxy_stdio_to_http(port, repo_root=_root)
+    sys.exit(exit_code)
+
+
+def owner_main(root: str | None = None, watch: bool = False, reindex: bool = False) -> None:
+    """
+    Backend entrypoint — runs FastMCP over HTTP on a loopback port.
+    Spawned by the proxy via `python -m codegraph _serve_owner`. Claude
+    Code never launches this directly.
+    """
+    global _root
+
+    _root = Path(root or os.getcwd()).resolve()
+
+    # Single-writer guard on the owner itself
     from codegraph.pidfile import acquire as _pidfile_acquire
 
     acquired, other_pid = _pidfile_acquire(_root)
     if not acquired:
         print(
-            f"[codegraph] another cgh serve is already running for this repo (pid {other_pid}).\n"
-            f"[codegraph] stop it first:  kill {other_pid}\n"
-            f"[codegraph] refusing to start a second server.",
+            f"[codegraph] another owner is running (pid {other_pid}); exiting.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    # MCP stdio transport reserves stdout for JSON-RPC. Redirect all
-    # human-readable output (reindex progress, watcher logs, FastMCP banner)
-    # to stderr so it doesn't corrupt the protocol stream.
-    sys.stdout.flush()
-    _orig_stdout = sys.stdout
-    sys.stdout = sys.stderr
+    # Load / ensure the auth key for HTTP bridge security
+    from codegraph.auth import ensure_auth_key
 
-    try:
-        if args.reindex:
-            from codegraph.indexer import index_repo
+    auth_key = ensure_auth_key(_root)
 
-            print(f"[codegraph] indexing {_root} …", flush=True)
-            try:
-                stats = index_repo(_root, verbose=True)
-                print(f"[codegraph] done: {stats}", flush=True)
-            except RuntimeError as exc:
-                # DB lock held by another cgh process — skip reindex and
-                # continue. The other process is presumably keeping the
-                # index fresh; we'll read from the same DB file.
-                print(
-                    f"[codegraph] skipping reindex: {exc}\n"
-                    f"[codegraph] another cgh process likely holds the lock — continuing with MCP server",
-                    flush=True,
+    # Reindex + watcher (if requested)
+    if reindex:
+        from codegraph.indexer import index_repo
+
+        print(f"[codegraph owner] indexing {_root} …", file=sys.stderr, flush=True)
+        try:
+            stats = index_repo(_root, verbose=False)
+            print(f"[codegraph owner] done: {stats}", file=sys.stderr, flush=True)
+        except RuntimeError as exc:
+            print(f"[codegraph owner] reindex skipped: {exc}", file=sys.stderr, flush=True)
+
+    if watch:
+        from codegraph.watcher import start_watcher
+
+        try:
+            start_watcher(_root)
+        except Exception as exc:
+            print(f"[codegraph owner] watcher disabled: {exc}", file=sys.stderr, flush=True)
+
+    # Pick a free port + publish port file + owner pid
+    from codegraph.ipc import free_port, owner_pidfile, port_file
+
+    port = free_port()
+    port_file(_root).write_text(str(port) + "\n")
+    owner_pidfile(_root).write_text(str(os.getpid()) + "\n")
+
+    # Cleanup on exit
+    import atexit as _atexit
+
+    def _cleanup():
+        try:
+            port_file(_root).unlink(missing_ok=True)
+            owner_pidfile(_root).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    _atexit.register(_cleanup)
+
+    # Build auth middleware — rejects any request without the bearer token
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+    from starlette.types import ASGIApp
+
+    class _BearerAuth(BaseHTTPMiddleware):
+        def __init__(self, app: ASGIApp, token: str) -> None:
+            super().__init__(app)
+            self._token = token
+
+        async def dispatch(self, request, call_next):
+            # Accept any path on 127.0.0.1 with correct bearer
+            header = request.headers.get("authorization", "")
+            expected = f"Bearer {self._token}"
+            if header != expected:
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
                 )
+            return await call_next(request)
 
-        if args.watch:
-            from codegraph.watcher import start_watcher
+    print(
+        f"[codegraph owner] listening on 127.0.0.1:{port} (auth: bearer)",
+        file=sys.stderr,
+        flush=True,
+    )
 
-            try:
-                start_watcher(_root)
-            except Exception as exc:
-                print(f"[codegraph] watcher disabled: {exc}", flush=True)
-    finally:
-        # Restore stdout for MCP JSON-RPC
-        sys.stdout = _orig_stdout
+    # Starlette middleware expects a different wiring than ASGIMiddleware
+    # FastMCP's run_http_async uses middleware=[ASGIMiddleware(...)]; since
+    # BaseHTTPMiddleware is an ASGIApp factory, we can wrap with a Middleware
+    # class from starlette.
+    from starlette.middleware import Middleware
 
-    mcp.run(transport="stdio")
+    mcp.run(
+        transport="http",
+        host="127.0.0.1",
+        port=port,
+        show_banner=False,
+        stateless_http=True,
+        json_response=True,
+        middleware=[Middleware(_BearerAuth, token=auth_key)],
+    )
 
 
 if __name__ == "__main__":

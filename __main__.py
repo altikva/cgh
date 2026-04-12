@@ -36,6 +36,14 @@ from codegraph.cli.commands_monitor import (
 )
 from codegraph.cli.commands_query import cmd_callees, cmd_callers, cmd_lookup, cmd_outline, cmd_search
 
+
+def _cmd_serve_owner(args) -> None:
+    """Internal: run the HTTP-backed owner process (spawned by cgh serve)."""
+    from codegraph.server import owner_main
+
+    owner_main(root=args.root, watch=args.watch, reindex=args.reindex)
+
+
 # ---------------------------------------------------------------------------
 # Help screen
 # ---------------------------------------------------------------------------
@@ -176,10 +184,16 @@ def main() -> None:
     p.add_argument("--root", default=os.getcwd())
 
     # --- serve ---
-    p = sub.add_parser("serve", help="Start MCP server (stdio transport)")
+    p = sub.add_parser("serve", help="Start MCP server (stdio proxy to shared HTTP owner)")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--watch", action="store_true", help="Enable live file watcher")
     p.add_argument("--reindex", action="store_true", help="Re-index before serving")
+
+    # --- _serve_owner (hidden internal subcommand) ---
+    p = sub.add_parser("_serve_owner", help=argparse.SUPPRESS)
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--watch", action="store_true")
+    p.add_argument("--reindex", action="store_true")
 
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
@@ -269,6 +283,7 @@ def main() -> None:
         "index": cmd_index,
         "watch": cmd_watch,
         "serve": cmd_serve,
+        "_serve_owner": _cmd_serve_owner,
         "stats": cmd_stats,
         "tail": cmd_tail,
         "logs": cmd_logs,

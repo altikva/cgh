@@ -418,3 +418,62 @@ def register(mcp) -> None:
             rows = _rows(r)
             stats[label] = rows[0]["c"] if rows else 0
         return json.dumps(stats, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def live_graph_stats() -> str:
+        """
+        Lightweight snapshot of the index: node counts, FTS symbol count,
+        scan freshness (git HEAD vs indexed), and a timestamp. Designed
+        for polling — call it repeatedly to watch the graph change during
+        an ongoing scan or watcher burst.
+
+        Differs from graph_stats: also includes scan_status and FTS count
+        so you don't need multiple tool calls to assess the index health.
+        """
+        from codegraph.fts import get_fts_conn
+        from codegraph.scan_meta import scan_status as _scan_status
+
+        conn = _get_conn()
+        nodes: dict[str, int] = {}
+        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
+            try:
+                query = "MATCH (n:" + label + ") RETURN count(n) AS c"
+                r = conn.execute(query)
+                rows = _rows(r)
+                nodes[label] = rows[0]["c"] if rows else 0
+            except Exception:
+                nodes[label] = 0
+
+        fts_count = 0
+        try:
+            fts_conn = get_fts_conn(_root)
+            fts_count = fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        except Exception:
+            pass
+
+        ss = {}
+        try:
+            if _root is not None:
+                ss = _scan_status(_root)
+                # Trim changed_files for token economy in polling
+                if isinstance(ss.get("changed_files"), list):
+                    n = len(ss["changed_files"])
+                    if n > 20:
+                        ss["changed_files"] = ss["changed_files"][:20]
+                        ss["changed_files_total"] = n
+        except Exception:
+            pass
+
+        import time as _t
+
+        return json.dumps(
+            {
+                "nodes": nodes,
+                "nodes_total": sum(nodes.values()),
+                "fts_symbols": fts_count,
+                "scan": ss,
+                "sampled_at": _t.time(),
+            },
+            indent=2,
+        )

@@ -601,12 +601,20 @@ def index_repo(
         elif verbose:
             print(f"  [codegraph] using git ls-files ({len(parseable)} parseable files)")
 
+        from .scan_meta import git_hash_object as _git_hash
+
         for full_path in parseable:
             try:
                 rel = str(full_path.relative_to(repo_root))
             except ValueError:
                 rel = str(full_path)
-            ok = index_file(full_path, repo_root, git_blob_sha=blob_shas.get(rel))
+            sha = blob_shas.get(rel)
+            if sha is None:
+                # Untracked but parseable (e.g., new file not yet committed).
+                # Fall back to `git hash-object` so the File node still gets
+                # a SHA — lets incremental_reindex skip it next time.
+                sha = _git_hash(repo_root, full_path)
+            ok = index_file(full_path, repo_root, git_blob_sha=sha)
             status = "indexed" if ok else "error"
             if ok:
                 stats["indexed"] += 1

@@ -151,6 +151,62 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
     return hits[:limit]
 
 
+_STOPWORDS = frozenset(
+    """
+    a an the and or but if then else while when where why how what which who whom
+    is are was were be been being have has had do does did doing can could should
+    would will shall may might must of in on at by for with to from into onto off
+    over under above below up down out about as per via vs versus through across
+    this that these those it its they them their there here also more most less
+    some any each all every few many much no not such than too very not so only
+    just both not only either neither etc eg ie vs me my our us you your he she
+    we they them il je nous vous ils elles tu se son sa ses leur leurs aux les
+    des du la le un une de d l s t c n que qui dont
+    """.split()
+)
+
+
+def _keyword_query(task: str, min_len: int = 3) -> str:
+    """
+    Turn a natural-language task description into an FTS5 OR query.
+
+    Drops stopwords + very short tokens. Splits camelCase/snake_case so a
+    task like "CerfaHandler refactor" yields tokens matching either
+    `Cerfa`, `Handler`, or `refactor`.
+    """
+    import re
+
+    # \w matches Unicode letters by default in Python — captures accented chars
+    tokens = re.findall(r"[^\W\d_]+", task, flags=re.UNICODE)
+    expanded: list[str] = []
+    for t in tokens:
+        t = t.strip()
+        if not t:
+            continue
+        # Split camelCase
+        parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", t).split()
+        for p in parts:
+            # Split snake_case
+            for q in p.split("_"):
+                if len(q) >= min_len and q.lower() not in _STOPWORDS:
+                    expanded.append(q)
+
+    if not expanded:
+        return task  # last-resort fallback
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for w in expanded:
+        lw = w.lower()
+        if lw not in seen:
+            seen.add(lw)
+            unique.append(w)
+
+    # FTS5 OR syntax
+    return " OR ".join(unique[:20])  # cap query length
+
+
 def context_for_task(
     task: str,
     kuzu_conn: kuzu.Connection,
@@ -159,7 +215,7 @@ def context_for_task(
 ) -> TaskContext:
     """
     Build a ranked context for a natural-language task.
-    1. FTS search in codegraph to find initial seed symbols
+    1. Keyword-extract the task, FTS-search to find initial seed symbols
     2. Expand via graph edges (callers, callees, inheritance)
     3. Query Ruflo memory for project knowledge + review patterns
     4. Rank by relevance and return top-N
@@ -167,8 +223,13 @@ def context_for_task(
     # Step 0: Query Ruflo memory (best-effort, non-blocking)
     memory_hits = _query_ruflo_memory(task)
 
-    # Step 1: FTS search to find seed symbols
-    fts_results = fts_search(fts_conn, task, limit=max_nodes * 2)
+    # Step 1: FTS search to find seed symbols. Natural-language sentences
+    # don't match symbol names directly — extract keywords first.
+    query = _keyword_query(task)
+    fts_results = fts_search(fts_conn, query, limit=max_nodes * 2)
+    if not fts_results and query != task:
+        # Safety net: retry with the raw task if keyword query was too narrow
+        fts_results = fts_search(fts_conn, task, limit=max_nodes * 2)
 
     # Step 2: Build context nodes from FTS results
     nodes: list[ContextNode] = []

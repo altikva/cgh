@@ -542,9 +542,15 @@ def index_repo(
 
     Returns a summary dict.
     """
+    from .activity import log as _activity_log
+    from .activity import rotate_if_needed
+
     repo_root = Path(repo_root)
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     t0 = time.time()
+
+    rotate_if_needed(repo_root)
+    _activity_log(repo_root, "scan_start", str(repo_root))
 
     git_files = _git_tracked_files(repo_root)
 
@@ -575,6 +581,14 @@ def index_repo(
                 stats["indexed"] += 1
             else:
                 stats["errors"] += 1
+
+            # Throttle activity logs: every 25 files + errors
+            if not ok or stats["indexed"] % 25 == 0:
+                _activity_log(
+                    repo_root,
+                    "scan_progress" if ok else "scan_error",
+                    f"{stats['indexed']}/{len(parseable)} {full_path.relative_to(repo_root)}",
+                )
 
             if on_file:
                 on_file(full_path, status, stats)
@@ -608,4 +622,9 @@ def index_repo(
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["method"] = "git_ls_files" if git_files is not None else "os_walk"
+    _activity_log(
+        repo_root,
+        "scan_end",
+        f"indexed={stats['indexed']} skipped={stats['skipped']} errors={stats['errors']} elapsed={stats['elapsed_s']}s",
+    )
     return stats

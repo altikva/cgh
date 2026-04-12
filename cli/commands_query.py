@@ -25,35 +25,46 @@ from codegraph.cli import _get_conn, _rows, _short_path, console
 
 def cmd_search(args) -> None:
     root = os.path.abspath(args.root)
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
-        return
     query = args.query
     limit = args.limit
+    results: list = []
 
-    results = []
-    for label, kind in [("Function", "function"), ("Class", "class"), ("MdSection", "md_section")]:
-        if label == "MdSection":
-            r = conn.execute(
-                f"MATCH (n:{label}) WHERE n.title CONTAINS $q "
-                f"RETURN n.title AS name, n.file_path, n.start_line LIMIT $lim",
-                {"q": query, "lim": limit},
-            )
-        else:
-            r = conn.execute(
-                f"MATCH (n:{label}) WHERE n.name CONTAINS $q RETURN n.name, n.file_path, n.start_line LIMIT $lim",
-                {"q": query, "lim": limit},
-            )
-        for row in _rows(r):
-            results.append(
-                (
-                    kind,
-                    row.get("name", row.get("n.name", "?")),
-                    row.get("n.file_path", row.get("file_path", "?")),
-                    row.get("n.start_line", row.get("start_line", "?")),
+    conn = _get_conn(root, readonly=True)
+    if conn is None:
+        # Graph DB locked (MCP server is running). Fall back to FTS — SQLite
+        # supports concurrent readers, so this always works.
+        try:
+            from codegraph.fts import fts_search, get_fts_conn
+
+            fts_conn = get_fts_conn(root)
+            for hit in fts_search(fts_conn, query, limit=limit):
+                results.append((hit.kind, hit.name, hit.file_path, hit.start_line))
+        except Exception as exc:
+            console.print(f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]")
+            return
+    else:
+        for label, kind in [("Function", "function"), ("Class", "class"), ("MdSection", "md_section")]:
+            # Kuzu Cypher requires literal labels — safe: fixed allowlist
+            if label == "MdSection":
+                q = (
+                    "MATCH (n:" + label + ") WHERE n.title CONTAINS $q "
+                    "RETURN n.title AS name, n.file_path, n.start_line LIMIT $lim"
                 )
-            )
+            else:
+                q = (
+                    "MATCH (n:" + label + ") WHERE n.name CONTAINS $q "
+                    "RETURN n.name, n.file_path, n.start_line LIMIT $lim"
+                )
+            r = conn.execute(q, {"q": query, "lim": limit})
+            for row in _rows(r):
+                results.append(
+                    (
+                        kind,
+                        row.get("name", row.get("n.name", "?")),
+                        row.get("n.file_path", row.get("file_path", "?")),
+                        row.get("n.start_line", row.get("start_line", "?")),
+                    )
+                )
 
     if args.json:
         print(json.dumps([{"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in results], indent=2))
@@ -83,10 +94,6 @@ def cmd_search(args) -> None:
 
 def cmd_lookup(args) -> None:
     root = os.path.abspath(args.root)
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
-        return
     name = args.name
     found = False
 
@@ -97,32 +104,48 @@ def cmd_lookup(args) -> None:
         "md_section": "[cyan]doc[/cyan]",
     }
 
-    for label, kind in [
-        ("Function", "function"),
-        ("Class", "class"),
-        ("TFResource", "tf_resource"),
-        ("MdSection", "md_section"),
-    ]:
-        if label == "MdSection":
-            r = conn.execute(
-                f"MATCH (n:{label}) WHERE n.title CONTAINS $q "
-                f"RETURN n.title AS name, n.file_path, n.start_line, n.end_line",
-                {"q": name},
-            )
-        else:
-            r = conn.execute(
-                f"MATCH (n:{label}) WHERE n.name = $q RETURN n.name, n.file_path, n.start_line, n.end_line",
-                {"q": name},
-            )
-        for row in _rows(r):
-            found = True
-            n = row.get("name", row.get("n.name", "?"))
-            fp = row.get("n.file_path", row.get("file_path", "?"))
-            sl = row.get("n.start_line", row.get("start_line", "?"))
-            el = row.get("n.end_line", row.get("end_line", "?"))
-            icon = icons.get(kind, kind)
-            short = _short_path(fp, root)
-            console.print(f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]")
+    conn = _get_conn(root, readonly=True)
+    if conn is None:
+        # Fallback to FTS when Kuzu graph DB is locked by MCP server
+        try:
+            from codegraph.fts import fts_search, get_fts_conn
+
+            fts_conn = get_fts_conn(root)
+            for hit in fts_search(fts_conn, name, limit=20):
+                if hit.name == name or (hit.kind == "md_section" and name in hit.name):
+                    found = True
+                    icon = icons.get(hit.kind, hit.kind)
+                    short = _short_path(hit.file_path, root)
+                    console.print(
+                        f"  {icon}  [bold]{hit.name}[/bold]  [dim]{short}:{hit.start_line}-{hit.end_line}[/dim]"
+                    )
+        except Exception as exc:
+            console.print(f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]")
+            return
+    else:
+        for label, kind in [
+            ("Function", "function"),
+            ("Class", "class"),
+            ("TFResource", "tf_resource"),
+            ("MdSection", "md_section"),
+        ]:
+            if label == "MdSection":
+                q = (
+                    "MATCH (n:" + label + ") WHERE n.title CONTAINS $q "
+                    "RETURN n.title AS name, n.file_path, n.start_line, n.end_line"
+                )
+            else:
+                q = "MATCH (n:" + label + ") WHERE n.name = $q RETURN n.name, n.file_path, n.start_line, n.end_line"
+            r = conn.execute(q, {"q": name})
+            for row in _rows(r):
+                found = True
+                n = row.get("name", row.get("n.name", "?"))
+                fp = row.get("n.file_path", row.get("file_path", "?"))
+                sl = row.get("n.start_line", row.get("start_line", "?"))
+                el = row.get("n.end_line", row.get("end_line", "?"))
+                icon = icons.get(kind, kind)
+                short = _short_path(fp, root)
+                console.print(f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]")
 
     if not found:
         console.print(f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]")

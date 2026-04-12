@@ -25,7 +25,15 @@ from codegraph.cli.commands_index import cmd_force_index, cmd_index, cmd_serve, 
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
-from codegraph.cli.commands_monitor import cmd_compact, cmd_diff, cmd_doctor, cmd_history, cmd_logs, cmd_stats
+from codegraph.cli.commands_monitor import (
+    cmd_compact,
+    cmd_diff,
+    cmd_doctor,
+    cmd_history,
+    cmd_logs,
+    cmd_stats,
+    cmd_tail,
+)
 from codegraph.cli.commands_query import cmd_callees, cmd_callers, cmd_lookup, cmd_outline, cmd_search
 
 # ---------------------------------------------------------------------------
@@ -177,6 +185,12 @@ def main() -> None:
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--live", action="store_true", help="Refresh stats every 500ms (Ctrl-C to stop)")
+
+    p = sub.add_parser("tail", help="Live view of scan/watcher activity")
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--limit", "-n", type=int, default=30, help="Number of recent entries (default: 30)")
+    p.add_argument("--follow", "-f", action="store_true", help="Follow new activity (Ctrl-C to stop)")
 
     # --- logs ---
     p = sub.add_parser("logs", help="View MCP tool call logs")
@@ -256,6 +270,7 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "stats": cmd_stats,
+        "tail": cmd_tail,
         "logs": cmd_logs,
         "search": cmd_search,
         "lookup": cmd_lookup,

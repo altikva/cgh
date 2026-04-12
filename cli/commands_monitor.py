@@ -14,6 +14,8 @@ import sqlite3
 from pathlib import Path
 
 from rich import box
+from rich.console import Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -25,22 +27,62 @@ from codegraph.cli import LOGO, _get_conn, _lang_color, _rows, console
 # ---------------------------------------------------------------------------
 
 
+def _build_stats_group(root: str) -> Group:
+    """Build the stats display as a Rich Group — reusable for --live mode."""
+    # Reset cached readonly connection so we see fresh counts every tick
+    from codegraph.core.db import reset_connection as _rst
+
+    _rst()
+    return _stats_content(root)
+
+
 def cmd_stats(args) -> None:
     root = os.path.abspath(args.root)
+
+    if getattr(args, "json", False):
+        print(_stats_json(root))
+        return
+
+    if getattr(args, "live", False):
+        console.print(LOGO)
+        console.print("[dim]Live stats — Ctrl-C to stop[/dim]\n")
+        try:
+            with Live(
+                _build_stats_group(root),
+                console=console,
+                refresh_per_second=2,
+                screen=False,
+            ) as live:
+                import time as _t
+
+                while True:
+                    _t.sleep(0.5)
+                    live.update(_build_stats_group(root))
+        except KeyboardInterrupt:
+            console.print("\n[dim]Stopped.[/dim]")
+        return
+
+    console.print(LOGO)
+    console.print(_stats_content(root))
+
+
+def _stats_content(root: str) -> Group:
+    """Produce the stats renderables for a repo as a Rich Group."""
     conn = _get_conn(root, readonly=True)
 
-    # Graph stats (may be None if DB is locked)
-    graph = {}
-    edges = {}
+    graph: dict = {}
+    edges: dict = {}
     graph_locked = conn is None
 
     if conn is not None:
         for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            # Kuzu Cypher requires literal labels — safe: fixed allowlist
-            query = "MATCH (n:" + label + ") RETURN count(n) AS c"
-            r = conn.execute(query)
-            for row in _rows(r):
-                graph[label] = row["c"]
+            try:
+                query = "MATCH (n:" + label + ") RETURN count(n) AS c"
+                r = conn.execute(query)
+                for row in _rows(r):
+                    graph[label] = row["c"]
+            except Exception:
+                pass
 
         for edge_type in (
             "IMPORTS",
@@ -63,12 +105,10 @@ def cmd_stats(args) -> None:
             except Exception:
                 pass
 
-    # Call logs
     from codegraph.call_log import get_stats
 
     call_stats = get_stats(root)
 
-    # FTS
     fts_count = 0
     try:
         from codegraph.fts import get_fts_conn
@@ -78,9 +118,8 @@ def cmd_stats(args) -> None:
     except Exception:
         pass
 
-    # DB sizes
     codegraph_dir = Path(root) / ".codegraph"
-    db_sizes = {}
+    db_sizes: dict = {}
     total_size = 0
     for f in sorted(codegraph_dir.glob("*")) if codegraph_dir.exists() else []:
         if f.is_file() and not f.name.endswith(("-shm", "-wal")):
@@ -88,31 +127,16 @@ def cmd_stats(args) -> None:
             total_size += size
             db_sizes[f.name] = size
 
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "graph": {"nodes": graph, "edges": edges},
-                    "fts": {"indexed_symbols": fts_count},
-                    "calls": call_stats,
-                    "storage": {k: v for k, v in db_sizes.items()},
-                },
-                indent=2,
-            )
-        )
-        return
-
-    console.print(LOGO)
+    renderables: list = []
 
     if graph_locked:
-        console.print(
+        renderables.append(
             Panel(
                 "[yellow]Graph DB is locked (indexing in progress?). Showing FTS + call log stats only.[/yellow]",
                 border_style="yellow",
             )
         )
     else:
-        # Nodes table
         node_table = Table(
             title="Graph Nodes",
             box=box.SIMPLE_HEAD,
@@ -132,7 +156,6 @@ def cmd_stats(args) -> None:
             "TFVar": "magenta",
             "MdSection": "cyan",
         }
-
         for label, count in graph.items():
             if count == 0:
                 continue
@@ -141,12 +164,10 @@ def cmd_stats(args) -> None:
             bar_len = int(pct / 5)
             bar = f"[{color}]{'#' * bar_len}[/{color}][dim]{'.' * (20 - bar_len)}[/dim]"
             node_table.add_row(label, f"[{color}]{count:,}[/{color}]", bar)
-
         node_table.add_section()
         node_table.add_row("[bold]Total[/bold]", f"[bold]{total_nodes:,}[/bold]", "")
-        console.print(node_table)
+        renderables.append(node_table)
 
-        # Edges table
         if edges:
             edge_table = Table(
                 title="Graph Edges",
@@ -156,14 +177,12 @@ def cmd_stats(args) -> None:
             )
             edge_table.add_column("Relationship", style="bold")
             edge_table.add_column("Count", justify="right")
-
             for edge, count in sorted(edges.items(), key=lambda x: -x[1]):
                 edge_table.add_row(edge, f"{count:,}")
             edge_table.add_section()
             edge_table.add_row("[bold]Total[/bold]", f"[bold]{sum(edges.values()):,}[/bold]")
-            console.print(edge_table)
+            renderables.append(edge_table)
 
-    # FTS + storage row
     info_table = Table(box=box.SIMPLE_HEAD, title="Index Info", title_style="bold cyan")
     info_table.add_column("", style="bold")
     info_table.add_column("", justify="right")
@@ -179,25 +198,16 @@ def cmd_stats(args) -> None:
             info_table.add_row("[bold]Total storage[/bold]", f"[bold]{total_size / 1024 / 1024:.1f} MB[/bold]")
         else:
             info_table.add_row("[bold]Total storage[/bold]", f"[bold]{total_size / 1024:.0f} KB[/bold]")
-    console.print(info_table)
+    renderables.append(info_table)
 
-    # Call stats
     if call_stats["total_calls"] > 0:
-        call_table = Table(
-            title="MCP Tool Calls",
-            box=box.SIMPLE_HEAD,
-            title_style="bold cyan",
-        )
+        call_table = Table(title="MCP Tool Calls", box=box.SIMPLE_HEAD, title_style="bold cyan")
         call_table.add_column("Tool", style="bold")
         call_table.add_column("Calls", justify="right")
         call_table.add_column("Avg ms", justify="right")
         call_table.add_column("Max ms", justify="right")
         call_table.add_column("Errors", justify="right")
-
-        for tool, ts in sorted(
-            call_stats.get("tools", {}).items(),
-            key=lambda x: -x[1]["calls"],
-        ):
+        for tool, ts in sorted(call_stats.get("tools", {}).items(), key=lambda x: -x[1]["calls"]):
             err_str = f"[red]{ts['errors']}[/red]" if ts["errors"] > 0 else "[dim]0[/dim]"
             call_table.add_row(
                 tool,
@@ -206,7 +216,6 @@ def cmd_stats(args) -> None:
                 f"{ts['max_latency_ms']:.1f}",
                 err_str,
             )
-
         call_table.add_section()
         call_table.add_row(
             "[bold]Total[/bold]",
@@ -215,19 +224,137 @@ def cmd_stats(args) -> None:
             "",
             f"[bold]{call_stats.get('error_count', 0)}[/bold] ({call_stats.get('error_rate', '0%')})",
         )
-        if call_stats.get("period"):
-            call_table.add_row(
-                "[dim]Period[/dim]",
-                f"[dim]{call_stats['period']['first_call']}[/dim]",
-                "[dim]to[/dim]",
-                f"[dim]{call_stats['period']['last_call']}[/dim]",
-                "",
-            )
-        console.print(call_table)
+        renderables.append(call_table)
     else:
-        console.print("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
+        renderables.append(Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]"))
 
-    console.print()
+    return Group(*renderables)
+
+
+def _stats_json(root: str) -> str:
+    """Produce the stats as a JSON string (for --json mode)."""
+    conn = _get_conn(root, readonly=True)
+    graph: dict = {}
+    edges: dict = {}
+    if conn is not None:
+        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
+            try:
+                r = conn.execute("MATCH (n:" + label + ") RETURN count(n) AS c")
+                for row in _rows(r):
+                    graph[label] = row["c"]
+            except Exception:
+                pass
+        for edge_type in (
+            "IMPORTS",
+            "DEFINES_FN",
+            "DEFINES_CLASS",
+            "CALLS",
+            "INHERITS",
+            "HAS_METHOD",
+            "DEFINES_SECTION",
+            "MD_REFS_SYMBOL",
+            "MD_REFS_CLASS",
+            "CONTAINS_SECTION",
+        ):
+            try:
+                r = conn.execute("MATCH ()-[r:" + edge_type + "]->() RETURN count(r) AS c")
+                for row in _rows(r):
+                    if row["c"] > 0:
+                        edges[edge_type] = row["c"]
+            except Exception:
+                pass
+
+    from codegraph.call_log import get_stats
+
+    call_stats = get_stats(root)
+
+    fts_count = 0
+    try:
+        from codegraph.fts import get_fts_conn
+
+        fts_conn = get_fts_conn(root)
+        fts_count = fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    except Exception:
+        pass
+
+    codegraph_dir = Path(root) / ".codegraph"
+    db_sizes: dict = {}
+    for f in sorted(codegraph_dir.glob("*")) if codegraph_dir.exists() else []:
+        if f.is_file() and not f.name.endswith(("-shm", "-wal")):
+            db_sizes[f.name] = f.stat().st_size
+
+    return json.dumps(
+        {
+            "graph": {"nodes": graph, "edges": edges},
+            "fts": {"indexed_symbols": fts_count},
+            "calls": call_stats,
+            "storage": db_sizes,
+        },
+        indent=2,
+    )
+
+
+# ---------------------------------------------------------------------------
+# cmd_tail
+# ---------------------------------------------------------------------------
+
+
+def cmd_tail(args) -> None:
+    """Live view of scan/watcher activity. Works while MCP server is running."""
+    import datetime as _dt
+    import time as _t
+
+    from codegraph.activity import tail as _act_tail
+
+    root = os.path.abspath(args.root)
+    n = getattr(args, "limit", 30)
+
+    _EVENT_STYLE = {
+        "scan_start": "bold cyan",
+        "scan_end": "bold green",
+        "scan_progress": "cyan",
+        "scan_error": "red",
+        "reindex": "green",
+        "error": "red",
+    }
+
+    def _build():
+        entries = _act_tail(root, n=n)
+        table = Table(
+            title="codegraph activity",
+            box=box.SIMPLE_HEAD,
+            title_style="bold cyan",
+        )
+        table.add_column("When", style="dim", width=8)
+        table.add_column("Event", width=14)
+        table.add_column("Detail", overflow="fold")
+        if not entries:
+            table.add_row("--:--:--", "[dim]no activity yet[/dim]", "")
+        now = _t.time()
+        for ts, event, detail in entries:
+            age = now - ts
+            if age < 60:
+                when = f"{int(age)}s ago"
+            elif age < 3600:
+                when = f"{int(age / 60)}m ago"
+            else:
+                when = _dt.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+            style = _EVENT_STYLE.get(event, "white")
+            table.add_row(when, f"[{style}]{event}[/{style}]", detail)
+        return table
+
+    if not getattr(args, "follow", False):
+        console.print(_build())
+        return
+
+    console.print("[dim]Tailing codegraph activity — Ctrl-C to stop[/dim]\n")
+    try:
+        with Live(_build(), console=console, refresh_per_second=2, screen=False) as live:
+            while True:
+                _t.sleep(0.5)
+                live.update(_build())
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
 
 
 # ---------------------------------------------------------------------------

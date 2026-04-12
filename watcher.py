@@ -103,6 +103,8 @@ class _CodeGraphHandler(FileSystemEventHandler):
             t.start()
 
     def _reindex(self, path: str) -> None:
+        from codegraph.activity import log as _activity_log
+
         with self._lock:
             self._timers.pop(path, None)
         try:
@@ -110,8 +112,10 @@ class _CodeGraphHandler(FileSystemEventHandler):
             if ok:
                 rel = Path(path).relative_to(self._root)
                 print(f"[codegraph] + {rel}", flush=True)
+                _activity_log(self._root, "reindex", str(rel))
         except Exception as exc:
             print(f"[codegraph] error {path}: {exc}", flush=True)
+            _activity_log(self._root, "error", f"{path}: {exc}")
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:

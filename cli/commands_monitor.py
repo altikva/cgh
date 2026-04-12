@@ -411,12 +411,14 @@ def cmd_logs(args) -> None:
         errors_only=args.errors,
     )
 
-    if not logs:
-        console.print("[dim]No call logs found.[/dim]")
-        return
-
     if args.json:
         print(json.dumps(logs, indent=2))
+        return
+
+    console.print(LOGO)
+
+    if not logs:
+        console.print("[dim]No call logs found.[/dim]")
         return
 
     table = Table(

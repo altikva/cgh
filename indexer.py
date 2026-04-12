@@ -116,10 +116,16 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _upsert_file(conn: kuzu.Connection, path: str, lang: str, mtime: float) -> None:
+def _upsert_file(
+    conn: kuzu.Connection,
+    path: str,
+    lang: str,
+    mtime: float,
+    git_blob_sha: str | None = None,
+) -> None:
     conn.execute(
-        "MERGE (f:File {path: $p}) SET f.lang = $l, f.mtime = $m",
-        {"p": path, "l": lang, "m": mtime},
+        "MERGE (f:File {path: $p}) SET f.lang = $l, f.mtime = $m, f.git_blob_sha = $g",
+        {"p": path, "l": lang, "m": mtime, "g": git_blob_sha},
     )
 
 
@@ -422,6 +428,7 @@ def index_file(
     path: str | Path,
     repo_root: str | Path | None = None,
     force: bool = False,
+    git_blob_sha: str | None = None,
 ) -> bool:
     """
     Parse and ingest a single file into the graph.
@@ -470,7 +477,19 @@ def index_file(
         return False
 
     lang = idx.lang
-    _upsert_file(conn, str(path), lang, mtime)
+
+    # Compute git blob SHA for surgical-reindex detection. Caller can pass
+    # it in (batched lookup) or we fall back to a per-file subprocess.
+    blob_sha = git_blob_sha
+    if blob_sha is None:
+        try:
+            from .scan_meta import git_hash_object
+
+            blob_sha = git_hash_object(root, path)
+        except Exception:
+            pass
+
+    _upsert_file(conn, str(path), lang, mtime, git_blob_sha=blob_sha)
 
     # Ingest into graph
     if idx.functions or idx.classes:
@@ -552,6 +571,14 @@ def index_repo(
     rotate_if_needed(repo_root)
     _activity_log(repo_root, "scan_start", str(repo_root))
 
+    # Batch-fetch git blob SHAs once, pass to each index_file call
+    try:
+        from .scan_meta import git_tree_blob_shas
+
+        blob_shas = git_tree_blob_shas(repo_root) or {}
+    except Exception:
+        blob_shas = {}
+
     git_files = _git_tracked_files(repo_root)
 
     if git_files is not None:
@@ -575,7 +602,11 @@ def index_repo(
             print(f"  [codegraph] using git ls-files ({len(parseable)} parseable files)")
 
         for full_path in parseable:
-            ok = index_file(full_path, repo_root)
+            try:
+                rel = str(full_path.relative_to(repo_root))
+            except ValueError:
+                rel = str(full_path)
+            ok = index_file(full_path, repo_root, git_blob_sha=blob_shas.get(rel))
             status = "indexed" if ok else "error"
             if ok:
                 stats["indexed"] += 1
@@ -671,3 +702,123 @@ def index_repo(
         f"indexed={stats['indexed']} skipped={stats['skipped']} errors={stats['errors']} elapsed={stats['elapsed_s']}s",
     )
     return stats
+
+
+def incremental_reindex(repo_root: str | Path) -> dict:
+    """
+    Surgical reindex: compare each File node's stored git_blob_sha to the
+    current HEAD blob SHA and re-index only files whose blob changed.
+    Also re-indexes files present in HEAD but not in the graph (newly added).
+
+    Much faster than scan_repo after a branch switch / pull / rebase.
+    Falls back to a full scan if:
+      - not a git repo
+      - stored File nodes have no git_blob_sha (pre-0.4 DB not yet rescanned)
+
+    Returns a dict with: mode, reindexed, deleted, unchanged, elapsed_s.
+    """
+    from .activity import log as _activity_log
+    from .scan_meta import git_tree_blob_shas, write_meta
+
+    repo_root = Path(repo_root)
+    t0 = time.time()
+    _activity_log(repo_root, "incremental_start", str(repo_root))
+
+    head_shas = git_tree_blob_shas(repo_root)
+    if head_shas is None:
+        # Not a git repo — fall back to full scan
+        _activity_log(repo_root, "incremental_fallback", "no git")
+        return {"mode": "fallback_full", **index_repo(repo_root)}
+
+    conn = get_connection(repo_root)
+
+    # Load stored (path, blob_sha) pairs
+    stored: dict[str, str | None] = {}
+    try:
+        res = conn.execute("MATCH (f:File) RETURN f.path, f.git_blob_sha")
+        while res.has_next():
+            row = res.get_next()
+            stored[row[0]] = row[1]
+    except Exception:
+        # Old schema / column missing — fall back
+        _activity_log(repo_root, "incremental_fallback", "no git_blob_sha column")
+        return {"mode": "fallback_full", **index_repo(repo_root)}
+
+    # If nothing is stored OR none of the stored entries have a sha, the
+    # index predates per-file blob tracking — do a full scan to populate.
+    if not stored or all(sha is None for sha in stored.values()):
+        _activity_log(repo_root, "incremental_fallback", "no stored blob shas")
+        return {"mode": "fallback_full", **index_repo(repo_root)}
+
+    # Diff: paths whose blob_sha changed or that are new
+    to_index: list[tuple[str, str]] = []  # (rel_path, blob_sha)
+    for rel_path, head_sha in head_shas.items():
+        stored_sha = stored.get(str(repo_root / rel_path))
+        if stored_sha != head_sha:
+            # Only parseable files
+            full = repo_root / rel_path
+            if is_supported(full) and full.exists():
+                to_index.append((rel_path, head_sha))
+
+    # Paths that are gone from HEAD (deleted on this branch)
+    head_abs = {str(repo_root / p) for p in head_shas}
+    to_delete = [p for p in stored if p not in head_abs]
+
+    fts_conn = _get_fts(repo_root) if repo_root else None
+
+    # Delete stale File nodes + attached graph nodes
+    deleted_count = 0
+    for path in to_delete:
+        try:
+            _purge_file(conn, path, fts_conn)
+            conn.execute("MATCH (f:File {path: $p}) DETACH DELETE f", {"p": path})
+            deleted_count += 1
+        except Exception:
+            pass
+
+    # Re-index changed/new files
+    reindexed: list[str] = []
+    errors = 0
+    for rel_path, blob_sha in to_index:
+        full = repo_root / rel_path
+        try:
+            if index_file(full, repo_root, force=True, git_blob_sha=blob_sha):
+                reindexed.append(rel_path)
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+
+    elapsed = round(time.time() - t0, 2)
+    result = {
+        "mode": "incremental",
+        "reindexed": reindexed,
+        "reindexed_count": len(reindexed),
+        "deleted": to_delete,
+        "deleted_count": deleted_count,
+        "unchanged_count": max(0, len(head_shas) - len(to_index)),
+        "errors": errors,
+        "elapsed_s": elapsed,
+    }
+
+    # Refresh scan metadata (HEAD + branch) since we just caught up
+    try:
+        write_meta(
+            repo_root,
+            {
+                "indexed": len(reindexed),
+                "skipped": result["unchanged_count"],
+                "errors": errors,
+                "elapsed_s": elapsed,
+                "method": "incremental",
+            },
+        )
+    except Exception:
+        pass
+
+    _activity_log(
+        repo_root,
+        "incremental_end",
+        f"reindexed={len(reindexed)} deleted={deleted_count} elapsed={elapsed}s",
+    )
+    return result

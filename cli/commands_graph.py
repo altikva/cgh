@@ -26,7 +26,7 @@ SCOPES = ["imports", "calls", "classes", "docs", "overview"]
 def cmd_graph(args) -> None:
     """Generate and display a graph visualization."""
     from codegraph.db import get_readonly_connection
-    from codegraph.visualize import (
+    from codegraph.viz import (
         generate_html,
         mermaid_calls,
         mermaid_classes,

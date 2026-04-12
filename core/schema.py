@@ -17,9 +17,10 @@ import kuzu
 NODE_TABLES = [
     # Source file
     """CREATE NODE TABLE IF NOT EXISTS File(
-        path    STRING,
-        lang    STRING,
-        mtime   DOUBLE,
+        path          STRING,
+        lang          STRING,
+        mtime         DOUBLE,
+        git_blob_sha  STRING,
         PRIMARY KEY (path)
     )""",
     # Function or method
@@ -109,7 +110,23 @@ EDGE_TABLES = [
 ]
 
 
+def _migrate_file_git_blob_sha(conn: kuzu.Connection) -> None:
+    """Add File.git_blob_sha column if missing (migration for pre-0.4 DBs)."""
+    try:
+        # Probe: if this succeeds the column exists.
+        conn.execute("MATCH (f:File) RETURN f.git_blob_sha LIMIT 1")
+    except RuntimeError:
+        try:
+            conn.execute("ALTER TABLE File ADD git_blob_sha STRING")
+        except RuntimeError:
+            # Either already added by a concurrent migrator, or older Kuzu
+            # version without ALTER support — non-fatal; feature just won't
+            # work until a fresh reindex.
+            pass
+
+
 def init_schema(conn: kuzu.Connection) -> None:
     """Create all node and edge tables (idempotent via IF NOT EXISTS)."""
     for ddl in NODE_TABLES + EDGE_TABLES:
         conn.execute(ddl)
+    _migrate_file_git_blob_sha(conn)

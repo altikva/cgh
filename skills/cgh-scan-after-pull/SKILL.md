@@ -26,16 +26,21 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
 
 1. Call `mcp__codegraph__scan_status` to see how stale the graph is.
    - If `fresh=true`, do nothing.
-   - If `fresh=false`, note `behind_by` and `changed_files`.
+   - If `fresh=false`, proceed.
 
-2. If only a handful of files changed (`< 50`), prefer
-   `mcp__codegraph__index_changed_files(since="<indexed_sha>")` — it's fast.
+2. **Preferred**: call `mcp__codegraph__incremental_reindex`. It compares
+   stored per-file git blob SHAs to the current HEAD and re-indexes only
+   the files whose content changed. Handles deletions too. Fast and
+   correct for branch switches, pulls, rebases.
 
-3. If many files changed or you're unsure, call `mcp__codegraph__scan_repo()`.
-   A full scan on a typical repo is under 2 seconds.
+3. If `incremental_reindex` returns `mode=fallback_full` (old index
+   without blob tracking), it already ran a full scan — you're done.
 
-4. Report the result to the user briefly (e.g. "Refreshed codegraph — 12
-   files re-indexed.").
+4. Only call `mcp__codegraph__scan_repo` if the user explicitly asks
+   for a full rebuild.
+
+5. Report the result to the user briefly (e.g. "Refreshed codegraph —
+   12 files re-indexed, 2 deleted.").
 
 ## Don't
 

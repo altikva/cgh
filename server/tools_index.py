@@ -153,6 +153,35 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
+    def incremental_reindex() -> str:
+        """
+        Surgical reindex: compare stored git blob SHAs to the current HEAD
+        and re-index only files whose content changed. Much faster than
+        scan_repo after `git pull`, `git checkout <branch>`, or `git rebase`.
+
+        Falls back automatically to a full scan if the index is too old
+        (pre-0.4 DB without blob SHA tracking).
+
+        Returns JSON: {mode, reindexed_count, deleted_count, unchanged_count,
+        errors, elapsed_s}.
+        """
+        from codegraph.indexer import incremental_reindex as _incr
+
+        root = _server._root
+        if root is None:
+            return json.dumps({"status": "error", "message": "repo root not set"})
+        result = _incr(root)
+        # Truncate lists for token economy
+        if len(result.get("reindexed", [])) > 100:
+            result["reindexed"] = result["reindexed"][:100]
+            result["reindexed_truncated"] = True
+        if len(result.get("deleted", [])) > 100:
+            result["deleted"] = result["deleted"][:100]
+            result["deleted_truncated"] = True
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
     def scan_status() -> str:
         """
         Report whether the code graph is fresh relative to the current git HEAD.

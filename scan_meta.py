@@ -104,6 +104,36 @@ def read_meta(repo_root: str | Path) -> dict | None:
         return None
 
 
+def git_tree_blob_shas(repo_root: str | Path) -> dict[str, str] | None:
+    """
+    Return {relative_path: blob_sha} for every file in HEAD.
+    Uses `git ls-tree -r HEAD`. Returns None if git unavailable.
+    """
+    out = _git(repo_root, "ls-tree", "-r", "HEAD")
+    if out is None:
+        return None
+    result: dict[str, str] = {}
+    for line in out.splitlines():
+        # Format: "<mode> <type> <sha>\t<path>"
+        try:
+            meta, path = line.split("\t", 1)
+            parts = meta.split()
+            if len(parts) >= 3 and parts[1] == "blob":
+                result[path] = parts[2]
+        except ValueError:
+            continue
+    return result
+
+
+def git_hash_object(repo_root: str | Path, path: str | Path) -> str | None:
+    """
+    Compute git blob SHA for a file's current on-disk content (may differ
+    from HEAD for dirty files). Returns None if git unavailable.
+    """
+    out = _git(repo_root, "hash-object", str(path))
+    return out if out else None
+
+
 def scan_status(repo_root: str | Path) -> dict:
     """
     Compute the freshness of the graph vs the working tree.

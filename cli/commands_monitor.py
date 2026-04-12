@@ -328,6 +328,132 @@ def _stats_json(root: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# cmd_status
+# ---------------------------------------------------------------------------
+
+
+def cmd_status(args) -> None:
+    """Quick one-screen health check: owner, freshness, counts, extra_dirs."""
+    import json as _json
+
+    from codegraph.ipc import (
+        is_owner_alive,
+        live_workers,
+        read_owner_port,
+    )
+    from codegraph.scan_meta import scan_status as _scan_status
+
+    root = os.path.abspath(args.root)
+
+    # Owner
+    owner_pid = None
+    owner_port = None
+    if (Path(root) / ".codegraph").exists():
+        try:
+            owner_pid = int((Path(root) / ".codegraph" / "owner.pid").read_text().strip())
+        except (OSError, ValueError):
+            pass
+        owner_port = read_owner_port(root)
+    owner_alive = is_owner_alive(root)
+    workers = live_workers(root)
+
+    # Scan freshness
+    ss = _scan_status(root)
+
+    # Counts (readonly — works even while owner holds write lock)
+    file_count = endpoint_count = 0
+    extra_dirs: list[str] = []
+    try:
+        from codegraph.core.db import get_readonly_connection
+
+        conn = get_readonly_connection(root)
+        if conn is not None:
+            r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
+            file_count = r.get_next()[0]
+            r = conn.execute("MATCH (e:Endpoint) RETURN count(e) AS c")
+            endpoint_count = r.get_next()[0]
+    except Exception:
+        pass
+
+    try:
+        import tomllib
+
+        cfg = Path(root) / ".codegraph" / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                extra_dirs = tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+    except Exception:
+        pass
+
+    payload = {
+        "root": root,
+        "owner": {
+            "alive": owner_alive,
+            "pid": owner_pid,
+            "port": owner_port,
+            "workers": len(workers),
+        },
+        "scan": {
+            "fresh": ss.get("fresh"),
+            "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
+            "indexed_branch": ss.get("indexed_branch"),
+            "indexed_at": ss.get("indexed_at"),
+            "current_sha": (ss.get("current_sha") or "")[:8] or None,
+            "dirty": ss.get("dirty"),
+            "behind_by": ss.get("behind_by"),
+        },
+        "graph": {
+            "files": file_count,
+            "endpoints": endpoint_count,
+        },
+        "extra_dirs": extra_dirs,
+    }
+
+    if getattr(args, "json", False):
+        print(_json.dumps(payload, indent=2))
+        return
+
+    console.print(LOGO)
+
+    # Owner panel
+    if owner_alive:
+        owner_line = f"[green]running[/green]  pid={owner_pid} port={owner_port}  {len(workers)} worker(s)"
+    elif owner_pid:
+        owner_line = f"[yellow]stale pidfile[/yellow]  pid={owner_pid} (not alive)"
+    else:
+        owner_line = "[dim]not running[/dim]"
+
+    # Freshness
+    if ss.get("fresh"):
+        scan_line = (
+            f"[green]fresh[/green]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] "
+            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]"
+        )
+    elif payload["scan"]["indexed_sha"]:
+        drift = []
+        if ss.get("behind_by"):
+            drift.append(f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind")
+        if ss.get("dirty"):
+            drift.append("working tree dirty")
+        scan_line = (
+            f"[yellow]stale[/yellow]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] → "
+            f"HEAD [bold]{payload['scan']['current_sha']}[/bold]" + (f"  ({', '.join(drift)})" if drift else "")
+        )
+    else:
+        scan_line = "[dim]no scan recorded — run cgh index[/dim]"
+
+    table = Table(box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan")
+    table.add_column("", style="bold")
+    table.add_column("", overflow="fold")
+    table.add_row("Owner", owner_line)
+    table.add_row("Scan", scan_line)
+    table.add_row("Files", f"{file_count:,}")
+    table.add_row("Endpoints", f"{endpoint_count:,}")
+    table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # cmd_reset
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,7 @@ from codegraph.cli.commands_monitor import (
     cmd_logs,
     cmd_reset,
     cmd_stats,
+    cmd_status,
     cmd_tail,
 )
 from codegraph.cli.commands_query import cmd_callees, cmd_callers, cmd_lookup, cmd_outline, cmd_search
@@ -155,11 +156,20 @@ def main() -> None:
         console.print(f"[bold cyan]codegraph[/bold cyan] {VERSION}")
         return
 
-    ap = argparse.ArgumentParser(prog="codegraph", add_help=False)
+    class _LogoArgumentParser(argparse.ArgumentParser):
+        """ArgumentParser that prints the LOGO before any error message."""
+
+        def error(self, message: str) -> None:  # type: ignore[override]
+            console.print(LOGO)
+            console.print(f"[red]error:[/red] {message}\n")
+            console.print("[dim]Run[/dim] [cyan]cgh --help[/cyan] [dim]for the full list of commands.[/dim]")
+            sys.exit(2)
+
+    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
     ap.add_argument("--root", default=os.getcwd())
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
-    sub = ap.add_subparsers(dest="cmd")
+    sub = ap.add_subparsers(dest="cmd", parser_class=_LogoArgumentParser)
 
     # --- init ---
     p = sub.add_parser("init", help="Initialize codegraph in current directory (interactive wizard)")
@@ -223,6 +233,10 @@ def main() -> None:
     p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     p.add_argument("--drop-extra-dirs", action="store_true", help="Also remove extra_dirs from config.toml")
     p.add_argument("--no-reindex", action="store_true", help="Don't re-index after cleaning")
+
+    p = sub.add_parser("status", help="Owner state, scan freshness, counts, extra_dirs in one glance")
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--json", action="store_true", help="Output as JSON")
 
     # --- logs ---
     p = sub.add_parser("logs", help="View MCP tool call logs")
@@ -303,6 +317,7 @@ def main() -> None:
         "serve": cmd_serve,
         "_serve_owner": _cmd_serve_owner,
         "stats": cmd_stats,
+        "status": cmd_status,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "logs": cmd_logs,

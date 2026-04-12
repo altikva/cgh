@@ -65,7 +65,24 @@ def cmd_index(args) -> None:
                     status=f"[{color}]{short}[/{color}]",
                 )
 
-        stats = index_repo(root, on_file=on_file, on_discovery=on_discovery)
+        try:
+            stats = index_repo(root, on_file=on_file, on_discovery=on_discovery)
+        except RuntimeError as exc:
+            if "Could not set lock" in str(exc):
+                console.print()
+                console.print(
+                    Panel(
+                        "[yellow]Database is locked by another cgh process.[/yellow]\n\n"
+                        "An MCP server or watcher is already running for this repo.\n"
+                        "It's likely keeping the index up to date — no action needed.\n\n"
+                        "To force a fresh index, stop the other process first:\n"
+                        "  [cyan]pkill -f 'cgh serve'[/cyan]",
+                        title="[yellow]Index Skipped[/yellow]",
+                        border_style="yellow",
+                    )
+                )
+                return
+            raise
 
     # Summary
     console.print()

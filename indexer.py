@@ -122,10 +122,23 @@ def _upsert_file(
     lang: str,
     mtime: float,
     git_blob_sha: str | None = None,
+    role: str | None = None,
+    layer: str | None = None,
+    module_doc: str | None = None,
 ) -> None:
     conn.execute(
-        "MERGE (f:File {path: $p}) SET f.lang = $l, f.mtime = $m, f.git_blob_sha = $g",
-        {"p": path, "l": lang, "m": mtime, "g": git_blob_sha},
+        "MERGE (f:File {path: $p}) SET "
+        "f.lang = $l, f.mtime = $m, f.git_blob_sha = $g, "
+        "f.role = $r, f.layer = $ly, f.module_doc = $d",
+        {
+            "p": path,
+            "l": lang,
+            "m": mtime,
+            "g": git_blob_sha,
+            "r": role,
+            "ly": layer,
+            "d": module_doc,
+        },
     )
 
 
@@ -149,6 +162,10 @@ def _purge_file(conn: kuzu.Connection, path: str, fts_conn=None) -> None:
     )
     conn.execute(
         "MATCH (s:MdSection) WHERE s.file_path = $p DETACH DELETE s",
+        {"p": path},
+    )
+    conn.execute(
+        "MATCH (e:Endpoint) WHERE e.file_path = $p DETACH DELETE e",
         {"p": path},
     )
     conn.execute(
@@ -329,6 +346,59 @@ def _ingest_terraform(conn: kuzu.Connection, idx: FileIndex) -> None:
             )
 
 
+def _ingest_endpoints(conn: kuzu.Connection, path: Path) -> int:
+    """Extract and persist HTTP endpoints from a file. Returns count."""
+    from .endpoints import extract as _extract_endpoints
+
+    try:
+        src = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+
+    eps = _extract_endpoints(path, src)
+    if not eps:
+        return 0
+
+    # Purge old endpoints for this file first
+    conn.execute(
+        "MATCH (e:Endpoint) WHERE e.file_path = $p DETACH DELETE e",
+        {"p": str(path)},
+    )
+
+    for ep in eps:
+        conn.execute(
+            """MERGE (e:Endpoint {id: $id}) SET
+                 e.method     = $m,
+                 e.path       = $path,
+                 e.framework  = $f,
+                 e.file_path  = $fp,
+                 e.start_line = $sl""",
+            {
+                "id": ep.id,
+                "m": ep.method,
+                "path": ep.path,
+                "f": ep.framework,
+                "fp": ep.file_path,
+                "sl": ep.start_line,
+            },
+        )
+        conn.execute(
+            """MATCH (f:File {path: $fp}), (e:Endpoint {id: $id})
+               MERGE (f)-[:DEFINES_ENDPOINT]->(e)""",
+            {"fp": str(path), "id": ep.id},
+        )
+        if ep.handler_name:
+            # Link to the handler Function. We don't know its class so try
+            # by name only — safe, best-effort.
+            conn.execute(
+                """MATCH (e:Endpoint {id: $id}), (fn:Function)
+                   WHERE fn.name = $n AND fn.file_path = $fp
+                   MERGE (e)-[:IMPLEMENTED_BY]->(fn)""",
+                {"id": ep.id, "n": ep.handler_name, "fp": str(path)},
+            )
+    return len(eps)
+
+
 def _ingest_markdown(conn: kuzu.Connection, idx: FileIndex) -> None:
     # Sections
     for sec in idx.sections:
@@ -489,7 +559,23 @@ def index_file(
         except Exception:
             pass
 
-    _upsert_file(conn, str(path), lang, mtime, git_blob_sha=blob_sha)
+    # Role + layer classification + module-level summary for arch tools
+    from .module_doc import extract as _extract_doc
+    from .roles import classify as _classify_role
+
+    role, layer = _classify_role(path, root)
+    module_doc = _extract_doc(path, lang)
+
+    _upsert_file(
+        conn,
+        str(path),
+        lang,
+        mtime,
+        git_blob_sha=blob_sha,
+        role=role,
+        layer=layer,
+        module_doc=module_doc,
+    )
 
     # Ingest into graph
     if idx.functions or idx.classes:
@@ -498,6 +584,9 @@ def index_file(
         _ingest_terraform(conn, idx)
     if idx.sections:
         _ingest_markdown(conn, idx)
+
+    # HTTP endpoints (after functions are in place so IMPLEMENTED_BY can link)
+    _ingest_endpoints(conn, path)
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)

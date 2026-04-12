@@ -101,20 +101,34 @@ def _short_path(path: str) -> str:
 mcp = FastMCP(
     name="codegraph",
     instructions=(
-        "Local code graph index for this repository.  "
-        "Use these tools BEFORE reading files — they return exact "
-        "file paths and line numbers so you only need to read the "
-        "specific lines you need, saving tokens."
+        "Local code graph index for this repository.\n\n"
+        "CALL THESE TOOLS BEFORE READING FILES — they return exact file paths\n"
+        "and line numbers so you only read the specific lines you need.\n\n"
+        "Workflow matrix:\n"
+        "  • Broad / architecture question ('how does X work', 'where to add Y',\n"
+        "    'explain the structure'):\n"
+        "       1. context_for_task(task)\n"
+        "       2. architecture_overview() or domain_map(keyword)\n"
+        "       3. endpoints(path_pattern) if it's an API question\n"
+        "  • Symbol lookup ('where is Foo defined', 'what calls Bar'):\n"
+        "       1. symbol_lookup / find_callers / find_callees\n"
+        "       2. search_symbols for fuzzy name, fts_search for docstrings\n"
+        "  • After git pull / checkout / rebase:\n"
+        "       1. scan_status, then incremental_reindex if stale\n"
+        "  • Adding an external dir to the graph:  add_directory(path)\n"
+        "Only use Read for the exact line range returned by the tool above.\n"
     ),
 )
 
 # Register tools from sub-modules (must be after mcp = FastMCP)
+from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
 from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
 from codegraph.server.tools_query import register as _register_query  # noqa: E402
 from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
 
+_register_arch(mcp)  # architecture_overview, domain_map, endpoints — use FIRST
 _register_query(mcp)
 _register_docs(mcp)
 _register_index(mcp)

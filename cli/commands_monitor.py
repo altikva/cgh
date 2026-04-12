@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -324,6 +325,131 @@ def _stats_json(root: str) -> str:
         },
         indent=2,
     )
+
+
+# ---------------------------------------------------------------------------
+# cmd_reset
+# ---------------------------------------------------------------------------
+
+
+def cmd_reset(args) -> None:
+    """
+    Nuke the graph + FTS DBs, kill the owner, then optionally re-index
+    and re-publish. Use after a schema migration or when the graph gets
+    into a weird state.
+    """
+    import shutil
+    import subprocess
+    import time
+
+    from codegraph.ipc import owner_pidfile
+
+    root = Path(os.path.abspath(args.root))
+    cg_dir = root / ".codegraph"
+    if not cg_dir.exists():
+        console.print("[yellow]Not initialized.[/yellow]")
+        return
+
+    # 1. Kill the owner if it's running
+    owner_pid_path = owner_pidfile(root)
+    killed = False
+    if owner_pid_path.exists():
+        try:
+            pid = int(owner_pid_path.read_text().strip())
+            os.kill(pid, 15)
+            killed = True
+            # Give it up to 3s to clean up
+            for _ in range(30):
+                time.sleep(0.1)
+                if not _pid_alive(pid):
+                    break
+        except (ValueError, ProcessLookupError, OSError):
+            pass
+
+    # Defensive: kill any stray cgh serve / owner
+    subprocess.run(
+        ["pkill", "-9", "-f", "codegraph _serve_owner"],
+        capture_output=True,
+        timeout=3,
+    )
+
+    # 2. Confirm destructive deletion
+    targets = []
+    for name in ("graph.db", "fts.db", "scan_meta.json", "activity.log"):
+        p = cg_dir / name
+        if p.exists():
+            targets.append(p)
+    # Kuzu also writes .wal / .tmp / shm files
+    for p in cg_dir.iterdir():
+        if p.is_file() and (p.name.startswith("graph.db") or p.name.startswith("fts.db")):
+            if p not in targets:
+                targets.append(p)
+    # Workers dir + port + pid files (leftovers)
+    for name in ("server.pid", "server.port", "owner.pid", "workers"):
+        p = cg_dir / name
+        if p.exists():
+            targets.append(p)
+
+    if not targets:
+        console.print("[dim]Nothing to delete.[/dim]")
+    else:
+        if not args.yes:
+            console.print("[yellow]Will delete:[/yellow]")
+            for t in targets:
+                console.print(f"  - {t.relative_to(root)}")
+            if killed:
+                console.print(f"[dim]Already stopped owner (pid {pid}).[/dim]")
+            resp = input("Proceed? [y/N] ").strip().lower()
+            if resp not in ("y", "yes"):
+                console.print("[dim]Aborted.[/dim]")
+                return
+
+        for t in targets:
+            try:
+                if t.is_dir():
+                    shutil.rmtree(t, ignore_errors=True)
+                else:
+                    t.unlink(missing_ok=True)
+            except OSError:
+                pass
+        console.print(f"[green]Cleaned {len(targets)} items.[/green]")
+
+    # 3. Optionally drop extra_dirs from config.toml
+    if args.drop_extra_dirs:
+        config_path = cg_dir / "config.toml"
+        if config_path.exists():
+            content = config_path.read_text()
+            new_content = re.sub(
+                r"^\s*extra_dirs\s*=\s*\[.*?\]\s*\n",
+                "",
+                content,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+            if new_content != content:
+                config_path.write_text(new_content)
+                console.print("[green]Dropped extra_dirs from config.toml[/green]")
+
+    # 4. Re-index (unless --no-reindex)
+    if not args.no_reindex:
+        from codegraph.cli.commands_index import cmd_index
+
+        cmd_index(
+            __import__("argparse").Namespace(
+                root=str(root),
+                verbose=False,
+                method="auto",
+            )
+        )
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
 
 
 # ---------------------------------------------------------------------------

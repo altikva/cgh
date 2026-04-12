@@ -211,6 +211,22 @@ reindex_on_start = true
 [ruflo]
 # Ruflo integration (auto-detected if not set)
 # enabled = true
+
+[roles]
+# Override file-role classification for this project.
+# Built-in defaults cover FastAPI, Flask, Django, Express, Nuxt, Next.js,
+# Remix, Terraform, and conventional folder names (/handlers/, /services/,
+# /models/, /components/, etc).
+#
+# Use this section if your layout differs — e.g. "src/domain/handlers/":
+#
+#   "/src/domain/handlers/"   = "handler:application"
+#   "/src/adapters/"          = "provider:infra"
+#   "/pkg/internal/services/" = "service:application"
+#
+# Syntax: "<path_fragment>" = "<role>:<layer>"
+#   role  — free-form narrow category (shown in architecture_overview)
+#   layer — one of: presentation, application, domain, infra, test, doc, other
 """
 
 

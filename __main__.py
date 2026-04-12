@@ -31,6 +31,7 @@ from codegraph.cli.commands_monitor import (
     cmd_doctor,
     cmd_history,
     cmd_logs,
+    cmd_reset,
     cmd_stats,
     cmd_tail,
 )
@@ -217,6 +218,12 @@ def main() -> None:
     p.add_argument("--limit", "-n", type=int, default=30, help="Number of recent entries (default: 30)")
     p.add_argument("--follow", "-f", action="store_true", help="Follow new activity (Ctrl-C to stop)")
 
+    p = sub.add_parser("reset", help="Nuke graph + FTS DBs, kill owner, re-index from scratch")
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    p.add_argument("--drop-extra-dirs", action="store_true", help="Also remove extra_dirs from config.toml")
+    p.add_argument("--no-reindex", action="store_true", help="Don't re-index after cleaning")
+
     # --- logs ---
     p = sub.add_parser("logs", help="View MCP tool call logs")
     p.add_argument("--root", default=os.getcwd())
@@ -297,6 +304,7 @@ def main() -> None:
         "_serve_owner": _cmd_serve_owner,
         "stats": cmd_stats,
         "tail": cmd_tail,
+        "reset": cmd_reset,
         "logs": cmd_logs,
         "search": cmd_search,
         "lookup": cmd_lookup,

@@ -21,7 +21,20 @@ NODE_TABLES = [
         lang          STRING,
         mtime         DOUBLE,
         git_blob_sha  STRING,
+        role          STRING,
+        layer         STRING,
+        module_doc    STRING,
         PRIMARY KEY (path)
+    )""",
+    # HTTP endpoint (FastAPI decorator or Nuxt server/api file)
+    """CREATE NODE TABLE IF NOT EXISTS Endpoint(
+        id          STRING,
+        method      STRING,
+        path        STRING,
+        framework   STRING,
+        file_path   STRING,
+        start_line  INT64,
+        PRIMARY KEY (id)
     )""",
     # Function or method
     """CREATE NODE TABLE IF NOT EXISTS Function(
@@ -107,22 +120,38 @@ EDGE_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS MD_REFS_CLASS(FROM MdSection TO Class, context STRING)",
     # Section hierarchy: parent heading contains child heading
     "CREATE REL TABLE IF NOT EXISTS CONTAINS_SECTION(FROM MdSection TO MdSection)",
+    # File defines an HTTP endpoint (FastAPI route / Nuxt server/api)
+    "CREATE REL TABLE IF NOT EXISTS DEFINES_ENDPOINT(FROM File TO Endpoint)",
+    # Endpoint is implemented by a function (handler)
+    "CREATE REL TABLE IF NOT EXISTS IMPLEMENTED_BY(FROM Endpoint TO Function)",
 ]
 
 
 def _migrate_file_git_blob_sha(conn: kuzu.Connection) -> None:
     """Add File.git_blob_sha column if missing (migration for pre-0.4 DBs)."""
     try:
-        # Probe: if this succeeds the column exists.
         conn.execute("MATCH (f:File) RETURN f.git_blob_sha LIMIT 1")
     except RuntimeError:
         try:
             conn.execute("ALTER TABLE File ADD git_blob_sha STRING")
         except RuntimeError:
-            # Either already added by a concurrent migrator, or older Kuzu
-            # version without ALTER support — non-fatal; feature just won't
-            # work until a fresh reindex.
             pass
+
+
+def _migrate_file_role_layer_doc(conn: kuzu.Connection) -> None:
+    """Add File.role, File.layer, File.module_doc columns (migration)."""
+    for column in ("role", "layer", "module_doc"):
+        # Fixed allowlist → safe to concatenate into Cypher (Kuzu doesn't
+        # support parameterised column names).
+        probe = "MATCH (f:File) RETURN f." + column + " LIMIT 1"
+        add = "ALTER TABLE File ADD " + column + " STRING"
+        try:
+            conn.execute(probe)
+        except RuntimeError:
+            try:
+                conn.execute(add)
+            except RuntimeError:
+                pass
 
 
 def init_schema(conn: kuzu.Connection) -> None:
@@ -130,3 +159,4 @@ def init_schema(conn: kuzu.Connection) -> None:
     for ddl in NODE_TABLES + EDGE_TABLES:
         conn.execute(ddl)
     _migrate_file_git_blob_sha(conn)
+    _migrate_file_role_layer_doc(conn)

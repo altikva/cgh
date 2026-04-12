@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import atexit
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,8 @@ _conn: kuzu.Connection | None = None
 _ro_db: kuzu.Database | None = None
 _ro_conn: kuzu.Connection | None = None
 
+_atexit_registered = False
+
 
 def get_db_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / _DB_DIR / _DB_FILE
@@ -38,10 +41,15 @@ def get_connection(repo_root: str | Path | None = None) -> kuzu.Connection:
     Return (and cache) a read-write Kuzu connection.
     Retries on lock with backoff.
     """
-    global _db, _conn
+    global _db, _conn, _atexit_registered
 
     if _conn is not None:
         return _conn
+
+    # Ensure we release the lock on process exit (SIGTERM, etc.)
+    if not _atexit_registered:
+        atexit.register(reset_connection)
+        _atexit_registered = True
 
     root = Path(repo_root) if repo_root else Path.cwd()
     db_dir = root / _DB_DIR
@@ -100,8 +108,23 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> kuzu.Connect
 
 
 def reset_connection() -> None:
-    """Force re-open on next call (useful after full re-index)."""
+    """
+    Release the Kuzu file lock and force re-open on next call.
+
+    Kuzu holds an OS-level write lock for the lifetime of the Database
+    object. Dropping Python references alone is not enough — CPython's
+    GC may defer destruction, and the lock lingers until the process
+    exits. We explicitly close the Connection + Database here so the
+    lock is released immediately.
+    """
     global _db, _conn, _ro_db, _ro_conn
+    for obj in (_conn, _db, _ro_conn, _ro_db):
+        if obj is None:
+            continue
+        try:
+            obj.close()
+        except Exception:
+            pass
     _conn = None
     _db = None
     _ro_conn = None

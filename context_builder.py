@@ -43,12 +43,37 @@ class MemoryHit:
 
 
 @dataclass
+class MemoryDocHit:
+    """A hit from the local Claude Code memory index (not Ruflo)."""
+
+    path: str
+    kind: str
+    title: str
+    snippet: str
+    score: float
+
+
+@dataclass
+class PlanDocHit:
+    """A hit from the local Claude Code plans index."""
+
+    path: str
+    slug: str
+    agent_id: str
+    title: str
+    snippet: str
+    score: float
+
+
+@dataclass
 class TaskContext:
     task: str
     nodes: list[ContextNode]
     files_referenced: list[str]
     token_estimate: int
     memory_hits: list[MemoryHit] = field(default_factory=list)
+    memory_docs: list[MemoryDocHit] = field(default_factory=list)
+    plan_docs: list[PlanDocHit] = field(default_factory=list)
 
 
 def _check_ruflo_available() -> bool:
@@ -223,6 +248,10 @@ def context_for_task(
     # Step 0: Query Ruflo memory (best-effort, non-blocking)
     memory_hits = _query_ruflo_memory(task)
 
+    # Step 0b: Query local Claude Code memory + plans (SQLite FTS, always on)
+    memory_docs = _local_memory_hits(fts_conn, task, limit=3)
+    plan_docs = _local_plan_hits(fts_conn, task, limit=2)
+
     # Step 1: FTS search to find seed symbols. Natural-language sentences
     # don't match symbol names directly — extract keywords first.
     query = _keyword_query(task)
@@ -303,7 +332,56 @@ def context_for_task(
         files_referenced=files,
         token_estimate=token_estimate,
         memory_hits=memory_hits,
+        memory_docs=memory_docs,
+        plan_docs=plan_docs,
     )
+
+
+def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) -> list[MemoryDocHit]:
+    """Wrap fts.memory_search with graceful fallback + keyword expansion."""
+    try:
+        from codegraph.fts import memory_search as _search
+
+        query = _keyword_query(task)
+        hits = _search(fts_conn, query, limit=limit)
+        if not hits and query != task:
+            hits = _search(fts_conn, task, limit=limit)
+        return [
+            MemoryDocHit(
+                path=h.path,
+                kind=h.kind,
+                title=h.title,
+                snippet=h.snippet,
+                score=h.score,
+            )
+            for h in hits
+        ]
+    except Exception:
+        return []
+
+
+def _local_plan_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 2) -> list[PlanDocHit]:
+    """Wrap fts.plan_search with graceful fallback."""
+    try:
+        from codegraph.fts import plan_search as _search
+
+        query = _keyword_query(task)
+        hits = _search(fts_conn, query, limit=limit)
+        if not hits and query != task:
+            hits = _search(fts_conn, task, limit=limit)
+        return [
+            PlanDocHit(
+                path=h.path,
+                slug=h.slug,
+                agent_id=h.agent_id,
+                title=h.title,
+                snippet=h.snippet,
+                score=h.score,
+            )
+            for h in hits
+        ]
+    except Exception:
+        return []
 
 
 def render_context_markdown(ctx: TaskContext) -> str:
@@ -321,6 +399,27 @@ def render_context_markdown(ctx: TaskContext) -> str:
             lines.append(f"  Relationships: {', '.join(node.relationships)}")
         lines.append("")
 
+    # Claude Code memory (user preferences / feedback / project notes)
+    if ctx.memory_docs:
+        lines.append("---")
+        lines.append("## Memory (Claude Code)")
+        lines.append("")
+        for m in ctx.memory_docs:
+            lines.append(f"- **[{m.kind}]** {m.title}")
+            lines.append(f"  {m.snippet[:180]}")
+            lines.append("")
+
+    # Relevant past plans
+    if ctx.plan_docs:
+        lines.append("---")
+        lines.append("## Related Plans")
+        lines.append("")
+        for p in ctx.plan_docs:
+            agent = f" (agent {p.agent_id[:8]})" if p.agent_id else ""
+            lines.append(f"- **{p.slug}**{agent} — {p.title}")
+            lines.append(f"  `{p.path}`")
+            lines.append("")
+
     # Ruflo memory knowledge
     if ctx.memory_hits:
         lines.append("---")
@@ -334,6 +433,10 @@ def render_context_markdown(ctx: TaskContext) -> str:
 
     lines.append(f"**Files**: {', '.join(ctx.files_referenced)}")
     lines.append(f"**Estimated tokens**: ~{ctx.token_estimate}")
+    if ctx.memory_docs:
+        lines.append(f"**Memory**: {len(ctx.memory_docs)} Claude Code entries")
+    if ctx.plan_docs:
+        lines.append(f"**Plans**: {len(ctx.plan_docs)} related")
     if ctx.memory_hits:
-        lines.append(f"**Ruflo knowledge**: {len(ctx.memory_hits)} relevant entries")
+        lines.append(f"**Ruflo knowledge**: {len(ctx.memory_hits)} entries")
     return "\n".join(lines)

@@ -91,12 +91,18 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def context_for_task(task: str, max_nodes: int = 15) -> str:
+    def context_for_task(
+        task: str,
+        max_nodes: int = 15,
+        session_id: str = "",
+        include_shown: bool = False,
+    ) -> str:
         """
         THE FIRST TOOL TO CALL for any coding task.
         Given a natural-language task description, builds a compact, ranked context
         block containing the most relevant symbols, their docstrings, and their
-        graph relationships — WITHOUT reading any files.
+        graph relationships — plus Claude Code memory entries and related plan
+        files — WITHOUT reading any files.
 
         Use this before any file reads. It will cut exploration tokens by 60-90%.
 
@@ -106,9 +112,15 @@ def register(mcp) -> None:
                        "add a new GCS bucket resource"
                        "refactor the DataLoader class"
             max_nodes: max symbols to include (default 15)
+            session_id: optional — when passed, already-surfaced entities
+                  from previous calls in THIS session are hidden. Pass the
+                  same id across calls to avoid re-serving the same nodes.
+            include_shown: if true, ignore session dedup and return
+                  everything. Useful to review what was previously served.
 
-        Returns structured markdown context ready for Claude to use directly.
+        Returns structured markdown context + hit counts.
         """
+        from codegraph.call_log import filter_unseen, record_mentions
         from codegraph.context_builder import context_for_task as _ctx
         from codegraph.context_builder import render_context_markdown
 
@@ -118,17 +130,71 @@ def register(mcp) -> None:
             fts_conn=_get_fts(),
             max_nodes=max_nodes,
         )
+
+        # Session-scoped dedup
+        if session_id and not include_shown:
+            from codegraph.activity import log as _activity_log
+
+            served_nodes = [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
+            served_mem = [("memory", m.path) for m in ctx.memory_docs]
+            served_plans = [("plan", p.path) for p in ctx.plan_docs]
+            all_entities = served_nodes + served_mem + served_plans
+
+            unseen = set(filter_unseen(session_id, all_entities, repo_root=_root))
+            before = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
+
+            ctx.nodes = [n for n in ctx.nodes if ("symbol", f"{n.file_path}:{n.start_line}") in unseen]
+            ctx.memory_docs = [m for m in ctx.memory_docs if ("memory", m.path) in unseen]
+            ctx.plan_docs = [p for p in ctx.plan_docs if ("plan", p.path) in unseen]
+
+            after = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
+            if before != after:
+                try:
+                    _activity_log(_root, "session_dedup", f"{session_id} hid {before - after}")
+                except Exception:
+                    pass
+
+            # Record what we're about to serve
+            now_served = (
+                [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
+                + [("memory", m.path) for m in ctx.memory_docs]
+                + [("plan", p.path) for p in ctx.plan_docs]
+            )
+            if now_served:
+                record_mentions(session_id, now_served, repo_root=_root)
+
+            # Recompute derived fields after filtering
+            ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
+            ctx.token_estimate = sum(len(n.name) + len(n.docstring) + len(n.file_path) + 50 for n in ctx.nodes) // 4
+
         md = render_context_markdown(ctx)
         return json.dumps(
             {
                 "context_markdown": md,
                 "files_referenced": ctx.files_referenced,
                 "symbol_count": len(ctx.nodes),
-                "memory_hits": len(ctx.memory_hits),
+                "memory_docs_count": len(ctx.memory_docs),
+                "plan_docs_count": len(ctx.plan_docs),
+                "ruflo_memory_hits": len(ctx.memory_hits),
                 "estimated_tokens": ctx.token_estimate,
+                "session_id": session_id or None,
             },
             indent=2,
         )
+
+    @mcp.tool()
+    @_logged_tool
+    def session_reset(session_id: str) -> str:
+        """
+        Clear the dedup cache for a session — subsequent `context_for_task`
+        calls with this session_id will be allowed to re-surface previously
+        shown entities. Useful at the start of a new task within the same
+        client session.
+        """
+        from codegraph.call_log import clear_session
+
+        removed = clear_session(session_id, repo_root=_root)
+        return json.dumps({"session_id": session_id, "cleared": removed})
 
     @mcp.tool()
     @_logged_tool

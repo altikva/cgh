@@ -101,22 +101,25 @@ def _short_path(path: str) -> str:
 mcp = FastMCP(
     name="codegraph",
     instructions=(
-        "Local code graph index for this repository.\n\n"
+        "Local code graph + Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES — they return exact file paths\n"
         "and line numbers so you only read the specific lines you need.\n\n"
         "Workflow matrix:\n"
-        "  • Broad / architecture question ('how does X work', 'where to add Y',\n"
-        "    'explain the structure'):\n"
-        "       1. context_for_task(task)\n"
-        "       2. architecture_overview() or domain_map(keyword)\n"
-        "       3. endpoints(path_pattern) if it's an API question\n"
-        "  • Symbol lookup ('where is Foo defined', 'what calls Bar'):\n"
+        "  • Task kickoff / broad question ('how does X work', 'where to add Y'):\n"
+        "       1. context_for_task(task, session_id?) — merges code + memory + plans\n"
+        "       2. architecture_overview() or domain_map(keyword) for structure\n"
+        "       3. endpoints(path_pattern) for API questions\n"
+        "  • Known user preference territory (commit style, naming, workflow):\n"
+        "       1. memory_search(query, kind='feedback') BEFORE asking the user\n"
+        "  • User hints at a past plan ('the refactor we planned'):\n"
+        "       1. plan_search(query)\n"
+        "  • Symbol lookup ('where is Foo', 'what calls Bar'):\n"
         "       1. symbol_lookup / find_callers / find_callees\n"
-        "       2. search_symbols for fuzzy name, fts_search for docstrings\n"
+        "       2. search_symbols for fuzzy, fts_search for docstrings\n"
         "  • After git pull / checkout / rebase:\n"
         "       1. scan_status, then incremental_reindex if stale\n"
-        "  • Adding an external dir to the graph:  add_directory(path)\n"
-        "Only use Read for the exact line range returned by the tool above.\n"
+        "  • Adding an external dir: add_directory(path)\n"
+        "Only use Read for the exact line range returned above.\n"
     ),
 )
 
@@ -124,7 +127,9 @@ mcp = FastMCP(
 from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
+from codegraph.server.tools_memory import register as _register_memory  # noqa: E402
 from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
+from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
 from codegraph.server.tools_query import register as _register_query  # noqa: E402
 from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
 
@@ -134,6 +139,8 @@ _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)
 _register_meta(mcp)
+_register_memory(mcp)
+_register_plans(mcp)
 
 
 # ---------------------------------------------------------------------------

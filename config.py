@@ -42,6 +42,58 @@ from pathlib import Path
 CODEGRAPH_DIR = ".codegraph"
 CONFIG_FILE = "config.toml"
 GLOBAL_DIR = Path.home() / ".codegraph"
+CLAUDE_HOME = Path.home() / ".claude"
+
+
+def _claude_memory_dir_for(project_root: str | Path) -> Path:
+    """
+    Claude Code stores per-project memory at
+    ~/.claude/projects/-<abs-path-with-slashes-as-dashes>/memory/.
+    """
+    slug = str(Path(project_root).resolve()).replace("/", "-")
+    return CLAUDE_HOME / "projects" / slug / "memory"
+
+
+def _claude_plans_dir() -> Path:
+    """Claude Code stores plan files globally at ~/.claude/plans/."""
+    return CLAUDE_HOME / "plans"
+
+
+def memory_dir(project_root: str | Path) -> Path:
+    """
+    Resolve the memory directory for this project.
+    Order: env var → [paths].memory_dir in config.toml → auto-detect.
+    """
+    env = os.environ.get("CG_MEMORY_DIR") or os.environ.get("CODEGRAPH_MEMORY_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+
+    cfg = _read_toml(Path(project_root) / CODEGRAPH_DIR / CONFIG_FILE)
+    paths = cfg.get("paths") or {}
+    configured = paths.get("memory_dir")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    return _claude_memory_dir_for(project_root)
+
+
+def plans_dir(project_root: str | Path) -> Path:
+    """
+    Resolve the plans directory.
+    Order: env var → [paths].plans_dir in config.toml → auto-detect.
+    """
+    env = os.environ.get("CG_PLANS_DIR") or os.environ.get("CODEGRAPH_PLANS_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+
+    cfg = _read_toml(Path(project_root) / CODEGRAPH_DIR / CONFIG_FILE)
+    paths = cfg.get("paths") or {}
+    configured = paths.get("plans_dir")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    return _claude_plans_dir()
+
 
 DEFAULT_IGNORE_DIRS = [
     ".git",
@@ -211,6 +263,14 @@ reindex_on_start = true
 [ruflo]
 # Ruflo integration (auto-detected if not set)
 # enabled = true
+
+[paths]
+# Where to look for Claude Code memory and plan files. Default is the
+# auto-detected Claude Code location (~/.claude/...). Env vars
+# CG_MEMORY_DIR / CG_PLANS_DIR override both config and auto-detect.
+#
+# memory_dir = "~/.claude/projects/-my-slug/memory"
+# plans_dir  = "~/.claude/plans"
 
 [roles]
 # Override file-role classification for this project.

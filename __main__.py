@@ -19,7 +19,14 @@ from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
 from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
-from codegraph.cli.commands_index import cmd_force_index, cmd_index, cmd_serve, cmd_watch
+from codegraph.cli.commands_index import (
+    cmd_force_index,
+    cmd_index,
+    cmd_memory_index,
+    cmd_plan_index,
+    cmd_serve,
+    cmd_watch,
+)
 
 # ---------------------------------------------------------------------------
 # Commands (imported from cli subpackage)
@@ -238,6 +245,14 @@ def main() -> None:
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
+    p = sub.add_parser("memory-index", help="Scan the Claude Code memory directory into the FTS index")
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--verbose", "-v", action="store_true")
+
+    p = sub.add_parser("plan-index", help="Scan ~/.claude/plans/ into the FTS index")
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument("--verbose", "-v", action="store_true")
+
     # --- logs ---
     p = sub.add_parser("logs", help="View MCP tool call logs")
     p.add_argument("--root", default=os.getcwd())
@@ -320,6 +335,8 @@ def main() -> None:
         "status": cmd_status,
         "tail": cmd_tail,
         "reset": cmd_reset,
+        "memory-index": cmd_memory_index,
+        "plan-index": cmd_plan_index,
         "logs": cmd_logs,
         "search": cmd_search,
         "lookup": cmd_lookup,

@@ -135,11 +135,63 @@ _active_observer: Observer | None = None
 _active_handler: _CodeGraphHandler | None = None
 
 
+class _AuxRescanHandler(FileSystemEventHandler):
+    """
+    Debounced handler that triggers a folder-level rescan callback on
+    any .md change. Used for the memory dir and the plans dir — we
+    re-scan the entire (small) folder instead of tracking per-file state.
+    """
+
+    def __init__(self, repo_root: Path, label: str, scan_fn) -> None:
+        super().__init__()
+        self._root = repo_root
+        self._label = label
+        self._scan_fn = scan_fn
+        self._timer: threading.Timer | None = None
+        self._lock = threading.Lock()
+
+    def _schedule(self, path: str) -> None:
+        if not path.endswith(".md"):
+            return
+        with self._lock:
+            if self._timer:
+                self._timer.cancel()
+            self._timer = threading.Timer(_DEBOUNCE * 3, self._rescan)
+            self._timer.start()
+
+    def _rescan(self) -> None:
+        try:
+            stats = self._scan_fn(self._root)
+            print(
+                f"[codegraph] {self._label} rescan: "
+                f"indexed={stats.get('indexed', 0)} removed={stats.get('removed', 0)}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[codegraph] {self._label} rescan error: {exc}", flush=True)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_deleted(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.dest_path)
+
+
 def start_watcher(repo_root: str | Path) -> Observer:
     """
     Start a background file watcher for `repo_root`.
     Returns the Observer so the caller can stop it with observer.stop().
-    Also loads extra_dirs from config.toml and watches them too.
+    Also watches extra_dirs, the Claude Code memory dir, and the plans dir.
     """
     global _active_observer, _active_handler
 
@@ -165,10 +217,35 @@ def start_watcher(repo_root: str | Path) -> Observer:
     except Exception:
         pass
 
+    # Memory + plans dirs (auto-discovered; env / config-overridable)
+    from codegraph.config import memory_dir, plans_dir
+    from codegraph.memory_index import scan_memory_dir
+    from codegraph.plan_index import scan_plan_dir
+
+    aux_targets: list[tuple[Path, str, object]] = []
+    try:
+        mdir = memory_dir(root)
+        if mdir.exists() and mdir.is_dir():
+            aux_targets.append((mdir, "memory", scan_memory_dir))
+    except Exception:
+        pass
+    try:
+        pdir = plans_dir(root)
+        if pdir.exists() and pdir.is_dir():
+            aux_targets.append((pdir, "plans", scan_plan_dir))
+    except Exception:
+        pass
+
+    for path, label, scan_fn in aux_targets:
+        aux_handler = _AuxRescanHandler(root, label, scan_fn)
+        observer.schedule(aux_handler, str(path), recursive=False)
+
     observer.start()
     print(f"[codegraph] watching {root}", flush=True)
     for p in extra_paths:
         print(f"[codegraph] watching {p} (extra_dir)", flush=True)
+    for path, label, _ in aux_targets:
+        print(f"[codegraph] watching {path} ({label})", flush=True)
 
     _active_observer = observer
     _active_handler = handler

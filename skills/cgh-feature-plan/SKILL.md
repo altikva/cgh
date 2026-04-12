@@ -12,10 +12,13 @@ that follow are surgical.
 
 ## Required sequence
 
-1. **`mcp__codegraph__context_for_task(task)`**
-   Pass the user's full description. Returns the most-relevant symbols,
-   with their docstrings and relationships (callers, callees, inheritors).
-   If it returns empty results, move on — don't block the plan.
+1. **`mcp__codegraph__context_for_task(task, session_id=<id>)`**
+   Pass the user's full description. Returns the most-relevant symbols
+   with their docstrings and relationships (callers, callees, inheritors),
+   PLUS top Claude Code memory entries and related plan files in one
+   response. Pass a stable `session_id` so subsequent calls don't
+   re-serve already-shown entities.
+   If it returns empty code results, move on — don't block the plan.
 
 2. **`mcp__codegraph__architecture_overview()`**
    Compact map of files grouped by layer + role (router / handler /
@@ -32,7 +35,14 @@ that follow are surgical.
    coupling), list existing endpoints matching the domain. Reveals the
    FastAPI ↔ Nuxt contract.
 
-5. **`mcp__codegraph__find_callers(fn_name)` / `find_callees(fn_name)`**
+5. **`mcp__codegraph__memory_search(query, kind="feedback")`** — only when
+   the user hints at preferences you might already know. Avoids asking
+   the same question twice across sessions.
+
+6. **`mcp__codegraph__plan_search(query)`** — when the user mentions a
+   past plan ("the refactor we discussed"). Reuse rather than re-derive.
+
+7. **`mcp__codegraph__find_callers(fn_name)` / `find_callees(fn_name)`**
    Only for symbols identified in steps 1–4 that you plan to change.
    Never blindly on arbitrary names.
 

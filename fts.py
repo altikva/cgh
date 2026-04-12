@@ -57,6 +57,39 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             name, docstring, content='symbols', content_rowid='rowid'
         )
     """)
+    # Memory entries — indexed from ~/.claude/projects/<slug>/memory/
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory_entries (
+            path        TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL DEFAULT 'other',
+            title       TEXT NOT NULL DEFAULT '',
+            body        TEXT NOT NULL DEFAULT '',
+            mtime       REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+            title, body, kind UNINDEXED,
+            content='memory_entries', content_rowid='rowid'
+        )
+    """)
+    # Plan documents — indexed from ~/.claude/plans/
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS plan_entries (
+            path        TEXT PRIMARY KEY,
+            slug        TEXT NOT NULL DEFAULT '',
+            agent_id    TEXT NOT NULL DEFAULT '',
+            title       TEXT NOT NULL DEFAULT '',
+            body        TEXT NOT NULL DEFAULT '',
+            mtime       REAL NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS plan_fts USING fts5(
+            title, body, slug UNINDEXED, agent_id UNINDEXED,
+            content='plan_entries', content_rowid='rowid'
+        )
+    """)
     conn.commit()
     return conn
 
@@ -175,6 +208,221 @@ def fts_search(
             )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Memory + Plan helpers (Phase A/B of the Claude Code integration)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MemoryHit:
+    path: str
+    kind: str
+    title: str
+    snippet: str
+    score: float
+
+
+@dataclass
+class PlanHit:
+    path: str
+    slug: str
+    agent_id: str
+    title: str
+    snippet: str
+    score: float
+
+
+def upsert_memory_entry(
+    conn: sqlite3.Connection,
+    path: str,
+    kind: str,
+    title: str,
+    body: str,
+    mtime: float,
+) -> None:
+    """Insert or replace a memory entry in both main table and FTS index."""
+    conn.execute(
+        "INSERT OR REPLACE INTO memory_entries(path, kind, title, body, mtime) VALUES (?, ?, ?, ?, ?)",
+        (path, kind or "other", title or "", body or "", mtime),
+    )
+    rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+    if rowid:
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
+            (rowid[0], title or "", body or "", kind or "other"),
+        )
+
+
+def delete_memory_entry(conn: sqlite3.Connection, path: str) -> None:
+    rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+    if rowid:
+        conn.execute(
+            "INSERT INTO memory_fts(memory_fts, rowid, title, body, kind) VALUES('delete', ?, '', '', '')",
+            (rowid[0],),
+        )
+    conn.execute("DELETE FROM memory_entries WHERE path = ?", (path,))
+
+
+def memory_search(
+    conn: sqlite3.Connection,
+    query: str,
+    kind: str | None = None,
+    limit: int = 10,
+) -> list[MemoryHit]:
+    """BM25 search over memory entries. Returns hits ordered by relevance."""
+    out: list[MemoryHit] = []
+    try:
+        sql = (
+            "SELECT m.path, m.kind, m.title, m.body, rank AS score "
+            "FROM memory_fts f JOIN memory_entries m ON m.rowid = f.rowid "
+            "WHERE memory_fts MATCH ? "
+        )
+        params: list = [_tokenize(query)]
+        if kind:
+            sql += "AND m.kind = ? "
+            params.append(kind)
+        sql += "ORDER BY rank LIMIT ?"
+        params.append(limit)
+        for row in conn.execute(sql, params).fetchall():
+            out.append(
+                MemoryHit(
+                    path=row[0],
+                    kind=row[1],
+                    title=row[2],
+                    snippet=(row[3] or "")[:240],
+                    score=-row[4],  # BM25 returns negative values; higher = better
+                )
+            )
+    except sqlite3.OperationalError:
+        # Fallback: LIKE search if FTS chokes
+        like = f"%{query}%"
+        sql = "SELECT path, kind, title, body FROM memory_entries WHERE title LIKE ? OR body LIKE ? "
+        params = [like, like]
+        if kind:
+            sql += "AND kind = ? "
+            params.append(kind)
+        sql += "LIMIT ?"
+        params.append(limit)
+        for i, row in enumerate(conn.execute(sql, params).fetchall()):
+            out.append(
+                MemoryHit(
+                    path=row[0],
+                    kind=row[1],
+                    title=row[2],
+                    snippet=(row[3] or "")[:240],
+                    score=1.0 / (i + 1),
+                )
+            )
+    return out
+
+
+def list_memory_entries(conn: sqlite3.Connection, kind: str | None = None) -> list[MemoryHit]:
+    """All memory entries, newest first — cheap index read."""
+    sql = "SELECT path, kind, title, body, mtime FROM memory_entries"
+    params: list = []
+    if kind:
+        sql += " WHERE kind = ?"
+        params.append(kind)
+    sql += " ORDER BY mtime DESC"
+    return [
+        MemoryHit(path=row[0], kind=row[1], title=row[2], snippet=(row[3] or "")[:240], score=row[4])
+        for row in conn.execute(sql, params).fetchall()
+    ]
+
+
+def upsert_plan_entry(
+    conn: sqlite3.Connection,
+    path: str,
+    slug: str,
+    agent_id: str,
+    title: str,
+    body: str,
+    mtime: float,
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO plan_entries(path, slug, agent_id, title, body, mtime) VALUES (?, ?, ?, ?, ?, ?)",
+        (path, slug or "", agent_id or "", title or "", body or "", mtime),
+    )
+    rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+    if rowid:
+        conn.execute(
+            "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
+            (rowid[0], title or "", body or "", slug or "", agent_id or ""),
+        )
+
+
+def delete_plan_entry(conn: sqlite3.Connection, path: str) -> None:
+    rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+    if rowid:
+        conn.execute(
+            "INSERT INTO plan_fts(plan_fts, rowid, title, body, slug, agent_id) VALUES('delete', ?, '', '', '', '')",
+            (rowid[0],),
+        )
+    conn.execute("DELETE FROM plan_entries WHERE path = ?", (path,))
+
+
+def plan_search(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[PlanHit]:
+    """BM25 search over plan files."""
+    out: list[PlanHit] = []
+    try:
+        rows = conn.execute(
+            "SELECT p.path, p.slug, p.agent_id, p.title, p.body, rank AS score "
+            "FROM plan_fts f JOIN plan_entries p ON p.rowid = f.rowid "
+            "WHERE plan_fts MATCH ? ORDER BY rank LIMIT ?",
+            (_tokenize(query), limit),
+        ).fetchall()
+        for row in rows:
+            out.append(
+                PlanHit(
+                    path=row[0],
+                    slug=row[1],
+                    agent_id=row[2],
+                    title=row[3],
+                    snippet=(row[4] or "")[:240],
+                    score=-row[5],
+                )
+            )
+    except sqlite3.OperationalError:
+        like = f"%{query}%"
+        for i, row in enumerate(
+            conn.execute(
+                "SELECT path, slug, agent_id, title, body FROM plan_entries WHERE title LIKE ? OR body LIKE ? LIMIT ?",
+                (like, like, limit),
+            ).fetchall()
+        ):
+            out.append(
+                PlanHit(
+                    path=row[0],
+                    slug=row[1],
+                    agent_id=row[2],
+                    title=row[3],
+                    snippet=(row[4] or "")[:240],
+                    score=1.0 / (i + 1),
+                )
+            )
+    return out
+
+
+def list_plan_entries(conn: sqlite3.Connection, agent_only: bool = False, limit: int = 50) -> list[PlanHit]:
+    sql = "SELECT path, slug, agent_id, title, body, mtime FROM plan_entries"
+    params: list = []
+    if agent_only:
+        sql += " WHERE agent_id <> ''"
+    sql += " ORDER BY mtime DESC LIMIT ?"
+    params.append(limit)
+    return [
+        PlanHit(
+            path=row[0],
+            slug=row[1],
+            agent_id=row[2],
+            title=row[3],
+            snippet=(row[4] or "")[:240],
+            score=row[5],
+        )
+        for row in conn.execute(sql, params).fetchall()
+    ]
 
 
 def _tokenize(name: str) -> str:

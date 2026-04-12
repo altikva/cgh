@@ -103,6 +103,56 @@ def cmd_index(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_memory_index
+# ---------------------------------------------------------------------------
+
+
+def cmd_memory_index(args) -> None:
+    """Scan the Claude Code memory directory into the FTS index."""
+    from codegraph.memory_index import scan_memory_dir
+
+    root = os.path.abspath(args.root)
+    console.print(LOGO)
+    stats = scan_memory_dir(root, verbose=getattr(args, "verbose", False))
+
+    from rich.table import Table
+
+    table = Table(box=box.ROUNDED, title="Memory scan", title_style="bold cyan")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Memory dir", f"[dim]{stats['memory_dir']}[/dim]")
+    table.add_row("Indexed", f"[green]{stats['indexed']}[/green]")
+    table.add_row("Skipped", f"[dim]{stats['skipped']}[/dim]")
+    table.add_row("Removed", f"[yellow]{stats['removed']}[/yellow]")
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# cmd_plan_index
+# ---------------------------------------------------------------------------
+
+
+def cmd_plan_index(args) -> None:
+    """Scan ~/.claude/plans/ into the FTS index."""
+    from codegraph.plan_index import scan_plan_dir
+
+    root = os.path.abspath(args.root)
+    console.print(LOGO)
+    stats = scan_plan_dir(root, verbose=getattr(args, "verbose", False))
+
+    from rich.table import Table
+
+    table = Table(box=box.ROUNDED, title="Plan scan", title_style="bold cyan")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Plans dir", f"[dim]{stats['plans_dir']}[/dim]")
+    table.add_row("Indexed", f"[green]{stats['indexed']}[/green]")
+    table.add_row("Skipped", f"[dim]{stats['skipped']}[/dim]")
+    table.add_row("Removed", f"[yellow]{stats['removed']}[/yellow]")
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # cmd_watch
 # ---------------------------------------------------------------------------
 

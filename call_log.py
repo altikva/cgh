@@ -51,8 +51,85 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_call_log_ts ON call_log(timestamp)
     """)
+    # Session-scoped dedup — track which entities a context_for_task /
+    # session_context call has already surfaced for a given session_id.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_mentions (
+            session_id   TEXT NOT NULL,
+            entity_kind  TEXT NOT NULL,
+            entity_key   TEXT NOT NULL,
+            ts           REAL NOT NULL,
+            PRIMARY KEY (session_id, entity_kind, entity_key)
+        )
+    """)
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_session_mentions_session
+            ON session_mentions(session_id)
+    """)
     _conn.commit()
     return _conn
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped dedup helpers
+# ---------------------------------------------------------------------------
+
+
+def filter_unseen(
+    session_id: str,
+    entities: list[tuple[str, str]],
+    repo_root: str | Path | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Given (kind, key) pairs, return only those NOT yet mentioned in this
+    session. Cheap SQL lookup.
+    """
+    if not session_id or not entities:
+        return entities
+    conn = _get_conn(repo_root)
+    cur = conn.cursor()
+    try:
+        placeholders = ",".join("(?,?)" for _ in entities)
+        flat: list[str] = []
+        for kind, key in entities:
+            flat.extend((kind, key))
+        rows = cur.execute(
+            "SELECT entity_kind, entity_key FROM session_mentions "
+            f"WHERE session_id = ? AND (entity_kind, entity_key) IN ({placeholders})",
+            [session_id, *flat],
+        ).fetchall()
+        seen = {(r[0], r[1]) for r in rows}
+        return [e for e in entities if e not in seen]
+    finally:
+        cur.close()
+
+
+def record_mentions(
+    session_id: str,
+    entities: list[tuple[str, str]],
+    repo_root: str | Path | None = None,
+) -> int:
+    """Record (kind, key) pairs as served this session. Returns new count."""
+    if not session_id or not entities:
+        return 0
+    conn = _get_conn(repo_root)
+    ts = time.time()
+    conn.executemany(
+        "INSERT OR IGNORE INTO session_mentions(session_id, entity_kind, entity_key, ts) VALUES (?, ?, ?, ?)",
+        [(session_id, k, v, ts) for k, v in entities],
+    )
+    conn.commit()
+    return len(entities)
+
+
+def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
+    """Wipe the dedup cache for a specific session (e.g. at session end)."""
+    if not session_id:
+        return 0
+    conn = _get_conn(repo_root)
+    cur = conn.execute("DELETE FROM session_mentions WHERE session_id = ?", (session_id,))
+    conn.commit()
+    return cur.rowcount or 0
 
 
 def log_call(

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import functools
 import os
+import sys
 import time as _time
 from pathlib import Path
 
@@ -137,17 +138,28 @@ def main() -> None:
 
     _root = Path(args.root).resolve()
 
-    if args.reindex:
-        from codegraph.indexer import index_repo
+    # MCP stdio transport reserves stdout for JSON-RPC. Redirect all
+    # human-readable output (reindex progress, watcher logs, FastMCP banner)
+    # to stderr so it doesn't corrupt the protocol stream.
+    sys.stdout.flush()
+    _orig_stdout = sys.stdout
+    sys.stdout = sys.stderr
 
-        print(f"[codegraph] indexing {_root} …", flush=True)
-        stats = index_repo(_root, verbose=True)
-        print(f"[codegraph] done: {stats}", flush=True)
+    try:
+        if args.reindex:
+            from codegraph.indexer import index_repo
 
-    if args.watch:
-        from codegraph.watcher import start_watcher
+            print(f"[codegraph] indexing {_root} …", flush=True)
+            stats = index_repo(_root, verbose=True)
+            print(f"[codegraph] done: {stats}", flush=True)
 
-        start_watcher(_root)
+        if args.watch:
+            from codegraph.watcher import start_watcher
+
+            start_watcher(_root)
+    finally:
+        # Restore stdout for MCP JSON-RPC
+        sys.stdout = _orig_stdout
 
     mcp.run(transport="stdio")
 

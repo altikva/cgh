@@ -239,6 +239,19 @@ def _install_integration(root: Path, tool: str) -> None:
             "args": ["-m", "codegraph", "serve", "--root", ".", "--watch", "--reindex"],
         }
 
+    from codegraph.skill_installer import (
+        install_claude,
+        install_codex,
+        install_cursor,
+        install_gemini,
+    )
+
+    def _skills_line(tool_label: str, names: list[str]) -> None:
+        if names:
+            plural = "s" if len(names) != 1 else ""
+            joined = ", ".join(names)
+            console.print(f"    [green]+[/green] {tool_label} [dim]({len(names)} skill{plural}: {joined})[/dim]")
+
     if tool == "claude":
         mcp_path = root / ".mcp.json"
         if mcp_path.exists():
@@ -268,6 +281,9 @@ def _install_integration(root: Path, tool: str) -> None:
         if not has_codegraph_hook:
             console.print("    [green]+[/green] .claude/settings.json [dim](post-commit hook)[/dim]")
 
+        # Skills
+        _skills_line(".claude/skills/", install_claude(root))
+
     elif tool == "cursor":
         cursor_dir = root / ".cursor"
         cursor_dir.mkdir(exist_ok=True)
@@ -275,6 +291,7 @@ def _install_integration(root: Path, tool: str) -> None:
         data = {"mcpServers": {"codegraph": mcp_entry}}
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
         console.print("    [green]+[/green] .cursor/mcp.json [dim](MCP server)[/dim]")
+        _skills_line(".cursor/rules/", install_cursor(root))
 
     elif tool == "codex":
         mcp_path = root / ".mcp.json"
@@ -285,6 +302,7 @@ def _install_integration(root: Path, tool: str) -> None:
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]")
+        _skills_line("AGENTS.md", install_codex(root))
 
     elif tool == "gemini":
         mcp_path = root / ".mcp.json"
@@ -295,6 +313,7 @@ def _install_integration(root: Path, tool: str) -> None:
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]")
+        _skills_line("GEMINI.md", install_gemini(root))
 
 
 # ---------------------------------------------------------------------------

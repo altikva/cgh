@@ -656,6 +656,15 @@ def index_repo(
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["method"] = "git_ls_files" if git_files is not None else "os_walk"
     stats["extra_dirs"] = extra_dirs
+
+    # Persist scan metadata (git HEAD + branch + stats) for scan_status
+    try:
+        from .scan_meta import write_meta
+
+        write_meta(repo_root, stats)
+    except Exception:
+        pass
+
     _activity_log(
         repo_root,
         "scan_end",

@@ -153,6 +153,37 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
+    def scan_status() -> str:
+        """
+        Report whether the code graph is fresh relative to the current git HEAD.
+
+        Call this BEFORE trusting symbol_lookup/find_callers results if the user
+        mentions a branch switch, rebase, pull, or recent edits. When `fresh` is
+        false, call scan_repo to refresh the index.
+
+        Returns JSON with:
+          fresh         — true if indexed sha == HEAD and working tree is clean
+          indexed_sha   — git commit the graph was built at
+          indexed_at    — ISO timestamp of last scan
+          current_sha   — git HEAD now
+          behind_by     — commits between indexed and HEAD
+          dirty         — working tree has uncommitted changes
+          changed_files — files modified since indexed_sha (up to 200)
+        """
+        from codegraph.scan_meta import scan_status as _scan_status
+
+        root = _server._root
+        if root is None:
+            return json.dumps({"status": "error", "message": "repo root not set"})
+        ss = _scan_status(root)
+        # Truncate changed_files for token economy
+        if len(ss.get("changed_files", [])) > 200:
+            ss["changed_files"] = ss["changed_files"][:200]
+            ss["changed_files_truncated"] = True
+        return json.dumps(ss, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
     def add_directory(path: str) -> str:
         """
         Add an external directory to the code graph and hot-index it.

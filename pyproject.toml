@@ -58,3 +58,6 @@ cgh = "codegraph.__main__:main"
 [tool.setuptools.packages.find]
 where = [".."]
 include = ["codegraph", "codegraph.*"]
+
+[tool.setuptools.package-data]
+codegraph = ["skills/*/SKILL.md", "skills/*/*.md"]

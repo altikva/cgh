@@ -129,6 +129,38 @@ def _stats_content(root: str) -> Group:
 
     renderables: list = []
 
+    # Scan freshness banner
+    try:
+        from codegraph.scan_meta import scan_status as _scan_status
+
+        ss = _scan_status(root)
+        if ss.get("indexed_sha"):
+            sha_short = (ss["indexed_sha"] or "")[:7]
+            branch = ss.get("indexed_branch") or "?"
+            dirty = ss.get("dirty")
+            if ss.get("fresh"):
+                msg = f"[green]fresh[/green] — indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]"
+            else:
+                behind = ss.get("behind_by")
+                curr = (ss.get("current_sha") or "")[:7]
+                curr_branch = ss.get("current_branch") or "?"
+                drift_bits = []
+                if behind:
+                    drift_bits.append(f"{behind} commit{'s' if behind != 1 else ''} behind")
+                if dirty:
+                    drift_bits.append("working tree dirty")
+                if branch != curr_branch:
+                    drift_bits.append(f"branch {branch} → {curr_branch}")
+                drift = ", ".join(drift_bits) or "drifted"
+                msg = (
+                    f"[yellow]stale[/yellow] — indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]  "
+                    f"[dim]→ HEAD {curr} ({drift})[/dim]  "
+                    f"[dim]run scan_repo to refresh[/dim]"
+                )
+            renderables.append(Text.from_markup(msg))
+    except Exception:
+        pass
+
     if graph_locked:
         renderables.append(
             Panel(

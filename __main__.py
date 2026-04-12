@@ -177,6 +177,17 @@ def main() -> None:
     p = sub.add_parser("index", help="Full index / re-index the repository")
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--root", default=os.getcwd())
+    p.add_argument(
+        "--method",
+        "-m",
+        choices=["auto", "git_ls_files", "os_walk", "find", "git_diff", "incremental"],
+        default="auto",
+        help=(
+            "File discovery strategy. auto (default) = git_ls_files with os_walk "
+            "fallback. incremental = only drifted blob SHAs. git_diff = only "
+            "files changed since last scan."
+        ),
+    )
 
     # --- watch ---
     p = sub.add_parser("watch", help="Index then watch for file changes")

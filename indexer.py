@@ -542,34 +542,140 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
         return None
 
 
+VALID_METHODS = ("auto", "git_ls_files", "os_walk", "find", "git_diff", "incremental")
+
+
+def _discover_find(repo_root: Path) -> list[Path]:
+    """Use GNU `find -type f` for file discovery (fast on large repos)."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["find", str(repo_root), "-type", "f", "-not", "-path", "*/.*"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if r.returncode != 0:
+            return []
+        out: list[Path] = []
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            p = Path(line)
+            if any(part in _IGNORE_DIRS for part in p.parts):
+                continue
+            if _is_cghignored(p, repo_root):
+                continue
+            out.append(p)
+        return out
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+
+
+def _discover_os_walk(repo_root: Path) -> list[Path]:
+    """Python os.walk — portable, respects _IGNORE_DIRS + .cghignore."""
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if _is_cghignored(p, repo_root):
+                continue
+            out.append(p)
+    return out
+
+
+def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
+    """
+    Return (changed_files, deleted_files) since the last scan (from scan_meta).
+    Falls back to an empty list when no prior scan exists — caller should
+    switch to a full method in that case.
+    """
+    import subprocess
+
+    from .scan_meta import read_meta
+
+    meta = read_meta(repo_root)
+    if not meta or not meta.get("git_head"):
+        return [], []
+    last_sha = meta["git_head"]
+    try:
+        # Committed changes
+        r = subprocess.run(
+            ["git", "diff", "--name-status", f"{last_sha}..HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+            timeout=10,
+        )
+        changed: list[Path] = []
+        deleted: list[Path] = []
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) < 2:
+                    continue
+                status, path = parts[0].strip(), parts[-1].strip()
+                full = repo_root / path
+                if status.startswith("D"):
+                    deleted.append(full)
+                else:
+                    changed.append(full)
+        return changed, deleted
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return [], []
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,
     on_file: Callable[[Path, str, dict], None] | None = None,
     on_discovery: Callable[[int, str], None] | None = None,
+    method: str = "auto",
 ) -> dict:
     """
     Walk the repo, index all supported files.
-    Uses `git ls-files` to respect .gitignore. Falls back to os.walk if not a git repo.
+
+    Discovery strategies (`method`):
+      - auto          default; tries git_ls_files, falls back to os_walk
+      - git_ls_files  force git; respects .gitignore
+      - os_walk       Python os.walk; respects _IGNORE_DIRS + .cghignore
+      - find          GNU `find -type f`; fast on huge repos
+      - git_diff      only files changed since last scan (uses scan_meta)
+      - incremental   only files whose git blob SHA drifted (delegates to
+                      incremental_reindex)
 
     Args:
         repo_root: Repository root.
         verbose: Print each file to stdout (ignored if on_file is set).
         on_file: Callback(file_path, status, stats) called after each file.
                  status is "indexed", "skipped", or "error".
-        on_discovery: Callback(total_files, method) called once after file discovery.
+        on_discovery: Callback(total_files, method) called once after
+                 file discovery.
+        method: One of VALID_METHODS.
 
     Returns a summary dict.
     """
+    if method not in VALID_METHODS:
+        raise ValueError(f"method must be one of {VALID_METHODS}, got {method!r}")
+
     from .activity import log as _activity_log
     from .activity import rotate_if_needed
 
     repo_root = Path(repo_root)
+
+    # "incremental" is a different workflow (handles deletions, keyed on
+    # per-file blob SHAs). Delegate to the dedicated implementation.
+    if method == "incremental":
+        return incremental_reindex(repo_root)
+
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     t0 = time.time()
 
     rotate_if_needed(repo_root)
-    _activity_log(repo_root, "scan_start", str(repo_root))
+    _activity_log(repo_root, f"scan_start:{method}", str(repo_root))
 
     # Batch-fetch git blob SHAs once, pass to each index_file call
     try:
@@ -578,86 +684,106 @@ def index_repo(
         blob_shas = git_tree_blob_shas(repo_root) or {}
     except Exception:
         blob_shas = {}
+    from .scan_meta import git_hash_object as _git_hash
 
-    git_files = _git_tracked_files(repo_root)
+    # ------------------------------------------------------------------
+    # File discovery — each method returns (files_to_index, actual_method)
+    # ------------------------------------------------------------------
+    actual_method = method
+    candidates: list[Path] = []
+    deletions: list[Path] = []
 
-    if git_files is not None:
-        # Filter to parseable files
-        parseable = []
-        for full_path in git_files:
-            if not is_supported(full_path):
-                stats["skipped"] += 1
-                continue
-            if any(part in _IGNORE_DIRS for part in full_path.parts):
-                stats["skipped"] += 1
-                continue
-            if not full_path.exists():
-                stats["skipped"] += 1
-                continue
-            parseable.append(full_path)
+    if method in ("auto", "git_ls_files"):
+        git_files = _git_tracked_files(repo_root)
+        if git_files is None:
+            if method == "git_ls_files":
+                raise RuntimeError("git_ls_files requested but git is unavailable or repo not initialised")
+            # auto → fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
+        else:
+            actual_method = "git_ls_files"
+            candidates = list(git_files)
 
-        if on_discovery:
-            on_discovery(len(parseable), "git_ls_files")
-        elif verbose:
-            print(f"  [codegraph] using git ls-files ({len(parseable)} parseable files)")
+    elif method == "os_walk":
+        candidates = _discover_os_walk(repo_root)
 
-        from .scan_meta import git_hash_object as _git_hash
+    elif method == "find":
+        candidates = _discover_find(repo_root)
+        if not candidates:
+            # Tool missing or errored — fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
 
-        for full_path in parseable:
+    elif method == "git_diff":
+        candidates, deletions = _discover_git_diff(repo_root)
+        if not candidates and not deletions:
+            # No prior scan meta → do a full scan instead
+            actual_method = "git_ls_files"
+            git_files = _git_tracked_files(repo_root)
+            candidates = list(git_files) if git_files is not None else _discover_os_walk(repo_root)
+            if git_files is None:
+                actual_method = "os_walk"
+
+    # Filter to parseable, existing files
+    parseable: list[Path] = []
+    for p in candidates:
+        if not is_supported(p):
+            stats["skipped"] += 1
+            continue
+        if any(part in _IGNORE_DIRS for part in p.parts):
+            stats["skipped"] += 1
+            continue
+        if not p.exists():
+            stats["skipped"] += 1
+            continue
+        parseable.append(p)
+
+    if on_discovery:
+        on_discovery(len(parseable), actual_method)
+    elif verbose:
+        print(f"  [codegraph] using {actual_method} ({len(parseable)} parseable files)")
+
+    # Handle deletions first (git_diff only)
+    if deletions:
+        fts_conn = _get_fts(repo_root)
+        conn = get_connection(repo_root)
+        for gone in deletions:
             try:
-                rel = str(full_path.relative_to(repo_root))
-            except ValueError:
-                rel = str(full_path)
-            sha = blob_shas.get(rel)
-            if sha is None:
-                # Untracked but parseable (e.g., new file not yet committed).
-                # Fall back to `git hash-object` so the File node still gets
-                # a SHA — lets incremental_reindex skip it next time.
-                sha = _git_hash(repo_root, full_path)
-            ok = index_file(full_path, repo_root, git_blob_sha=sha)
-            status = "indexed" if ok else "error"
-            if ok:
-                stats["indexed"] += 1
-            else:
-                stats["errors"] += 1
+                _purge_file(conn, str(gone), fts_conn)
+                conn.execute("MATCH (f:File {path: $p}) DETACH DELETE f", {"p": str(gone)})
+            except Exception:
+                pass
 
-            # Throttle activity logs: every 25 files + errors
-            if not ok or stats["indexed"] % 25 == 0:
-                _activity_log(
-                    repo_root,
-                    "scan_progress" if ok else "scan_error",
-                    f"{stats['indexed']}/{len(parseable)} {full_path.relative_to(repo_root)}",
-                )
+    # ------------------------------------------------------------------
+    # Index loop (shared across all methods)
+    # ------------------------------------------------------------------
+    for full_path in parseable:
+        try:
+            rel = str(full_path.relative_to(repo_root))
+        except ValueError:
+            rel = str(full_path)
+        sha = blob_shas.get(rel)
+        if sha is None:
+            sha = _git_hash(repo_root, full_path)
+        ok = index_file(full_path, repo_root, git_blob_sha=sha)
+        status = "indexed" if ok else "error"
+        if ok:
+            stats["indexed"] += 1
+        else:
+            stats["errors"] += 1
 
-            if on_file:
-                on_file(full_path, status, stats)
-            elif verbose:
-                print(f"  + {full_path.relative_to(repo_root)}")
-    else:
-        if on_discovery:
-            on_discovery(-1, "os_walk")
+        if not ok or stats["indexed"] % 25 == 0:
+            _activity_log(
+                repo_root,
+                "scan_progress" if ok else "scan_error",
+                f"{stats['indexed']}/{len(parseable)} {rel}",
+            )
+
+        if on_file:
+            on_file(full_path, status, stats)
         elif verbose:
-            print("  [codegraph] git not available, falling back to os.walk")
-
-        for dirpath, dirnames, filenames in os.walk(repo_root):
-            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
-            for filename in filenames:
-                full_path = Path(dirpath) / filename
-                if not is_supported(full_path):
-                    stats["skipped"] += 1
-                    continue
-
-                ok = index_file(full_path, repo_root)
-                status = "indexed" if ok else "error"
-                if ok:
-                    stats["indexed"] += 1
-                else:
-                    stats["errors"] += 1
-
-                if on_file:
-                    on_file(full_path, status, stats)
-                elif verbose:
-                    print(f"  + {full_path.relative_to(repo_root)}")
+            print(f"  + {rel}")
 
     # Also index extra_dirs from config.toml
     extra_dirs: list[str] = []
@@ -693,8 +819,11 @@ def index_repo(
                     stats["errors"] += 1
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
-    stats["method"] = "git_ls_files" if git_files is not None else "os_walk"
+    stats["method"] = actual_method
+    stats["method_requested"] = method
     stats["extra_dirs"] = extra_dirs
+    if deletions:
+        stats["deleted"] = len(deletions)
 
     # Persist scan metadata (git HEAD + branch + stats) for scan_status
     try:

@@ -23,6 +23,82 @@ SCOPES = ["imports", "calls", "classes", "docs", "overview"]
 # ---------------------------------------------------------------------------
 
 
+def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_nodes: int) -> str | None:
+    """
+    Ask the running MCP owner to build the Mermaid diagram for us.
+    Works while the owner holds the Kuzu write lock (which blocks our
+    own readonly connection). Returns None if the owner isn't running
+    or the call fails.
+    """
+    import http.client
+    import json as _json
+
+    from codegraph.auth import ensure_auth_key
+    from codegraph.ipc import is_owner_alive, read_owner_port
+
+    if not is_owner_alive(root):
+        return None
+    port = read_owner_port(root)
+    if not port:
+        return None
+    token = ensure_auth_key(root)
+
+    # CLI scope names differ from the MCP tool's — translate
+    scope_map = {
+        "imports": "file_imports",
+        "calls": "call_graph",
+        "classes": "class_hierarchy",
+        "docs": "doc_structure",
+        "overview": "full_overview",
+    }
+    args_payload = {
+        "scope": scope_map.get(scope, scope),
+        "symbol_name": symbol,
+        "file_path": file,
+        "max_nodes": max_nodes,
+        "format": "mermaid",
+    }
+    body = _json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "visualize_graph", "arguments": args_payload},
+        }
+    )
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+        c.request(
+            "POST",
+            "/mcp",
+            body=body.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        resp = c.getresponse()
+        if resp.status != 200:
+            return None
+        payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
+        result = payload.get("result") or {}
+        content = result.get("content") or []
+        for block in content:
+            if block.get("type") == "text" and block.get("text"):
+                # The tool returns a JSON blob {scope, format, diagram, ...}
+                try:
+                    inner = _json.loads(block["text"])
+                    diagram = inner.get("diagram")
+                    if diagram:
+                        return diagram
+                except Exception:
+                    return block["text"]
+    except Exception:
+        return None
+    return None
+
+
 def cmd_graph(args) -> None:
     """Generate and display a graph visualization."""
     from codegraph.db import get_readonly_connection
@@ -37,26 +113,35 @@ def cmd_graph(args) -> None:
     )
 
     root = os.path.abspath(args.root)
-    conn = get_readonly_connection(root)
-    if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
-        return
 
     scope = args.scope
     symbol = getattr(args, "symbol", "") or ""
     file = getattr(args, "file", "") or ""
     max_nodes = args.max_nodes
 
-    # Generate Mermaid
-    generators = {
-        "imports": lambda: mermaid_imports(conn, root, file, max_nodes),
-        "calls": lambda: mermaid_calls(conn, root, symbol, max_nodes),
-        "classes": lambda: mermaid_classes(conn, root, symbol, max_nodes),
-        "docs": lambda: mermaid_docs(conn, root, file, max_nodes),
-        "overview": lambda: mermaid_overview(conn, root, max_nodes),
-    }
+    # Try the owner's HTTP endpoint first — it works even when the
+    # Kuzu lock is held (which blocks readonly connections from CLI).
+    mermaid_code: str | None = _fetch_mermaid_via_owner(root, scope, symbol, file, max_nodes)
 
-    mermaid_code = generators[scope]()
+    if mermaid_code is None:
+        # Owner not running — open Kuzu directly.
+        conn = get_readonly_connection(root)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"
+                "[dim]Start one with:[/dim] cgh serve  [dim]or free the lock:[/dim] "
+                "pkill -f 'cgh serve'"
+            )
+            return
+
+        generators = {
+            "imports": lambda: mermaid_imports(conn, root, file, max_nodes),
+            "calls": lambda: mermaid_calls(conn, root, symbol, max_nodes),
+            "classes": lambda: mermaid_classes(conn, root, symbol, max_nodes),
+            "docs": lambda: mermaid_docs(conn, root, file, max_nodes),
+            "overview": lambda: mermaid_overview(conn, root, max_nodes),
+        }
+        mermaid_code = generators[scope]()
 
     # Output based on format flags
     if args.mermaid:

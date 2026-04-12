@@ -161,7 +161,11 @@ def scan_status(repo_root: str | Path) -> dict:
         behind_by = commits_between(root, indexed_sha, current_sha)
         changed = changed_files(root, indexed_sha, current_sha)
 
-    fresh = indexed_sha is not None and current_sha is not None and indexed_sha == current_sha and not dirty
+    # Fresh means the graph matches HEAD. Dirty (uncommitted changes) is
+    # NOT stale — the watcher keeps the index in sync on each file save.
+    # If the watcher is down, a separate check would be needed, but the
+    # git-vs-index sha comparison alone is the right coarse signal.
+    fresh = indexed_sha is not None and current_sha is not None and indexed_sha == current_sha
 
     return {
         "indexed_sha": indexed_sha,

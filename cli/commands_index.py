@@ -66,7 +66,12 @@ def cmd_index(args) -> None:
                 )
 
         try:
-            stats = index_repo(root, on_file=on_file, on_discovery=on_discovery)
+            stats = index_repo(
+                root,
+                on_file=on_file,
+                on_discovery=on_discovery,
+                method=getattr(args, "method", "auto"),
+            )
         except RuntimeError as exc:
             if "Could not set lock" in str(exc):
                 console.print()

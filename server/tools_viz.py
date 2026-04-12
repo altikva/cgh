@@ -288,14 +288,14 @@ def register(mcp) -> None:
         )
         lang_stats = _rows(r)
 
-        r2 = conn.execute("MATCH (n:Function) RETURN count(n) AS c")
-        fn_count = _rows(r2)[0]["c"] if _rows(r2) else 0
+        fn_rows = _rows(conn.execute("MATCH (n:Function) RETURN count(n) AS c"))
+        fn_count = fn_rows[0]["c"] if fn_rows else 0
 
-        r3 = conn.execute("MATCH (n:Class) RETURN count(n) AS c")
-        cls_count = _rows(r3)[0]["c"] if _rows(r3) else 0
+        cls_rows = _rows(conn.execute("MATCH (n:Class) RETURN count(n) AS c"))
+        cls_count = cls_rows[0]["c"] if cls_rows else 0
 
-        r4 = conn.execute("MATCH (n:MdSection) RETURN count(n) AS c")
-        md_count = _rows(r4)[0]["c"] if _rows(r4) else 0
+        md_rows = _rows(conn.execute("MATCH (n:MdSection) RETURN count(n) AS c"))
+        md_count = md_rows[0]["c"] if md_rows else 0
 
         # Top files by symbol density
         r5 = conn.execute(

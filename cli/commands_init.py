@@ -126,17 +126,40 @@ def cmd_init(args) -> None:
         console.print()
 
     # -- Step 4: Detect parseable files --
+    # Use git ls-files to match what the real indexer will process
+    # (respects .gitignore). Fall back to glob if not a git repo.
     from codegraph.parsers import get_parser_info
 
     parsers = get_parser_info()
+    ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
 
-    file_counts = {}
-    for info in parsers:
-        count = 0
-        for ext in info["extensions"]:
-            count += len(glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True))
-        if count > 0:
-            file_counts[info["lang"]] = count
+    file_counts: dict[str, int] = {}
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            timeout=30,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                suffix = Path(line).suffix.lower()
+                lang = ext_to_lang.get(suffix)
+                if lang:
+                    file_counts[lang] = file_counts.get(lang, 0) + 1
+        else:
+            raise RuntimeError("git ls-files failed")
+    except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
+        # Fallback — glob from project root (will overcount but better than nothing)
+        for info in parsers:
+            count = 0
+            for ext in info["extensions"]:
+                count += len(glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True))
+            if count > 0:
+                file_counts[info["lang"]] = count
 
     if file_counts:
         console.print("  [bold]Files to index:[/bold]\n")

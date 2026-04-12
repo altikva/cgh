@@ -30,9 +30,52 @@ cgh init [--yes | -y] [--root DIR]
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini)
-5. Prompts to install MCP configs for detected tools (with auth key in env)
-6. Counts parseable files by language
-7. Optionally runs `cgh index`
+5. Prompts (multi-select) which tools to install MCP configs for — pick one or many
+6. For selected tools: writes MCP config, installs the bundled skills, and (optional) appends codegraph usage guidelines to the agent's root rules file (CLAUDE.md / AGENTS.md / GEMINI.md)
+7. Offers Claude-specific auto-accept for MCP tool calls
+8. Counts parseable files by language
+9. Optionally runs `cgh index`
+
+### `reset`
+
+Nuke the graph + FTS DBs, kill the running owner, and re-index from scratch. Useful after schema migrations or when the graph gets into a weird state.
+
+```
+cgh reset [--yes | -y] [--drop-extra-dirs] [--no-reindex] [--root DIR]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y` | Skip confirmation |
+| `--drop-extra-dirs` | Also remove `extra_dirs` from `config.toml` |
+| `--no-reindex` | Don't re-index after cleaning (leave empty DB) |
+
+### `tail`
+
+Live view of scan/watcher activity. Works even when the MCP owner holds the Kuzu lock.
+
+```
+cgh tail [--follow | -f] [--limit N] [--root DIR]
+```
+
+### `index --method`
+
+Choose the file-discovery strategy:
+
+```
+cgh index --method {auto,git_ls_files,os_walk,find,git_diff,incremental}
+```
+
+- `auto` — git_ls_files, falls back to os_walk (default)
+- `git_ls_files` — force git, respects `.gitignore`
+- `os_walk` — Python walk, respects `_IGNORE_DIRS` + `.cghignore`
+- `find` — GNU `find -type f`, fast on big repos
+- `git_diff` — only files changed since the last scan
+- `incremental` — only files whose git blob SHA drifted
+
+### `stats --live`
+
+Refresh stats every 500 ms (Rich Live). Ctrl-C to stop.
 
 **Example:**
 

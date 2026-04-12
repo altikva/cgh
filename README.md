@@ -615,7 +615,15 @@ Force-indexed 4 file(s)
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 18 tools.
+When running as an MCP server (`cgh serve`), codegraph exposes 23 tools.
+
+### Architecture Awareness (call these FIRST)
+
+| Tool | Description |
+|------|-------------|
+| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries — no Read needed |
+| `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
+| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI decorators + Nuxt server/api file routes + Express) with their handlers — works cross-repo when `extra_dirs` is configured |
 
 ### Code Navigation
 
@@ -664,6 +672,15 @@ When running as an MCP server (`cgh serve`), codegraph exposes 18 tools.
 | Tool | Description |
 |------|-------------|
 | `call_stats()` | MCP tool usage statistics (calls, latency, errors) |
+| `live_graph_stats()` | Polling-friendly snapshot: node counts + FTS size + scan freshness + timestamp |
+
+### Scan Freshness & Incremental Updates
+
+| Tool | Description |
+|------|-------------|
+| `scan_status()` | Is the graph in sync with `git HEAD`? Returns `fresh`, `indexed_sha`, `behind_by`, `changed_files` |
+| `incremental_reindex()` | Surgical reindex — compares per-file git blob SHAs and touches only what actually changed since the last scan |
+| `add_directory(path)` | Hot-add an external directory (sibling repo) to the graph — persists to config, scans, extends the watcher. No restart needed. |
 
 ---
 

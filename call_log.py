@@ -66,6 +66,33 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_session_mentions_session
             ON session_mentions(session_id)
     """)
+    # Knowledge store — patterns, decisions, gotchas, style preferences,
+    # glossary entries. Explicitly written by Claude via the knowledge_*
+    # MCP tools. Backed by an FTS5 virtual table for BM25 search.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  TEXT NOT NULL DEFAULT '',
+            title       TEXT NOT NULL DEFAULT '',
+            body        TEXT NOT NULL DEFAULT '',
+            tags        TEXT NOT NULL DEFAULT '',
+            kind        TEXT NOT NULL DEFAULT 'note',
+            file_refs   TEXT NOT NULL DEFAULT '',
+            ts          REAL NOT NULL
+        )
+    """)
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_kind ON knowledge(kind)
+    """)
+    _conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_session ON knowledge(session_id)
+    """)
+    _conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+            title, body, tags, kind UNINDEXED,
+            content='knowledge', content_rowid='id'
+        )
+    """)
     _conn.commit()
     return _conn
 
@@ -130,6 +157,173 @@ def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
     cur = conn.execute("DELETE FROM session_mentions WHERE session_id = ?", (session_id,))
     conn.commit()
     return cur.rowcount or 0
+
+
+# ---------------------------------------------------------------------------
+# Knowledge store — patterns, decisions, gotchas, glossary
+# ---------------------------------------------------------------------------
+
+
+_VALID_KINDS = ("pattern", "decision", "gotcha", "style", "glossary", "note")
+
+
+def knowledge_record(
+    title: str,
+    body: str,
+    kind: str = "note",
+    tags: list[str] | str = "",
+    file_refs: list[str] | str = "",
+    session_id: str = "",
+    repo_root: str | Path | None = None,
+) -> int:
+    """
+    Persist a distilled knowledge entry. Returns the row id.
+
+    kind ∈ {pattern, decision, gotcha, style, glossary, note}.
+    tags can be a list or a comma/space-separated string.
+    file_refs is similar — canonical paths the entry refers to.
+    """
+    if kind not in _VALID_KINDS:
+        kind = "note"
+    if isinstance(tags, list):
+        tags = ",".join(t.strip() for t in tags if t and t.strip())
+    if isinstance(file_refs, list):
+        file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
+    conn = _get_conn(repo_root)
+    cur = conn.execute(
+        "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, title or "", body or "", tags or "", kind, file_refs or "", time.time()),
+    )
+    row_id = cur.lastrowid
+    # Mirror into FTS
+    conn.execute(
+        "INSERT INTO knowledge_fts(rowid, title, body, tags, kind) VALUES (?, ?, ?, ?, ?)",
+        (row_id, title or "", body or "", tags or "", kind),
+    )
+    conn.commit()
+    return int(row_id or 0)
+
+
+def knowledge_search(
+    query: str,
+    kind: str | None = None,
+    limit: int = 10,
+    repo_root: str | Path | None = None,
+) -> list[dict]:
+    """BM25 search over knowledge entries. Graceful LIKE fallback."""
+    conn = _get_conn(repo_root)
+    out: list[dict] = []
+    try:
+        sql = (
+            "SELECT k.id, k.kind, k.title, k.body, k.tags, k.file_refs, k.session_id, k.ts, rank AS score "
+            "FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
+            "WHERE knowledge_fts MATCH ? "
+        )
+        params: list = [query]
+        if kind:
+            sql += "AND k.kind = ? "
+            params.append(kind)
+        sql += "ORDER BY rank LIMIT ?"
+        params.append(limit)
+        for row in conn.execute(sql, params).fetchall():
+            out.append(_knowledge_row_to_dict(row, score=-row[8]))
+    except sqlite3.OperationalError:
+        like = f"%{query}%"
+        sql = (
+            "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
+            "WHERE title LIKE ? OR body LIKE ? OR tags LIKE ? "
+        )
+        params = [like, like, like]
+        if kind:
+            sql += "AND kind = ? "
+            params.append(kind)
+        sql += "ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        for i, row in enumerate(conn.execute(sql, params).fetchall()):
+            out.append(_knowledge_row_to_dict(row, score=1.0 / (i + 1)))
+    return out
+
+
+def knowledge_list(
+    kind: str | None = None,
+    tag: str | None = None,
+    session_id: str | None = None,
+    limit: int = 50,
+    repo_root: str | Path | None = None,
+) -> list[dict]:
+    """Browse knowledge entries. Filters: kind / tag (substring) / session."""
+    conn = _get_conn(repo_root)
+    sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
+    where: list[str] = []
+    params: list = []
+    if kind:
+        where.append("kind = ?")
+        params.append(kind)
+    if tag:
+        where.append("tags LIKE ?")
+        params.append(f"%{tag}%")
+    if session_id:
+        where.append("session_id = ?")
+        params.append(session_id)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
+    return [_knowledge_row_to_dict(row, score=row[7]) for row in conn.execute(sql, params).fetchall()]
+
+
+def knowledge_terms(
+    min_count: int = 1,
+    repo_root: str | Path | None = None,
+) -> list[tuple[str, int]]:
+    """
+    Return the glossary — every tag with its occurrence count, sorted by
+    frequency. Acts as the "dict" of knowledge.
+    """
+    conn = _get_conn(repo_root)
+    counts: dict[str, int] = {}
+    for (tags_csv,) in conn.execute("SELECT tags FROM knowledge WHERE tags <> ''"):
+        for t in tags_csv.split(","):
+            t = t.strip().lower()
+            if not t:
+                continue
+            counts[t] = counts.get(t, 0) + 1
+    return sorted(
+        ((t, n) for t, n in counts.items() if n >= min_count),
+        key=lambda kv: (-kv[1], kv[0]),
+    )
+
+
+def knowledge_forget(
+    entry_id: int,
+    repo_root: str | Path | None = None,
+) -> bool:
+    """Delete a single knowledge entry + its FTS row."""
+    conn = _get_conn(repo_root)
+    existed = conn.execute("SELECT 1 FROM knowledge WHERE id = ?", (entry_id,)).fetchone()
+    if not existed:
+        return False
+    conn.execute(
+        "INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind) VALUES('delete', ?, '', '', '', '')",
+        (entry_id,),
+    )
+    conn.execute("DELETE FROM knowledge WHERE id = ?", (entry_id,))
+    conn.commit()
+    return True
+
+
+def _knowledge_row_to_dict(row, score: float = 0.0) -> dict:
+    return {
+        "id": row[0],
+        "kind": row[1],
+        "title": row[2],
+        "body": row[3],
+        "tags": [t for t in (row[4] or "").split(",") if t],
+        "file_refs": [f for f in (row[5] or "").split(",") if f],
+        "session_id": row[6],
+        "ts": row[7] if len(row) > 7 else 0.0,
+        "score": round(score, 4),
+    }
 
 
 def log_call(

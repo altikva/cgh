@@ -138,7 +138,8 @@ def register(mcp) -> None:
             served_nodes = [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
             served_mem = [("memory", m.path) for m in ctx.memory_docs]
             served_plans = [("plan", p.path) for p in ctx.plan_docs]
-            all_entities = served_nodes + served_mem + served_plans
+            served_know = [("knowledge", str(k.id)) for k in ctx.knowledge_docs]
+            all_entities = served_nodes + served_mem + served_plans + served_know
 
             unseen = set(filter_unseen(session_id, all_entities, repo_root=_root))
             before = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
@@ -146,8 +147,9 @@ def register(mcp) -> None:
             ctx.nodes = [n for n in ctx.nodes if ("symbol", f"{n.file_path}:{n.start_line}") in unseen]
             ctx.memory_docs = [m for m in ctx.memory_docs if ("memory", m.path) in unseen]
             ctx.plan_docs = [p for p in ctx.plan_docs if ("plan", p.path) in unseen]
+            ctx.knowledge_docs = [k for k in ctx.knowledge_docs if ("knowledge", str(k.id)) in unseen]
 
-            after = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
+            after = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs) + len(ctx.knowledge_docs)
             if before != after:
                 try:
                     _activity_log(_root, "session_dedup", f"{session_id} hid {before - after}")
@@ -159,6 +161,7 @@ def register(mcp) -> None:
                 [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
                 + [("memory", m.path) for m in ctx.memory_docs]
                 + [("plan", p.path) for p in ctx.plan_docs]
+                + [("knowledge", str(k.id)) for k in ctx.knowledge_docs]
             )
             if now_served:
                 record_mentions(session_id, now_served, repo_root=_root)
@@ -175,6 +178,7 @@ def register(mcp) -> None:
                 "symbol_count": len(ctx.nodes),
                 "memory_docs_count": len(ctx.memory_docs),
                 "plan_docs_count": len(ctx.plan_docs),
+                "knowledge_docs_count": len(ctx.knowledge_docs),
                 "ruflo_memory_hits": len(ctx.memory_hits),
                 "estimated_tokens": ctx.token_estimate,
                 "session_id": session_id or None,

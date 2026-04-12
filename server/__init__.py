@@ -113,6 +113,12 @@ mcp = FastMCP(
         "       1. memory_search(query, kind='feedback') BEFORE asking the user\n"
         "  • User hints at a past plan ('the refactor we planned'):\n"
         "       1. plan_search(query)\n"
+        "  • Problem that might have been solved before (gotchas, patterns):\n"
+        "       1. knowledge_search(query)  — persisted learnings across sessions\n"
+        "  • You learn something worth remembering:\n"
+        "       1. knowledge_record(title, body, kind, tags)\n"
+        "  • Before the session gets compacted/summarized:\n"
+        "       1. compact_session(session_id, title, digest)\n"
         "  • Symbol lookup ('where is Foo', 'what calls Bar'):\n"
         "       1. symbol_lookup / find_callers / find_callees\n"
         "       2. search_symbols for fuzzy, fts_search for docstrings\n"
@@ -127,6 +133,7 @@ mcp = FastMCP(
 from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
+from codegraph.server.tools_knowledge import register as _register_knowledge  # noqa: E402
 from codegraph.server.tools_memory import register as _register_memory  # noqa: E402
 from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
 from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
@@ -141,6 +148,7 @@ _register_viz(mcp)
 _register_meta(mcp)
 _register_memory(mcp)
 _register_plans(mcp)
+_register_knowledge(mcp)
 
 
 # ---------------------------------------------------------------------------

@@ -14,9 +14,33 @@ or before ignoring context you already have access to.
 | Situation | Tool to call first |
 |---|---|
 | User is about to do something that may have a stored preference (commit, PR, code style, naming) | `mcp__codegraph__memory_search(query="<topic>", kind="feedback")` |
-| User mentions a past plan (*"the refactor we planned"*, *"my last codegraph plan"*) | `mcp__codegraph__plan_search(query="<keywords>")` |
-| User asks *"what do you know about this project"* | `mcp__codegraph__memory_list(kind="project")` |
-| Any non-trivial task | `mcp__codegraph__context_for_task` — already merges memory + plan hits |
+| User mentions a past plan | `mcp__codegraph__plan_search(query="<keywords>")` |
+| Facing a problem that might be solved before (gotchas, patterns) | `mcp__codegraph__knowledge_search(query="<keywords>")` |
+| Unsure what topics are already captured | `mcp__codegraph__knowledge_terms()` (glossary) |
+| User asks *"what do you know about this project"* | `mcp__codegraph__memory_list(kind="project")` + `knowledge_list()` |
+| Any non-trivial task | `mcp__codegraph__context_for_task` — merges memory + plan + knowledge |
+
+## When to RECORD knowledge (not just read it)
+
+Call `mcp__codegraph__knowledge_record` when you notice:
+- A **pattern** the codebase follows (*"all handlers return HTTPException on 404"*)
+- A **decision** with rationale (*"chose Stripe over PayPal because SEPA coverage"*)
+- A **gotcha** worth saving (*"Kuzu holds the lock until Python GC runs"*)
+- A **style** preference (*"user prefers French in commit bodies"*)
+- A **glossary** term (*"RFM = Recency, Frequency, Monetary"*)
+
+Use `kind` to classify and `tags` to make it discoverable (tags form the
+glossary via `knowledge_terms`).
+
+## Context compaction
+
+Before a long session gets compacted/summarized, call:
+
+  `mcp__codegraph__compact_session(session_id, title, digest, tags=...)`
+
+with a distilled summary of what was learned. It persists across
+sessions — a future `context_for_task` call with relevant keywords
+will surface it automatically.
 
 ## `context_for_task` now returns memory + plans
 

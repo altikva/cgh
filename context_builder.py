@@ -66,6 +66,18 @@ class PlanDocHit:
 
 
 @dataclass
+class KnowledgeHit:
+    """An entry from codegraph's knowledge store (patterns, decisions, gotchas…)."""
+
+    id: int
+    kind: str
+    title: str
+    body: str
+    tags: list[str]
+    score: float
+
+
+@dataclass
 class TaskContext:
     task: str
     nodes: list[ContextNode]
@@ -74,6 +86,7 @@ class TaskContext:
     memory_hits: list[MemoryHit] = field(default_factory=list)
     memory_docs: list[MemoryDocHit] = field(default_factory=list)
     plan_docs: list[PlanDocHit] = field(default_factory=list)
+    knowledge_docs: list[KnowledgeHit] = field(default_factory=list)
 
 
 def _check_ruflo_available() -> bool:
@@ -251,6 +264,7 @@ def context_for_task(
     # Step 0b: Query local Claude Code memory + plans (SQLite FTS, always on)
     memory_docs = _local_memory_hits(fts_conn, task, limit=3)
     plan_docs = _local_plan_hits(fts_conn, task, limit=2)
+    knowledge_docs = _local_knowledge_hits(task, limit=3)
 
     # Step 1: FTS search to find seed symbols. Natural-language sentences
     # don't match symbol names directly — extract keywords first.
@@ -334,7 +348,32 @@ def context_for_task(
         memory_hits=memory_hits,
         memory_docs=memory_docs,
         plan_docs=plan_docs,
+        knowledge_docs=knowledge_docs,
     )
+
+
+def _local_knowledge_hits(task: str, limit: int = 3) -> list[KnowledgeHit]:
+    """Pull top knowledge entries matching the task via call_log FTS."""
+    try:
+        from codegraph.call_log import knowledge_search as _search
+
+        query = _keyword_query(task)
+        hits = _search(query, limit=limit)
+        if not hits and query != task:
+            hits = _search(task, limit=limit)
+        return [
+            KnowledgeHit(
+                id=h["id"],
+                kind=h["kind"],
+                title=h["title"],
+                body=(h["body"] or "")[:300],
+                tags=h["tags"],
+                score=h.get("score", 0.0),
+            )
+            for h in hits
+        ]
+    except Exception:
+        return []
 
 
 def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) -> list[MemoryDocHit]:
@@ -420,6 +459,17 @@ def render_context_markdown(ctx: TaskContext) -> str:
             lines.append(f"  `{p.path}`")
             lines.append("")
 
+    # Persisted knowledge — patterns, decisions, gotchas
+    if ctx.knowledge_docs:
+        lines.append("---")
+        lines.append("## Learned Knowledge")
+        lines.append("")
+        for k in ctx.knowledge_docs:
+            tag_str = f"  [{', '.join(k.tags)}]" if k.tags else ""
+            lines.append(f"- **[{k.kind}]** {k.title}{tag_str}")
+            lines.append(f"  {k.body[:200]}")
+            lines.append("")
+
     # Ruflo memory knowledge
     if ctx.memory_hits:
         lines.append("---")
@@ -437,6 +487,8 @@ def render_context_markdown(ctx: TaskContext) -> str:
         lines.append(f"**Memory**: {len(ctx.memory_docs)} Claude Code entries")
     if ctx.plan_docs:
         lines.append(f"**Plans**: {len(ctx.plan_docs)} related")
+    if ctx.knowledge_docs:
+        lines.append(f"**Knowledge**: {len(ctx.knowledge_docs)} entries")
     if ctx.memory_hits:
         lines.append(f"**Ruflo knowledge**: {len(ctx.memory_hits)} entries")
     return "\n".join(lines)

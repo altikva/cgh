@@ -150,8 +150,31 @@ def main() -> None:
         is_owner_alive,
         proxy_stdio_to_http,
         read_owner_port,
+        register_worker,
         spawn_owner,
+        unregister_worker,
     )
+
+    # Register this proxy as a worker BEFORE spawning the owner, so the
+    # owner's shutdown logic always sees at least one live worker.
+    register_worker(_root)
+
+    # Release the worker slot on any exit (normal, SIGTERM, SIGHUP).
+    import atexit as _atexit
+    import signal as _signal
+
+    _atexit.register(unregister_worker, _root)
+
+    def _graceful(signum, _frame):
+        unregister_worker(_root)
+        _signal.signal(signum, _signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for _sig in (_signal.SIGTERM, _signal.SIGHUP, _signal.SIGINT):
+        try:
+            _signal.signal(_sig, _graceful)
+        except (ValueError, OSError):
+            pass
 
     # Start (or reuse) the shared owner
     if is_owner_alive(_root):
@@ -165,6 +188,7 @@ def main() -> None:
                 "[codegraph] failed to start owner (see .codegraph/owner.log)",
                 file=sys.stderr,
             )
+            unregister_worker(_root)
             sys.exit(1)
         print(f"[codegraph] owner up on port {port}", file=sys.stderr)
 
@@ -232,6 +256,22 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
         try:
             port_file(_root).unlink(missing_ok=True)
             owner_pidfile(_root).unlink(missing_ok=True)
+            # Release the single-writer pidfile the owner acquired.
+            from codegraph.pidfile import release as _pidfile_release
+
+            _pidfile_release(_root)
+            # Clear the workers dir (entries + dir itself if empty).
+            wd = _root / ".codegraph" / "workers"
+            if wd.exists():
+                for f in wd.iterdir():
+                    try:
+                        f.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                try:
+                    wd.rmdir()
+                except OSError:
+                    pass
         except Exception:
             pass
 
@@ -263,6 +303,76 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
         file=sys.stderr,
         flush=True,
     )
+
+    # Background thread: once at least one worker has registered, shut
+    # the owner down as soon as all workers exit. Grace windows are
+    # intentionally conservative to tolerate the brief gap while a new
+    # Claude session is starting its proxy.
+    import signal as _sig
+    import threading as _th
+    import time as _time
+
+    from codegraph.ipc import live_workers
+
+    _seen_worker = False
+    _idle_since: float | None = None
+
+    def _shutdown(reason: str) -> None:
+        print(f"[codegraph owner] {reason} — shutting down", file=sys.stderr, flush=True)
+        # Run cleanup explicitly — SIGTERM + os._exit would skip atexit.
+        try:
+            _cleanup()
+        except Exception:
+            pass
+        # Release Kuzu lock so a subsequent owner can start immediately.
+        try:
+            from codegraph.core.db import reset_connection
+
+            reset_connection()
+        except Exception:
+            pass
+        # Hard exit — uvicorn has its own signal handlers and blocks
+        # cooperative shutdown from threads; os._exit gets us out reliably.
+        os._exit(0)
+
+    def _watch_workers() -> None:
+        nonlocal _seen_worker, _idle_since
+        grace_before_first = 30.0  # wait this long for the first worker
+        grace_while_idle = 5.0  # then exit after workers leave
+
+        started_at = _time.time()
+        while True:
+            _time.sleep(1.0)
+            workers = live_workers(_root)
+
+            if workers:
+                _seen_worker = True
+                _idle_since = None
+                continue
+
+            if not _seen_worker:
+                if _time.time() - started_at > grace_before_first:
+                    _shutdown(f"no workers connected within {grace_before_first:.0f}s")
+                    return
+                continue
+
+            if _idle_since is None:
+                _idle_since = _time.time()
+            elif _time.time() - _idle_since > grace_while_idle:
+                _shutdown("last worker exited")
+                return
+
+    _th.Thread(target=_watch_workers, daemon=True).start()
+
+    # SIGTERM / SIGINT from outside (kill, Ctrl-C) also do a clean shutdown.
+    def _signal_shutdown(signum, _frame):
+        _shutdown(f"received {_sig.Signals(signum).name}")
+
+    for s in (_sig.SIGTERM, _sig.SIGINT):
+        try:
+            _sig.signal(s, _signal_shutdown)
+        except (ValueError, OSError):
+            pass
 
     # Starlette middleware expects a different wiring than ASGIMiddleware
     # FastMCP's run_http_async uses middleware=[ASGIMiddleware(...)]; since

@@ -21,6 +21,7 @@ from pathlib import Path
 
 _PORT_FILE = "server.port"
 _OWNER_PID_FILE = "owner.pid"
+_WORKERS_DIR = "workers"
 
 
 def port_file(repo_root: str | Path) -> Path:
@@ -29,6 +30,55 @@ def port_file(repo_root: str | Path) -> Path:
 
 def owner_pidfile(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _OWNER_PID_FILE
+
+
+def workers_dir(repo_root: str | Path) -> Path:
+    return Path(repo_root) / ".codegraph" / _WORKERS_DIR
+
+
+def register_worker(repo_root: str | Path) -> Path:
+    """
+    Drop a worker lock file named after this process's PID.
+    Called by every proxy on startup. The owner uses the worker count
+    to decide when to self-terminate.
+    """
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    lock = wd / f"{os.getpid()}"
+    lock.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    return lock
+
+
+def unregister_worker(repo_root: str | Path) -> None:
+    """Remove this process's worker lock. No-op if already gone."""
+    try:
+        (workers_dir(repo_root) / f"{os.getpid()}").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def live_workers(repo_root: str | Path) -> list[int]:
+    """
+    Return PIDs of currently-alive workers. Stale entries (dead PIDs)
+    are pruned from disk as a side effect.
+    """
+    wd = workers_dir(repo_root)
+    if not wd.exists():
+        return []
+    alive: list[int] = []
+    for entry in wd.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if is_pid_alive(pid):
+            alive.append(pid)
+        else:
+            # Stale — drop it
+            entry.unlink(missing_ok=True)
+    return alive
 
 
 def read_owner_port(repo_root: str | Path) -> int | None:

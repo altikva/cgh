@@ -150,13 +150,26 @@ def main() -> None:
             from codegraph.indexer import index_repo
 
             print(f"[codegraph] indexing {_root} …", flush=True)
-            stats = index_repo(_root, verbose=True)
-            print(f"[codegraph] done: {stats}", flush=True)
+            try:
+                stats = index_repo(_root, verbose=True)
+                print(f"[codegraph] done: {stats}", flush=True)
+            except RuntimeError as exc:
+                # DB lock held by another cgh process — skip reindex and
+                # continue. The other process is presumably keeping the
+                # index fresh; we'll read from the same DB file.
+                print(
+                    f"[codegraph] skipping reindex: {exc}\n"
+                    f"[codegraph] another cgh process likely holds the lock — continuing with MCP server",
+                    flush=True,
+                )
 
         if args.watch:
             from codegraph.watcher import start_watcher
 
-            start_watcher(_root)
+            try:
+                start_watcher(_root)
+            except Exception as exc:
+                print(f"[codegraph] watcher disabled: {exc}", flush=True)
     finally:
         # Restore stdout for MCP JSON-RPC
         sys.stdout = _orig_stdout

@@ -138,6 +138,22 @@ def main() -> None:
 
     _root = Path(args.root).resolve()
 
+    # Single-writer guard — refuse to start if another cgh serve holds the
+    # pidfile for this repo. Kuzu can't share its write lock across
+    # processes, so competing servers cause opaque lock errors on every
+    # MCP tool call. Fail fast with a clear message instead.
+    from codegraph.pidfile import acquire as _pidfile_acquire
+
+    acquired, other_pid = _pidfile_acquire(_root)
+    if not acquired:
+        print(
+            f"[codegraph] another cgh serve is already running for this repo (pid {other_pid}).\n"
+            f"[codegraph] stop it first:  kill {other_pid}\n"
+            f"[codegraph] refusing to start a second server.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # MCP stdio transport reserves stdout for JSON-RPC. Redirect all
     # human-readable output (reindex progress, watcher logs, FastMCP banner)
     # to stderr so it doesn't corrupt the protocol stream.

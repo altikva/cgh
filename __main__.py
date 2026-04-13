@@ -43,7 +43,14 @@ from codegraph.cli.commands_monitor import (
     cmd_status,
     cmd_tail,
 )
-from codegraph.cli.commands_query import cmd_callees, cmd_callers, cmd_lookup, cmd_outline, cmd_search
+from codegraph.cli.commands_query import (
+    cmd_callees,
+    cmd_callers,
+    cmd_grep,
+    cmd_lookup,
+    cmd_outline,
+    cmd_search,
+)
 
 
 def _cmd_serve_owner(args) -> None:
@@ -263,6 +270,15 @@ def main() -> None:
     p.add_argument("--clear", action="store_true", help="Clear all logs")
 
     # --- search ---
+    p = sub.add_parser("grep", help="Regex/substring search across indexed files (ripgrep under the hood)")
+    p.add_argument("pattern", help="regex (default) or literal (with --fixed)")
+    p.add_argument("--glob", "-g", default="", help="shell glob filter, e.g. '*.py'")
+    p.add_argument("--limit", "-n", type=int, default=50)
+    p.add_argument("--fixed", "-F", action="store_true", help="literal substring, not regex")
+    p.add_argument("--case", "-s", action="store_true", help="case-sensitive match")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--root", default=os.getcwd())
+
     p = sub.add_parser("search", help="Search symbols by name (fuzzy)")
     p.add_argument("query", help="Search query")
     p.add_argument("--root", default=os.getcwd())
@@ -338,6 +354,7 @@ def main() -> None:
         "memory-index": cmd_memory_index,
         "plan-index": cmd_plan_index,
         "logs": cmd_logs,
+        "grep": cmd_grep,
         "search": cmd_search,
         "lookup": cmd_lookup,
         "callers": cmd_callers,

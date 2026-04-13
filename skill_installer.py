@@ -47,6 +47,9 @@ MCP. Always prefer codegraph tools over reading files directly.
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
   2. `search_symbols` for fuzzy, `fts_search` for docstrings
+- **Text/regex pattern search** (*"find every occurrence of X"*):
+  1. `pattern_search(pattern, glob?, max_results?)` — INSTEAD of Grep.
+     Returns structured {file, line, text}. Then Read only those lines.
 - **Known-preference territory** (commit style, naming, workflow):
   1. `memory_search(query, kind="feedback")` BEFORE asking the user
 - **User hints at a past plan** (*"the refactor we planned"*):

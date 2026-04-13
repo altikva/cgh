@@ -23,6 +23,47 @@ from codegraph.cli import _get_conn, _rows, _short_path, console
 # ---------------------------------------------------------------------------
 
 
+def cmd_grep(args) -> None:
+    """Regex/substring pattern search across the indexed repo."""
+    import json as _json
+
+    from codegraph.pattern import pattern_search
+
+    root = os.path.abspath(args.root)
+    hits, backend = pattern_search(
+        root,
+        pattern=args.pattern,
+        glob=getattr(args, "glob", "") or "",
+        max_results=getattr(args, "limit", 50),
+        regex=not getattr(args, "fixed", False),
+        case_sensitive=getattr(args, "case", False),
+    )
+
+    if args.json:
+        print(
+            _json.dumps(
+                {
+                    "pattern": args.pattern,
+                    "glob": args.glob or None,
+                    "backend": backend,
+                    "total": len(hits),
+                    "hits": [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not hits:
+        console.print(f"[dim]No matches for '[/dim]{args.pattern}[dim]'[/dim]")
+        return
+
+    console.print(f"[dim]backend: {backend} · {len(hits)} hit(s)[/dim]\n")
+    for h in hits:
+        short = _short_path(h.file, root)
+        console.print(f"  [cyan]{short}[/cyan]:[yellow]{h.line}[/yellow]  {h.text}")
+
+
 def cmd_search(args) -> None:
     root = os.path.abspath(args.root)
     query = args.query

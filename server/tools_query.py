@@ -21,6 +21,55 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
+    def pattern_search(
+        pattern: str,
+        glob: str = "",
+        max_results: int = 50,
+        regex: bool = True,
+        case_sensitive: bool = False,
+    ) -> str:
+        """
+        Regex / substring pattern search across the indexed repo. Use this
+        INSTEAD of the Grep tool for any "find all occurrences of X"
+        question — returns structured {file, line, text} hits so you can
+        then Read the exact line ranges that matter (never whole files).
+
+        Respects .gitignore (via ripgrep / git-grep). Automatically scans
+        extra_dirs configured on this project. Caps output at max_results.
+
+        Args:
+          pattern:        regex by default, literal when regex=False
+          glob:           optional shell glob, e.g. "*.py", "api/handlers/*"
+          max_results:    hard cap (default 50)
+          regex:          treat pattern as regex (default True)
+          case_sensitive: default False
+
+        Example: pattern_search(r"@router\\.(get|post)", glob="*.py")
+                 → list of route declarations with line numbers.
+        """
+        from codegraph.pattern import pattern_search as _search
+
+        hits, backend = _search(
+            _root,
+            pattern=pattern,
+            glob=glob,
+            max_results=max_results,
+            regex=regex,
+            case_sensitive=case_sensitive,
+        )
+        return json.dumps(
+            {
+                "pattern": pattern,
+                "glob": glob or None,
+                "backend": backend,
+                "total": len(hits),
+                "hits": [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
+            },
+            indent=2,
+        )
+
+    @mcp.tool()
+    @_logged_tool
     def symbol_lookup(name: str) -> str:
         """
         Find where a symbol (function, class, TF resource) is defined.

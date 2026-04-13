@@ -18,6 +18,7 @@ only read the lines you actually need.
 | "What does `fn` call?" | `mcp__codegraph__find_callees(fn_name="fn")` |
 | Fuzzy / partial name | `mcp__codegraph__search_symbols(query="...")` |
 | Full-text (docstrings, names) | `mcp__codegraph__fts_search(query="...")` |
+| **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)` — INSTEAD of Grep |
 | "How does [feature] work?" — starting a non-trivial task | `mcp__codegraph__context_for_task(task="...")` |
 | "What docs mention `X`?" | `mcp__codegraph__search_docs` / `doc_refs` |
 | "Blast radius of `file.py`" | `mcp__codegraph__subgraph(file_path="...")` |

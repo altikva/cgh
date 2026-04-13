@@ -62,6 +62,114 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
     return added
 
 
+def _detect_existing_state(root: Path) -> dict:
+    """
+    Probe the project for existing codegraph state so `cgh init` can
+    choose the right index strategy and warn about stale artifacts.
+    """
+    cg_dir = root / ".codegraph"
+    graph_db = cg_dir / "graph.db"
+    fts_db = cg_dir / "fts.db"
+
+    state = {
+        "initialized": cg_dir.exists(),
+        "graph_db_bytes": 0,
+        "fts_db_bytes": 0,
+        "indexed_files": 0,
+        "owner_alive": False,
+        "owner_pid": None,
+        "owner_port": None,
+        "scan_meta": None,
+        "extra_dirs": [],
+        "agent_blocks": {},  # tool -> True if the codegraph-usage block is already there
+        "mcp_server_configured": False,
+    }
+
+    if graph_db.exists():
+        try:
+            state["graph_db_bytes"] = graph_db.stat().st_size
+        except OSError:
+            pass
+    if fts_db.exists():
+        try:
+            state["fts_db_bytes"] = fts_db.stat().st_size
+        except OSError:
+            pass
+
+    # File count from the graph (best-effort, readonly — works even if
+    # the owner holds the write lock)
+    try:
+        from codegraph.core.db import get_readonly_connection
+
+        conn = get_readonly_connection(root)
+        if conn is not None:
+            try:
+                r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
+                state["indexed_files"] = int(r.get_next()[0])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Owner status
+    try:
+        from codegraph.ipc import is_owner_alive, read_owner_pid, read_owner_port
+
+        state["owner_alive"] = is_owner_alive(root)
+        state["owner_pid"] = read_owner_pid(root)
+        state["owner_port"] = read_owner_port(root)
+    except Exception:
+        pass
+
+    # Scan meta (last indexed sha + branch)
+    try:
+        from codegraph.scan_meta import read_meta
+
+        state["scan_meta"] = read_meta(root)
+    except Exception:
+        pass
+
+    # extra_dirs from config.toml
+    try:
+        import tomllib
+
+        cfg = cg_dir / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                state["extra_dirs"] = tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+    except Exception:
+        pass
+
+    # Existing codegraph-usage blocks in agent root files
+    marker = "<!-- codegraph-usage:start -->"
+    for tool_key, rel in (
+        ("claude", "CLAUDE.md"),
+        ("codex", "AGENTS.md"),
+        ("gemini", "GEMINI.md"),
+        ("cursor", ".cursor/rules/codegraph-usage.mdc"),
+    ):
+        fp = root / rel
+        if fp.exists():
+            try:
+                content = fp.read_text(encoding="utf-8", errors="replace")
+                state["agent_blocks"][tool_key] = marker in content or tool_key == "cursor"
+            except OSError:
+                state["agent_blocks"][tool_key] = False
+
+    # MCP server config
+    mcp_path = root / ".mcp.json"
+    if mcp_path.exists():
+        try:
+            import json as _json
+
+            data = _json.loads(mcp_path.read_text())
+            state["mcp_server_configured"] = "codegraph" in (data.get("mcpServers") or {})
+        except Exception:
+            pass
+
+    return state
+
+
 # ---------------------------------------------------------------------------
 # cmd_init
 # ---------------------------------------------------------------------------
@@ -93,6 +201,38 @@ def cmd_init(args) -> None:
             ("text", "fg:white"),
         ]
     )
+
+    # -- Step 0: Probe existing state (before anything mutates disk) --
+    prior_state = _detect_existing_state(root)
+    if prior_state["initialized"]:
+        console.print("  [bold]Existing codegraph state detected:[/bold]\n")
+        bits: list[str] = []
+        if prior_state["indexed_files"] > 0:
+            bits.append(f"{prior_state['indexed_files']:,} files indexed")
+        if prior_state["graph_db_bytes"] > 0:
+            bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
+        if prior_state["owner_alive"]:
+            bits.append(
+                f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
+            )
+        elif prior_state["owner_pid"]:
+            bits.append(f"[yellow]stale owner.pid {prior_state['owner_pid']}[/yellow]")
+        if prior_state["scan_meta"] and prior_state["scan_meta"].get("git_head"):
+            sha = prior_state["scan_meta"]["git_head"][:8]
+            branch = prior_state["scan_meta"].get("git_branch") or "?"
+            bits.append(f"last scan at {sha} on {branch}")
+        if prior_state["extra_dirs"]:
+            bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
+        if prior_state["mcp_server_configured"]:
+            bits.append(".mcp.json already has codegraph")
+        blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
+        if blocks_present:
+            bits.append("agent blocks: " + ", ".join(blocks_present))
+        for b in bits:
+            console.print(f"    • {b}")
+        if not bits:
+            console.print("    [dim](initialized but empty — safe to full scan)[/dim]")
+        console.print()
 
     # -- Step 1: Create .codegraph/ --
     with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
@@ -161,6 +301,16 @@ def cmd_init(args) -> None:
             selected_keys = []
     elif args.yes:
         selected_keys = [key for _, key in detected_tools]
+
+    # Show which tools will be skipped (explicit — no silent generation)
+    all_keys = [k for _, k, _ in all_tools]
+    skipped = [k for k in all_keys if k not in selected_keys]
+    if skipped:
+        console.print(
+            "  [dim]skipping:[/dim] "
+            + ", ".join(f"[dim]{k}[/dim]" for k in skipped)
+            + "  [dim](no config, no agent block, no skills)[/dim]\n"
+        )
 
     for key in selected_keys:
         _install_integration(root, key)
@@ -275,24 +425,117 @@ def cmd_init(args) -> None:
 
     total = sum(file_counts.values())
 
-    # -- Step 5: Index now? --
+    # -- Step 5: Index now? — branches on prior state --
     if total > 0:
-        do_index = (
-            args.yes
-            or questionary.confirm(
-                f"Index {total} files now?",
-                default=True,
-                style=cg_style,
-            ).ask()
-        )
+        owner_alive = prior_state.get("owner_alive", False)
+        has_data = prior_state.get("indexed_files", 0) > 0
+        default_method = "auto"
+        choice = None
 
-        if do_index:
-            console.print()
+        if owner_alive:
+            console.print("  [yellow]The MCP owner is running — it already watches this repo.[/yellow]")
+            if not args.yes:
+                choice = (
+                    questionary.select(
+                        "What do you want to do?",
+                        choices=[
+                            questionary.Choice(title="Skip — owner keeps the index fresh", value="skip"),
+                            questionary.Choice(
+                                title="Incremental rescan through the owner (no lock fight)",
+                                value="mcp_scan",
+                            ),
+                            questionary.Choice(
+                                title="Stop owner, wipe DB, full scan  [destructive]",
+                                value="reset",
+                            ),
+                        ],
+                        style=cg_style,
+                    ).ask()
+                    or "skip"
+                )
+            else:
+                choice = "skip"
+        elif has_data:
+            if not args.yes:
+                choice = (
+                    questionary.select(
+                        f"Index already has {prior_state['indexed_files']:,} files. Action?",
+                        choices=[
+                            questionary.Choice(
+                                title="Incremental (only files changed since last scan)",
+                                value="incremental",
+                            ),
+                            questionary.Choice(title="Full scan (re-parse everything)", value="full"),
+                            questionary.Choice(title="Skip — keep as-is", value="skip"),
+                        ],
+                        style=cg_style,
+                    ).ask()
+                    or "incremental"
+                )
+            else:
+                choice = "incremental"
+        else:
+            if not args.yes:
+                do_full = questionary.confirm(
+                    f"Run full scan of {total} files now?",
+                    default=True,
+                    style=cg_style,
+                ).ask()
+                choice = "full" if do_full else "skip"
+            else:
+                choice = "full"
+
+        console.print()
+        if choice == "full":
             from codegraph.cli.commands_index import cmd_index
 
-            cmd_index(argparse.Namespace(root=str(root), verbose=False))
+            cmd_index(argparse.Namespace(root=str(root), verbose=False, method=default_method))
+        elif choice == "incremental":
+            from codegraph.cli.commands_index import cmd_index
+
+            cmd_index(argparse.Namespace(root=str(root), verbose=False, method="incremental"))
+        elif choice == "mcp_scan":
+            # Kick off an incremental via the owner — no lock fight
+            try:
+                import http.client
+                import json as _json
+
+                from codegraph.auth import ensure_auth_key
+
+                port = prior_state.get("owner_port")
+                token = ensure_auth_key(root)
+                body = _json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": "incremental_reindex", "arguments": {}},
+                    }
+                )
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+                c.request(
+                    "POST",
+                    "/mcp",
+                    body=body.encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                        "Authorization": f"Bearer {token}",
+                    },
+                )
+                resp = c.getresponse()
+                if resp.status == 200:
+                    console.print("  [green]+[/green] owner completed incremental reindex")
+                else:
+                    console.print(f"  [yellow]owner returned HTTP {resp.status}[/yellow]")
+            except Exception as exc:
+                console.print(f"  [yellow]could not reach owner: {exc}[/yellow]")
+        elif choice == "reset":
+            from codegraph.cli.commands_monitor import cmd_reset
+
+            cmd_reset(argparse.Namespace(root=str(root), yes=True, drop_extra_dirs=False, no_reindex=False))
         else:
-            console.print("\n  [dim]Run 'codegraph index' when ready.[/dim]")
+            console.print("  [dim]Run 'cgh index' when ready.[/dim]")
     else:
         console.print("  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]")
 

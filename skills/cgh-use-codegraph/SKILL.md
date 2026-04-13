@@ -9,6 +9,12 @@ Codegraph is a local code graph (symbols, calls, imports, docs) exposed over
 MCP. Using it for navigation returns exact file paths + line ranges so you
 only read the lines you actually need.
 
+**Token economics**: MCP tool execution runs server-side and costs zero
+model tokens. The only token cost is the JSON response, which is capped
+and truncated. Read/Grep, in contrast, pulls the entire file into the
+transcript. Call codegraph tools liberally — they're almost always
+cheaper than reading. Default bias: call the tool, don't hesitate.
+
 ## Triggers → tool
 
 | Situation | Tool to call first |

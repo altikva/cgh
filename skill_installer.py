@@ -37,6 +37,13 @@ This project is indexed by **codegraph** — a local code graph +
 Claude Code memory + plans + persistent knowledge, all exposed via
 MCP. Always prefer codegraph tools over reading files directly.
 
+**Token cost mental model**: MCP tool execution is server-side and
+costs ZERO model tokens. The only tokens you spend are on the JSON
+response — which is capped, truncated, and structured. Read/Grep,
+in contrast, pull the full file into the transcript. Rule of thumb:
+when in doubt, call a codegraph tool; it's almost always cheaper
+than reading.
+
 **Workflow matrix — when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):

@@ -156,6 +156,24 @@ def _detect_existing_state(root: Path) -> dict:
             except OSError:
                 state["agent_blocks"][tool_key] = False
 
+    # Skill files + user modifications
+    state["claude_skills_installed"] = []
+    state["claude_skills_modified"] = []
+    skills_dir = root / ".claude" / "skills"
+    if skills_dir.exists():
+        try:
+            state["claude_skills_installed"] = sorted(
+                d.name for d in skills_dir.iterdir() if d.is_dir() and d.name.startswith("cgh-")
+            )
+        except OSError:
+            pass
+        try:
+            from codegraph.skill_installer import detect_modified_skills
+
+            state["claude_skills_modified"] = detect_modified_skills(root)
+        except Exception:
+            pass
+
     # MCP server config
     mcp_path = root / ".mcp.json"
     if mcp_path.exists():
@@ -225,6 +243,13 @@ def cmd_init(args) -> None:
             bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
         if prior_state["mcp_server_configured"]:
             bits.append(".mcp.json already has codegraph")
+        if prior_state.get("claude_skills_installed"):
+            n = len(prior_state["claude_skills_installed"])
+            mod = len(prior_state.get("claude_skills_modified") or [])
+            label = f"{n} claude skill{'s' if n != 1 else ''}"
+            if mod:
+                label += f" ([yellow]{mod} modified locally[/yellow])"
+            bits.append(label)
         blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
         if blocks_present:
             bits.append("agent blocks: " + ", ".join(blocks_present))
@@ -312,8 +337,26 @@ def cmd_init(args) -> None:
             + "  [dim](no config, no agent block, no skills)[/dim]\n"
         )
 
+    # Check for locally-edited skills before overwriting
+    overwrite_skills = True
+    if "claude" in selected_keys:
+        from codegraph.skill_installer import detect_modified_skills
+
+        modified = detect_modified_skills(root)
+        if modified and not args.yes:
+            console.print("  [yellow]You have locally-edited skills in .claude/skills/:[/yellow]")
+            for m in modified:
+                console.print(f"    • [yellow]{m}[/yellow] (SKILL.md differs from bundled)")
+            overwrite_skills = questionary.confirm(
+                "Overwrite with the bundled versions? (Your edits will be lost)",
+                default=False,
+                style=cg_style,
+            ).ask()
+            if not overwrite_skills:
+                console.print("  [green]Keeping your edits[/green] — will refresh only new / unmodified skills.\n")
+
     for key in selected_keys:
-        _install_integration(root, key)
+        _install_integration(root, key, overwrite_skills=overwrite_skills)
 
     if selected_keys:
         console.print()
@@ -554,7 +597,7 @@ def cmd_init(args) -> None:
     )
 
 
-def _install_integration(root: Path, tool: str) -> None:
+def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -> None:
     """Install MCP config + hooks for an AI tool."""
     import json as _json
     import shutil
@@ -618,8 +661,8 @@ def _install_integration(root: Path, tool: str) -> None:
         if not has_codegraph_hook:
             console.print("    [green]+[/green] .claude/settings.json [dim](post-commit hook)[/dim]")
 
-        # Skills
-        _skills_line(".claude/skills/", install_claude(root))
+        # Skills — may preserve local edits if the user said so
+        _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))
 
     elif tool == "cursor":
         cursor_dir = root / ".cursor"

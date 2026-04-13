@@ -138,8 +138,15 @@ def _iter_skills() -> list[tuple[str, dict, str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def install_claude(project_root: str | Path) -> list[str]:
-    """Copy skills verbatim to <project>/.claude/skills/<name>/."""
+def install_claude(project_root: str | Path, overwrite_modified: bool = True) -> list[str]:
+    """
+    Copy skills verbatim to <project>/.claude/skills/<name>/.
+
+    If overwrite_modified=False, any SKILL.md whose content differs from
+    the bundled version is kept as-is (user edits preserved). Identical
+    copies and missing files are always written. Defaults to True for
+    backwards compatibility with cmd_setup.
+    """
     project_root = Path(project_root)
     dest_root = project_root / ".claude" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -149,13 +156,46 @@ def install_claude(project_root: str | Path) -> list[str]:
         target_dir = dest_root / name
         target_dir.mkdir(parents=True, exist_ok=True)
         for f in skill_dir.rglob("*"):
-            if f.is_file():
-                rel = f.relative_to(skill_dir)
-                dest = target_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, dest)
+            if not f.is_file():
+                continue
+            rel = f.relative_to(skill_dir)
+            dest = target_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not overwrite_modified and dest.exists() and _file_content_differs(f, dest):
+                # Local customization — leave it alone.
+                continue
+            shutil.copy2(f, dest)
         installed.append(name)
     return installed
+
+
+def detect_modified_skills(project_root: str | Path) -> list[str]:
+    """
+    Return the list of skill names whose bundled SKILL.md differs from
+    what's on disk under <project>/.claude/skills/. Used by `cgh init`
+    to warn before overwriting user edits.
+    """
+    project_root = Path(project_root)
+    dest_root = project_root / ".claude" / "skills"
+    if not dest_root.exists():
+        return []
+    modified: list[str] = []
+    for name, _fm, _body, skill_dir in _iter_skills():
+        src = skill_dir / "SKILL.md"
+        dst = dest_root / name / "SKILL.md"
+        if not dst.exists():
+            continue
+        if _file_content_differs(src, dst):
+            modified.append(name)
+    return modified
+
+
+def _file_content_differs(a: Path, b: Path) -> bool:
+    """Byte-level diff. Cheap enough for skill files."""
+    try:
+        return a.read_bytes() != b.read_bytes()
+    except OSError:
+        return True
 
 
 def install_cursor(project_root: Path) -> list[str]:

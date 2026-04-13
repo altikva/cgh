@@ -62,6 +62,134 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
     return added
 
 
+def _incremental_via_owner(
+    root: Path,
+    port: int | None,
+    console_obj,
+    tool_name: str = "incremental_reindex",
+    overall_timeout: int = 900,
+) -> None:
+    """
+    Call the running MCP owner to run a scan, while live-tailing
+    .codegraph/activity.log so the user sees progress instead of
+    staring at a frozen prompt.
+
+    Runs the HTTP POST in a background thread with a generous timeout
+    (15 min). The main thread renders a Rich Live view polling the
+    activity log every 500ms. Either branch finishing the scan wins.
+    """
+    if not port:
+        console_obj.print("  [yellow]owner port not known — skipping[/yellow]")
+        return
+
+    import http.client
+    import json as _json
+    import threading
+    import time as _t
+
+    from rich.live import Live
+    from rich.table import Table
+
+    from codegraph.activity import tail as _act_tail
+    from codegraph.auth import ensure_auth_key
+
+    token = ensure_auth_key(root)
+    body = _json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": {}},
+        }
+    )
+
+    result_holder: dict = {"status": None, "body": None, "error": None}
+    done = threading.Event()
+
+    def _call() -> None:
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=overall_timeout)
+            c.request(
+                "POST",
+                "/mcp",
+                body=body.encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+            resp = c.getresponse()
+            result_holder["status"] = resp.status
+            result_holder["body"] = resp.read().decode("utf-8", errors="replace")
+            c.close()
+        except Exception as exc:
+            result_holder["error"] = str(exc)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_call, daemon=True)
+    t.start()
+
+    def _render() -> Table:
+        entries = _act_tail(root, n=8)
+        tbl = Table(
+            title=f"[bold cyan]owner:[/bold cyan] {tool_name} in progress…",
+            title_style="",
+            expand=False,
+        )
+        tbl.add_column("when", style="dim", width=10)
+        tbl.add_column("event", width=16)
+        tbl.add_column("detail", overflow="fold")
+        if not entries:
+            tbl.add_row("—", "[dim]waiting[/dim]", "[dim]activity log empty[/dim]")
+        now = _t.time()
+        for ts, event, detail in entries:
+            age = now - ts
+            when = f"{int(age)}s ago" if age < 60 else f"{int(age / 60)}m ago"
+            style = "green" if event.endswith("_end") else ("yellow" if "error" in event else "cyan")
+            tbl.add_row(when, f"[{style}]{event}[/{style}]", detail)
+        return tbl
+
+    try:
+        with Live(_render(), console=console_obj, refresh_per_second=2) as live:
+            while not done.is_set():
+                _t.sleep(0.5)
+                live.update(_render())
+    except KeyboardInterrupt:
+        console_obj.print("\n  [yellow]stopped watching — owner may still be working in the background[/yellow]")
+        return
+
+    # Report result
+    if result_holder["error"]:
+        console_obj.print(
+            f"  [yellow]owner call failed:[/yellow] {result_holder['error']}  "
+            "[dim](the owner itself may have completed — check `cgh status`)[/dim]"
+        )
+        return
+    if result_holder["status"] != 200:
+        console_obj.print(f"  [yellow]owner returned HTTP {result_holder['status']}[/yellow]")
+        return
+
+    # Try to pull the JSON stats out of the MCP response
+    try:
+        payload = _json.loads(result_holder["body"] or "{}")
+        content = (payload.get("result") or {}).get("content") or []
+        text = next((c["text"] for c in content if c.get("type") == "text"), None)
+        if text:
+            inner = _json.loads(text)
+            reindexed = inner.get("reindexed_count") or inner.get("indexed") or 0
+            deleted = inner.get("deleted_count") or 0
+            elapsed = inner.get("elapsed_s") or inner.get("elapsed") or "?"
+            console_obj.print(
+                f"  [green]+[/green] owner completed: reindexed={reindexed}, deleted={deleted}, elapsed={elapsed}s"
+            )
+            return
+    except Exception:
+        pass
+    console_obj.print("  [green]+[/green] owner completed the scan")
+
+
 def _detect_existing_state(root: Path) -> dict:
     """
     Probe the project for existing codegraph state so `cgh init` can
@@ -538,41 +666,11 @@ def cmd_init(args) -> None:
 
             cmd_index(argparse.Namespace(root=str(root), verbose=False, method="incremental"))
         elif choice == "mcp_scan":
-            # Kick off an incremental via the owner — no lock fight
-            try:
-                import http.client
-                import json as _json
-
-                from codegraph.auth import ensure_auth_key
-
-                port = prior_state.get("owner_port")
-                token = ensure_auth_key(root)
-                body = _json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/call",
-                        "params": {"name": "incremental_reindex", "arguments": {}},
-                    }
-                )
-                c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-                c.request(
-                    "POST",
-                    "/mcp",
-                    body=body.encode("utf-8"),
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json, text/event-stream",
-                        "Authorization": f"Bearer {token}",
-                    },
-                )
-                resp = c.getresponse()
-                if resp.status == 200:
-                    console.print("  [green]+[/green] owner completed incremental reindex")
-                else:
-                    console.print(f"  [yellow]owner returned HTTP {resp.status}[/yellow]")
-            except Exception as exc:
-                console.print(f"  [yellow]could not reach owner: {exc}[/yellow]")
+            _incremental_via_owner(
+                root=root,
+                port=prior_state.get("owner_port"),
+                console_obj=console,
+            )
         elif choice == "reset":
             from codegraph.cli.commands_monitor import cmd_reset
 

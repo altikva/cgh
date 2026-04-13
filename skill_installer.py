@@ -33,25 +33,40 @@ _USAGE_BLOCK_END = "<!-- codegraph-usage:end -->"
 # root rules file (CLAUDE.md / AGENTS.md / GEMINI.md) when the user opts in.
 _USAGE_BODY = """## codegraph — use MCP tools before Read/Grep
 
-This project is indexed by **codegraph** — a local code graph exposed via
-MCP. Always prefer codegraph tools over reading files directly. They
-return exact paths + line numbers, saving 60–90% of exploration tokens.
+This project is indexed by **codegraph** — a local code graph +
+Claude Code memory + plans + persistent knowledge, all exposed via
+MCP. Always prefer codegraph tools over reading files directly.
 
-**Workflow matrix**
+**Workflow matrix — when to call what**
 
-- **Architecture / new feature** (*"how does X work"*, *"where to add Y"*):
-  1. `mcp__codegraph__context_for_task(task)`
+- **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
+  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
+     — merges graph + memory + plans + knowledge in one call
   2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
-  3. `mcp__codegraph__endpoints(path_pattern)` if it's an API question
+  3. `mcp__codegraph__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
-  2. `search_symbols` for fuzzy names, `fts_search` for docstrings
+  2. `search_symbols` for fuzzy, `fts_search` for docstrings
+- **Known-preference territory** (commit style, naming, workflow):
+  1. `memory_search(query, kind="feedback")` BEFORE asking the user
+- **User hints at a past plan** (*"the refactor we planned"*):
+  1. `plan_search(query)`
+- **Problem that might have been solved before**:
+  1. `knowledge_search(query)` — persisted learnings across sessions
+  2. `knowledge_terms()` for the glossary of captured topics
+- **You learn something worth remembering** (pattern / decision /
+  gotcha / style / glossary term):
+  1. `knowledge_record(title, body, kind, tags, file_refs?)`
+- **Before the session gets compacted / summarized**:
+  1. `compact_session(session_id, title, digest, tags?)`
 - **After `git pull` / `checkout` / `rebase`**:
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)
 
 Only use `Read` on the exact line ranges returned by a codegraph tool.
 Never `ls`/`find`/`tree` for structure — `architecture_overview` has it.
+Never re-derive a fact that could be looked up via `memory_search` or
+`knowledge_search`.
 """
 
 
@@ -113,8 +128,9 @@ def _iter_skills() -> list[tuple[str, dict, str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def install_claude(project_root: Path) -> list[str]:
+def install_claude(project_root: str | Path) -> list[str]:
     """Copy skills verbatim to <project>/.claude/skills/<name>/."""
+    project_root = Path(project_root)
     dest_root = project_root / ".claude" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
 
@@ -238,7 +254,7 @@ def _install_agents_md(target: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def install_usage_guidelines(project_root: Path, tool: str) -> str | None:
+def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     """
     Inject a "when to use codegraph" block into the agent's root rules file.
     The block is marked with delimiters so repeated installs update in place.
@@ -251,6 +267,7 @@ def install_usage_guidelines(project_root: Path, tool: str) -> str | None:
 
     Returns the path written (as str) or None if skipped.
     """
+    project_root = Path(project_root)
     if tool == "cursor":
         target = project_root / ".cursor" / "rules" / "codegraph-usage.mdc"
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -68,6 +68,9 @@ def cmd_search(args) -> None:
     root = os.path.abspath(args.root)
     query = args.query
     limit = args.limit
+    offset = getattr(args, "offset", 0) or 0
+    # Fetch offset+limit+1 so we can detect whether more results exist.
+    fetch = offset + limit + 1
     results: list = []
 
     conn = _get_conn(root, readonly=True)
@@ -78,7 +81,7 @@ def cmd_search(args) -> None:
             from codegraph.fts import fts_search, get_fts_conn
 
             fts_conn = get_fts_conn(root)
-            for hit in fts_search(fts_conn, query, limit=limit):
+            for hit in fts_search(fts_conn, query, limit=fetch):
                 results.append((hit.kind, hit.name, hit.file_path, hit.start_line))
         except Exception as exc:
             console.print(f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]")
@@ -96,7 +99,7 @@ def cmd_search(args) -> None:
                     "MATCH (n:" + label + ") WHERE n.name CONTAINS $q "
                     "RETURN n.name, n.file_path, n.start_line LIMIT $lim"
                 )
-            r = conn.execute(q, {"q": query, "lim": limit})
+            r = conn.execute(q, {"q": query, "lim": fetch})
             for row in _rows(r):
                 results.append(
                     (
@@ -107,12 +110,28 @@ def cmd_search(args) -> None:
                     )
                 )
 
+    total_fetched = len(results)
+    has_more = total_fetched > offset + limit
+    page = results[offset : offset + limit]
+
     if args.json:
-        print(json.dumps([{"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in results], indent=2))
+        out = {
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+            "returned": len(page),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+            "results": [{"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in page],
+        }
+        print(json.dumps(out, indent=2))
         return
 
-    if not results:
-        console.print(f"[dim]No symbols matching '[/dim][bold]{query}[/bold][dim]'[/dim]")
+    if not page:
+        if offset > 0:
+            console.print(f"[dim]No more results for '[/dim][bold]{query}[/bold][dim]' at offset {offset}[/dim]")
+        else:
+            console.print(f"[dim]No symbols matching '[/dim][bold]{query}[/bold][dim]'[/dim]")
         return
 
     table = Table(box=box.SIMPLE_HEAD, title=f"Search: {query}", title_style="bold")
@@ -121,11 +140,20 @@ def cmd_search(args) -> None:
     table.add_column("Location", style="dim")
 
     icons = {"function": "[green]fn[/green]", "class": "[yellow]cls[/yellow]", "md_section": "[cyan]doc[/cyan]"}
-    for kind, name, fp, line in results[:limit]:
+    for kind, name, fp, line in page:
         short = _short_path(fp, root)
         table.add_row(icons.get(kind, kind), name, f"{short}:{line}")
 
     console.print(table)
+    start = offset + 1
+    end = offset + len(page)
+    if has_more:
+        console.print(
+            f"[dim]Showing {start}–{end}. More results — next page:[/dim] "
+            f"[cyan]cgh search {query} --offset {offset + limit} -n {limit}[/cyan]"
+        )
+    else:
+        console.print(f"[dim]Showing {start}–{end} (end of results).[/dim]")
 
 
 # ---------------------------------------------------------------------------

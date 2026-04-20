@@ -93,7 +93,41 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             content='knowledge', content_rowid='id'
         )
     """)
+    # Keep the external-content FTS in sync with the knowledge table even
+    # when callers bypass the helpers below. Without these triggers a raw
+    # DELETE leaves orphan rowids that surface as "missing row N from
+    # content table" once queried.
+    _conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
+            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.kind);
+        END
+    """)
     _conn.commit()
+    # Self-heal: if the FTS references rowids that no longer exist, rebuild
+    # from the content table. Cheap at open time (runs once per connection).
+    try:
+        _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('integrity-check')").fetchall()
+    except sqlite3.DatabaseError:
+        try:
+            _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+            _conn.commit()
+        except sqlite3.DatabaseError:
+            pass
     return _conn
 
 
@@ -195,11 +229,7 @@ def knowledge_record(
         (session_id, title or "", body or "", tags or "", kind, file_refs or "", time.time()),
     )
     row_id = cur.lastrowid
-    # Mirror into FTS
-    conn.execute(
-        "INSERT INTO knowledge_fts(rowid, title, body, tags, kind) VALUES (?, ?, ?, ?, ?)",
-        (row_id, title or "", body or "", tags or "", kind),
-    )
+    # FTS mirror is now maintained by the AFTER INSERT trigger.
     conn.commit()
     return int(row_id or 0)
 
@@ -249,9 +279,12 @@ def knowledge_list(
     tag: str | None = None,
     session_id: str | None = None,
     limit: int = 50,
+    offset: int = 0,
     repo_root: str | Path | None = None,
 ) -> list[dict]:
-    """Browse knowledge entries. Filters: kind / tag (substring) / session."""
+    """Browse knowledge entries. Filters: kind / tag (substring) / session.
+    Pagination: limit + offset. Caller can fetch limit+1 to detect has_more.
+    """
     conn = _get_conn(repo_root)
     sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
     where: list[str] = []
@@ -267,9 +300,34 @@ def knowledge_list(
         params.append(session_id)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY ts DESC LIMIT ?"
-    params.append(limit)
+    sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+    params.extend([limit, max(0, offset)])
     return [_knowledge_row_to_dict(row, score=row[7]) for row in conn.execute(sql, params).fetchall()]
+
+
+def knowledge_count(
+    kind: str | None = None,
+    tag: str | None = None,
+    session_id: str | None = None,
+    repo_root: str | Path | None = None,
+) -> int:
+    """Total matching entries — use alongside knowledge_list for pagination."""
+    conn = _get_conn(repo_root)
+    sql = "SELECT count(*) FROM knowledge"
+    where: list[str] = []
+    params: list = []
+    if kind:
+        where.append("kind = ?")
+        params.append(kind)
+    if tag:
+        where.append("tags LIKE ?")
+        params.append(f"%{tag}%")
+    if session_id:
+        where.append("session_id = ?")
+        params.append(session_id)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return int(conn.execute(sql, params).fetchone()[0])
 
 
 def knowledge_terms(
@@ -303,10 +361,7 @@ def knowledge_forget(
     existed = conn.execute("SELECT 1 FROM knowledge WHERE id = ?", (entry_id,)).fetchone()
     if not existed:
         return False
-    conn.execute(
-        "INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind) VALUES('delete', ?, '', '', '', '')",
-        (entry_id,),
-    )
+    # FTS sync is handled by the AFTER DELETE trigger.
     conn.execute("DELETE FROM knowledge WHERE id = ?", (entry_id,))
     conn.commit()
     return True

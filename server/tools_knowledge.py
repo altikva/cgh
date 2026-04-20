@@ -81,11 +81,22 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def knowledge_list(kind: str = "", tag: str = "", session_id: str = "", limit: int = 50) -> str:
+    def knowledge_list(
+        kind: str = "",
+        tag: str = "",
+        session_id: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> str:
         """
         Browse knowledge entries, newest first. Useful at session kickoff
         to see what's already known before re-deriving.
+
+        Pagination: pass `offset` to page through results. Response includes
+        `total`, `returned`, `has_more`, and `next_offset` so the caller can
+        follow up without counting locally.
         """
+        from codegraph.call_log import knowledge_count
         from codegraph.call_log import knowledge_list as _list
 
         entries = _list(
@@ -93,14 +104,27 @@ def register(mcp) -> None:
             tag=tag or None,
             session_id=session_id or None,
             limit=limit,
+            offset=offset,
             repo_root=_root,
         )
+        total = knowledge_count(
+            kind=kind or None,
+            tag=tag or None,
+            session_id=session_id or None,
+            repo_root=_root,
+        )
+        has_more = (offset + len(entries)) < total
         return json.dumps(
             {
                 "kind": kind or None,
                 "tag": tag or None,
                 "session_id": session_id or None,
-                "total": len(entries),
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "returned": len(entries),
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
                 "entries": entries,
             },
             indent=2,

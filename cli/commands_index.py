@@ -94,11 +94,18 @@ def cmd_index(args) -> None:
     table = Table(box=box.ROUNDED, title="Index Summary", title_style="bold")
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
-    table.add_row("Files indexed", f"[green]{stats['indexed']}[/green]")
-    table.add_row("Files skipped", f"[dim]{stats['skipped']}[/dim]")
-    table.add_row("Errors", f"[red]{stats['errors']}[/red]" if stats["errors"] > 0 else "[dim]0[/dim]")
+    # Incremental returns reindexed_count/unchanged_count; full returns indexed/skipped.
+    indexed = stats.get("indexed", stats.get("reindexed_count", 0))
+    skipped = stats.get("skipped", stats.get("unchanged_count", 0))
+    deleted = stats.get("deleted_count", len(stats.get("deleted", [])) if isinstance(stats.get("deleted"), list) else 0)
+    method = stats.get("method", stats.get("mode", "?"))
+    table.add_row("Files indexed", f"[green]{indexed}[/green]")
+    table.add_row("Files skipped", f"[dim]{skipped}[/dim]")
+    if deleted:
+        table.add_row("Files deleted", f"[yellow]{deleted}[/yellow]")
+    table.add_row("Errors", f"[red]{stats['errors']}[/red]" if stats.get("errors", 0) > 0 else "[dim]0[/dim]")
     table.add_row("Elapsed", f"[cyan]{stats['elapsed_s']}s[/cyan]")
-    table.add_row("Method", f"[dim]{stats.get('method', '?')}[/dim]")
+    table.add_row("Method", f"[dim]{method}[/dim]")
     console.print(table)
 
 

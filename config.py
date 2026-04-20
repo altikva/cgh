@@ -140,6 +140,8 @@ class CodegraphConfig:
     ignore_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_DIRS))
     ignore_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_PATTERNS))
     max_file_size_kb: int = 500
+    # Dirs to force-index even if gitignored (relative to project_root or absolute).
+    include_dirs: list[str] = field(default_factory=list)
 
     # Parsers
     enabled_parsers: list[str] | None = None  # None = all available
@@ -214,6 +216,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.ignore_patterns = cg["ignore_patterns"]
     if "max_file_size_kb" in cg:
         config.max_file_size_kb = cg["max_file_size_kb"]
+    if "include_dirs" in cg:
+        config.include_dirs = list(cg["include_dirs"])
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:
@@ -247,6 +251,11 @@ ignore_dirs = [
 ignore_patterns = ["*.min.js", "*.bundle.js", "*.map"]
 # Skip files larger than this (KB)
 max_file_size_kb = 500
+# Directories to force-index even if .gitignore excludes them (e.g. "docs/",
+# generated schema dumps, vendored source you still want in the graph).
+# Paths are relative to the project root. Use absolute paths for dirs that
+# live outside the repo (sibling repos prefer add_directory / extra_dirs).
+# include_dirs = ["docs", "internal/specs"]
 
 [parsers]
 # Uncomment to restrict which parsers are active:
@@ -288,6 +297,21 @@ reindex_on_start = true
 #   role  — free-form narrow category (shown in architecture_overview)
 #   layer — one of: presentation, application, domain, infra, test, doc, other
 """
+
+
+def resolve_include_dirs(project_root: str | Path) -> list[Path]:
+    """Return the config's include_dirs as absolute, existing directories."""
+    cfg = load_config(project_root)
+    root = Path(project_root).resolve()
+    out: list[Path] = []
+    for entry in cfg.include_dirs:
+        p = Path(entry).expanduser()
+        if not p.is_absolute():
+            p = root / p
+        p = p.resolve()
+        if p.exists() and p.is_dir():
+            out.append(p)
+    return out
 
 
 def init_project(root: Path) -> dict:

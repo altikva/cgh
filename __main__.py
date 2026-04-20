@@ -251,6 +251,7 @@ def main() -> None:
     p = sub.add_parser("status", help="Owner state, scan freshness, counts, extra_dirs in one glance")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--workers", action="store_true", help="Also list every worker pid + tty + start time")
 
     p = sub.add_parser("memory-index", help="Scan the Claude Code memory directory into the FTS index")
     p.add_argument("--root", default=os.getcwd())
@@ -282,7 +283,8 @@ def main() -> None:
     p = sub.add_parser("search", help="Search symbols by name (fuzzy)")
     p.add_argument("query", help="Search query")
     p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--limit", "-n", type=int, default=20)
+    p.add_argument("--limit", "-n", type=int, default=100, help="Page size (default: 100)")
+    p.add_argument("--offset", "-o", type=int, default=0, help="Skip first N results (for pagination)")
     p.add_argument("--json", action="store_true")
 
     # --- lookup ---

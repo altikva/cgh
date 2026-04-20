@@ -47,10 +47,11 @@ def register(mcp) -> None:
         Example: pattern_search(r"@router\\.(get|post)", glob="*.py")
                  → list of route declarations with line numbers.
         """
+        import codegraph.server as _srv
         from codegraph.pattern import pattern_search as _search
 
         hits, backend = _search(
-            _root,
+            _srv._root,
             pattern=pattern,
             glob=glob,
             max_results=max_results,

@@ -93,9 +93,34 @@ def get_parser_info() -> list[dict]:
     return list(seen.values())
 
 
+# Files matched by name (no extension or ambiguous extension).
+_NAME_REGISTRY: dict[str, str] = {}  # lowercase filename -> extension key in _REGISTRY
+
+
+def register_by_name(filenames: list[str], ext_key: str):
+    """Map specific filenames to a parser extension key (for Dockerfile etc.)."""
+    for name in filenames:
+        _NAME_REGISTRY[name.lower()] = ext_key
+
+
 def is_supported(path: str | Path) -> bool:
-    """Check if a file can be parsed."""
-    return Path(path).suffix.lower() in _REGISTRY
+    """Check if a file can be parsed (by extension or by filename)."""
+    p = Path(path)
+    if p.suffix.lower() in _REGISTRY:
+        return True
+    return p.name.lower() in _NAME_REGISTRY
+
+
+def get_parser_for_path(path: str | Path) -> BaseParser | None:
+    """Resolve parser by extension first, then by filename."""
+    p = Path(path)
+    parser = get_parser(p.suffix)
+    if parser:
+        return parser
+    ext_key = _NAME_REGISTRY.get(p.name.lower())
+    if ext_key:
+        return get_parser(ext_key)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -113,3 +138,15 @@ def _discover_parsers():
 
 
 _discover_parsers()
+
+# Register well-known filenames that lack a unique extension
+register_by_name(
+    ["Dockerfile", "Dockerfile.dev", "Dockerfile.prod", "Dockerfile.staging"],
+    ".dockerfile",
+)
+register_by_name(
+    ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
+    ".yaml",
+)
+register_by_name([".env.example", ".env.local", ".env.staging", ".env.production"], ".env")
+register_by_name(["Makefile", "GNUmakefile"], ".sh")

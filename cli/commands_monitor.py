@@ -452,6 +452,72 @@ def cmd_status(args) -> None:
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
     console.print(table)
 
+    # --workers: detailed proxy list with tty + start time + cmdline
+    if getattr(args, "workers", False):
+        _print_workers_table(workers, owner_pid)
+
+
+def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
+    """Render a table of every proxy worker with ps metadata."""
+    import subprocess
+
+    pids = list(worker_pids)
+    if owner_pid and owner_pid not in pids:
+        pids.append(owner_pid)
+
+    if not pids:
+        console.print("\n[dim]No workers registered.[/dim]")
+        return
+
+    # One ps call, many PIDs → fewer subprocess invocations
+    try:
+        r = subprocess.run(
+            ["ps", "-o", "pid=,tty=,lstart=,command=", "-p", ",".join(str(p) for p in pids)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        lines = [ln.rstrip() for ln in r.stdout.splitlines() if ln.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        lines = []
+
+    info: dict[int, tuple[str, str, str]] = {}
+    for line in lines:
+        # pid tty lstart(5 tokens) command(rest)
+        parts = line.split(None, 6)
+        if len(parts) < 7:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        tty = parts[1]
+        lstart = " ".join(parts[2:6])
+        cmd = parts[6]
+        info[pid] = (tty, lstart, cmd)
+
+    tbl = Table(
+        box=box.SIMPLE_HEAD,
+        title="workers + owner",
+        title_style="bold cyan",
+    )
+    tbl.add_column("role", style="bold", width=8)
+    tbl.add_column("pid", justify="right", width=7)
+    tbl.add_column("tty", width=10)
+    tbl.add_column("started", style="dim", width=20)
+    tbl.add_column("command", overflow="fold", style="dim")
+
+    if owner_pid:
+        tty, lstart, cmd = info.get(owner_pid, ("?", "?", "?"))
+        tbl.add_row("[green]owner[/green]", str(owner_pid), tty, lstart, cmd)
+
+    for pid in worker_pids:
+        tty, lstart, cmd = info.get(pid, ("?", "?", "?"))
+        tbl.add_row("proxy", str(pid), tty, lstart, cmd)
+
+    console.print()
+    console.print(tbl)
+
 
 # ---------------------------------------------------------------------------
 # cmd_reset

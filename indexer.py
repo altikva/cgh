@@ -514,6 +514,10 @@ def index_file(
     suffix = path.suffix.lower()
     parser = get_parser(suffix)
     if parser is None:
+        from .parsers import get_parser_for_path
+
+        parser = get_parser_for_path(path)
+    if parser is None:
         return False
 
     # Check .cghignore (skip if force)
@@ -626,9 +630,44 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
             if _is_cghignored(full, repo_root):
                 continue
             files.append(full)
+        # Merge in include_dirs (force-index even when gitignored)
+        files.extend(_walk_include_dirs(repo_root, seen=set(files)))
         return files
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
+
+
+def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
+    try:
+        from .config import resolve_include_dirs
+
+        return resolve_include_dirs(repo_root)
+    except Exception:
+        return []
+
+
+def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[Path]:
+    """Walk configured include_dirs (config.toml) and return files not yet seen."""
+    from .config import resolve_include_dirs
+
+    seen = seen or set()
+    out: list[Path] = []
+    try:
+        include_dirs = resolve_include_dirs(repo_root)
+    except Exception:
+        return out
+    for base in include_dirs:
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+            for filename in filenames:
+                p = Path(dirpath) / filename
+                if p in seen:
+                    continue
+                if _is_cghignored(p, repo_root):
+                    continue
+                out.append(p)
+                seen.add(p)
+    return out
 
 
 VALID_METHODS = ("auto", "git_ls_files", "os_walk", "find", "git_diff", "incremental")
@@ -986,9 +1025,36 @@ def incremental_reindex(repo_root: str | Path) -> dict:
             if is_supported(full) and full.exists():
                 to_index.append((rel_path, head_sha))
 
-    # Paths that are gone from HEAD (deleted on this branch)
+    # include_dirs: force-reindex by mtime (git-blob diff doesn't see gitignored files)
+    include_extras: list[Path] = []
+    for p in _walk_include_dirs(repo_root):
+        if not (is_supported(p) and p.exists()):
+            continue
+        try:
+            disk_mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        stored_mtime: float | None = None
+        try:
+            res = conn.execute("MATCH (f:File {path: $p}) RETURN f.mtime", {"p": str(p)})
+            if res.has_next():
+                row = res.get_next()
+                if row[0] is not None:
+                    stored_mtime = float(row[0])
+        except Exception:
+            stored_mtime = None
+        if stored_mtime is None or abs(stored_mtime - disk_mtime) > 0.01:
+            include_extras.append(p)
+
+    # Paths that are gone from HEAD (deleted on this branch) — but don't delete
+    # include_dir files just because they're absent from git HEAD.
+    include_roots = [str(r) for r in resolve_include_dirs_safe(repo_root)]
     head_abs = {str(repo_root / p) for p in head_shas}
-    to_delete = [p for p in stored if p not in head_abs]
+
+    def _under_include(path_str: str) -> bool:
+        return any(path_str.startswith(root + os.sep) for root in include_roots)
+
+    to_delete = [p for p in stored if p not in head_abs and not _under_include(p)]
 
     fts_conn = _get_fts(repo_root) if repo_root else None
 
@@ -1010,6 +1076,19 @@ def incremental_reindex(repo_root: str | Path) -> dict:
         try:
             if index_file(full, repo_root, force=True, git_blob_sha=blob_sha):
                 reindexed.append(rel_path)
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+
+    # Re-index include_dir files flagged by mtime (gitignored but force-included)
+    for full in include_extras:
+        try:
+            if index_file(full, repo_root, force=True):
+                try:
+                    reindexed.append(str(full.relative_to(repo_root)))
+                except ValueError:
+                    reindexed.append(str(full))
             else:
                 errors += 1
         except Exception:

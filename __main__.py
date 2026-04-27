@@ -95,6 +95,7 @@ def _print_help():
             "Monitor",
             [
                 ("stats", "Graph nodes, edges, call stats, storage"),
+                ("status", "Owner / workers state, scan freshness (--workers)"),
                 ("logs", "View MCP tool call history"),
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
@@ -224,6 +225,13 @@ def main() -> None:
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--watch", action="store_true", help="Enable live file watcher")
     p.add_argument("--reindex", action="store_true", help="Re-index before serving")
+    p.add_argument(
+        "--background",
+        "-b",
+        action="store_true",
+        help="Spawn owner in background and exit (keeps graph alive for Claude sessions)",
+    )
+    p.add_argument("--stop", action="store_true", help="Stop a running owner process")
 
     # --- _serve_owner (hidden internal subcommand) ---
     p = sub.add_parser("_serve_owner", help=argparse.SUPPRESS)

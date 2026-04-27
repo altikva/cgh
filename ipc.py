@@ -171,12 +171,15 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
         close_fds=True,
     )
 
-    # Wait for the owner to publish its port
-    deadline = time.time() + 8.0
+    # Wait for the owner to publish its port. When --reindex is requested the
+    # owner finishes the full scan before writing the port file, which can take
+    # well over a minute on large repos. Use a generous timeout.
+    timeout = 300.0 if reindex else 15.0
+    deadline = time.time() + timeout
     while time.time() < deadline:
         if is_owner_alive(repo_root):
             return read_owner_port(repo_root)
-        time.sleep(0.1)
+        time.sleep(0.25)
     return None
 
 

@@ -47,23 +47,51 @@ knowledge_record(
 per entry. Reuse existing tags when possible — call `knowledge_terms()`
 first to see what's already in use.
 
-## Context compaction
+## Context lifecycle — persist before compaction, reload after
 
-Near the end of a long session, or when the user mentions summarizing /
-continuing later, call:
+Your context window is finite. Knowledge survives compaction — raw
+conversation does not. This is the most important workflow in codegraph.
 
+### Before compaction (~80% context usage)
+
+When you sense the window tightening (long session, many tool results,
+system warns about approaching limits):
+
+1. **Record everything non-trivial** you learned this session:
+   ```
+   knowledge_record(title=..., body=..., kind=..., tags=..., file_refs=...)
+   ```
+   Better to over-record than to lose. If in doubt, record it.
+
+2. **Compact the session**:
+   ```
+   compact_session(
+       session_id=<same id used during the session>,
+       title="<what we worked on>",
+       digest="<3-8 bullet points of what was learned / decided / shipped>",
+       tags="<topics>,session-digest"
+   )
+   ```
+   This persists a `kind=note` entry stamped with the session_id.
+
+### After compaction / session resume
+
+This is CRITICAL — without this step you restart from zero:
+
+1. `knowledge_list(limit=20)` — reload recent learnings
+2. `knowledge_search(query)` — targeted reload for the current task
+3. `memory_search(query)` — reload user preferences and feedback
+4. `plan_search(query)` — reload any active plan
+5. `knowledge_terms()` — see the full glossary of captured topics
+
+### Session start (new conversation)
+
+Same reload sequence. Always start with:
 ```
-compact_session(
-    session_id=<same id used during the session>,
-    title="<what we worked on>",
-    digest="<3-8 bullet points of what was learned / decided / shipped>",
-    tags="<topics>,session-digest"
-)
+context_for_task(task="<what the user wants>", session_id=<new_id>)
 ```
-
-This persists a `kind=note` entry stamped with the session_id. Future
-sessions get it automatically when `context_for_task` matches relevant
-keywords.
+This automatically merges code graph + memory + plans + knowledge.
+Then supplement with targeted `knowledge_search` if needed.
 
 ## Before recording — check for duplicates
 

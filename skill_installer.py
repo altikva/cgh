@@ -67,11 +67,36 @@ than reading.
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
   1. `knowledge_record(title, body, kind, tags, file_refs?)`
-- **Before the session gets compacted / summarized**:
-  1. `compact_session(session_id, title, digest, tags?)`
 - **After `git pull` / `checkout` / `rebase`**:
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)
+
+**Context lifecycle — persist before compaction, reload after**
+
+Your context window is finite. codegraph knowledge survives across
+sessions and compactions — but only if you write it before the window
+shrinks and reload it after.
+
+- **When context usage exceeds ~80%** (you feel the window tightening,
+  or the system warns about approaching limits):
+  1. Proactively call `knowledge_record(title, body, kind, tags)` for
+     every non-trivial insight, decision, or pattern learned this session
+     that is NOT already captured. Better to over-record than to lose.
+  2. Call `compact_session(session_id, title, digest, tags)` to persist
+     a structured summary of the full session into knowledge.
+  3. These survive compaction — raw conversation context does not.
+
+- **Immediately after context compaction / session resume**:
+  1. `knowledge_list(limit=20)` — reload recent learnings
+  2. `knowledge_search(query)` — targeted reload for the current task
+  3. `memory_search(query)` — reload user preferences and feedback
+  4. `plan_search(query)` — reload any active plan
+  5. This is CRITICAL: without this step you restart from zero. With it,
+     you resume with full cross-session continuity.
+
+- **Session start** (new conversation on this project):
+  1. Same reload sequence: `knowledge_list` + `memory_search("feedback")`
+  2. `knowledge_terms()` to see the glossary of what's been captured
 
 Only use `Read` on the exact line ranges returned by a codegraph tool.
 Never `ls`/`find`/`tree` for structure — `architecture_overview` has it.

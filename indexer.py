@@ -602,9 +602,15 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
     """
     Use `git ls-files` to get tracked + untracked-not-ignored files.
     Also filters out _IGNORE_DIRS (node_modules, .venv, etc.) as extra safety.
+    Files inside any federated subrepo path are skipped — those repos
+    own their own index and the parent acts as a passe-plat for them.
     Returns None if not a git repo or git command fails (fallback to os.walk).
     """
     import subprocess
+
+    from .federation import child_paths_to_skip, is_under_any
+
+    subrepos = child_paths_to_skip(repo_root)
 
     try:
         result = subprocess.run(
@@ -629,6 +635,9 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
             full = repo_root / line
             if _is_cghignored(full, repo_root):
                 continue
+            # Skip files inside a federated subrepo
+            if subrepos and is_under_any(full, subrepos):
+                continue
             files.append(full)
         # Merge in include_dirs (force-index even when gitignored)
         files.extend(_walk_include_dirs(repo_root, seen=set(files)))
@@ -647,8 +656,10 @@ def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
 
 
 def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[Path]:
-    """Walk configured include_dirs (config.toml) and return files not yet seen."""
+    """Walk configured include_dirs (config.toml) and return files not yet seen.
+    Files inside any federated subrepo are skipped."""
     from .config import resolve_include_dirs
+    from .federation import child_paths_to_skip, is_under_any
 
     seen = seen or set()
     out: list[Path] = []
@@ -656,6 +667,7 @@ def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[P
         include_dirs = resolve_include_dirs(repo_root)
     except Exception:
         return out
+    subrepos = child_paths_to_skip(repo_root)
     for base in include_dirs:
         for dirpath, dirnames, filenames in os.walk(base):
             dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
@@ -664,6 +676,8 @@ def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[P
                 if p in seen:
                     continue
                 if _is_cghignored(p, repo_root):
+                    continue
+                if subrepos and is_under_any(p, subrepos):
                     continue
                 out.append(p)
                 seen.add(p)
@@ -703,13 +717,21 @@ def _discover_find(repo_root: Path) -> list[Path]:
 
 
 def _discover_os_walk(repo_root: Path) -> list[Path]:
-    """Python os.walk — portable, respects _IGNORE_DIRS + .cghignore."""
+    """Python os.walk — portable, respects _IGNORE_DIRS + .cghignore + federated subrepos."""
+    from .federation import child_paths_to_skip, is_under_any
+
+    subrepos = child_paths_to_skip(repo_root)
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+        # Prune subrepo directories so we don't even descend into them
+        if subrepos:
+            dirnames[:] = [d for d in dirnames if not is_under_any(Path(dirpath) / d, subrepos)]
         for filename in filenames:
             p = Path(dirpath) / filename
             if _is_cghignored(p, repo_root):
+                continue
+            if subrepos and is_under_any(p, subrepos):
                 continue
             out.append(p)
     return out
@@ -989,11 +1011,20 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     t0 = time.time()
     _activity_log(repo_root, "incremental_start", str(repo_root))
 
+    from .federation import child_paths_to_skip, is_under_any
+
+    subrepos = child_paths_to_skip(repo_root)
+
     head_shas = git_tree_blob_shas(repo_root)
     if head_shas is None:
         # Not a git repo — fall back to full scan
         _activity_log(repo_root, "incremental_fallback", "no git")
         return {"mode": "fallback_full", **index_repo(repo_root)}
+
+    # Drop any path that lives under a federated subrepo. The subrepo
+    # owns its own index; the parent acts as a passe-plat.
+    if subrepos:
+        head_shas = {rel: sha for rel, sha in head_shas.items() if not is_under_any(repo_root / rel, subrepos)}
 
     conn = get_connection(repo_root)
 
@@ -1054,7 +1085,12 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     def _under_include(path_str: str) -> bool:
         return any(path_str.startswith(root + os.sep) for root in include_roots)
 
-    to_delete = [p for p in stored if p not in head_abs and not _under_include(p)]
+    def _under_subrepo(path_str: str) -> bool:
+        if not subrepos:
+            return False
+        return is_under_any(path_str, subrepos)
+
+    to_delete = [p for p in stored if p not in head_abs and not _under_include(p) and not _under_subrepo(p)]
 
     fts_conn = _get_fts(repo_root) if repo_root else None
 

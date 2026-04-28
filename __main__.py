@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
+from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
 from codegraph.cli.commands_index import (
     cmd_force_index,
@@ -114,6 +115,7 @@ def _print_help():
             [
                 ("watch", "Index + live-watch for file changes"),
                 ("add-dir", "Manage extra directories in the graph"),
+                ("federate", "Federate sub-repos (parent queries their indexes read-only)"),
                 ("force-index", "Index files bypassing .gitignore (requires confirmation)"),
             ],
         ),
@@ -336,6 +338,14 @@ def main() -> None:
     # --- graph + add-dir ---
     register_graph_parser(sub)
 
+    # --- federate ---
+    p = sub.add_parser("federate", help="Manage federated subrepos (parent queries their indexes read-only)")
+    p.add_argument(
+        "action", nargs="?", choices=["add", "remove", "list", "verify"], default="list", help="Action (default: list)"
+    )
+    p.add_argument("paths", nargs="*", help="Subrepo paths (for add / remove)")
+    p.add_argument("--root", default=os.getcwd())
+
     # --- force-index ---
     p = sub.add_parser("force-index", help="Force-index files/dirs (bypasses .gitignore)")
     p.add_argument("paths", nargs="+", help="Files or directories")
@@ -376,6 +386,7 @@ def main() -> None:
         "compact": cmd_compact,
         "graph": cmd_graph,
         "add-dir": cmd_add_dir,
+        "federate": cmd_federate,
         "force-index": cmd_force_index,
     }
 

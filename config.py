@@ -157,6 +157,12 @@ class CodegraphConfig:
     log_max_mb: int = 5
     log_backup_count: int = 3
 
+    # Federation: child sub-repos with their own .codegraph/ index. The
+    # parent acts as a passe-plat — indexes only files outside any subrepo,
+    # then federates queries (read-only) to the children's databases.
+    # Paths are relative to project_root or absolute.
+    subrepos: list[str] = field(default_factory=list)
+
     # Ruflo
     ruflo_enabled: bool | None = None  # None = auto-detect
 
@@ -228,6 +234,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.log_max_mb = int(cg["log_max_mb"])
     if "log_backup_count" in cg:
         config.log_backup_count = int(cg["log_backup_count"])
+    if "subrepos" in cg:
+        config.subrepos = list(cg["subrepos"])
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:

@@ -23,6 +23,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from .federation import child_paths_to_skip, is_under_any
 from .indexer import _IGNORE_DIRS, _is_cghignored, index_file
 from .parsers import is_supported
 
@@ -41,6 +42,9 @@ class _CodeGraphHandler(FileSystemEventHandler):
         self._root = repo_root
         self._timers: dict[str, threading.Timer] = {}
         self._lock = threading.Lock()
+        # Cached at startup. Federation membership rarely changes mid-session;
+        # restart the owner if the user runs `cgh federate add`.
+        self._subrepos: list[Path] = child_paths_to_skip(repo_root)
 
     def _should_ignore(self, path: str) -> bool:
         p = Path(path)
@@ -58,7 +62,11 @@ class _CodeGraphHandler(FileSystemEventHandler):
         if _is_cghignored(p, self._root):
             return True
 
-        # 4. git check-ignore (cached)
+        # 4. Federated subrepo — owned by its own index
+        if self._subrepos and is_under_any(p, self._subrepos):
+            return True
+
+        # 5. git check-ignore (cached)
         if self._is_gitignored(path):
             return True
 

@@ -226,13 +226,19 @@ def cmd_serve(args) -> None:
         )
         return
 
-    # --stop: kill owner + unregister this worker + remove keepalive marker
+    # --stop: kill owner + unregister this worker + remove keepalive marker.
+    # Wait for the owner to actually exit so a follow-up `cgh serve` doesn't
+    # race against a still-shutting-down uvicorn (would falsely report
+    # "Owner already running on port X").
     if getattr(args, "stop", False):
+        import time as _time
         from pathlib import Path
 
         from codegraph.ipc import (
             is_owner_alive,
+            is_pid_alive,
             owner_pidfile,
+            port_file,
             unregister_keepalive,
             unregister_worker,
         )
@@ -245,9 +251,25 @@ def cmd_serve(args) -> None:
             try:
                 pid = int(pf.read_text().strip())
                 os.kill(pid, 15)  # SIGTERM
-                console.print(f"[green]Owner (pid {pid}) stopped.[/green]")
+                # Wait up to 5s for the process to die. The owner removes
+                # its own pidfile/portfile via atexit on a clean exit.
+                deadline = _time.time() + 5.0
+                while _time.time() < deadline and is_pid_alive(pid):
+                    _time.sleep(0.1)
+                if is_pid_alive(pid):
+                    os.kill(pid, 9)  # SIGKILL — escalate
+                    _time.sleep(0.2)
+                    console.print(f"[yellow]Owner (pid {pid}) force-killed after timeout.[/yellow]")
+                else:
+                    console.print(f"[green]Owner (pid {pid}) stopped.[/green]")
+                # Belt-and-braces: drop stale ipc files if the owner crashed
+                # without running its atexit.
+                pf.unlink(missing_ok=True)
+                port_file(root_path).unlink(missing_ok=True)
             except (ValueError, ProcessLookupError, PermissionError):
                 console.print("[yellow]Owner already stopped.[/yellow]")
+                pf.unlink(missing_ok=True)
+                port_file(root_path).unlink(missing_ok=True)
         elif is_owner_alive(root_path):
             console.print("[yellow]Owner pidfile missing but port responds.[/yellow]")
         else:

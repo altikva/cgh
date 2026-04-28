@@ -18,6 +18,8 @@
 #   ignore_dirs = [".git", "node_modules", "__pycache__", ".venv"]
 #   ignore_patterns = ["*.min.js", "*.bundle.js"]
 #   max_file_size_kb = 500
+#   log_max_mb = 5            # rotate owner.log at this size; 0 disables
+#   log_backup_count = 3      # keep this many owner.log.N backups; 0 truncates
 #
 #   [parsers]
 #   enabled = ["python", "typescript", "terraform", "markdown"]
@@ -151,6 +153,10 @@ class CodegraphConfig:
     auto_watch: bool = True
     reindex_on_start: bool = True
 
+    # Owner log rotation (applied at owner spawn time)
+    log_max_mb: int = 5
+    log_backup_count: int = 3
+
     # Ruflo
     ruflo_enabled: bool | None = None  # None = auto-detect
 
@@ -218,6 +224,10 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.max_file_size_kb = cg["max_file_size_kb"]
     if "include_dirs" in cg:
         config.include_dirs = list(cg["include_dirs"])
+    if "log_max_mb" in cg:
+        config.log_max_mb = int(cg["log_max_mb"])
+    if "log_backup_count" in cg:
+        config.log_backup_count = int(cg["log_backup_count"])
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:

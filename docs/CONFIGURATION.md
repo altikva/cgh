@@ -44,6 +44,14 @@ max_file_size_kb = 500
 # Useful for multi-repo setups. Add with: cgh add-dir add ../frontend
 # extra_dirs = ["../ondonne-frontend", "../ondonne-infra"]
 
+# Owner log rotation (.codegraph/owner.log). Checked at owner spawn time —
+# owners restart often (stop/start, --reindex, new sessions) so spawn-time
+# rotation bounds disk use without an interceptor process.
+# log_max_mb = 0       disables rotation entirely
+# log_backup_count = 0 truncates instead of keeping backups
+log_max_mb = 5
+log_backup_count = 3
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.
@@ -77,6 +85,8 @@ reindex_on_start = true
 | `ignore_patterns` | `list[str]` | See defaults below | Glob patterns for files to skip |
 | `max_file_size_kb` | `int` | `500` | Max file size in KB |
 | `extra_dirs` | `list[str]` | `[]` | Extra directories to index (relative paths) |
+| `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
+| `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 
 **Default `ignore_dirs`:**
 

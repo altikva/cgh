@@ -162,6 +162,61 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def rotate_owner_log(repo_root: str | Path) -> None:
+    """
+    Rotate .codegraph/owner.log if it exceeds `log_max_mb`. Keeps the
+    last `log_backup_count` rotations as `owner.log.1` … `owner.log.N`.
+
+    Called at owner spawn — owners restart often enough (stop/start, new
+    sessions, --reindex) that this bounds disk use without needing an
+    interceptor process between owner stdout and the log file.
+    """
+    from codegraph.config import load_config
+
+    log_path = Path(repo_root) / ".codegraph" / "owner.log"
+    if not log_path.exists():
+        return
+
+    cfg = load_config(repo_root)
+    max_bytes = max(0, cfg.log_max_mb) * 1024 * 1024
+    backup_count = max(0, cfg.log_backup_count)
+
+    # max_mb=0 disables rotation entirely (truncate-only would lose data
+    # without warning, so we just no-op).
+    if max_bytes == 0:
+        return
+
+    try:
+        size = log_path.stat().st_size
+    except OSError:
+        return
+    if size < max_bytes:
+        return
+
+    # Roll: owner.log.{N-1} -> owner.log.{N}, ..., owner.log -> owner.log.1
+    # Drop the oldest if it exists.
+    if backup_count == 0:
+        log_path.unlink(missing_ok=True)
+        return
+
+    oldest = log_path.with_suffix(f".log.{backup_count}")
+    oldest.unlink(missing_ok=True)
+    for i in range(backup_count - 1, 0, -1):
+        src = log_path.with_suffix(f".log.{i}")
+        dst = log_path.with_suffix(f".log.{i + 1}")
+        if src.exists():
+            try:
+                src.rename(dst)
+            except OSError:
+                pass
+    try:
+        log_path.rename(log_path.with_suffix(".log.1"))
+    except OSError:
+        # If rename fails (e.g. file held open on Windows) we bail rather
+        # than truncate — losing logs silently is worse than a big file.
+        pass
+
+
 def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None:
     """
     Launch `cgh _serve_owner` as a detached background process.
@@ -173,6 +228,9 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
 
     # Clear any stale state
     port_file(repo_root).unlink(missing_ok=True)
+
+    # Rotate the log if it grew too large since the last owner exit.
+    rotate_owner_log(repo_root)
 
     cmd = [sys.executable, "-m", "codegraph", "_serve_owner", "--root", str(repo_root)]
     if watch:

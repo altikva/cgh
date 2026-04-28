@@ -190,6 +190,56 @@ def _incremental_via_owner(
     console_obj.print("  [green]+[/green] owner completed the scan")
 
 
+def _detect_existing_subrepos(root: Path, max_depth: int = 4) -> list[Path]:
+    """
+    Walk the project up to `max_depth` levels deep looking for nested
+    directories that already have a `.codegraph/` of their own. These are
+    candidates to federate. Skips the parent's own .codegraph/ and common
+    ignore dirs (node_modules, .venv, …) for speed.
+    """
+    skip_dirs = {
+        ".git",
+        ".codegraph",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".terraform",
+        "dist",
+        "build",
+        ".next",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+    found: list[Path] = []
+
+    def walk(d: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = list(d.iterdir())
+        except (OSError, PermissionError):
+            return
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            if entry.name in skip_dirs or entry.name.startswith("."):
+                continue
+            if entry == root / ".codegraph":
+                continue
+            # Found a nested .codegraph/ → it's a candidate subrepo
+            if (entry / ".codegraph").is_dir() and entry != root:
+                found.append(entry.resolve())
+                # Don't descend further — subrepos federate as a whole
+                continue
+            walk(entry, depth + 1)
+
+    walk(root, 0)
+    return found
+
+
 def _detect_existing_state(root: Path) -> dict:
     """
     Probe the project for existing codegraph state so `cgh init` can
@@ -540,13 +590,62 @@ def cmd_init(args) -> None:
                         console.print(f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]")
                 console.print()
 
+    # -- Step 3d: Detect already-initialized subrepos --
+    # Look for nested directories that already have their own .codegraph/.
+    # Each is a candidate to federate: the parent will skip indexing them
+    # and instead query their own DBs read-only at runtime. Crucial for
+    # workspaces containing multiple git repos — without this, the parent
+    # would count and try to index every node_modules + child source tree.
+    detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
+    if detected_subrepos:
+        console.print(
+            f"  [bold]Detected {len(detected_subrepos)} already-initialized subrepo(s) inside this project:[/bold]\n"
+        )
+        for s in detected_subrepos:
+            try:
+                rel = s.relative_to(root)
+                shown = f"./{rel}"
+            except ValueError:
+                shown = str(s)
+            git_marker = "[dim](git)[/dim]" if (s / ".git").exists() else ""
+            console.print(f"    [cyan]>[/cyan] {shown}  {git_marker}")
+        console.print()
+        console.print(
+            "  [dim]If federated, the parent will skip indexing these and "
+            "fan out queries to their existing indexes (read-only).[/dim]\n"
+        )
+        if (
+            args.yes
+            or questionary.confirm(
+                "Federate them now?",
+                default=True,
+                style=cg_style,
+            ).ask()
+        ):
+            from codegraph.federation import add_subrepo
+
+            for s in detected_subrepos:
+                try:
+                    add_subrepo(root, s)
+                    console.print(f"    [green]+[/green] federated {s.name}")
+                except ValueError as exc:
+                    console.print(f"    [yellow]⚠[/yellow] {s.name}: {exc}")
+            console.print()
+        else:
+            console.print("  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n")
+
     # -- Step 4: Detect parseable files --
     # Use git ls-files to match what the real indexer will process
     # (respects .gitignore). Fall back to glob if not a git repo.
+    from codegraph.federation import child_paths_to_skip, is_under_any
     from codegraph.parsers import get_parser_info
 
     parsers = get_parser_info()
     ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
+
+    # Federation skip list — if the user federated subrepos in step 3d above,
+    # they should NOT contribute to the file count.
+    skip_paths = child_paths_to_skip(root)
 
     file_counts: dict[str, int] = {}
     try:
@@ -561,6 +660,10 @@ def cmd_init(args) -> None:
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
+                if not line:
+                    continue
+                if skip_paths and is_under_any(root / line, skip_paths):
+                    continue
                 suffix = Path(line).suffix.lower()
                 lang = ext_to_lang.get(suffix)
                 if lang:
@@ -568,11 +671,16 @@ def cmd_init(args) -> None:
         else:
             raise RuntimeError("git ls-files failed")
     except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
-        # Fallback — glob from project root (will overcount but better than nothing)
+        # Fallback — glob from project root. Filter out subrepo paths so
+        # the count reflects what the indexer will actually process.
         for info in parsers:
             count = 0
             for ext in info["extensions"]:
-                count += len(glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True))
+                for match in glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True):
+                    full = root / match
+                    if skip_paths and is_under_any(full, skip_paths):
+                        continue
+                    count += 1
             if count > 0:
                 file_counts[info["lang"]] = count
 

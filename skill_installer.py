@@ -71,6 +71,40 @@ than reading.
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)
 
+**Federation — multi-repo workspaces**
+
+When this project declares `subrepos = […]` in `.codegraph/config.toml`
+(check via `cgh federate list`), every read tool above transparently
+fans out to each subrepo's read-only DB and aggregates results. You
+don't call extra tools — same `symbol_lookup`, same `find_callers`,
+same `pattern_search`. What changes is the response shape:
+
+- **Every result has a `scope` field**: `"parent"` or `"<subrepo-name>"`.
+  Use it to disambiguate when the same symbol exists in multiple repos
+  (common for utility names like `init`, `Config`, `handler`), and to
+  know which working tree to pass to `Read` — child symbols live under
+  the child's path, not the parent's.
+- **Cross-repo edges are NOT inferred**. `find_callers("foo")` in
+  subrepo A won't list callers from subrepo B. `subgraph` import edges
+  stop at repo boundaries. Treat each scope as an independent island.
+  When tracing a call chain across repos, run the tool once per scope
+  (the federation already does this, but interpret results accordingly).
+- **`find_dead_code` is per-scope**. A symbol marked dead in scope X may
+  actually be called from scope Y. The response has an explicit `note`
+  field reminding you. Never delete based on a single-scope dead verdict
+  in a federated workspace.
+- **Partial results**: if a child DB is locked (its own owner is
+  reindexing) or schema-mismatched, the response has `partial: true` and
+  `warnings: [{scope, error}]`. Results are useful but incomplete for
+  that scope. Re-query in a moment if you need full coverage.
+- **NOT federated**: `knowledge_*`, `memory_*`, `plan_*`. Each project
+  keeps its own. `knowledge_search` from the parent only sees the
+  parent's stored entries — to learn from a child's knowledge, you'd
+  need to switch context to that child or import explicitly.
+- **Setup**: `cgh federate add <path>`, `cgh federate list`,
+  `cgh federate verify`. Init auto-detects nested `.codegraph/` dirs and
+  offers federation when run from a workspace folder.
+
 **Context lifecycle — persist before compaction, reload after**
 
 Your context window is finite. codegraph knowledge survives across

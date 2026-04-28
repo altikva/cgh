@@ -14,7 +14,8 @@ import json
 
 
 def register(mcp) -> None:
-    from codegraph.server import _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -50,12 +51,12 @@ def register(mcp) -> None:
             tags=tags,
             file_refs=file_refs,
             session_id=session_id,
-            repo_root=_root,
+            repo_root=_srv._root,
         )
         try:
             from codegraph.activity import log as _log
 
-            _log(_root, "knowledge_record", f"id={entry_id} kind={kind} title={title[:60]}")
+            _log(_srv._root, "knowledge_record", f"id={entry_id} kind={kind} title={title[:60]}")
         except Exception:
             pass
         return json.dumps({"id": entry_id, "kind": kind, "title": title})
@@ -72,7 +73,7 @@ def register(mcp) -> None:
         """
         from codegraph.call_log import knowledge_search as _search
 
-        hits = _search(query, kind=kind or None, limit=limit, repo_root=_root)
+        hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
         return json.dumps(
             {"query": query, "kind": kind or None, "total": len(hits), "hits": hits},
             indent=2,
@@ -105,13 +106,13 @@ def register(mcp) -> None:
             session_id=session_id or None,
             limit=limit,
             offset=offset,
-            repo_root=_root,
+            repo_root=_srv._root,
         )
         total = knowledge_count(
             kind=kind or None,
             tag=tag or None,
             session_id=session_id or None,
-            repo_root=_root,
+            repo_root=_srv._root,
         )
         has_more = (offset + len(entries)) < total
         return json.dumps(
@@ -141,7 +142,7 @@ def register(mcp) -> None:
         """
         from codegraph.call_log import knowledge_terms as _terms
 
-        terms = _terms(min_count=min_count, repo_root=_root)
+        terms = _terms(min_count=min_count, repo_root=_srv._root)
         return json.dumps(
             {
                 "total": len(terms),
@@ -156,7 +157,7 @@ def register(mcp) -> None:
         """Delete a single knowledge entry by id (obtained from search/list)."""
         from codegraph.call_log import knowledge_forget as _forget
 
-        ok = _forget(entry_id=entry_id, repo_root=_root)
+        ok = _forget(entry_id=entry_id, repo_root=_srv._root)
         return json.dumps({"id": entry_id, "forgotten": ok})
 
     @mcp.tool()
@@ -186,12 +187,12 @@ def register(mcp) -> None:
             tags=tags or "compaction,session-digest",
             file_refs=file_refs,
             session_id=session_id,
-            repo_root=_root,
+            repo_root=_srv._root,
         )
         try:
             from codegraph.activity import log as _log
 
-            _log(_root, "session_compact", f"{session_id} id={entry_id}")
+            _log(_srv._root, "session_compact", f"{session_id} id={entry_id}")
         except Exception:
             pass
         return json.dumps({"id": entry_id, "session_id": session_id, "title": title or f"Session digest {session_id}"})

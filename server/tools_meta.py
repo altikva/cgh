@@ -13,7 +13,8 @@ import json
 
 def register(mcp) -> None:
     """Register meta tools on the given FastMCP instance."""
-    from codegraph.server import _get_conn, _get_fts, _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _get_conn, _get_fts, _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -141,7 +142,7 @@ def register(mcp) -> None:
             served_know = [("knowledge", str(k.id)) for k in ctx.knowledge_docs]
             all_entities = served_nodes + served_mem + served_plans + served_know
 
-            unseen = set(filter_unseen(session_id, all_entities, repo_root=_root))
+            unseen = set(filter_unseen(session_id, all_entities, repo_root=_srv._root))
             before = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
 
             ctx.nodes = [n for n in ctx.nodes if ("symbol", f"{n.file_path}:{n.start_line}") in unseen]
@@ -152,7 +153,7 @@ def register(mcp) -> None:
             after = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs) + len(ctx.knowledge_docs)
             if before != after:
                 try:
-                    _activity_log(_root, "session_dedup", f"{session_id} hid {before - after}")
+                    _activity_log(_srv._root, "session_dedup", f"{session_id} hid {before - after}")
                 except Exception:
                     pass
 
@@ -164,7 +165,7 @@ def register(mcp) -> None:
                 + [("knowledge", str(k.id)) for k in ctx.knowledge_docs]
             )
             if now_served:
-                record_mentions(session_id, now_served, repo_root=_root)
+                record_mentions(session_id, now_served, repo_root=_srv._root)
 
             # Recompute derived fields after filtering
             ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
@@ -197,7 +198,7 @@ def register(mcp) -> None:
         """
         from codegraph.call_log import clear_session
 
-        removed = clear_session(session_id, repo_root=_root)
+        removed = clear_session(session_id, repo_root=_srv._root)
         return json.dumps({"session_id": session_id, "cleared": removed})
 
     @mcp.tool()
@@ -209,5 +210,5 @@ def register(mcp) -> None:
         """
         from codegraph.call_log import get_stats
 
-        stats = get_stats(_root)
+        stats = get_stats(_srv._root)
         return json.dumps(stats, indent=2)

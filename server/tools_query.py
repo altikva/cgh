@@ -17,7 +17,8 @@ from codegraph.core.utils import rows as _rows
 
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
-    from codegraph.server import _get_conn, _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _get_conn, _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -47,7 +48,6 @@ def register(mcp) -> None:
         Example: pattern_search(r"@router\\.(get|post)", glob="*.py")
                  → list of route declarations with line numbers.
         """
-        import codegraph.server as _srv
         from codegraph.pattern import pattern_search as _search
 
         hits, backend = _search(
@@ -198,8 +198,8 @@ def register(mcp) -> None:
         Pass a path relative to the repo root or absolute.
         """
         conn = _get_conn()
-        if not os.path.isabs(file_path) and _root:
-            file_path = str(_root / file_path)
+        if not os.path.isabs(file_path) and _srv._root:
+            file_path = str(_srv._root / file_path)
 
         r = conn.execute(
             """MATCH (src:File {path:$p})-[i:IMPORTS]->(tgt:File)
@@ -279,8 +279,8 @@ def register(mcp) -> None:
         Useful for understanding blast radius before editing a file.
         """
         conn = _get_conn()
-        if not os.path.isabs(file_path) and _root:
-            file_path = str(_root / file_path)
+        if not os.path.isabs(file_path) and _srv._root:
+            file_path = str(_srv._root / file_path)
 
         if depth == 1:
             r = conn.execute(

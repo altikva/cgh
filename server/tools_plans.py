@@ -12,7 +12,8 @@ import json
 
 
 def register(mcp) -> None:
-    from codegraph.server import _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -31,7 +32,7 @@ def register(mcp) -> None:
         from codegraph.fts import get_fts_conn
         from codegraph.fts import plan_search as _search
 
-        conn = get_fts_conn(_root)
+        conn = get_fts_conn(_srv._root)
         hits = _search(conn, query, limit=limit)
         return json.dumps(
             {
@@ -67,7 +68,7 @@ def register(mcp) -> None:
         """
         from codegraph.fts import get_fts_conn, list_plan_entries
 
-        conn = get_fts_conn(_root)
+        conn = get_fts_conn(_srv._root)
         hits = list_plan_entries(conn, agent_only=agent_only, limit=limit)
         return json.dumps(
             {
@@ -96,5 +97,5 @@ def register(mcp) -> None:
         """
         from codegraph.plan_index import scan_plan_dir
 
-        stats = scan_plan_dir(_root, verbose=False)
+        stats = scan_plan_dir(_srv._root, verbose=False)
         return json.dumps(stats, indent=2)

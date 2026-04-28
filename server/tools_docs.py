@@ -16,7 +16,8 @@ from codegraph.core.utils import rows as _rows
 
 def register(mcp) -> None:
     """Register documentation tools on the given FastMCP instance."""
-    from codegraph.server import _get_conn, _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _get_conn, _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -86,8 +87,8 @@ def register(mcp) -> None:
         Shows the hierarchical structure of sections with line numbers.
         """
         conn = _get_conn()
-        if not os.path.isabs(file_path) and _root:
-            file_path = str(_root / file_path)
+        if not os.path.isabs(file_path) and _srv._root:
+            file_path = str(_srv._root / file_path)
 
         r = conn.execute(
             "MATCH (s:MdSection) WHERE s.file_path = $p "

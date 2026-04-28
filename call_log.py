@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,17 +22,44 @@ _LOG_FILE = "call_log.db"
 
 _conn: sqlite3.Connection | None = None
 
+# This connection is shared across asyncio MCP tool threads, watcher threads,
+# and the main owner thread. Sqlite3 in Python forbids cross-thread reuse
+# unless check_same_thread=False AND callers serialize themselves. This lock
+# guards every operation against the shared connection.
+_LOG_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    """Serialize all access to the shared sqlite3 connection."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LOG_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
 
 def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     global _conn
     if _conn is not None:
         return _conn
 
+    # Schema bootstrap below races if two threads first-touch concurrently.
+    with _LOG_LOCK:
+        if _conn is not None:
+            return _conn
+        return _init_conn(repo_root)
+
+
+def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
+    global _conn
     root = Path(repo_root) if repo_root else Path.cwd()
     db_dir = root / _DB_DIR
     db_dir.mkdir(parents=True, exist_ok=True)
 
-    _conn = sqlite3.connect(str(db_dir / _LOG_FILE))
+    _conn = sqlite3.connect(str(db_dir / _LOG_FILE), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS call_log (
@@ -136,6 +164,7 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 
+@_locked
 def filter_unseen(
     session_id: str,
     entities: list[tuple[str, str]],
@@ -165,6 +194,7 @@ def filter_unseen(
         cur.close()
 
 
+@_locked
 def record_mentions(
     session_id: str,
     entities: list[tuple[str, str]],
@@ -183,6 +213,7 @@ def record_mentions(
     return len(entities)
 
 
+@_locked
 def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
     """Wipe the dedup cache for a specific session (e.g. at session end)."""
     if not session_id:
@@ -201,6 +232,7 @@ def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
 _VALID_KINDS = ("pattern", "decision", "gotcha", "style", "glossary", "note")
 
 
+@_locked
 def knowledge_record(
     title: str,
     body: str,
@@ -234,6 +266,7 @@ def knowledge_record(
     return int(row_id or 0)
 
 
+@_locked
 def knowledge_search(
     query: str,
     kind: str | None = None,
@@ -274,6 +307,7 @@ def knowledge_search(
     return out
 
 
+@_locked
 def knowledge_list(
     kind: str | None = None,
     tag: str | None = None,
@@ -305,6 +339,7 @@ def knowledge_list(
     return [_knowledge_row_to_dict(row, score=row[7]) for row in conn.execute(sql, params).fetchall()]
 
 
+@_locked
 def knowledge_count(
     kind: str | None = None,
     tag: str | None = None,
@@ -330,6 +365,7 @@ def knowledge_count(
     return int(conn.execute(sql, params).fetchone()[0])
 
 
+@_locked
 def knowledge_terms(
     min_count: int = 1,
     repo_root: str | Path | None = None,
@@ -352,6 +388,7 @@ def knowledge_terms(
     )
 
 
+@_locked
 def knowledge_forget(
     entry_id: int,
     repo_root: str | Path | None = None,
@@ -381,6 +418,7 @@ def _knowledge_row_to_dict(row, score: float = 0.0) -> dict:
     }
 
 
+@_locked
 def log_call(
     tool: str,
     args: dict,
@@ -439,6 +477,7 @@ def track_call(tool: str, args: dict, repo_root: str | Path | None = None):
         )
 
 
+@_locked
 def get_stats(repo_root: str | Path | None = None) -> dict:
     """Aggregate call statistics."""
     conn = _get_conn(repo_root)
@@ -513,6 +552,7 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
     }
 
 
+@_locked
 def get_logs(
     repo_root: str | Path | None = None,
     tool: str | None = None,
@@ -555,6 +595,7 @@ def get_logs(
     ]
 
 
+@_locked
 def clear_logs(repo_root: str | Path | None = None) -> int:
     """Clear all call logs. Returns count of deleted rows."""
     conn = _get_conn(repo_root)

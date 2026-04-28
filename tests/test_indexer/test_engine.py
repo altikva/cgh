@@ -47,8 +47,8 @@ class TestIndexFile:
         assert "DonationHandler" in cls_names
 
     def test_index_unsupported_extension(self, tmp_path):
-        f = tmp_path / "data.json"
-        f.write_text("{}")
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"\x00\x01\x02")
         ok = index_file(f, tmp_path)
         assert ok is False
 

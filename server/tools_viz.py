@@ -19,7 +19,8 @@ from codegraph.core.utils import safe_id as _safe_id
 
 def register(mcp) -> None:
     """Register visualization tools on the given FastMCP instance."""
-    from codegraph.server import _get_conn, _logged_tool, _root, _short_path
+    import codegraph.server as _srv
+    from codegraph.server import _get_conn, _logged_tool, _short_path
 
     # -------------------------------------------------------------------
     # Internal diagram generators (use _short_path which depends on _root)
@@ -27,8 +28,8 @@ def register(mcp) -> None:
 
     def _viz_file_imports(conn, file_path: str, max_nodes: int, fmt: str) -> str:
         if file_path:
-            if not os.path.isabs(file_path) and _root:
-                file_path = str(_root / file_path)
+            if not os.path.isabs(file_path) and _srv._root:
+                file_path = str(_srv._root / file_path)
             r = conn.execute(
                 """MATCH (src:File {path:$p})-[:IMPORTS]->(dep:File)
                    RETURN src.path AS src, dep.path AS tgt
@@ -163,8 +164,8 @@ def register(mcp) -> None:
         if not file_path:
             return "graph TD\n  ERR[file_path required for file_symbols scope]"
 
-        if not os.path.isabs(file_path) and _root:
-            file_path = str(_root / file_path)
+        if not os.path.isabs(file_path) and _srv._root:
+            file_path = str(_srv._root / file_path)
 
         short = _short_path(file_path)
         file_id = _safe_id(short)
@@ -223,8 +224,8 @@ def register(mcp) -> None:
 
     def _viz_doc_structure(conn, file_path: str, max_nodes: int, fmt: str) -> str:
         if file_path:
-            if not os.path.isabs(file_path) and _root:
-                file_path = str(_root / file_path)
+            if not os.path.isabs(file_path) and _srv._root:
+                file_path = str(_srv._root / file_path)
             r = conn.execute(
                 "MATCH (s:MdSection) WHERE s.file_path = $p "
                 "RETURN s.id, s.title, s.level, s.start_line, s.file_path "
@@ -308,7 +309,7 @@ def register(mcp) -> None:
 
         if fmt == "mermaid":
             lines = ["graph TD"]
-            lines.append(f'  REPO["{_root.name}"]:::repo')
+            lines.append(f'  REPO["{_srv._root.name if _srv._root else "repo"}"]:::repo')
 
             for ls in lang_stats:
                 lang_id = _safe_id(ls["lang"] or "unknown")
@@ -331,7 +332,11 @@ def register(mcp) -> None:
             lines.append("  classDef hotfile fill:#fff3e0,stroke:#e65100")
             return "\n".join(lines)
         else:
-            lines = ["digraph overview {", "  rankdir=TD;", f'  repo [label="{_root.name}",shape=box3d];']
+            lines = [
+                "digraph overview {",
+                "  rankdir=TD;",
+                f'  repo [label="{_srv._root.name if _srv._root else "repo"}",shape=box3d];',
+            ]
             for ls in lang_stats:
                 lines.append(f'  "{ls["lang"]}" [label="{ls["lang"]}: {ls["cnt"]} files"];')
                 lines.append(f'  repo -> "{ls["lang"]}";')
@@ -447,15 +452,15 @@ def register(mcp) -> None:
 
         fts_count = 0
         try:
-            fts_conn = get_fts_conn(_root)
+            fts_conn = get_fts_conn(_srv._root)
             fts_count = fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         except Exception:
             pass
 
         ss = {}
         try:
-            if _root is not None:
-                ss = _scan_status(_root)
+            if _srv._root is not None:
+                ss = _scan_status(_srv._root)
                 # Trim changed_files for token economy in polling
                 if isinstance(ss.get("changed_files"), list):
                     n = len(ss["changed_files"])

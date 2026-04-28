@@ -19,7 +19,8 @@ from codegraph.core.utils import short_path as _short_path
 
 
 def register(mcp) -> None:
-    from codegraph.server import _get_conn, _logged_tool, _root
+    import codegraph.server as _srv
+    from codegraph.server import _get_conn, _logged_tool
 
     @mcp.tool()
     @_logged_tool
@@ -58,7 +59,7 @@ def register(mcp) -> None:
             layer = row.get("f.layer") or "other"
             role = row.get("f.role") or "other"
             entry = {
-                "path": _short_path(row["f.path"], _root),
+                "path": _short_path(row["f.path"], _srv._root),
                 "lang": row.get("f.lang"),
                 "module_doc": (row.get("f.module_doc") or "")[:180],
             }
@@ -113,7 +114,7 @@ def register(mcp) -> None:
             if k in p.lower() or k in doc.lower() or k == (role or "").lower():
                 hits_by_role[role].append(
                     {
-                        "path": _short_path(p, _root),
+                        "path": _short_path(p, _srv._root),
                         "layer": row.get("f.layer"),
                         "module_doc": doc[:160],
                     }
@@ -178,7 +179,7 @@ def register(mcp) -> None:
                     "method": mth,
                     "path": url,
                     "handler": row.get("fn.name"),
-                    "file": _short_path(row["e.file_path"], _root),
+                    "file": _short_path(row["e.file_path"], _srv._root),
                     "line": row.get("e.start_line"),
                 }
             )

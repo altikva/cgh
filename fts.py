@@ -14,11 +14,18 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 _DB_DIR = ".codegraph"
 _FTS_FILE = "fts.db"
+
+# The cached connection (see indexer._get_fts) is shared across watcher Timer
+# threads, MCP tool threads, and the main owner thread. SQLite forbids that
+# unless check_same_thread=False AND callers serialize their own writes.
+# This lock guards every operation against the shared connection.
+_FTS_LOCK = threading.RLock()
 
 
 @dataclass
@@ -39,7 +46,10 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     db_dir.mkdir(parents=True, exist_ok=True)
 
     db_path = db_dir / _FTS_FILE
-    conn = sqlite3.connect(str(db_path))
+    # check_same_thread=False because this connection is cached and reused
+    # from watcher Timer threads + MCP tool threads. We serialize writes
+    # ourselves via _FTS_LOCK.
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS symbols (
@@ -105,34 +115,36 @@ def upsert_symbol(
     docstring: str = "",
 ) -> None:
     """Insert or replace a symbol in both the main table and FTS index."""
-    conn.execute(
-        "INSERT OR REPLACE INTO symbols (sym_id, kind, name, file_path, start_line, end_line, docstring) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sym_id, kind, name, file_path, start_line, end_line, docstring),
-    )
-    # Rebuild FTS for this row
-    rowid = conn.execute("SELECT rowid FROM symbols WHERE sym_id = ?", (sym_id,)).fetchone()
-    if rowid:
+    with _FTS_LOCK:
         conn.execute(
-            "INSERT OR REPLACE INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
-            (rowid[0], _tokenize(name), docstring),
+            "INSERT OR REPLACE INTO symbols (sym_id, kind, name, file_path, start_line, end_line, docstring) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sym_id, kind, name, file_path, start_line, end_line, docstring),
         )
+        rowid = conn.execute("SELECT rowid FROM symbols WHERE sym_id = ?", (sym_id,)).fetchone()
+        if rowid:
+            conn.execute(
+                "INSERT OR REPLACE INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
+                (rowid[0], _tokenize(name), docstring),
+            )
 
 
 def delete_file_symbols(conn: sqlite3.Connection, file_path: str) -> None:
     """Remove all symbols for a file from both tables."""
-    rows = conn.execute("SELECT rowid FROM symbols WHERE file_path = ?", (file_path,)).fetchall()
-    for (rowid,) in rows:
-        conn.execute(
-            "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) VALUES('delete', ?, '', '')",
-            (rowid,),
-        )
-    conn.execute("DELETE FROM symbols WHERE file_path = ?", (file_path,))
+    with _FTS_LOCK:
+        rows = conn.execute("SELECT rowid FROM symbols WHERE file_path = ?", (file_path,)).fetchall()
+        for (rowid,) in rows:
+            conn.execute(
+                "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) VALUES('delete', ?, '', '')",
+                (rowid,),
+            )
+        conn.execute("DELETE FROM symbols WHERE file_path = ?", (file_path,))
 
 
 def commit(conn: sqlite3.Connection) -> None:
     """Commit pending changes."""
-    conn.commit()
+    with _FTS_LOCK:
+        conn.commit()
 
 
 def fts_search(
@@ -164,7 +176,8 @@ def fts_search(
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
 
-        rows = conn.execute(sql, params).fetchall()
+        with _FTS_LOCK:
+            rows = conn.execute(sql, params).fetchall()
         for row in rows:
             results.append(
                 FTSResult(
@@ -193,7 +206,8 @@ def fts_search(
         sql += "LIMIT ?"
         params_like.append(limit)
 
-        rows = conn.execute(sql, params_like).fetchall()
+        with _FTS_LOCK:
+            rows = conn.execute(sql, params_like).fetchall()
         for i, row in enumerate(rows):
             results.append(
                 FTSResult(
@@ -243,26 +257,28 @@ def upsert_memory_entry(
     mtime: float,
 ) -> None:
     """Insert or replace a memory entry in both main table and FTS index."""
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_entries(path, kind, title, body, mtime) VALUES (?, ?, ?, ?, ?)",
-        (path, kind or "other", title or "", body or "", mtime),
-    )
-    rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
-    if rowid:
+    with _FTS_LOCK:
         conn.execute(
-            "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
-            (rowid[0], title or "", body or "", kind or "other"),
+            "INSERT OR REPLACE INTO memory_entries(path, kind, title, body, mtime) VALUES (?, ?, ?, ?, ?)",
+            (path, kind or "other", title or "", body or "", mtime),
         )
+        rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+        if rowid:
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
+                (rowid[0], title or "", body or "", kind or "other"),
+            )
 
 
 def delete_memory_entry(conn: sqlite3.Connection, path: str) -> None:
-    rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
-    if rowid:
-        conn.execute(
-            "INSERT INTO memory_fts(memory_fts, rowid, title, body, kind) VALUES('delete', ?, '', '', '')",
-            (rowid[0],),
-        )
-    conn.execute("DELETE FROM memory_entries WHERE path = ?", (path,))
+    with _FTS_LOCK:
+        rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+        if rowid:
+            conn.execute(
+                "INSERT INTO memory_fts(memory_fts, rowid, title, body, kind) VALUES('delete', ?, '', '', '')",
+                (rowid[0],),
+            )
+        conn.execute("DELETE FROM memory_entries WHERE path = ?", (path,))
 
 
 def memory_search(
@@ -285,7 +301,9 @@ def memory_search(
             params.append(kind)
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
-        for row in conn.execute(sql, params).fetchall():
+        with _FTS_LOCK:
+            rows = conn.execute(sql, params).fetchall()
+        for row in rows:
             out.append(
                 MemoryHit(
                     path=row[0],
@@ -305,7 +323,9 @@ def memory_search(
             params.append(kind)
         sql += "LIMIT ?"
         params.append(limit)
-        for i, row in enumerate(conn.execute(sql, params).fetchall()):
+        with _FTS_LOCK:
+            rows = conn.execute(sql, params).fetchall()
+        for i, row in enumerate(rows):
             out.append(
                 MemoryHit(
                     path=row[0],
@@ -326,9 +346,10 @@ def list_memory_entries(conn: sqlite3.Connection, kind: str | None = None) -> li
         sql += " WHERE kind = ?"
         params.append(kind)
     sql += " ORDER BY mtime DESC"
+    with _FTS_LOCK:
+        rows = conn.execute(sql, params).fetchall()
     return [
-        MemoryHit(path=row[0], kind=row[1], title=row[2], snippet=(row[3] or "")[:240], score=row[4])
-        for row in conn.execute(sql, params).fetchall()
+        MemoryHit(path=row[0], kind=row[1], title=row[2], snippet=(row[3] or "")[:240], score=row[4]) for row in rows
     ]
 
 
@@ -341,38 +362,42 @@ def upsert_plan_entry(
     body: str,
     mtime: float,
 ) -> None:
-    conn.execute(
-        "INSERT OR REPLACE INTO plan_entries(path, slug, agent_id, title, body, mtime) VALUES (?, ?, ?, ?, ?, ?)",
-        (path, slug or "", agent_id or "", title or "", body or "", mtime),
-    )
-    rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
-    if rowid:
+    with _FTS_LOCK:
         conn.execute(
-            "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
-            (rowid[0], title or "", body or "", slug or "", agent_id or ""),
+            "INSERT OR REPLACE INTO plan_entries(path, slug, agent_id, title, body, mtime) VALUES (?, ?, ?, ?, ?, ?)",
+            (path, slug or "", agent_id or "", title or "", body or "", mtime),
         )
+        rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+        if rowid:
+            conn.execute(
+                "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
+                (rowid[0], title or "", body or "", slug or "", agent_id or ""),
+            )
 
 
 def delete_plan_entry(conn: sqlite3.Connection, path: str) -> None:
-    rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
-    if rowid:
-        conn.execute(
-            "INSERT INTO plan_fts(plan_fts, rowid, title, body, slug, agent_id) VALUES('delete', ?, '', '', '', '')",
-            (rowid[0],),
-        )
-    conn.execute("DELETE FROM plan_entries WHERE path = ?", (path,))
+    with _FTS_LOCK:
+        rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+        if rowid:
+            conn.execute(
+                "INSERT INTO plan_fts(plan_fts, rowid, title, body, slug, agent_id) "
+                "VALUES('delete', ?, '', '', '', '')",
+                (rowid[0],),
+            )
+        conn.execute("DELETE FROM plan_entries WHERE path = ?", (path,))
 
 
 def plan_search(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[PlanHit]:
     """BM25 search over plan files."""
     out: list[PlanHit] = []
     try:
-        rows = conn.execute(
-            "SELECT p.path, p.slug, p.agent_id, p.title, p.body, rank AS score "
-            "FROM plan_fts f JOIN plan_entries p ON p.rowid = f.rowid "
-            "WHERE plan_fts MATCH ? ORDER BY rank LIMIT ?",
-            (_tokenize(query), limit),
-        ).fetchall()
+        with _FTS_LOCK:
+            rows = conn.execute(
+                "SELECT p.path, p.slug, p.agent_id, p.title, p.body, rank AS score "
+                "FROM plan_fts f JOIN plan_entries p ON p.rowid = f.rowid "
+                "WHERE plan_fts MATCH ? ORDER BY rank LIMIT ?",
+                (_tokenize(query), limit),
+            ).fetchall()
         for row in rows:
             out.append(
                 PlanHit(
@@ -386,12 +411,12 @@ def plan_search(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[P
             )
     except sqlite3.OperationalError:
         like = f"%{query}%"
-        for i, row in enumerate(
-            conn.execute(
+        with _FTS_LOCK:
+            rows = conn.execute(
                 "SELECT path, slug, agent_id, title, body FROM plan_entries WHERE title LIKE ? OR body LIKE ? LIMIT ?",
                 (like, like, limit),
             ).fetchall()
-        ):
+        for i, row in enumerate(rows):
             out.append(
                 PlanHit(
                     path=row[0],
@@ -412,6 +437,8 @@ def list_plan_entries(conn: sqlite3.Connection, agent_only: bool = False, limit:
         sql += " WHERE agent_id <> ''"
     sql += " ORDER BY mtime DESC LIMIT ?"
     params.append(limit)
+    with _FTS_LOCK:
+        rows = conn.execute(sql, params).fetchall()
     return [
         PlanHit(
             path=row[0],
@@ -421,7 +448,7 @@ def list_plan_entries(conn: sqlite3.Connection, agent_only: bool = False, limit:
             snippet=(row[4] or "")[:240],
             score=row[5],
         )
-        for row in conn.execute(sql, params).fetchall()
+        for row in rows
     ]
 
 

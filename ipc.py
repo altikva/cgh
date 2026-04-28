@@ -60,7 +60,9 @@ def unregister_worker(repo_root: str | Path) -> None:
 def live_workers(repo_root: str | Path) -> list[int]:
     """
     Return PIDs of currently-alive workers. Stale entries (dead PIDs)
-    are pruned from disk as a side effect.
+    are pruned from disk as a side effect. The synthetic "keepalive"
+    marker (used by `cgh serve --background`) counts as one synthetic
+    worker (pid 0) so the owner stays up across Claude sessions.
     """
     wd = workers_dir(repo_root)
     if not wd.exists():
@@ -68,6 +70,9 @@ def live_workers(repo_root: str | Path) -> list[int]:
     alive: list[int] = []
     for entry in wd.iterdir():
         if not entry.is_file():
+            continue
+        if entry.name == "keepalive":
+            alive.append(0)
             continue
         try:
             pid = int(entry.name)
@@ -79,6 +84,23 @@ def live_workers(repo_root: str | Path) -> list[int]:
             # Stale — drop it
             entry.unlink(missing_ok=True)
     return alive
+
+
+def register_keepalive(repo_root: str | Path) -> Path:
+    """Drop a non-pid worker marker that persists across cgh process exits."""
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    marker = wd / "keepalive"
+    marker.write_text("background\n", encoding="utf-8")
+    return marker
+
+
+def unregister_keepalive(repo_root: str | Path) -> None:
+    """Remove the keepalive marker (called by `cgh serve --stop`)."""
+    try:
+        (workers_dir(repo_root) / "keepalive").unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def read_owner_port(repo_root: str | Path) -> int | None:

@@ -189,19 +189,20 @@ def cmd_watch(args) -> None:
 def cmd_serve(args) -> None:
     root = os.path.abspath(args.root)
 
-    # --background: spawn/reuse the owner, register a persistent worker, exit.
+    # --background: spawn/reuse the owner, drop a persistent keepalive
+    # marker (survives this process's exit), then return.
     if getattr(args, "background", False):
         from pathlib import Path
 
         from codegraph.ipc import (
             is_owner_alive,
             read_owner_port,
-            register_worker,
+            register_keepalive,
             spawn_owner,
         )
 
         root_path = Path(root).resolve()
-        register_worker(root_path)
+        register_keepalive(root_path)
 
         if is_owner_alive(root_path):
             port = read_owner_port(root_path)
@@ -218,21 +219,27 @@ def cmd_serve(args) -> None:
             console.print(f"[green]Owner started on port {port}[/green]")
 
         console.print(
-            f"[dim]Worker registered (pid {os.getpid()}). "
-            f"Owner stays alive while workers exist.[/dim]\n"
-            f"[dim]Stop with:[/dim] [cyan]cgh serve --stop[/cyan] [dim]or[/dim] "
-            f"[cyan]pkill -f 'codegraph _serve_owner'[/cyan]"
+            "[dim]Background keepalive registered. "
+            "Owner stays alive across Claude sessions.[/dim]\n"
+            "[dim]Stop with:[/dim] [cyan]cgh serve --stop[/cyan] [dim]or[/dim] "
+            "[cyan]pkill -f 'codegraph _serve_owner'[/cyan]"
         )
         return
 
-    # --stop: kill owner + unregister this worker
+    # --stop: kill owner + unregister this worker + remove keepalive marker
     if getattr(args, "stop", False):
         from pathlib import Path
 
-        from codegraph.ipc import is_owner_alive, owner_pidfile, unregister_worker
+        from codegraph.ipc import (
+            is_owner_alive,
+            owner_pidfile,
+            unregister_keepalive,
+            unregister_worker,
+        )
 
         root_path = Path(root).resolve()
         unregister_worker(root_path)
+        unregister_keepalive(root_path)
         pf = owner_pidfile(root_path)
         if pf.exists():
             try:

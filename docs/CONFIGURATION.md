@@ -52,6 +52,13 @@ max_file_size_kb = 500
 log_max_mb = 5
 log_backup_count = 3
 
+# Federated subrepos — sub-projects with their own .codegraph/ index. The
+# parent indexes only files OUTSIDE these paths and federates queries
+# (read-only) to the children at runtime. Each subrepo can be a separate
+# git repo with its own .gitignore; the parent doesn't try to walk into
+# them. Add via: cgh federate add ../child-repo
+# subrepos = ["./apps/api", "./apps/web", "../shared-lib"]
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.
@@ -87,6 +94,7 @@ reindex_on_start = true
 | `extra_dirs` | `list[str]` | `[]` | Extra directories to index (relative paths) |
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
+| `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
 
 **Default `ignore_dirs`:**
 
@@ -147,6 +155,67 @@ max_file_size_kb = 1000
 [parsers]
 disabled = ["terraform"]
 ```
+
+---
+
+## Federated subrepos
+
+When you have a parent project that contains (or sits next to) several
+sub-projects each with their own `git` repository and their own
+`.codegraph/` index, the parent should NOT try to re-index everything.
+Each sub-repo's `.gitignore` and parsers are self-contained, and re-indexing
+from the parent would either miss files (its `git ls-files` doesn't see the
+children's tracked files) or duplicate work.
+
+The federation model: the parent acts as a **passe-plat**. It indexes only
+files that don't fall under any declared subrepo, and at runtime each MCP
+read tool fans out to the children's `.codegraph/` databases (read-only)
+and aggregates results, tagging each with a `scope` field (`parent`,
+`<child-name>`).
+
+**Setup**
+
+```bash
+# In each subrepo (one-time, by whoever owns that repo)
+cd apps/api && cgh init && cgh index
+
+# In the parent
+cd ../..
+cgh init                           # creates parent's own .codegraph/
+cgh federate add ./apps/api ./apps/web ../shared-lib
+cgh federate list                  # status table per child
+cgh index                          # parent now indexes only its own files
+cgh serve --background --watch     # owner federates queries to children
+```
+
+**What's federated** (read-only, scope-tagged):
+
+| Tool | Aggregation |
+|---|---|
+| `symbol_lookup`, `search_symbols`, `find_callers`, `find_callees` | Concat per scope |
+| `imports_of`, `subgraph` | Concat — cross-repo edges are NOT inferred (each scope's IMPORTS graph is canonical for its own files) |
+| `pattern_search` | Runs ripgrep in each scope's tree |
+| `fts_search` | Concat + sort by score (BM25 not renormalized across repos) |
+| `search_docs`, `doc_outline`, `doc_refs` | Concat |
+| `architecture_overview` | Returns `{by_scope: {parent: {…}, child1: {…}}}` when subrepos present |
+| `domain_map`, `endpoints` | Concat with per-result scope tag |
+| `find_dead_code` | Per-scope analysis with explicit caveat: a symbol "dead" in scope X may be live via cross-repo callers |
+
+**What's NOT federated** (parent-local only):
+- `knowledge_*`, `memory_*`, `plan_*` (each project keeps its own)
+- `index`, `force_index`, `incremental_reindex` (write-side, parent only)
+- `context_for_task`, `session_*`, `call_stats` (parent-local)
+
+**Edge cases**
+
+- Subrepo not initialized → `cgh federate add` warns, skipped at query time
+- Subrepo's Kuzu DB locked by its own owner → that scope returns
+  `error: db unavailable`; results include `partial: true` + `warnings: [...]`
+- Subrepo deleted from disk → marked `unreachable` in `cgh federate list`,
+  silently skipped at query time
+- Federation membership changes mid-session → restart the parent's owner
+  (`cgh serve --stop && cgh serve --background`) to refresh the watcher's
+  cached subrepo list
 
 ---
 

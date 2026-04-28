@@ -21,26 +21,16 @@ def register(mcp) -> None:
     def fts_search(query: str, limit: int = 15, kind: str = "") -> str:
         """
         Full-text search over symbol names AND docstrings using BM25 ranking.
-        Much more powerful than symbol_lookup — handles partial names, keywords
-        from docstrings, camelCase/snake_case splitting.
-
-        Args:
-            query: natural language or partial symbol name
-            limit: max results (default 15)
-            kind: optional filter — "function", "class", "tf_resource", "tf_var"
+        Federated across subrepos. Each result tagged with `scope`. The
+        `limit` is applied per scope; scores are NOT renormalized across
+        repos (BM25 is corpus-relative).
         """
+        from codegraph.federation import for_each_child_fts
         from codegraph.fts import fts_search as _fts
 
-        results = _fts(
-            _get_fts(),
-            query,
-            limit=limit,
-            kind_filter=kind if kind else None,
-        )
-        if not results:
-            return json.dumps({"query": query, "results": []})
-        out = [
-            {
+        def _result_to_dict(r, scope):
+            return {
+                "scope": scope,
                 "kind": r.kind,
                 "name": r.name,
                 "file": r.file_path,
@@ -48,9 +38,41 @@ def register(mcp) -> None:
                 "doc": r.docstring,
                 "score": round(r.score, 4),
             }
-            for r in results
-        ]
-        return json.dumps({"query": query, "results": out}, indent=2)
+
+        all_results: list[dict] = []
+        warnings: list[dict] = []
+
+        # Parent — use cached conn from server
+        try:
+            parent_results = _fts(
+                _get_fts(),
+                query,
+                limit=limit,
+                kind_filter=kind if kind else None,
+            )
+            all_results.extend(_result_to_dict(r, "parent") for r in parent_results)
+        except Exception as exc:
+            warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+
+        # Children — fresh RO conns
+        if _srv._root is not None:
+            for scoped in for_each_child_fts(
+                _srv._root,
+                lambda c, _r: _fts(c, query, limit=limit, kind_filter=kind if kind else None),
+            ):
+                if scoped.error:
+                    warnings.append({"scope": scoped.scope, "error": scoped.error})
+                    continue
+                all_results.extend(_result_to_dict(r, scoped.scope) for r in scoped.payload or [])
+
+        # Sort across federation by score (BM25 returns negative — higher abs is better)
+        all_results.sort(key=lambda x: -x["score"])
+
+        out: dict = {"query": query, "results": all_results}
+        if warnings:
+            out["partial"] = True
+            out["warnings"] = warnings
+        return json.dumps(out, indent=2)
 
     @mcp.tool()
     @_logged_tool
@@ -60,35 +82,73 @@ def register(mcp) -> None:
     ) -> str:
         """
         Find potentially unused functions, classes, and Terraform resources.
-        A symbol is flagged when no CALLS / INHERITS / TF_DEPENDS edge points to it
-        and it is not a known entry-point name (__init__, main, etc.).
+        A symbol is flagged when no CALLS / INHERITS / TF_DEPENDS edge points
+        to it and it is not a known entry-point name.
 
-        Args:
-            file_path: optional path substring to restrict analysis to one file
-            include_private: include _private functions (default False)
-
-        Returns list of dead symbols with file + line references.
+        FEDERATION CAVEAT: results are computed per scope (parent + each
+        subrepo). A symbol "dead" in subrepo X may actually be called from
+        the parent or another subrepo — we don't infer cross-repo edges.
+        Treat the results as a per-scope candidate list, not a hard verdict.
         """
         from codegraph.dead_code import find_dead_code as _find_dead
+        from codegraph.federation import for_each_child_kuzu
 
-        dead = _find_dead(
-            _get_conn(),
-            include_private=include_private,
-            file_filter=file_path if file_path else None,
-        )
-        if not dead:
-            return json.dumps({"dead_symbols": [], "count": 0})
-        out = [
-            {
-                "kind": d.kind,
-                "name": d.name,
-                "file": d.file_path,
-                "lines": f"{d.start_line}-{d.end_line}",
-                "reason": d.reason,
-            }
-            for d in dead
-        ]
-        return json.dumps({"dead_symbols": out, "count": len(out)}, indent=2)
+        all_dead: list[dict] = []
+        warnings: list[dict] = []
+
+        try:
+            parent = _find_dead(
+                _get_conn(),
+                include_private=include_private,
+                file_filter=file_path if file_path else None,
+            )
+            for d in parent:
+                all_dead.append(
+                    {
+                        "scope": "parent",
+                        "kind": d.kind,
+                        "name": d.name,
+                        "file": d.file_path,
+                        "lines": f"{d.start_line}-{d.end_line}",
+                        "reason": d.reason,
+                    }
+                )
+        except Exception as exc:
+            warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+
+        if _srv._root is not None:
+            for scoped in for_each_child_kuzu(
+                _srv._root,
+                lambda c, _r: _find_dead(
+                    c,
+                    include_private=include_private,
+                    file_filter=file_path if file_path else None,
+                ),
+            ):
+                if scoped.error:
+                    warnings.append({"scope": scoped.scope, "error": scoped.error})
+                    continue
+                for d in scoped.payload or []:
+                    all_dead.append(
+                        {
+                            "scope": scoped.scope,
+                            "kind": d.kind,
+                            "name": d.name,
+                            "file": d.file_path,
+                            "lines": f"{d.start_line}-{d.end_line}",
+                            "reason": d.reason,
+                        }
+                    )
+
+        out: dict = {
+            "dead_symbols": all_dead,
+            "count": len(all_dead),
+            "note": "per-scope analysis — a symbol may be live via cross-repo callers",
+        }
+        if warnings:
+            out["partial"] = True
+            out["warnings"] = warnings
+        return json.dumps(out, indent=2)
 
     @mcp.tool()
     @_logged_tool

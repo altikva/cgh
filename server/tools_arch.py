@@ -20,7 +20,22 @@ from codegraph.core.utils import short_path as _short_path
 
 def register(mcp) -> None:
     import codegraph.server as _srv
+    from codegraph.federation import for_each_child_kuzu
     from codegraph.server import _get_conn, _logged_tool
+
+    def _query_each_kuzu(query_fn):
+        """Run query_fn(conn) on parent + each child; return [(scope, payload), …]."""
+        results: list[tuple[str, list]] = []
+        try:
+            results.append(("parent", query_fn(_get_conn()) or []))
+        except Exception:
+            results.append(("parent", []))
+        if _srv._root is not None:
+            for scoped in for_each_child_kuzu(_srv._root, lambda c, _r: query_fn(c)):
+                if scoped.error:
+                    continue
+                results.append((scoped.scope, scoped.payload or []))
+        return results
 
     @mcp.tool()
     @_logged_tool
@@ -46,43 +61,51 @@ def register(mcp) -> None:
             "doc":         { "doc": [...] }
           }
         """
-        conn = _get_conn()
-        try:
-            r = conn.execute(
-                "MATCH (f:File) RETURN f.path, f.lang, f.role, f.layer, f.module_doc ORDER BY f.layer, f.role, f.path"
-            )
-        except RuntimeError as exc:
-            return json.dumps({"error": str(exc)})
 
-        by_layer: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
-        for row in _rows(r):
-            layer = row.get("f.layer") or "other"
-            role = row.get("f.role") or "other"
-            entry = {
-                "path": _short_path(row["f.path"], _srv._root),
-                "lang": row.get("f.lang"),
-                "module_doc": (row.get("f.module_doc") or "")[:180],
-            }
-            by_layer[layer][role].append(entry)
+        def query(conn):
+            try:
+                r = conn.execute(
+                    "MATCH (f:File) RETURN f.path, f.lang, f.role, f.layer, f.module_doc "
+                    "ORDER BY f.layer, f.role, f.path"
+                )
+            except RuntimeError:
+                return []
+            return _rows(r)
 
-        # Sort within each role, cap list size
-        for layer_dict in by_layer.values():
-            for role_name, files in layer_dict.items():
-                files.sort(key=lambda e: e["path"])
-                if len(files) > max_files_per_role:
-                    layer_dict[role_name] = files[:max_files_per_role] + [
-                        {"path": f"... {len(files) - max_files_per_role} more"}
-                    ]
+        per_scope = _query_each_kuzu(query)
+        scopes_out: dict[str, dict] = {}
 
         from codegraph.roles import LAYER_ORDER
 
-        ordered = {lyr: dict(by_layer[lyr]) for lyr in LAYER_ORDER if lyr in by_layer}
-        # Include any unknown layers at the end
-        for lyr, val in by_layer.items():
-            if lyr not in ordered:
-                ordered[lyr] = dict(val)
+        for scope, rows in per_scope:
+            by_layer: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+            for row in rows:
+                layer = row.get("f.layer") or "other"
+                role = row.get("f.role") or "other"
+                by_layer[layer][role].append(
+                    {
+                        "path": _short_path(row["f.path"], _srv._root),
+                        "lang": row.get("f.lang"),
+                        "module_doc": (row.get("f.module_doc") or "")[:180],
+                    }
+                )
+            for layer_dict in by_layer.values():
+                for role_name, files in layer_dict.items():
+                    files.sort(key=lambda e: e["path"])
+                    if len(files) > max_files_per_role:
+                        layer_dict[role_name] = files[:max_files_per_role] + [
+                            {"path": f"... {len(files) - max_files_per_role} more"}
+                        ]
+            ordered = {lyr: dict(by_layer[lyr]) for lyr in LAYER_ORDER if lyr in by_layer}
+            for lyr, val in by_layer.items():
+                if lyr not in ordered:
+                    ordered[lyr] = dict(val)
+            scopes_out[scope] = ordered
 
-        return json.dumps(ordered, indent=2)
+        # If only the parent scope is present, keep the legacy flat shape.
+        if list(scopes_out.keys()) == ["parent"]:
+            return json.dumps(scopes_out["parent"], indent=2)
+        return json.dumps({"by_scope": scopes_out}, indent=2)
 
     @mcp.tool()
     @_logged_tool
@@ -99,28 +122,35 @@ def register(mcp) -> None:
         if not keyword.strip():
             return json.dumps({"error": "keyword is required"})
 
-        conn = _get_conn()
         k = keyword.strip().lower()
-        try:
-            r = conn.execute("MATCH (f:File) RETURN f.path, f.lang, f.role, f.layer, f.module_doc")
-        except RuntimeError as exc:
-            return json.dumps({"error": str(exc)})
 
+        def query(conn):
+            try:
+                r = conn.execute("MATCH (f:File) RETURN f.path, f.lang, f.role, f.layer, f.module_doc")
+            except RuntimeError:
+                return []
+            out = []
+            for row in _rows(r):
+                p = row["f.path"]
+                doc = row.get("f.module_doc") or ""
+                role = row.get("f.role") or "other"
+                if k in p.lower() or k in doc.lower() or k == (role or "").lower():
+                    out.append(
+                        {
+                            "path": _short_path(p, _srv._root),
+                            "layer": row.get("f.layer"),
+                            "module_doc": doc[:160],
+                            "role": role,
+                        }
+                    )
+            return out
+
+        per_scope = _query_each_kuzu(query)
         hits_by_role: dict[str, list[dict]] = defaultdict(list)
-        for row in _rows(r):
-            p = row["f.path"]
-            doc = row.get("f.module_doc") or ""
-            role = row.get("f.role") or "other"
-            if k in p.lower() or k in doc.lower() or k == (role or "").lower():
-                hits_by_role[role].append(
-                    {
-                        "path": _short_path(p, _srv._root),
-                        "layer": row.get("f.layer"),
-                        "module_doc": doc[:160],
-                    }
-                )
+        for scope, rows in per_scope:
+            for row in rows:
+                hits_by_role[row.pop("role")].append({**row, "scope": scope})
 
-        # Cap per role
         for role_name, files in hits_by_role.items():
             files.sort(key=lambda e: e["path"])
             if len(files) > limit_per_role:
@@ -151,38 +181,40 @@ def register(mcp) -> None:
         routes, so cross-repo questions ("does the frontend call this Python
         route?") become navigable.
         """
-        conn = _get_conn()
-        try:
-            r = conn.execute(
-                "MATCH (e:Endpoint) "
-                "OPTIONAL MATCH (e)-[:IMPLEMENTED_BY]->(fn:Function) "
-                "RETURN e.method, e.path, e.framework, e.file_path, e.start_line, fn.name "
-                "ORDER BY e.path, e.method"
-            )
-        except RuntimeError as exc:
-            return json.dumps({"error": str(exc)})
-
-        data = _rows(r)
         method_filter = method.strip().upper() or None
 
+        def query(conn):
+            try:
+                r = conn.execute(
+                    "MATCH (e:Endpoint) "
+                    "OPTIONAL MATCH (e)-[:IMPLEMENTED_BY]->(fn:Function) "
+                    "RETURN e.method, e.path, e.framework, e.file_path, e.start_line, fn.name "
+                    "ORDER BY e.path, e.method"
+                )
+            except RuntimeError:
+                return []
+            return _rows(r)
+
+        per_scope = _query_each_kuzu(query)
         grouped: dict[str, list[dict]] = defaultdict(list)
-        for row in data:
-            url = row.get("e.path") or ""
-            mth = row.get("e.method") or ""
-            if method_filter and mth != method_filter:
-                continue
-            if path_pattern:
-                if not fnmatch.fnmatch(url, path_pattern):
+        for scope, rows in per_scope:
+            for row in rows:
+                url = row.get("e.path") or ""
+                mth = row.get("e.method") or ""
+                if method_filter and mth != method_filter:
                     continue
-            grouped[row.get("e.framework") or "unknown"].append(
-                {
-                    "method": mth,
-                    "path": url,
-                    "handler": row.get("fn.name"),
-                    "file": _short_path(row["e.file_path"], _srv._root),
-                    "line": row.get("e.start_line"),
-                }
-            )
+                if path_pattern and not fnmatch.fnmatch(url, path_pattern):
+                    continue
+                grouped[row.get("e.framework") or "unknown"].append(
+                    {
+                        "scope": scope,
+                        "method": mth,
+                        "path": url,
+                        "handler": row.get("fn.name"),
+                        "file": _short_path(row["e.file_path"], _srv._root),
+                        "line": row.get("e.start_line"),
+                    }
+                )
 
         total = sum(len(v) for v in grouped.values())
         return json.dumps(

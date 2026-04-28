@@ -239,37 +239,53 @@ def for_each_kuzu(
 ) -> list[ScopedResult]:
     """
     Run `fn(conn, scope_path)` against the Kuzu DB of the parent and each
-    initialized subrepo. Failures are captured per-scope so one bad child
-    can't break the whole query.
+    initialized subrepo. Failures are captured per-scope. Tries to RO-open
+    the parent — only works when no other process holds the write lock.
+    For tools running inside the parent's owner (which already holds a
+    write conn), use `for_each_child_kuzu` instead and call your local
+    write conn for the parent scope yourself.
     """
     parent = Path(repo_root).resolve()
-    out: list[ScopedResult] = []
-    for root in iter_db_roots(parent):
-        scope = _scope_name(root, parent)
-        with open_kuzu_ro(root) as conn:
-            if conn is None:
-                out.append(
-                    ScopedResult(
-                        scope=scope,
-                        scope_path=root,
-                        payload=None,
-                        error="db unavailable (missing or locked)",
-                    )
-                )
-                continue
-            try:
-                payload = fn(conn, root)
-                out.append(ScopedResult(scope=scope, scope_path=root, payload=payload))
-            except Exception as exc:
-                out.append(
-                    ScopedResult(
-                        scope=scope,
-                        scope_path=root,
-                        payload=None,
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-                )
-    return out
+    return [_run_one_kuzu(root, parent, fn) for root in iter_db_roots(parent)]
+
+
+def for_each_child_kuzu(
+    repo_root: str | Path,
+    fn: Callable[[kuzu.Connection, Path], Any],
+) -> list[ScopedResult]:
+    """
+    Children-only iteration. The caller (typically a parent-owner MCP tool)
+    is expected to have already queried its own DB via `_get_conn()` and
+    is now fanning out to the subrepos to aggregate cross-repo results.
+    """
+    parent = Path(repo_root).resolve()
+    return [_run_one_kuzu(root, parent, fn) for root in iter_db_roots(parent)[1:]]
+
+
+def _run_one_kuzu(
+    root: Path,
+    parent: Path,
+    fn: Callable[[kuzu.Connection, Path], Any],
+) -> ScopedResult:
+    scope = _scope_name(root, parent)
+    with open_kuzu_ro(root) as conn:
+        if conn is None:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error="db unavailable (missing or locked)",
+            )
+        try:
+            payload = fn(conn, root)
+            return ScopedResult(scope=scope, scope_path=root, payload=payload)
+        except Exception as exc:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
 
 def for_each_fts(
@@ -278,33 +294,47 @@ def for_each_fts(
 ) -> list[ScopedResult]:
     """Same as for_each_kuzu but for the FTS sqlite databases."""
     parent = Path(repo_root).resolve()
-    out: list[ScopedResult] = []
-    for root in iter_db_roots(parent):
-        scope = _scope_name(root, parent)
-        with open_fts_ro(root) as conn:
-            if conn is None:
-                out.append(
-                    ScopedResult(
-                        scope=scope,
-                        scope_path=root,
-                        payload=None,
-                        error="fts db unavailable",
-                    )
-                )
-                continue
-            try:
-                payload = fn(conn, root)
-                out.append(ScopedResult(scope=scope, scope_path=root, payload=payload))
-            except Exception as exc:
-                out.append(
-                    ScopedResult(
-                        scope=scope,
-                        scope_path=root,
-                        payload=None,
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-                )
-    return out
+    return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)]
+
+
+def for_each_child_fts(
+    repo_root: str | Path,
+    fn: Callable[[sqlite3.Connection, Path], Any],
+) -> list[ScopedResult]:
+    """Children-only FTS iteration — the parent caller uses its cached conn."""
+    parent = Path(repo_root).resolve()
+    return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)[1:]]
+
+
+def _run_one_fts(
+    root: Path,
+    parent: Path,
+    fn: Callable[[sqlite3.Connection, Path], Any],
+) -> ScopedResult:
+    scope = _scope_name(root, parent)
+    with open_fts_ro(root) as conn:
+        if conn is None:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error="fts db unavailable",
+            )
+        try:
+            payload = fn(conn, root)
+            return ScopedResult(scope=scope, scope_path=root, payload=payload)
+        except Exception as exc:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+
+def has_subrepos(repo_root: str | Path) -> bool:
+    """Cheap check — useful for tools to take a fast no-op path when off."""
+    return bool(resolve_children(repo_root))
 
 
 # ---------------------------------------------------------------------------

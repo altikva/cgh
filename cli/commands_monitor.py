@@ -360,37 +360,56 @@ def cmd_status(args) -> None:
     # Scan freshness
     ss = _scan_status(root)
 
-    # Counts (readonly — works even while owner holds write lock,
-    # except when Kuzu is mid-write: it locks RO opens too).
+    # Counts. Kuzu holds an exclusive lock for the lifetime of an open
+    # write Database — so when our owner is alive, even a read-only open
+    # from this CLI process is blocked. Order of attempts:
+    #   1. If the owner is alive AND we know its port, ask it via MCP
+    #      (live_graph_stats) — authoritative + cheap.
+    #   2. Else try a local RO open (works only when no owner is up).
+    #   3. As a final fallback, read the FTS sqlite (always RO-safe).
     file_count = endpoint_count = 0
-    graph_busy = False
+    counts_source = "none"
     fts_symbols: int | None = None
     extra_dirs: list[str] = []
-    try:
-        from codegraph.core.db import get_readonly_connection
 
-        conn = get_readonly_connection(root)
-        if conn is not None:
-            r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
-            file_count = r.get_next()[0]
-            r = conn.execute("MATCH (e:Endpoint) RETURN count(e) AS c")
-            endpoint_count = r.get_next()[0]
-        else:
-            # Kuzu is mid-write — fall back to FTS as a liveness proxy so
-            # the user sees "data is there, just busy" instead of a misleading 0.
-            graph_busy = True
-            try:
-                import sqlite3 as _sql
+    if owner_alive and owner_port:
+        try:
+            stats = _ask_owner_live_stats(root, owner_port)
+            if stats is not None:
+                nodes = stats.get("nodes") or {}
+                file_count = int(nodes.get("File", 0))
+                # endpoint count not in live_graph_stats — derive separately if 0
+                fts_symbols = int(stats.get("fts_symbols", 0))
+                counts_source = "owner"
+        except Exception:
+            pass
 
-                fts_path = Path(root) / ".codegraph" / "fts.db"
-                if fts_path.exists():
-                    c = _sql.connect(f"file:{fts_path}?mode=ro", uri=True)
-                    fts_symbols = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
-                    c.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if counts_source == "none":
+        try:
+            from codegraph.core.db import get_readonly_connection
+
+            conn = get_readonly_connection(root)
+            if conn is not None:
+                r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
+                file_count = r.get_next()[0]
+                r = conn.execute("MATCH (e:Endpoint) RETURN count(e) AS c")
+                endpoint_count = r.get_next()[0]
+                counts_source = "ro"
+        except Exception:
+            pass
+
+    if counts_source == "none":
+        try:
+            import sqlite3 as _sql
+
+            fts_path = Path(root) / ".codegraph" / "fts.db"
+            if fts_path.exists():
+                c = _sql.connect(f"file:{fts_path}?mode=ro", uri=True)
+                fts_symbols = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
+                c.close()
+                counts_source = "fts_only"
+        except Exception:
+            pass
 
     try:
         import tomllib
@@ -464,14 +483,19 @@ def cmd_status(args) -> None:
     table.add_column("", overflow="fold")
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
-    if graph_busy:
-        files_cell = "[yellow]graph DB busy (owner indexing)[/yellow]" + (
-            f"  [dim]· FTS has {fts_symbols:,} symbols[/dim]" if fts_symbols is not None else ""
-        )
+    fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
+    if counts_source == "owner":
+        files_cell = f"{file_count:,}{fts_suffix}  [dim](via owner)[/dim]"
+        endpoints_cell = "[dim]ask the MCP `endpoints` tool[/dim]"
+    elif counts_source == "ro":
+        files_cell = f"{file_count:,}{fts_suffix}"
+        endpoints_cell = f"{endpoint_count:,}"
+    elif counts_source == "fts_only":
+        files_cell = f"[dim]graph locked[/dim]{fts_suffix}"
         endpoints_cell = "[dim]—[/dim]"
     else:
-        files_cell = f"{file_count:,}"
-        endpoints_cell = f"{endpoint_count:,}"
+        files_cell = "[dim]unknown[/dim]"
+        endpoints_cell = "[dim]—[/dim]"
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
@@ -480,6 +504,78 @@ def cmd_status(args) -> None:
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
+
+
+def _ask_owner_live_stats(root: str, port: int, timeout: float = 1.5) -> dict | None:
+    """
+    HTTP-call the running MCP owner's `live_graph_stats` tool. Returns the
+    parsed JSON dict on success, None on any failure (timeout, auth, HTTP
+    error, malformed body). Used by cgh status when the owner is alive
+    and the local CLI can't open Kuzu read-only because of the write lock.
+    """
+    import http.client
+    import json as _json
+
+    from codegraph.auth import ensure_auth_key
+
+    try:
+        token = ensure_auth_key(root)
+    except Exception:
+        return None
+    body = _json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "live_graph_stats", "arguments": {}},
+        }
+    )
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+        c.request(
+            "POST",
+            "/mcp",
+            body=body.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        resp = c.getresponse()
+        if resp.status != 200:
+            return None
+        raw = resp.read().decode("utf-8", errors="replace")
+        c.close()
+    except Exception:
+        return None
+
+    # MCP returns either a JSON object or an SSE stream depending on
+    # the Accept header negotiation. Find the JSON-RPC envelope either way.
+    payload = None
+    if raw.startswith("{"):
+        try:
+            payload = _json.loads(raw)
+        except Exception:
+            return None
+    else:
+        # SSE: lines start with `data: `, last `data:` line carries the result
+        for line in raw.splitlines():
+            if line.startswith("data: "):
+                try:
+                    payload = _json.loads(line[6:])
+                except Exception:
+                    pass
+    if not payload:
+        return None
+    content = (payload.get("result") or {}).get("content") or []
+    text = next((c["text"] for c in content if c.get("type") == "text"), None)
+    if not text:
+        return None
+    try:
+        return _json.loads(text)
+    except Exception:
+        return None
 
 
 def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:

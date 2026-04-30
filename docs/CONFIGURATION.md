@@ -181,12 +181,26 @@ cd apps/api && cgh init && cgh index
 
 # In the parent
 cd ../..
-cgh init                           # creates parent's own .codegraph/
-cgh federate add ./apps/api ./apps/web ../shared-lib
-cgh federate list                  # status table per child
-cgh index                          # parent now indexes only its own files
-cgh serve --background --watch     # owner federates queries to children
+cgh init                           # creates parent's own .codegraph/, auto-detects nested subrepos
+cgh federate add ./apps/api ./apps/web ../shared-lib    # if you want to add manually
+cgh federate list                  # status table per child (status, owner, git, path)
+cgh index                          # parent indexes only its own files
+cgh serve --background --watch     # parent owner federates queries to children
+
+# Optional: keep each child's own owner alive too (so its index stays
+# fresh as files in the child's tree are edited). Without this, the parent
+# can still read each child's DB read-only, but the child's data may go
+# stale if no-one runs the child's watcher.
+cgh federate up                    # spawns `cgh _serve_owner --watch` per child
+cgh federate down                  # stops them all
 ```
+
+**Owner lifecycle**: the parent reads each child's `.codegraph/` files
+directly (read-only). It does NOT auto-spawn child owners — children's
+owners exist only to keep their own index fresh. `cgh federate up` is the
+explicit way to ensure every child has its own watcher running. If a
+child's owner is mid-write when the parent queries it, that scope returns
+`partial: true / warnings: [...]`; results from other scopes still flow.
 
 **What's federated** (read-only, scope-tagged):
 

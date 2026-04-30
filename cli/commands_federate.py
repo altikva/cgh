@@ -4,7 +4,9 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI commands — `cgh federate` verbs (add/remove/list/verify).
+# Description: CLI commands — `cgh federate` verbs:
+#              add / remove / list / verify  (config mutation + status)
+#              up / down                     (lifecycle of each child's owner)
 #              Manages the parent project's federated subrepos, declared in
 #              .codegraph/config.toml under [codegraph] subrepos = […].
 
@@ -18,6 +20,7 @@ from rich.table import Table
 
 from codegraph.federation import (
     add_subrepo,
+    child_owner_status,
     remove_subrepo,
     resolve_children,
     verify_child,
@@ -37,8 +40,12 @@ def cmd_federate(args) -> None:
         return _cmd_verify(args)
     if action == "list":
         return _cmd_list(args)
+    if action == "up":
+        return _cmd_up(args)
+    if action == "down":
+        return _cmd_down(args)
     console.print(f"[red]Unknown action: {action}[/red]")
-    console.print("[dim]Usage: cgh federate add <path> | remove <path> | list | verify[/dim]")
+    console.print("[dim]Usage: cgh federate add <path> | remove <path> | list | verify | up | down[/dim]")
 
 
 def _cmd_add(args) -> None:
@@ -106,6 +113,95 @@ def _cmd_verify(args) -> None:
         raise SystemExit(1)
 
 
+def _cmd_up(args) -> None:
+    """Ensure each federated child has its own owner running with --watch.
+
+    For children whose owner is already alive: no-op. For children that are
+    initialized but ownerless, drop a keepalive marker in the child's
+    `.codegraph/workers/` and spawn `cgh _serve_owner --watch` for them.
+    The keepalive survives this CLI process, so the child's owner stays
+    up across Claude sessions just like the parent owner does.
+    """
+    from codegraph.ipc import is_owner_alive, register_keepalive, spawn_owner
+
+    root = Path(os.path.abspath(args.root))
+    children = resolve_children(root)
+    if not children:
+        console.print("[dim]No subrepos federated. Nothing to start.[/dim]")
+        return
+
+    for child in children:
+        st = verify_child(child)
+        if not st.ok:
+            console.print(
+                f"[yellow]⚠ {child.name}[/yellow] skipped — "
+                f"{'not initialized' if not st.initialized else 'no graph.db'}"
+            )
+            continue
+        if is_owner_alive(child):
+            owner = child_owner_status(child)
+            console.print(f"[dim]• {child.name} already running (pid {owner.pid}, port {owner.port})[/dim]")
+            continue
+        register_keepalive(child)
+        port = spawn_owner(child, watch=True, reindex=False)
+        if port is None:
+            console.print(f"[red]✗ {child.name}[/red] failed to start (see {child}/.codegraph/owner.log)")
+        else:
+            console.print(f"[green]✓ {child.name}[/green] started on port {port}")
+
+    console.print(
+        "\n[dim]Children stay alive via keepalive markers in each "
+        ".codegraph/workers/. Stop them all with:[/dim] [cyan]cgh federate down[/cyan]"
+    )
+
+
+def _cmd_down(args) -> None:
+    """Stop the owner of each federated child (if running) and remove its
+    keepalive marker. Doesn't touch children whose owners were started by
+    something other than `cgh federate up` — they'll just lose their
+    keepalive and exit on their own when their last worker disconnects.
+    """
+    import os as _os
+    import time as _time
+
+    from codegraph.ipc import (
+        is_pid_alive,
+        owner_pidfile,
+        port_file,
+        unregister_keepalive,
+    )
+
+    root = Path(_os.path.abspath(args.root))
+    children = resolve_children(root)
+    if not children:
+        console.print("[dim]No subrepos federated.[/dim]")
+        return
+
+    for child in children:
+        unregister_keepalive(child)
+        pf = owner_pidfile(child)
+        if not pf.exists():
+            console.print(f"[dim]• {child.name} already stopped[/dim]")
+            continue
+        try:
+            pid = int(pf.read_text().strip())
+            _os.kill(pid, 15)
+            deadline = _time.time() + 5.0
+            while _time.time() < deadline and is_pid_alive(pid):
+                _time.sleep(0.1)
+            if is_pid_alive(pid):
+                _os.kill(pid, 9)
+                console.print(f"[yellow]⚠ {child.name}[/yellow] force-killed pid {pid}")
+            else:
+                console.print(f"[green]✓ {child.name}[/green] stopped pid {pid}")
+            pf.unlink(missing_ok=True)
+            port_file(child).unlink(missing_ok=True)
+        except (ValueError, ProcessLookupError, PermissionError):
+            console.print(f"[dim]• {child.name} already gone[/dim]")
+            pf.unlink(missing_ok=True)
+            port_file(child).unlink(missing_ok=True)
+
+
 def _render_status_table(
     root: Path,
     children: list[Path],
@@ -117,6 +213,7 @@ def _render_status_table(
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("subrepo")
     table.add_column("status")
+    table.add_column("owner")
     table.add_column("git")
     table.add_column("path")
 
@@ -135,6 +232,15 @@ def _render_status_table(
         else:
             badge = "[green]ok[/green]"
 
+        if status.ok:
+            owner = child_owner_status(child)
+            if owner.alive:
+                owner_cell = f"[green]up[/green] [dim]:{owner.port}[/dim]"
+            else:
+                owner_cell = "[dim]down[/dim]"
+        else:
+            owner_cell = "[dim]—[/dim]"
+
         git = "[dim]yes[/dim]" if status.is_git_repo else "[dim]no[/dim]"
-        table.add_row(child.name, badge, git, display)
+        table.add_row(child.name, badge, owner_cell, git, display)
     console.print(table)

@@ -337,6 +337,27 @@ def has_subrepos(repo_root: str | Path) -> bool:
     return bool(resolve_children(repo_root))
 
 
+@dataclass
+class OwnerStatus:
+    """Per-child owner liveness, used by `cgh federate list/up/down`."""
+
+    alive: bool
+    pid: int | None
+    port: int | None
+
+
+def child_owner_status(child_path: str | Path) -> OwnerStatus:
+    """Inspect whether a federated child has its own MCP owner running."""
+    from codegraph.ipc import is_owner_alive, read_owner_pid, read_owner_port
+
+    p = Path(child_path)
+    return OwnerStatus(
+        alive=is_owner_alive(p),
+        pid=read_owner_pid(p),
+        port=read_owner_port(p),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Config mutation helpers (used by the CLI)
 # ---------------------------------------------------------------------------

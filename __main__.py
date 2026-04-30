@@ -341,7 +341,11 @@ def main() -> None:
     # --- federate ---
     p = sub.add_parser("federate", help="Manage federated subrepos (parent queries their indexes read-only)")
     p.add_argument(
-        "action", nargs="?", choices=["add", "remove", "list", "verify"], default="list", help="Action (default: list)"
+        "action",
+        nargs="?",
+        choices=["add", "remove", "list", "verify", "up", "down"],
+        default="list",
+        help="Action (default: list)",
     )
     p.add_argument("paths", nargs="*", help="Subrepo paths (for add / remove)")
     p.add_argument("--root", default=os.getcwd())

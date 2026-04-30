@@ -360,8 +360,11 @@ def cmd_status(args) -> None:
     # Scan freshness
     ss = _scan_status(root)
 
-    # Counts (readonly — works even while owner holds write lock)
+    # Counts (readonly — works even while owner holds write lock,
+    # except when Kuzu is mid-write: it locks RO opens too).
     file_count = endpoint_count = 0
+    graph_busy = False
+    fts_symbols: int | None = None
     extra_dirs: list[str] = []
     try:
         from codegraph.core.db import get_readonly_connection
@@ -372,6 +375,20 @@ def cmd_status(args) -> None:
             file_count = r.get_next()[0]
             r = conn.execute("MATCH (e:Endpoint) RETURN count(e) AS c")
             endpoint_count = r.get_next()[0]
+        else:
+            # Kuzu is mid-write — fall back to FTS as a liveness proxy so
+            # the user sees "data is there, just busy" instead of a misleading 0.
+            graph_busy = True
+            try:
+                import sqlite3 as _sql
+
+                fts_path = Path(root) / ".codegraph" / "fts.db"
+                if fts_path.exists():
+                    c = _sql.connect(f"file:{fts_path}?mode=ro", uri=True)
+                    fts_symbols = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
+                    c.close()
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -447,8 +464,16 @@ def cmd_status(args) -> None:
     table.add_column("", overflow="fold")
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
-    table.add_row("Files", f"{file_count:,}")
-    table.add_row("Endpoints", f"{endpoint_count:,}")
+    if graph_busy:
+        files_cell = "[yellow]graph DB busy (owner indexing)[/yellow]" + (
+            f"  [dim]· FTS has {fts_symbols:,} symbols[/dim]" if fts_symbols is not None else ""
+        )
+        endpoints_cell = "[dim]—[/dim]"
+    else:
+        files_cell = f"{file_count:,}"
+        endpoints_cell = f"{endpoint_count:,}"
+    table.add_row("Files", files_cell)
+    table.add_row("Endpoints", endpoints_cell)
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
     console.print(table)
 

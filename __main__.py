@@ -262,6 +262,15 @@ def main() -> None:
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p.add_argument("--workers", action="store_true", help="Also list every worker pid + tty + start time")
+    p.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Before showing status, call incremental_reindex via the owner so the "
+            "recorded scan SHA advances to HEAD when every file's blob matches. "
+            "Use after the watcher has caught up to a `git pull` / commit burst."
+        ),
+    )
 
     p = sub.add_parser("memory-index", help="Scan the Claude Code memory directory into the FTS index")
     p.add_argument("--root", default=os.getcwd())

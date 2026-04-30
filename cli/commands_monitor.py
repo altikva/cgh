@@ -357,7 +357,32 @@ def cmd_status(args) -> None:
     owner_alive = is_owner_alive(root)
     workers = live_workers(root)
 
-    # Scan freshness
+    # --refresh: ask the owner to run incremental_reindex BEFORE we read
+    # scan_meta. The watcher keeps individual files fresh on each save but
+    # never advances scan_meta.git_head — running incremental_reindex does,
+    # by checking every file's blob against HEAD and recording the new SHA
+    # when they all match.
+    if getattr(args, "refresh", False):
+        if not owner_alive or not owner_port:
+            console.print("[yellow]Cannot refresh — owner is not running.[/yellow]")
+            console.print(
+                "[dim]Start it with:[/dim] [cyan]cgh serve --background --watch[/cyan] [dim]then re-run.[/dim]\n"
+            )
+        else:
+            console.print(
+                "[dim]Calling incremental_reindex via owner — verifying every file's blob against HEAD…[/dim]"
+            )
+            stats = _ask_owner_incremental_reindex(root, owner_port)
+            if stats is None:
+                console.print("[yellow]Refresh call failed (timeout or error).[/yellow]\n")
+            else:
+                rx = stats.get("reindexed_count", stats.get("indexed", 0))
+                un = stats.get("unchanged_count", stats.get("skipped", 0))
+                de = stats.get("deleted_count", 0)
+                el = stats.get("elapsed_s", "?")
+                console.print(f"[green]✓[/green] reindexed={rx}, unchanged={un}, deleted={de}, elapsed={el}s\n")
+
+    # Scan freshness (re-read after possible refresh)
     ss = _scan_status(root)
 
     # Counts. Kuzu holds an exclusive lock for the lifetime of an open
@@ -506,12 +531,29 @@ def cmd_status(args) -> None:
         _print_workers_table(workers, owner_pid)
 
 
-def _ask_owner_live_stats(root: str, port: int, timeout: float = 1.5) -> dict | None:
+def _ask_owner_incremental_reindex(root: str, port: int) -> dict | None:
     """
-    HTTP-call the running MCP owner's `live_graph_stats` tool. Returns the
-    parsed JSON dict on success, None on any failure (timeout, auth, HTTP
-    error, malformed body). Used by cgh status when the owner is alive
-    and the local CLI can't open Kuzu read-only because of the write lock.
+    HTTP-call the owner's `incremental_reindex` MCP tool. This compares every
+    File node's stored git blob SHA to the current HEAD blob, re-indexes any
+    that drifted, and writes scan_meta with HEAD's SHA on success — which is
+    what `cgh status --refresh` needs to advance the recorded SHA.
+
+    Generous timeout (5 min) since on a large repo with many drifted files
+    this can take a while. Returns the parsed stats dict or None on failure.
+    """
+    return _call_owner_tool(root, port, "incremental_reindex", timeout=300.0)
+
+
+def _ask_owner_live_stats(root: str, port: int, timeout: float = 1.5) -> dict | None:
+    return _call_owner_tool(root, port, "live_graph_stats", timeout=timeout)
+
+
+def _call_owner_tool(root: str, port: int, tool: str, timeout: float) -> dict | None:
+    """
+    HTTP-call any MCP tool on the running owner with the given timeout.
+    Returns the parsed JSON dict on success, None on any failure (timeout,
+    auth, HTTP error, malformed body). Used by cgh status when the owner
+    is alive and the local CLI can't open Kuzu read-only.
     """
     import http.client
     import json as _json
@@ -527,7 +569,7 @@ def _ask_owner_live_stats(root: str, port: int, timeout: float = 1.5) -> dict | 
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": "live_graph_stats", "arguments": {}},
+            "params": {"name": tool, "arguments": {}},
         }
     )
     try:

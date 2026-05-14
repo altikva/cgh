@@ -446,6 +446,36 @@ def cmd_status(args) -> None:
     except Exception:
         pass
 
+    # Federated subrepos — surface them in status so users see at a glance
+    # which children this owner fans queries out to and whether they're up.
+    subrepos: list[dict] = []
+    try:
+        from codegraph.federation import child_owner_status, resolve_children, verify_child
+
+        for child in resolve_children(root):
+            st = verify_child(child)
+            owner = child_owner_status(child) if st.ok else None
+            subrepos.append(
+                {
+                    "name": child.name,
+                    "path": str(child),
+                    "ok": st.ok,
+                    "status": (
+                        "ok"
+                        if st.ok
+                        else "no graph.db"
+                        if st.initialized and not st.has_kuzu
+                        else "uninitialized"
+                        if st.exists
+                        else "missing"
+                    ),
+                    "owner_alive": bool(owner and owner.alive),
+                    "owner_port": owner.port if owner and owner.alive else None,
+                }
+            )
+    except Exception:
+        pass
+
     payload = {
         "root": root,
         "owner": {
@@ -468,6 +498,7 @@ def cmd_status(args) -> None:
             "endpoints": endpoint_count,
         },
         "extra_dirs": extra_dirs,
+        "subrepos": subrepos,
     }
 
     if getattr(args, "json", False):
@@ -524,11 +555,33 @@ def cmd_status(args) -> None:
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
+    table.add_row("Subrepos", _format_subrepos_cell(subrepos))
     console.print(table)
 
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
+
+
+def _format_subrepos_cell(subrepos: list[dict]) -> str:
+    """One-liner for the Subrepos row in `cgh status`.
+
+    Compact: `2 federated · ondonne-frontend [up :54052], ondonne-infra [down]`.
+    Empty: dim "none".
+    """
+    if not subrepos:
+        return "[dim]none[/dim]"
+    parts: list[str] = []
+    for s in subrepos:
+        name = s["name"]
+        if not s["ok"]:
+            badge = f"[yellow]{s['status']}[/yellow]"
+        elif s["owner_alive"]:
+            badge = f"[green]up :{s['owner_port']}[/green]"
+        else:
+            badge = "[dim]down[/dim]"
+        parts.append(f"{name} {badge}")
+    return f"{len(subrepos)} federated · " + ", ".join(parts)
 
 
 def _ask_owner_incremental_reindex(root: str, port: int) -> dict | None:

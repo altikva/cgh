@@ -9,7 +9,7 @@ description = "Local code graph for AI coding agents. Indexes your repo into Kuz
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
 classifiers = [
@@ -17,6 +17,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "License :: Free for non-commercial use",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

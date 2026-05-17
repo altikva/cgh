@@ -1,2 +1,0 @@
-[console_scripts]
-cgh = codegraph.__main__:main

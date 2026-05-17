@@ -3,15 +3,15 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codegraph"
+name = "cgh"
 version = "0.3.0"
-description = "Local code graph index — symbol lookup, call graphs, doc search. Works with Claude Code, Cursor, any MCP client."
+description = "Local code graph for AI coding agents. Indexes your repo into Kuzu + SQLite FTS, exposes 30+ MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.11"
-keywords = ["code-graph", "mcp", "claude", "code-index", "symbol-lookup", "call-graph"]
+keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -44,19 +44,18 @@ dependencies = [
 rust = ["tree-sitter-rust>=0.23"]
 go = ["tree-sitter-go>=0.23"]
 java = ["tree-sitter-java>=0.23"]
-all = ["codegraph[rust,go,java]"]
+all = ["cgh[rust,go,java]"]
 
 [project.urls]
-Homepage = "https://github.com/altikva/codegraph"
-Repository = "https://github.com/altikva/codegraph"
-Issues = "https://github.com/altikva/codegraph/issues"
+Homepage = "https://github.com/altikva/cgh"
+Repository = "https://github.com/altikva/cgh"
+Issues = "https://github.com/altikva/cgh/issues"
 
 [project.scripts]
-codegraph = "codegraph.__main__:main"
 cgh = "codegraph.__main__:main"
 
 [tool.setuptools.packages.find]
-where = [".."]
+where = ["."]
 include = ["codegraph", "codegraph.*"]
 
 [tool.setuptools.package-data]

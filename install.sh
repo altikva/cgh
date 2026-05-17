@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # codegraph installer — works on macOS, Linux, and WSL
-# Usage: curl -fsSL https://raw.githubusercontent.com/altikva/codegraph/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
 
 set -euo pipefail
 
@@ -46,26 +46,26 @@ echo -e "${GREEN}+${RESET} Python $PY_VERSION found"
 # Prefer pipx for isolated install, fall back to pip
 if command -v pipx &>/dev/null; then
     echo -e "${GREEN}+${RESET} Using pipx for isolated install"
-    pipx install codegraph 2>/dev/null || pipx install git+https://github.com/altikva/codegraph.git
+    pipx install codegraph 2>/dev/null || pipx install git+https://github.com/altikva/cgh.git
 elif command -v uv &>/dev/null; then
     echo -e "${GREEN}+${RESET} Using uv for install"
     uv tool install codegraph 2>/dev/null || uv pip install codegraph
 else
     echo -e "${YELLOW}!${RESET} pipx not found, using pip (consider: pip install pipx)"
-    $PY -m pip install --user codegraph 2>/dev/null || $PY -m pip install --user git+https://github.com/altikva/codegraph.git
+    $PY -m pip install --user cgh 2>/dev/null || $PY -m pip install --user git+https://github.com/altikva/cgh.git
 fi
 
 # Verify
-if command -v codegraph &>/dev/null; then
-    echo -e "\n${GREEN}${BOLD}codegraph installed successfully!${RESET}"
-    codegraph --version
+if command -v cgh &>/dev/null; then
+    echo -e "\n${GREEN}${BOLD}cgh installed successfully!${RESET}"
+    cgh --version
     echo -e "\n${CYAN}Quick start:${RESET}"
     echo "  cd your-project"
-    echo "  codegraph init"
-    echo "  codegraph index"
-    echo "  codegraph stats"
+    echo "  cgh init"
+    echo "  cgh index"
+    echo "  cgh stats"
 else
-    echo -e "\n${YELLOW}Installed but 'codegraph' not in PATH.${RESET}"
+    echo -e "\n${YELLOW}Installed but 'cgh' not in PATH.${RESET}"
     echo "Try: $PY -m codegraph --version"
     echo "Or add ~/.local/bin to your PATH"
 fi

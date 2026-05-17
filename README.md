@@ -18,15 +18,26 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 ## Install
 
 ```bash
+git clone https://github.com/altikva/cgh.git
+cd cgh
+
 # pip
-pip install -e ./codegraph
+pip install -e .
 
 # pipx (isolated install)
-pipx install ./codegraph
+pipx install .
 
 # uv
-uv pip install -e ./codegraph
-uv tool install ./codegraph
+uv pip install -e .
+uv tool install .
+```
+
+Once installed, the `cgh` CLI is on your PATH:
+
+```bash
+cgh --help
+cgh init           # initialize in any project
+cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
 ```
 
 After install, both `codegraph` and `cgh` (short alias) are available:

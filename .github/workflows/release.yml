@@ -28,10 +28,10 @@ jobs:
     name: Build sdist + wheel
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
         # No `enable-cache: true` — this repo has no uv.lock (setuptools is
         # the build backend, uv is only used as the build front-end). Without
         # a lockfile the cache action errors out trying to compute the key.
@@ -57,7 +57,7 @@ jobs:
           ls -lh dist/
           uvx twine check dist/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: dist
           path: dist/
@@ -76,7 +76,7 @@ jobs:
       # Required for PyPI Trusted Publisher OIDC exchange
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: dist
           path: dist/
@@ -94,7 +94,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: dist
           path: dist/

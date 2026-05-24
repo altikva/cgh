@@ -1021,87 +1021,46 @@ def cmd_parsers(args) -> None:
 
 
 def cmd_setup(args) -> None:
-    """Generate integration files for AI tools."""
-    import shutil
+    """
+    Generate integration files for AI tools.
+
+    Single source of truth: delegates the heavy lifting to
+    _install_integration so MCP config, skills, and (for Claude) hooks
+    stay in lock-step with `cgh init`. Adds the non-interactive extras
+    on top: auto-accept permissions and the usage-guidelines block.
+    """
+    from codegraph.skill_installer import install_usage_guidelines
 
     root = Path(os.path.abspath(args.root))
     target = args.target
 
     console.print(LOGO)
 
-    codegraph_cmd = "codegraph"
-    if not shutil.which("codegraph"):
-        codegraph_cmd = f"{sys.executable} -m codegraph"
-
-    mcp_config = {
-        "mcpServers": {
-            "codegraph": {
-                "command": codegraph_cmd.split()[0],
-                "args": codegraph_cmd.split()[1:] + ["serve", "--root", str(root), "--watch", "--reindex"],
-            }
-        }
-    }
-
-    created = []
-
-    if target in ("claude", "all"):
-        mcp_path = root / ".mcp.json"
-        if mcp_path.exists():
-            import json as _json
-
-            existing = _json.loads(mcp_path.read_text())
-            existing.setdefault("mcpServers", {})["codegraph"] = mcp_config["mcpServers"]["codegraph"]
-            mcp_path.write_text(_json.dumps(existing, indent=2) + "\n")
-        else:
-            import json as _json
-
-            mcp_path.write_text(_json.dumps(mcp_config, indent=2) + "\n")
-        created.append((".mcp.json", "Claude Code MCP server"))
-
-        # Auto-accept codegraph MCP tools (non-interactive path)
-        added = _configure_claude_auto_accept(root)
-        if added:
-            created.append((".claude/settings.local.json", f"permissions += {', '.join(added)}"))
-
-        # Usage guidelines in CLAUDE.md
-        from codegraph.skill_installer import install_usage_guidelines
-
-        path = install_usage_guidelines(root, "claude")
-        if path:
-            created.append(("CLAUDE.md", "codegraph usage block"))
-
-    from codegraph.skill_installer import install_usage_guidelines as _install_usage
-
-    if target in ("cursor", "all"):
-        cursor_dir = root / ".cursor"
-        cursor_dir.mkdir(exist_ok=True)
-        cursor_mcp = cursor_dir / "mcp.json"
-        import json as _json
-
-        cursor_mcp.write_text(_json.dumps(mcp_config, indent=2) + "\n")
-        created.append((".cursor/mcp.json", "Cursor MCP server"))
-        if _install_usage(root, "cursor"):
-            created.append((".cursor/rules/codegraph-usage.mdc", "codegraph usage rule"))
-
-    if target in ("codex", "all"):
-        created.append(("(same .mcp.json)", "Codex CLI MCP server"))
-        if _install_usage(root, "codex"):
-            created.append(("AGENTS.md", "codegraph usage block"))
-
-    if target in ("gemini", "all"):
-        created.append(("(same .mcp.json)", "Gemini CLI MCP server"))
-        if _install_usage(root, "gemini"):
-            created.append(("GEMINI.md", "codegraph usage block"))
-
-    if created:
-        panel_lines = [f"  [green]+[/green] {f} [dim]({desc})[/dim]" for f, desc in created]
-        console.print(
-            Panel(
-                "\n".join(panel_lines),
-                title=f"[bold green]Setup for {target}[/bold green]",
-                border_style="green",
-            )
-        )
-    else:
+    valid = ("claude", "cursor", "codex", "gemini", "all")
+    if target not in valid:
         console.print(f"[dim]Unknown target: {target}[/dim]")
-        console.print("[dim]Options: claude, cursor, codex, gemini, all[/dim]")
+        console.print(f"[dim]Options: {', '.join(valid)}[/dim]")
+        return
+
+    targets = ["claude", "cursor", "codex", "gemini"] if target == "all" else [target]
+
+    console.print(Panel(f"[bold]Setup for {target}[/bold]", border_style="cyan"))
+
+    for tool_key in targets:
+        console.print(f"\n[bold]{tool_key}[/bold]")
+        _install_integration(root, tool_key, overwrite_skills=True)
+
+        if tool_key == "claude":
+            added = _configure_claude_auto_accept(root)
+            if added:
+                console.print(
+                    f"    [green]+[/green] .claude/settings.local.json "
+                    f"[dim](permissions += {', '.join(added)})[/dim]"
+                )
+
+        written = install_usage_guidelines(root, tool_key)
+        if written:
+            rel = written.replace(str(root) + "/", "")
+            console.print(f"    [green]+[/green] {rel} [dim](usage guidelines)[/dim]")
+
+    console.print()

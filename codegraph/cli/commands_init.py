@@ -803,6 +803,72 @@ def cmd_init(args) -> None:
     )
 
 
+def _ensure_claude_hooks(settings: dict, cli_prefix: str) -> list[str]:
+    """
+    Idempotently merge cgh hooks into a parsed .claude/settings.json dict.
+
+    Returns the list of human-readable hook labels that were newly added —
+    callers use that list both to decide whether to write the file and to
+    print a per-hook breadcrumb. Hooks already present (matched by their
+    command string containing the marker) are left untouched.
+    """
+    hooks_root = settings.setdefault("hooks", {})
+    added: list[str] = []
+
+    desired = [
+        {
+            "event": "PostToolUse",
+            "matcher": "Bash(git commit*)",
+            "marker": "cgh-reindex-on-commit",
+            "label": "post-commit reindex",
+            "command": (
+                f"{cli_prefix} index --root . 2>/dev/null || true  "
+                f"# cgh-reindex-on-commit"
+            ),
+            "async": True,
+            "statusMessage": "cgh: indexing changes",
+        },
+        {
+            "event": "PreToolUse",
+            "matcher": "Grep",
+            "marker": "cgh-precheck-grep",
+            "label": "pre-Grep symbol hint",
+            "command": f"{cli_prefix} _hook_precheck_grep  # cgh-precheck-grep",
+            "async": False,
+        },
+        {
+            "event": "PreToolUse",
+            "matcher": "Read",
+            "marker": "cgh-precheck-read",
+            "label": "pre-Read outline hint",
+            "command": f"{cli_prefix} _hook_precheck_read  # cgh-precheck-read",
+            "async": False,
+        },
+    ]
+
+    for spec in desired:
+        bucket = hooks_root.setdefault(spec["event"], [])
+        already = any(
+            spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
+            for h in bucket
+            if h.get("matcher") == spec["matcher"]
+        )
+        if already:
+            continue
+        entry: dict = {
+            "type": "command",
+            "command": spec["command"],
+        }
+        if spec.get("async"):
+            entry["async"] = True
+        if spec.get("statusMessage"):
+            entry["statusMessage"] = spec["statusMessage"]
+        bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
+        added.append(spec["label"])
+
+    return added
+
+
 def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -> None:
     """Install MCP config + hooks for an AI tool."""
     import json as _json
@@ -857,15 +923,14 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         else:
             settings = {}
 
-        # Check if post-commit hook already exists
-        post_hooks = settings.get("hooks", {}).get("PostToolUse", [])
-        has_codegraph_hook = any(
-            "codegraph" in str(h.get("hooks", [{}])[0].get("command", ""))
-            for h in post_hooks
-            if h.get("matcher") == "Bash(git commit*)"
-        )
-        if not has_codegraph_hook:
-            console.print("    [green]+[/green] .claude/settings.json [dim](post-commit hook)[/dim]")
+        cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
+        cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
+
+        added = _ensure_claude_hooks(settings, cli_prefix)
+        if added:
+            settings_path.write_text(_json.dumps(settings, indent=2) + "\n")
+            for label in added:
+                console.print(f"    [green]+[/green] .claude/settings.json [dim]({label})[/dim]")
 
         # Skills — may preserve local edits if the user said so
         _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))

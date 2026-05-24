@@ -32,6 +32,7 @@ from codegraph.cli.commands_index import (
 # ---------------------------------------------------------------------------
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
+from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
     cmd_compact,
@@ -250,6 +251,11 @@ def main() -> None:
     p.add_argument("--watch", action="store_true")
     p.add_argument("--reindex", action="store_true")
 
+    # --- _hook_precheck_grep / _hook_precheck_read (hidden hook entry points) ---
+    # Both read the PreToolUse payload on stdin; no flags.
+    sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
+
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     p.add_argument("--root", default=os.getcwd())
@@ -389,6 +395,8 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "_serve_owner": _cmd_serve_owner,
+        "_hook_precheck_grep": cmd_hook_precheck_grep,
+        "_hook_precheck_read": cmd_hook_precheck_read,
         "stats": cmd_stats,
         "status": cmd_status,
         "tail": cmd_tail,

@@ -216,6 +216,15 @@ def main() -> None:
             "files changed since last scan."
         ),
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Bypass the running owner and grab the Kuzu write lock directly. "
+            "Fails with a clear error if another cgh process holds it. "
+            "Default behavior routes through the owner via MCP when one is alive."
+        ),
+    )
 
     # --- watch ---
     p = sub.add_parser("watch", help="Index then watch for file changes")

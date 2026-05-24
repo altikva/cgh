@@ -869,6 +869,129 @@ def _ensure_claude_hooks(settings: dict, cli_prefix: str) -> list[str]:
     return added
 
 
+# ---------------------------------------------------------------------------
+# Audit — used by `cgh doctor` to report drift between installed Claude
+# integration files and what the current cgh version would write.
+# ---------------------------------------------------------------------------
+
+# Markers used to detect installed hooks. Must stay in sync with
+# _ensure_claude_hooks above.
+_CLAUDE_HOOK_MARKERS = [
+    ("cgh-reindex-on-commit", "PostToolUse", "Bash(git commit*)", "post-commit reindex"),
+    ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint"),
+    ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint"),
+]
+
+
+def audit_claude_integration(root: Path) -> dict:
+    """
+    Inspect the Claude Code integration files in `root` and report what's
+    installed, missing, or stale vs the cgh version currently on PATH.
+
+    Read-only — never writes. `cgh doctor` calls this and renders the
+    result; `cgh setup claude` is the action side.
+    """
+    import json as _json
+
+    from codegraph.skill_installer import _iter_skills, detect_modified_skills
+
+    report: dict = {}
+
+    # .mcp.json — codegraph entry present?
+    mcp_path = root / ".mcp.json"
+    mcp_ok = False
+    if mcp_path.exists():
+        try:
+            data = _json.loads(mcp_path.read_text())
+            mcp_ok = "codegraph" in (data.get("mcpServers") or {})
+        except (OSError, _json.JSONDecodeError):
+            mcp_ok = False
+    report["mcp_json"] = {
+        "status": "ok" if mcp_ok else "missing",
+        "path": str(mcp_path.relative_to(root)) if mcp_path.exists() else ".mcp.json",
+    }
+
+    # Hooks — count present markers vs expected
+    settings_path = root / ".claude" / "settings.json"
+    hooks_root: dict = {}
+    if settings_path.exists():
+        try:
+            hooks_root = (_json.loads(settings_path.read_text()) or {}).get("hooks", {}) or {}
+        except (OSError, _json.JSONDecodeError):
+            hooks_root = {}
+
+    installed_markers: list[str] = []
+    missing_labels: list[str] = []
+    for marker, event, matcher, label in _CLAUDE_HOOK_MARKERS:
+        bucket = hooks_root.get(event, []) or []
+        found = any(
+            marker in str(h.get("hooks", [{}])[0].get("command", ""))
+            for h in bucket
+            if h.get("matcher") == matcher
+        )
+        if found:
+            installed_markers.append(marker)
+        else:
+            missing_labels.append(label)
+    expected = len(_CLAUDE_HOOK_MARKERS)
+    installed = len(installed_markers)
+    if installed == expected:
+        hook_status = "ok"
+    elif installed == 0:
+        hook_status = "missing"
+    else:
+        hook_status = "partial"
+    report["hooks"] = {
+        "status": hook_status,
+        "installed": installed,
+        "expected": expected,
+        "missing": missing_labels,
+    }
+
+    # Skills — count bundled vs on-disk + modified
+    bundled = [name for name, _fm, _body, _d in _iter_skills()]
+    skills_dir = root / ".claude" / "skills"
+    missing_skills: list[str] = []
+    for name in bundled:
+        if not (skills_dir / name / "SKILL.md").is_file():
+            missing_skills.append(name)
+    modified_skills = detect_modified_skills(root)
+    if not missing_skills and not modified_skills:
+        skills_status = "ok"
+    elif missing_skills and not modified_skills:
+        skills_status = "missing"
+    else:
+        skills_status = "stale"
+    report["skills"] = {
+        "status": skills_status,
+        "bundled": len(bundled),
+        "installed": len(bundled) - len(missing_skills),
+        "missing": missing_skills,
+        "modified": modified_skills,
+    }
+
+    # CLAUDE.md usage block — present?
+    claude_md = root / "CLAUDE.md"
+    has_block = False
+    if claude_md.exists():
+        try:
+            text = claude_md.read_text(encoding="utf-8")
+            has_block = "<!-- codegraph-usage:start -->" in text
+        except OSError:
+            has_block = False
+    report["usage_block"] = {
+        "status": "ok" if has_block else "missing",
+        "path": "CLAUDE.md",
+    }
+
+    report["overall"] = (
+        "ok"
+        if all(s["status"] == "ok" for s in (report["mcp_json"], report["hooks"], report["skills"], report["usage_block"]))
+        else "drift"
+    )
+    return report
+
+
 def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -> None:
     """Install MCP config + hooks for an AI tool."""
     import json as _json

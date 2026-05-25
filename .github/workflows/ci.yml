@@ -37,10 +37,14 @@ jobs:
         run: uv python install "$PYTHON_VERSION"
 
       - name: Lint with ruff
+        # ruff and pytest aren't project dependencies, so we run them via
+        # `uvx` (uv tool run) instead of `uv run`, which only picks up
+        # what's in the project env.
+        #
         # Format check is intentionally NOT enabled yet — 46 pre-existing
-        # files would fail on day one. Run `uv run ruff format .` in a
+        # files would fail on day one. Run `uvx ruff format .` in a
         # dedicated chore/ruff-format PR, then add the format check here.
-        run: uv run ruff check .
+        run: uvx ruff check .
 
       - name: Run pytest
         run: uv run --with pytest pytest -q

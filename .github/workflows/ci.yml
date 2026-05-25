@@ -1,0 +1,46 @@
+# Lint + test gate. Fires on every PR and on pushes to long-lived branches
+# (develop and main) so the integration history stays green. release.yml
+# stays the only workflow that touches PyPI; this one is purely advisory.
+#
+# No uv.lock in this repo (setuptools is the build backend) so we skip
+# enable-cache on setup-uv, matching release.yml.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  test:
+    name: Lint + tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    env:
+      # Surface matrix values via env so run: blocks don't interpolate
+      # ${{ ... }} directly (defense-in-depth even though matrix values
+      # are workflow-internal, not user input).
+      PYTHON_VERSION: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install "$PYTHON_VERSION"
+
+      - name: Lint with ruff
+        # Format check is intentionally NOT enabled yet — 46 pre-existing
+        # files would fail on day one. Run `uv run ruff format .` in a
+        # dedicated chore/ruff-format PR, then add the format check here.
+        run: uv run ruff check .
+
+      - name: Run pytest
+        run: uv run --with pytest pytest -q

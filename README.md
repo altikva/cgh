@@ -56,7 +56,7 @@ After install, both `codegraph` and `cgh` (short alias) are available:
 
 ```bash
 cgh --version
-# codegraph 0.3.0
+# codegraph 0.3.1
 ```
 
 ---

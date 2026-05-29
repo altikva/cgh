@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,14 @@ from .fts import commit as fts_commit
 from .fts import delete_file_symbols, get_fts_conn, upsert_symbol
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
+
+# Default Python recursion limit is 1000. Tree-sitter walks on deeply nested
+# code (long method chains, big JSX trees, generated protobufs) can blow past
+# that. Raise once at import time so we don't pay the cost on every call.
+# Ported from graphify — same constant.
+_RECURSION_LIMIT = 10_000
+if sys.getrecursionlimit() < _RECURSION_LIMIT:
+    sys.setrecursionlimit(_RECURSION_LIMIT)
 
 _fts_conn = None
 
@@ -556,8 +565,24 @@ def index_file(
 
     try:
         idx = parser.parse(path)
+    except RecursionError:
+        # Tree-sitter walk on extremely nested ASTs can recurse past even our
+        # raised limit. Skip the file cleanly so the rest of the scan continues.
+        from .activity import log as _act_log
+
+        msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
+        print(f"[codegraph] parse skipped — {msg}", file=sys.stderr, flush=True)
+        _act_log(root, "parse_error", msg)
+        return False
     except Exception as exc:
-        print(f"[codegraph] parse error {path}: {exc}")
+        # Catch-all: any other parse failure (decoding error, malformed source,
+        # tree-sitter binding bug, ...) skips this one file instead of taking
+        # down the whole scan.
+        from .activity import log as _act_log
+
+        msg = f"{path}: {type(exc).__name__}: {exc}"
+        print(f"[codegraph] parse error — {msg}", file=sys.stderr, flush=True)
+        _act_log(root, "parse_error", msg)
         return False
 
     lang = idx.lang

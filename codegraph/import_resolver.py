@@ -79,47 +79,55 @@ def resolve_python(source_module: str, importer_path: Path, repo_root: Path) -> 
     )
 
 
+def _resolve_target_with_exts(target: Path) -> Path | None:
+    """Given a bare path, try common JS/TS extensions and directory index files."""
+    if target.is_file():
+        return target
+    with_ext = [target.with_suffix(ext) for ext in _JS_TS_EXTS]
+    if hit := _try_paths(with_ext):
+        return hit
+    if target.is_dir():
+        if hit := _try_paths([target / idx for idx in _JS_TS_INDEX]):
+            return hit
+    return None
+
+
 def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> Path | None:
     """
     Resolve a JavaScript / TypeScript import target to a file path.
 
-    Handles relative paths (``"./foo"``, ``"../utils/bar"``) and absolute
-    paths from the repo root (``"/src/utils"``). Bare specifiers like
-    ``"react"`` return None — they're third-party deps, not user code.
-    tsconfig path aliases (``"@/..."``) and workspace packages are
-    intentionally NOT handled here; see follow-up PRs.
+    Layered resolution:
+      1. Relative paths (``"./foo"``, ``"../utils/bar"``)
+      2. Absolute paths from the repo root (``"/src/utils"``)
+      3. tsconfig.json compilerOptions.paths aliases (``"@/utils"``)
+
+    Bare specifiers without a tsconfig alias hit (``"react"``,
+    ``"lodash"``) return None — they're third-party deps, not user code.
+    Workspace packages are intentionally NOT handled here; see follow-up
+    PRs.
     """
     if not source_module:
-        return None
-
-    # Bare specifier (no leading . or /) — third-party module.
-    if not source_module.startswith(".") and not source_module.startswith("/"):
         return None
 
     importer = importer_path.resolve()
     importer_dir = importer.parent
 
-    if source_module.startswith("/"):
-        # Absolute-from-root: '/src/utils' → repo_root + 'src/utils'
-        anchor = repo_root.resolve()
-        rel = source_module.lstrip("/")
-        target = anchor / rel
-    else:
-        # Relative — anchor at the importer's directory.
+    # 1. Relative — anchor at the importer's directory.
+    if source_module.startswith("."):
         target = (importer_dir / source_module).resolve()
+        return _resolve_target_with_exts(target)
 
-    # If the path already points at a real file, return it.
-    if target.is_file():
-        return target
+    # 2. Absolute-from-root: '/src/utils' → repo_root + 'src/utils'
+    if source_module.startswith("/"):
+        target = (repo_root.resolve() / source_module.lstrip("/")).resolve()
+        return _resolve_target_with_exts(target)
 
-    # Try common JS/TS extensions on the bare path.
-    with_ext = [target.with_suffix(ext) for ext in _JS_TS_EXTS]
-    if hit := _try_paths(with_ext):
-        return hit
+    # 3. tsconfig path alias. Bare specifiers fall through here too —
+    # if no alias matches we'll return None (third-party).
+    from .tsconfig import resolve_alias
 
-    # Try treating it as a directory with an index file.
-    if target.is_dir():
-        if hit := _try_paths([target / idx for idx in _JS_TS_INDEX]):
+    for cand in resolve_alias(source_module, importer_dir):
+        if hit := _resolve_target_with_exts(cand):
             return hit
 
     return None

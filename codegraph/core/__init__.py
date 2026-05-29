@@ -8,7 +8,7 @@
 
 from .db import get_connection, get_db_path, get_readonly_connection, reset_connection
 from .schema import init_schema
-from .utils import lang_color, rows, safe_id, short_path
+from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
 __all__ = [
     "get_connection",
@@ -19,5 +19,6 @@ __all__ = [
     "short_path",
     "safe_id",
     "lang_color",
+    "normalize_identifier",
     "init_schema",
 ]

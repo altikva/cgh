@@ -134,8 +134,31 @@ class PythonParser(BaseParser):
             elif node.type == "import_from_statement":
                 mod_node = node.child_by_field_name("module_name")
                 module = _text(mod_node, src) if mod_node else ""
+
+                # Relative imports: `from . import x` and `from .. import y`
+                # have no module_name field; the leading dots live in a
+                # relative_import child. Reconstruct so the resolver sees
+                # ".x" / "..y" instead of "" + a sibling-name symbol list.
+                if not module:
+                    for child in node.children:
+                        if child.type == "relative_import":
+                            prefix = _text(child, src).strip()
+                            if prefix:
+                                module = prefix
+                            break
+
                 symbols = [_text(c, src) for c in node.children if c.type == "dotted_name" and c != mod_node]
-                index.imports.append(ImportRef(source_module=module, symbols=symbols))
+
+                # When the import is purely relative + dotted names
+                # (`from . import x, y`), treat each symbol as a sibling
+                # module so the resolver can wire one edge per target.
+                if module in (".", "..") and symbols:
+                    for sym in symbols:
+                        index.imports.append(
+                            ImportRef(source_module=module + sym, symbols=[])
+                        )
+                else:
+                    index.imports.append(ImportRef(source_module=module, symbols=symbols))
 
             # --- class ---
             elif node.type == "class_definition":

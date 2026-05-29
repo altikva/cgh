@@ -1343,6 +1343,94 @@ def cmd_doctor(args) -> None:
             )
         )
 
+    # Claude Code integration audit — separate section since it answers
+    # a different question (is what's installed in .claude/ up-to-date with
+    # this cgh version) and the fix command is also different (cgh setup
+    # claude, not anything in this repo's .codegraph/).
+    try:
+        from codegraph.cli.commands_init import audit_claude_integration
+
+        audit = audit_claude_integration(root)
+    except Exception:
+        audit = None
+
+    if audit is not None:
+        _print_claude_audit(audit)
+
+
+def _print_claude_audit(audit: dict) -> None:
+    """Render the Claude Code integration audit produced by
+    audit_claude_integration() as a Rich table with a fix hint when stale."""
+    icon = {
+        "ok": "[green]OK[/green]",
+        "missing": "[red]!![/red]",
+        "partial": "[yellow]~~[/yellow]",
+        "stale": "[yellow]~~[/yellow]",
+        "misplaced": "[yellow]~~[/yellow]",
+    }
+
+    tbl = Table(
+        title="Claude Code integration",
+        box=box.ROUNDED,
+        title_style="bold cyan",
+    )
+    tbl.add_column("Artifact", style="bold")
+    tbl.add_column("", width=3)
+    tbl.add_column("Detail")
+
+    m = audit["mcp_json"]
+    tbl.add_row(
+        ".mcp.json (codegraph entry)",
+        icon.get(m["status"], "[dim]?[/dim]"),
+        "[green]present[/green]" if m["status"] == "ok" else "[red]missing[/red]",
+    )
+
+    h = audit["hooks"]
+    if h["status"] == "ok":
+        detail = f"[green]{h['installed']}/{h['expected']} hooks installed[/green]"
+    elif h["status"] == "misplaced":
+        misplaced = ", ".join(h.get("misplaced", []))
+        detail = (
+            f"[yellow]{h['installed']}/{h['expected']} installed[/yellow]  "
+            f"[dim](in wrong settings file: {misplaced})[/dim]"
+        )
+    else:
+        bits = []
+        if h.get("missing"):
+            bits.append(f"missing: {', '.join(h['missing'])}")
+        if h.get("misplaced"):
+            bits.append(f"wrong file: {', '.join(h['misplaced'])}")
+        detail = f"[yellow]{h['installed']}/{h['expected']} installed[/yellow]  [dim]({'; '.join(bits)})[/dim]"
+    tbl.add_row(".claude hooks (settings + local)", icon.get(h["status"], "[dim]?[/dim]"), detail)
+
+    s = audit["skills"]
+    bits = [f"{s['installed']}/{s['bundled']} installed"]
+    if s["missing"]:
+        bits.append(f"missing: {', '.join(s['missing'])}")
+    if s["modified"]:
+        bits.append(f"modified: {', '.join(s['modified'])}")
+    detail = ("[green]" if s["status"] == "ok" else "[yellow]") + ", ".join(bits) + ("[/green]" if s["status"] == "ok" else "[/yellow]")
+    tbl.add_row(".claude/skills/", icon.get(s["status"], "[dim]?[/dim]"), detail)
+
+    u = audit["usage_block"]
+    tbl.add_row(
+        "CLAUDE.md usage block",
+        icon.get(u["status"], "[dim]?[/dim]"),
+        "[green]present[/green]" if u["status"] == "ok" else "[red]missing[/red]",
+    )
+
+    console.print()
+    console.print(tbl)
+
+    if audit["overall"] != "ok":
+        console.print(
+            Panel(
+                "[yellow]Drift detected.[/yellow] Run [cyan]cgh setup claude[/cyan] "
+                "to install / refresh the missing or stale artifacts.",
+                border_style="yellow",
+            )
+        )
+
 
 # ---------------------------------------------------------------------------
 # cmd_compact

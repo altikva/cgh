@@ -803,6 +803,287 @@ def cmd_init(args) -> None:
     )
 
 
+def _claude_hook_specs(cli_prefix: str) -> list[dict]:
+    """
+    Single source of truth for the cgh-installed Claude Code hooks.
+
+    `target` decides which settings file holds the hook:
+      - "shared" → .claude/settings.json   (committed, applies to every
+        teammate who clones the repo). Reserved for hooks that fail safely
+        when cgh is missing.
+      - "local"  → .claude/settings.local.json   (gitignored). Used for
+        hooks that hard-require cgh on PATH, so they don't break teammates
+        who haven't installed it.
+    """
+    return [
+        {
+            "event": "PostToolUse",
+            "matcher": "Bash(git commit*)",
+            "marker": "cgh-reindex-on-commit",
+            "label": "post-commit reindex",
+            "target": "shared",
+            "command": (
+                f"{cli_prefix} index --root . 2>/dev/null || true  "
+                f"# cgh-reindex-on-commit"
+            ),
+            "async": True,
+            "statusMessage": "cgh: indexing changes",
+        },
+        {
+            "event": "PreToolUse",
+            "matcher": "Grep",
+            "marker": "cgh-precheck-grep",
+            "label": "pre-Grep symbol hint",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_precheck_grep  # cgh-precheck-grep",
+            "async": False,
+        },
+        {
+            "event": "PreToolUse",
+            "matcher": "Read",
+            "marker": "cgh-precheck-read",
+            "label": "pre-Read outline hint",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_precheck_read  # cgh-precheck-read",
+            "async": False,
+        },
+    ]
+
+
+def _find_hook(settings: dict, spec: dict) -> bool:
+    """True iff `settings` contains a hook entry tagged with spec['marker']."""
+    bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
+    return any(
+        spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
+        for h in bucket
+        if h.get("matcher") == spec["matcher"]
+    )
+
+
+def _drop_hook(settings: dict, spec: dict) -> bool:
+    """Remove any hook entry tagged with spec['marker']. Returns True if dropped."""
+    hooks_root = settings.get("hooks") or {}
+    bucket = hooks_root.get(spec["event"], []) or []
+    keep = [
+        h
+        for h in bucket
+        if not (
+            h.get("matcher") == spec["matcher"]
+            and spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
+        )
+    ]
+    if len(keep) == len(bucket):
+        return False
+    if keep:
+        hooks_root[spec["event"]] = keep
+    else:
+        hooks_root.pop(spec["event"], None)
+    return True
+
+
+def _append_hook(settings: dict, spec: dict) -> None:
+    """Append a hook entry built from spec into `settings`."""
+    hooks_root = settings.setdefault("hooks", {})
+    bucket = hooks_root.setdefault(spec["event"], [])
+    entry: dict = {"type": "command", "command": spec["command"]}
+    if spec.get("async"):
+        entry["async"] = True
+    if spec.get("statusMessage"):
+        entry["statusMessage"] = spec["statusMessage"]
+    bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
+
+
+def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix: str) -> dict:
+    """
+    Idempotently route each cgh hook to the right settings file.
+
+    Returns:
+      - added / moved: human-readable labels for breadcrumbs
+      - shared_changed / local_changed: True if the corresponding dict
+        was mutated (add OR drop). Caller writes each file back only when
+        its flag is True so untouched files stay byte-identical on disk.
+    """
+    added: list[str] = []
+    moved: list[str] = []
+    shared_changed = False
+    local_changed = False
+
+    for spec in _claude_hook_specs(cli_prefix):
+        right_is_shared = spec["target"] == "shared"
+        right = settings_shared if right_is_shared else settings_local
+        wrong = settings_local if right_is_shared else settings_shared
+
+        in_wrong = _drop_hook(wrong, spec)
+        if in_wrong:
+            if right_is_shared:
+                local_changed = True
+            else:
+                shared_changed = True
+
+        in_right = _find_hook(right, spec)
+        if not in_right:
+            _append_hook(right, spec)
+            if right_is_shared:
+                shared_changed = True
+            else:
+                local_changed = True
+            if in_wrong:
+                moved.append(spec["label"])
+            else:
+                added.append(spec["label"])
+
+    return {
+        "added": added,
+        "moved": moved,
+        "shared_changed": shared_changed,
+        "local_changed": local_changed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audit — used by `cgh doctor` to report drift between installed Claude
+# integration files and what the current cgh version would write.
+# ---------------------------------------------------------------------------
+
+# Markers used to detect installed hooks. Must stay in sync with the spec
+# list returned by _claude_hook_specs above. `target` decides which
+# settings file should hold the hook:
+#   "shared" → .claude/settings.json
+#   "local"  → .claude/settings.local.json
+_CLAUDE_HOOK_MARKERS = [
+    ("cgh-reindex-on-commit", "PostToolUse", "Bash(git commit*)", "post-commit reindex", "shared"),
+    ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
+    ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
+]
+
+
+def _bucket_has(bucket: list, matcher: str, marker: str) -> bool:
+    """Helper: scan a hooks list for an entry tagged with `marker`."""
+    return any(
+        marker in str(h.get("hooks", [{}])[0].get("command", ""))
+        for h in (bucket or [])
+        if h.get("matcher") == matcher
+    )
+
+
+def audit_claude_integration(root: Path) -> dict:
+    """
+    Inspect the Claude Code integration files in `root` and report what's
+    installed, missing, or stale vs the cgh version currently on PATH.
+
+    Read-only — never writes. `cgh doctor` calls this and renders the
+    result; `cgh setup claude` is the action side.
+    """
+    import json as _json
+
+    from codegraph.skill_installer import _iter_skills, detect_modified_skills
+
+    report: dict = {}
+
+    # .mcp.json — codegraph entry present?
+    mcp_path = root / ".mcp.json"
+    mcp_ok = False
+    if mcp_path.exists():
+        try:
+            data = _json.loads(mcp_path.read_text())
+            mcp_ok = "codegraph" in (data.get("mcpServers") or {})
+        except (OSError, _json.JSONDecodeError):
+            mcp_ok = False
+    report["mcp_json"] = {
+        "status": "ok" if mcp_ok else "missing",
+        "path": str(mcp_path.relative_to(root)) if mcp_path.exists() else ".mcp.json",
+    }
+
+    # Hooks — count present markers vs expected, per file. A hook found
+    # in the wrong file (e.g. pre-Grep stuck in settings.json after the
+    # split) counts as installed but misplaced; doctor surfaces it so
+    # `cgh setup claude` can move it.
+    def _load_settings(path: Path) -> dict:
+        if not path.exists():
+            return {}
+        try:
+            return _json.loads(path.read_text()) or {}
+        except (OSError, _json.JSONDecodeError):
+            return {}
+
+    shared = _load_settings(root / ".claude" / "settings.json")
+    local = _load_settings(root / ".claude" / "settings.local.json")
+
+    installed_markers: list[str] = []
+    missing_labels: list[str] = []
+    misplaced_labels: list[str] = []
+    for marker, event, matcher, label, target in _CLAUDE_HOOK_MARKERS:
+        right = shared if target == "shared" else local
+        wrong = local if target == "shared" else shared
+        if _bucket_has(right.get("hooks", {}).get(event, []), matcher, marker):
+            installed_markers.append(marker)
+        elif _bucket_has(wrong.get("hooks", {}).get(event, []), matcher, marker):
+            installed_markers.append(marker)
+            misplaced_labels.append(label)
+        else:
+            missing_labels.append(label)
+    expected = len(_CLAUDE_HOOK_MARKERS)
+    installed = len(installed_markers)
+    if installed == expected and not misplaced_labels:
+        hook_status = "ok"
+    elif misplaced_labels and not missing_labels:
+        hook_status = "misplaced"
+    elif installed == 0:
+        hook_status = "missing"
+    else:
+        hook_status = "partial"
+    report["hooks"] = {
+        "status": hook_status,
+        "installed": installed,
+        "expected": expected,
+        "missing": missing_labels,
+        "misplaced": misplaced_labels,
+    }
+
+    # Skills — count bundled vs on-disk + modified
+    bundled = [name for name, _fm, _body, _d in _iter_skills()]
+    skills_dir = root / ".claude" / "skills"
+    missing_skills: list[str] = []
+    for name in bundled:
+        if not (skills_dir / name / "SKILL.md").is_file():
+            missing_skills.append(name)
+    modified_skills = detect_modified_skills(root)
+    if not missing_skills and not modified_skills:
+        skills_status = "ok"
+    elif missing_skills and not modified_skills:
+        skills_status = "missing"
+    else:
+        skills_status = "stale"
+    report["skills"] = {
+        "status": skills_status,
+        "bundled": len(bundled),
+        "installed": len(bundled) - len(missing_skills),
+        "missing": missing_skills,
+        "modified": modified_skills,
+    }
+
+    # CLAUDE.md usage block — present?
+    claude_md = root / "CLAUDE.md"
+    has_block = False
+    if claude_md.exists():
+        try:
+            text = claude_md.read_text(encoding="utf-8")
+            has_block = "<!-- codegraph-usage:start -->" in text
+        except OSError:
+            has_block = False
+    report["usage_block"] = {
+        "status": "ok" if has_block else "missing",
+        "path": "CLAUDE.md",
+    }
+
+    report["overall"] = (
+        "ok"
+        if all(s["status"] == "ok" for s in (report["mcp_json"], report["hooks"], report["skills"], report["usage_block"]))
+        else "drift"
+    )
+    return report
+
+
 def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -> None:
     """Install MCP config + hooks for an AI tool."""
     import json as _json
@@ -848,24 +1129,39 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server)[/dim]")
 
-        # Claude hooks
+        # Claude hooks — split across two settings files. Shared hooks
+        # (committed, team-wide) go into settings.json; local hooks (depend
+        # on cgh being on the user's PATH) go into settings.local.json so
+        # they don't break teammates who haven't installed cgh.
         settings_dir = root / ".claude"
         settings_dir.mkdir(exist_ok=True)
-        settings_path = settings_dir / "settings.json"
-        if settings_path.exists():
-            settings = _json.loads(settings_path.read_text())
-        else:
-            settings = {}
+        shared_path = settings_dir / "settings.json"
+        local_path = settings_dir / "settings.local.json"
 
-        # Check if post-commit hook already exists
-        post_hooks = settings.get("hooks", {}).get("PostToolUse", [])
-        has_codegraph_hook = any(
-            "codegraph" in str(h.get("hooks", [{}])[0].get("command", ""))
-            for h in post_hooks
-            if h.get("matcher") == "Bash(git commit*)"
-        )
-        if not has_codegraph_hook:
-            console.print("    [green]+[/green] .claude/settings.json [dim](post-commit hook)[/dim]")
+        shared = _json.loads(shared_path.read_text()) if shared_path.exists() else {}
+        local = _json.loads(local_path.read_text()) if local_path.exists() else {}
+
+        cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
+        cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
+
+        result = _ensure_claude_hooks(shared, local, cli_prefix)
+
+        if result["shared_changed"]:
+            shared_path.write_text(_json.dumps(shared, indent=2) + "\n")
+        if result["local_changed"]:
+            local_path.write_text(_json.dumps(local, indent=2) + "\n")
+
+        for label in result["added"]:
+            target_file = next(
+                (s["target"] for s in _claude_hook_specs(cli_prefix) if s["label"] == label),
+                "shared",
+            )
+            target_name = "settings.json" if target_file == "shared" else "settings.local.json"
+            console.print(f"    [green]+[/green] .claude/{target_name} [dim]({label})[/dim]")
+        for label in result["moved"]:
+            console.print(
+                f"    [yellow]~[/yellow] {label} [dim](moved to the correct settings file)[/dim]"
+            )
 
         # Skills — may preserve local edits if the user said so
         _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))
@@ -956,87 +1252,46 @@ def cmd_parsers(args) -> None:
 
 
 def cmd_setup(args) -> None:
-    """Generate integration files for AI tools."""
-    import shutil
+    """
+    Generate integration files for AI tools.
+
+    Single source of truth: delegates the heavy lifting to
+    _install_integration so MCP config, skills, and (for Claude) hooks
+    stay in lock-step with `cgh init`. Adds the non-interactive extras
+    on top: auto-accept permissions and the usage-guidelines block.
+    """
+    from codegraph.skill_installer import install_usage_guidelines
 
     root = Path(os.path.abspath(args.root))
     target = args.target
 
     console.print(LOGO)
 
-    codegraph_cmd = "codegraph"
-    if not shutil.which("codegraph"):
-        codegraph_cmd = f"{sys.executable} -m codegraph"
-
-    mcp_config = {
-        "mcpServers": {
-            "codegraph": {
-                "command": codegraph_cmd.split()[0],
-                "args": codegraph_cmd.split()[1:] + ["serve", "--root", str(root), "--watch", "--reindex"],
-            }
-        }
-    }
-
-    created = []
-
-    if target in ("claude", "all"):
-        mcp_path = root / ".mcp.json"
-        if mcp_path.exists():
-            import json as _json
-
-            existing = _json.loads(mcp_path.read_text())
-            existing.setdefault("mcpServers", {})["codegraph"] = mcp_config["mcpServers"]["codegraph"]
-            mcp_path.write_text(_json.dumps(existing, indent=2) + "\n")
-        else:
-            import json as _json
-
-            mcp_path.write_text(_json.dumps(mcp_config, indent=2) + "\n")
-        created.append((".mcp.json", "Claude Code MCP server"))
-
-        # Auto-accept codegraph MCP tools (non-interactive path)
-        added = _configure_claude_auto_accept(root)
-        if added:
-            created.append((".claude/settings.local.json", f"permissions += {', '.join(added)}"))
-
-        # Usage guidelines in CLAUDE.md
-        from codegraph.skill_installer import install_usage_guidelines
-
-        path = install_usage_guidelines(root, "claude")
-        if path:
-            created.append(("CLAUDE.md", "codegraph usage block"))
-
-    from codegraph.skill_installer import install_usage_guidelines as _install_usage
-
-    if target in ("cursor", "all"):
-        cursor_dir = root / ".cursor"
-        cursor_dir.mkdir(exist_ok=True)
-        cursor_mcp = cursor_dir / "mcp.json"
-        import json as _json
-
-        cursor_mcp.write_text(_json.dumps(mcp_config, indent=2) + "\n")
-        created.append((".cursor/mcp.json", "Cursor MCP server"))
-        if _install_usage(root, "cursor"):
-            created.append((".cursor/rules/codegraph-usage.mdc", "codegraph usage rule"))
-
-    if target in ("codex", "all"):
-        created.append(("(same .mcp.json)", "Codex CLI MCP server"))
-        if _install_usage(root, "codex"):
-            created.append(("AGENTS.md", "codegraph usage block"))
-
-    if target in ("gemini", "all"):
-        created.append(("(same .mcp.json)", "Gemini CLI MCP server"))
-        if _install_usage(root, "gemini"):
-            created.append(("GEMINI.md", "codegraph usage block"))
-
-    if created:
-        panel_lines = [f"  [green]+[/green] {f} [dim]({desc})[/dim]" for f, desc in created]
-        console.print(
-            Panel(
-                "\n".join(panel_lines),
-                title=f"[bold green]Setup for {target}[/bold green]",
-                border_style="green",
-            )
-        )
-    else:
+    valid = ("claude", "cursor", "codex", "gemini", "all")
+    if target not in valid:
         console.print(f"[dim]Unknown target: {target}[/dim]")
-        console.print("[dim]Options: claude, cursor, codex, gemini, all[/dim]")
+        console.print(f"[dim]Options: {', '.join(valid)}[/dim]")
+        return
+
+    targets = ["claude", "cursor", "codex", "gemini"] if target == "all" else [target]
+
+    console.print(Panel(f"[bold]Setup for {target}[/bold]", border_style="cyan"))
+
+    for tool_key in targets:
+        console.print(f"\n[bold]{tool_key}[/bold]")
+        _install_integration(root, tool_key, overwrite_skills=True)
+
+        if tool_key == "claude":
+            added = _configure_claude_auto_accept(root)
+            if added:
+                console.print(
+                    f"    [green]+[/green] .claude/settings.local.json "
+                    f"[dim](permissions += {', '.join(added)})[/dim]"
+                )
+
+        written = install_usage_guidelines(root, tool_key)
+        if written:
+            rel = written.replace(str(root) + "/", "")
+            console.print(f"    [green]+[/green] {rel} [dim](usage guidelines)[/dim]")
+
+    console.print()

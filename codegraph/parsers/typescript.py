@@ -43,6 +43,13 @@ def _text(node: Node, src: bytes) -> str:
     return src[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
+def _ident(node: Node, src: bytes) -> str:
+    """NFKC-normalized identifier extraction. See codegraph.core.utils."""
+    from codegraph.core.utils import normalize_identifier
+
+    return normalize_identifier(_text(node, src))
+
+
 def _collect_calls(node: Node, src: bytes) -> list[str]:
     calls: list[str] = []
     visited: set[int] = set()
@@ -54,10 +61,11 @@ def _collect_calls(node: Node, src: bytes) -> list[str]:
         if n.type == "call_expression":
             fn = n.child_by_field_name("function")
             if fn:
-                name = _text(fn, src)
+                name = _ident(fn, src)
                 if "." in name:
                     name = name.split(".")[-1]
-                if re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", name):
+                # Allow $ (JS identifier char) plus Unicode word chars.
+                if re.match(r"^[\w$]+$", name, re.UNICODE):
                     calls.append(name)
         for child in n.children:
             walk(child)
@@ -71,12 +79,12 @@ def _fn_name(node: Node, src: bytes) -> str:
     # function foo() / function* foo()
     name_node = node.child_by_field_name("name")
     if name_node:
-        return _text(name_node, src)
+        return _ident(name_node, src)
     # const foo = () => ...  (parent is variable_declarator)
     if node.parent and node.parent.type == "variable_declarator":
         id_node = node.parent.child_by_field_name("name")
         if id_node:
-            return _text(id_node, src)
+            return _ident(id_node, src)
     return "<anonymous>"
 
 
@@ -123,21 +131,21 @@ class TypeScriptParser(BaseParser):
                                     if spec.type == "import_specifier":
                                         n = spec.child_by_field_name("name")
                                         if n:
-                                            symbols.append(_text(n, src))
+                                            symbols.append(_ident(n, src))
                             elif sub.type == "identifier":
-                                symbols.append(_text(sub, src))
+                                symbols.append(_ident(sub, src))
                 index.imports.append(ImportRef(source_module=module, symbols=symbols))
 
             # --- class ---
             elif node.type == "class_declaration":
                 name_node = node.child_by_field_name("name")
-                name = _text(name_node, src) if name_node else "?"
+                name = _ident(name_node, src) if name_node else "?"
                 bases: list[str] = []
                 heritage = node.child_by_field_name("heritage")
                 if heritage:
                     for child in heritage.children:
                         if child.type in ("identifier", "member_expression"):
-                            bases.append(_text(child, src))
+                            bases.append(_ident(child, src))
                 body = node.child_by_field_name("body")
                 index.classes.append(
                     ClassDef(

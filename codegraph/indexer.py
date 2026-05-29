@@ -228,14 +228,24 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn: kuzu.Connection, functions: list) -> None:
+def _resolve_calls(conn: kuzu.Connection, functions: list, lang: str = "") -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
-    names to known function names.  Best-effort: unresolved names are skipped.
+    names to known function names. Best-effort: unresolved names are skipped.
+
+    Names that match a language built-in callable for ``lang`` are skipped
+    so callees like ``isinstance``, ``len``, ``String``, ``parseInt`` don't
+    accumulate spurious edges from every call site. If a user happens to
+    define a function whose name shadows a built-in, the edge to that
+    user-defined function is also skipped — that's a conscious tradeoff
+    to keep the graph clean.
     """
+    from codegraph.parsers.builtins import is_builtin
+
     for fn in functions:
         for called_name in fn.calls:
-            # Find any function with this name (prefer same file, fall back to any)
+            if lang and is_builtin(lang, called_name):
+                continue
             conn.execute(
                 """MATCH (caller:Function {id:$cid}), (callee:Function)
                    WHERE callee.name = $n
@@ -307,7 +317,7 @@ def _ingest_code(conn: kuzu.Connection, idx: FileIndex) -> None:
                 {"cid": class_id, "fid": fn.id},
             )
 
-    _resolve_calls(conn, idx.functions)
+    _resolve_calls(conn, idx.functions, idx.lang)
     _resolve_inherits(conn, idx.classes)
 
 

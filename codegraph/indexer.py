@@ -330,6 +330,53 @@ def _ingest_code(conn: kuzu.Connection, idx: FileIndex) -> None:
     _resolve_inherits(conn, idx.classes)
 
 
+def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | None) -> None:
+    """
+    Wire IMPORTS edges from idx.imports into Kuzu.
+
+    Resolves each ImportRef.source_module to a target file via
+    import_resolver, then MERGEs a File → File IMPORTS edge. Unresolved
+    imports (bare specifiers, missing files, third-party deps) are
+    silently skipped — they're not part of the user's repo, no edge to
+    draw.
+    """
+    if not idx.imports or repo_root is None:
+        return
+    from .import_resolver import resolve_import
+
+    seen_targets: set[str] = set()
+    for imp in idx.imports:
+        target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
+        if target is None:
+            continue
+        target_str = str(target)
+        if target_str == idx.path:
+            # File importing itself — skip the self-loop.
+            continue
+
+        # Make sure the target File exists. During incremental indexing
+        # the importer may be processed before its dependency, so MERGE
+        # creates a stub node carrying just the path. Once the target's
+        # own index_file runs, the same MERGE upserts the full metadata.
+        conn.execute("MERGE (f:File {path: $p})", {"p": target_str})
+
+        # Symbol annotation on the edge. If the import named multiple
+        # symbols, write one edge per symbol so MCP tools can answer
+        # "who imports name X". Single edge with empty symbol when the
+        # import is a whole-module pull.
+        symbols = imp.symbols if imp.symbols else [""]
+        for sym in symbols:
+            edge_key = f"{target_str}::{sym}"
+            if edge_key in seen_targets:
+                continue
+            seen_targets.add(edge_key)
+            conn.execute(
+                """MATCH (src:File {path:$sp}), (tgt:File {path:$tp})
+                   MERGE (src)-[:IMPORTS {symbol: $sym}]->(tgt)""",
+                {"sp": idx.path, "tp": target_str, "sym": sym},
+            )
+
+
 def _ingest_terraform(conn: kuzu.Connection, idx: FileIndex) -> None:
     """Ingest terraform resources and variables from unified FileIndex."""
     for res in idx.resources:
@@ -623,6 +670,12 @@ def index_file(
         _ingest_terraform(conn, idx)
     if idx.sections:
         _ingest_markdown(conn, idx)
+
+    # IMPORTS edges — wire them up after the File node exists, regardless
+    # of whether the file defines functions/classes (pure __init__.py
+    # re-export modules still have meaningful imports).
+    if idx.imports:
+        _ingest_imports(conn, idx, root)
 
     # HTTP endpoints (after functions are in place so IMPLEMENTED_BY can link)
     _ingest_endpoints(conn, path)

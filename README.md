@@ -52,12 +52,14 @@ cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
 ```
 
-After install, both `codegraph` and `cgh` (short alias) are available:
+After install, the `cgh` CLI is on your PATH:
 
 ```bash
 cgh --version
 # codegraph 0.3.1
 ```
+
+The Python import name is still `codegraph` (e.g. `from codegraph.parsers import ...`); only the CLI is renamed. Same pattern as `pip install pillow` then `import PIL`.
 
 ---
 
@@ -167,7 +169,7 @@ codegraph/
 
 ## CLI Reference
 
-`cgh` is a short alias for `codegraph`. All commands accept `--root <DIR>` to target a different project.
+All commands accept `--root <DIR>` to target a different project. The CLI is `cgh`; the Python import is `codegraph` (see Install above).
 
 ### Getting Started
 

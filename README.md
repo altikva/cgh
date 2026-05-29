@@ -17,7 +17,15 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 
 ## Install
 
+**Python 3.11, 3.12, or 3.13.** Python 3.14 is not supported yet because Kuzu
+(the underlying graph DB) does not publish cp314 wheels at the time of this
+release. The cap will be lifted as soon as Kuzu ships them.
+
 ```bash
+# From PyPI (most users)
+pip install cgh
+
+# From source (for development)
 git clone https://github.com/altikva/cgh.git
 cd cgh
 
@@ -32,6 +40,10 @@ uv pip install -e .
 uv tool install .
 ```
 
+> On Windows with Python 3.14 you will see a `kuzu` source build that fails
+> with `WinError 2`. Install on Python 3.13 instead (`py -3.13 -m pip install cgh`
+> or `uv tool install --python 3.13 cgh`).
+
 Once installed, the `cgh` CLI is on your PATH:
 
 ```bash
@@ -44,7 +56,7 @@ After install, both `codegraph` and `cgh` (short alias) are available:
 
 ```bash
 cgh --version
-# codegraph 0.3.0
+# codegraph 0.3.1
 ```
 
 ---

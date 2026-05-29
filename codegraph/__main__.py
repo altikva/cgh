@@ -32,6 +32,7 @@ from codegraph.cli.commands_index import (
 # ---------------------------------------------------------------------------
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
+from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
     cmd_compact,
@@ -216,6 +217,15 @@ def main() -> None:
             "files changed since last scan."
         ),
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Bypass the running owner and grab the Kuzu write lock directly. "
+            "Fails with a clear error if another cgh process holds it. "
+            "Default behavior routes through the owner via MCP when one is alive."
+        ),
+    )
 
     # --- watch ---
     p = sub.add_parser("watch", help="Index then watch for file changes")
@@ -240,6 +250,11 @@ def main() -> None:
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--watch", action="store_true")
     p.add_argument("--reindex", action="store_true")
+
+    # --- _hook_precheck_grep / _hook_precheck_read (hidden hook entry points) ---
+    # Both read the PreToolUse payload on stdin; no flags.
+    sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
 
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
@@ -380,6 +395,8 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "_serve_owner": _cmd_serve_owner,
+        "_hook_precheck_grep": cmd_hook_precheck_grep,
+        "_hook_precheck_read": cmd_hook_precheck_read,
         "stats": cmd_stats,
         "status": cmd_status,
         "tail": cmd_tail,

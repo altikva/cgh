@@ -26,11 +26,50 @@ from codegraph.cli import LOGO, _lang_color, _short_path, console
 
 def cmd_index(args) -> None:
     from codegraph.indexer import index_repo
+    from codegraph.ipc import is_owner_alive, read_owner_port
 
     root = os.path.abspath(args.root)
+    force = getattr(args, "force", False)
 
     console.print(LOGO)
     console.print(f"[dim]Repository:[/dim] [bold]{root}[/bold]\n")
+
+    # Owner-aware routing: when an owner is alive it holds Kuzu's write lock
+    # for its entire lifetime, so a direct index_repo() call would race the
+    # lock and fail. Route through the owner's incremental_reindex MCP tool
+    # instead — it re-checks every File node's blob SHA against HEAD,
+    # re-indexes drifted files, and advances scan_meta.git_head. The --force
+    # escape hatch preserves the old "fail loud if locked" behavior for
+    # users who really want a fresh local lock attempt.
+    if not force:
+        owner_port = read_owner_port(root) if is_owner_alive(root) else None
+        if owner_port:
+            from codegraph.cli.commands_monitor import _ask_owner_incremental_reindex
+
+            console.print(
+                f"[dim]Owner alive on port {owner_port} — routing through "
+                "incremental_reindex (drifted blobs only).[/dim]"
+            )
+            console.print(
+                "[dim]For a full forced re-walk: stop the owner with "
+                "[/dim][cyan]cgh serve --stop[/cyan][dim] then "
+                "[/dim][cyan]cgh index --force[/cyan][dim].[/dim]\n"
+            )
+            stats = _ask_owner_incremental_reindex(root, owner_port)
+            if stats is None:
+                console.print(
+                    Panel(
+                        "[yellow]Owner reachable but incremental_reindex failed[/yellow] "
+                        "(timeout or RPC error).\n"
+                        "Check [cyan].codegraph/owner.log[/cyan], or rerun with "
+                        "[cyan]cgh index --force[/cyan] after stopping the owner.",
+                        title="[yellow]Index Failed[/yellow]",
+                        border_style="yellow",
+                    )
+                )
+                return
+            _print_index_summary(stats)
+            return
 
     task_id = None
 
@@ -78,10 +117,11 @@ def cmd_index(args) -> None:
                 console.print(
                     Panel(
                         "[yellow]Database is locked by another cgh process.[/yellow]\n\n"
-                        "An MCP server or watcher is already running for this repo.\n"
-                        "It's likely keeping the index up to date — no action needed.\n\n"
-                        "To force a fresh index, stop the other process first:\n"
-                        "  [cyan]pkill -f 'cgh serve'[/cyan]",
+                        "An MCP owner is holding the Kuzu write lock for this repo.\n"
+                        "Default [cyan]cgh index[/cyan] routes through the owner via MCP — "
+                        "[cyan]--force[/cyan] was passed, which skips that path.\n\n"
+                        "Either drop [cyan]--force[/cyan], or stop the owner first:\n"
+                        "  [cyan]cgh serve --stop[/cyan]",
                         title="[yellow]Index Skipped[/yellow]",
                         border_style="yellow",
                     )
@@ -89,12 +129,14 @@ def cmd_index(args) -> None:
                 return
             raise
 
-    # Summary
+    _print_index_summary(stats)
+
+
+def _print_index_summary(stats: dict) -> None:
     console.print()
     table = Table(box=box.ROUNDED, title="Index Summary", title_style="bold")
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
-    # Incremental returns reindexed_count/unchanged_count; full returns indexed/skipped.
     indexed = stats.get("indexed", stats.get("reindexed_count", 0))
     skipped = stats.get("skipped", stats.get("unchanged_count", 0))
     deleted = stats.get("deleted_count", len(stats.get("deleted", [])) if isinstance(stats.get("deleted"), list) else 0)
@@ -103,8 +145,10 @@ def cmd_index(args) -> None:
     table.add_row("Files skipped", f"[dim]{skipped}[/dim]")
     if deleted:
         table.add_row("Files deleted", f"[yellow]{deleted}[/yellow]")
-    table.add_row("Errors", f"[red]{stats['errors']}[/red]" if stats.get("errors", 0) > 0 else "[dim]0[/dim]")
-    table.add_row("Elapsed", f"[cyan]{stats['elapsed_s']}s[/cyan]")
+    errors = stats.get("errors", 0)
+    table.add_row("Errors", f"[red]{errors}[/red]" if errors else "[dim]0[/dim]")
+    elapsed = stats.get("elapsed_s", "?")
+    table.add_row("Elapsed", f"[cyan]{elapsed}s[/cyan]")
     table.add_row("Method", f"[dim]{method}[/dim]")
     console.print(table)
 

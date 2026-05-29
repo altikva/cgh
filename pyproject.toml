@@ -4,13 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.3.0"
+version = "0.3.1"
 description = "Local code graph for AI coding agents. Indexes your repo into Kuzu + SQLite FTS, exposes 30+ MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
+# Upper bound is for kuzu, not cgh itself. Kuzu (0.11.x) does not yet
+# publish cp314 wheels, so pip would fall back to building from source
+# on Python 3.14 and fail without MSVC + CMake on Windows. Lift this
+# cap as soon as kuzu ships cp314 wheels.
 keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
 classifiers = [
     "Development Status :: 4 - Beta",

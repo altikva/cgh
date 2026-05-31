@@ -385,26 +385,27 @@ No config changes, no registry edits. The `@register_parser` decorator and auto-
 | `python.py` | Python | tree-sitter (`tree-sitter-python`) |
 | `typescript.py` | TypeScript, JavaScript | tree-sitter (`tree-sitter-typescript`) |
 | `vue.py` | Vue SFC | tree-sitter (extracts `<script>` block) |
+| `golang.py` | Go | tree-sitter (`tree-sitter-go`) |
+| `rust.py` | Rust | tree-sitter (`tree-sitter-rust`) |
+| `java.py` | Java | tree-sitter (`tree-sitter-java`) |
 | `terraform.py` | Terraform HCL | regex + brace tracking |
 | `markdown.py` | Markdown | regex (headings, links, code refs) |
+| `plaintext.py` | Plain text fallback | line-based |
 
 ---
 
-## Optional Dependencies
+## Dependencies
 
-Extra language grammars are declared in `pyproject.toml` as optional dependencies:
+As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java) is a core dependency in `pyproject.toml` — no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
 
 ```toml
-[project.optional-dependencies]
-rust = ["tree-sitter-rust>=0.23"]
-go = ["tree-sitter-go>=0.23"]
-java = ["tree-sitter-java>=0.23"]
-all = ["codegraph[rust,go,java]"]
-```
-
-Install with:
-
-```bash
-pip install codegraph[rust]
-pip install codegraph[all]
+dependencies = [
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+    "tree-sitter-java>=0.23",
+    # ...
+]
 ```

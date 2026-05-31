@@ -18,19 +18,19 @@ def tmp_plans_env(tmp_path: Path, monkeypatch) -> Path:
 
 class TestParseFilename:
     def test_slug_only(self):
-        from codegraph.plan_index import parse_filename
+        from codegraph.claude_state.plans import parse_filename
 
         assert parse_filename("nifty-popping-sprout") == ("nifty-popping-sprout", "")
 
     def test_with_agent(self):
-        from codegraph.plan_index import parse_filename
+        from codegraph.claude_state.plans import parse_filename
 
         slug, agent = parse_filename("crispy-dancing-wombat-agent-a621be379")
         assert slug == "crispy-dancing-wombat"
         assert agent == "a621be379"
 
     def test_multi_dashed_slug(self):
-        from codegraph.plan_index import parse_filename
+        from codegraph.claude_state.plans import parse_filename
 
         slug, agent = parse_filename("foo-bar-baz-qux-agent-deadbeef")
         assert slug == "foo-bar-baz-qux"
@@ -44,15 +44,15 @@ class TestScanPlanDir:
             "# Beta Sub-Agent Plan\n\nSub-task details", encoding="utf-8"
         )
 
-        from codegraph.plan_index import scan_plan_dir
+        from codegraph.claude_state.plans import scan_plan_dir
 
         stats = scan_plan_dir(tmp_path)
         assert stats["indexed"] == 2
 
     def test_agent_id_persisted(self, tmp_plans_env, tmp_path):
         (tmp_plans_env / "gamma-agent-cafebabe.md").write_text("# Gamma Plan\n\nAgent-driven", encoding="utf-8")
-        from codegraph.fts import get_fts_conn, list_plan_entries
-        from codegraph.plan_index import scan_plan_dir
+        from codegraph.core.fts import get_fts_conn, list_plan_entries
+        from codegraph.claude_state.plans import scan_plan_dir
 
         scan_plan_dir(tmp_path)
         conn = get_fts_conn(tmp_path)
@@ -64,8 +64,8 @@ class TestScanPlanDir:
             "# Add donor statistics dashboard\n\nImplementation plan for donor cohorts",
             encoding="utf-8",
         )
-        from codegraph.fts import get_fts_conn, plan_search
-        from codegraph.plan_index import scan_plan_dir
+        from codegraph.core.fts import get_fts_conn, plan_search
+        from codegraph.claude_state.plans import scan_plan_dir
 
         scan_plan_dir(tmp_path)
         conn = get_fts_conn(tmp_path)
@@ -77,8 +77,8 @@ class TestScanPlanDir:
         (tmp_plans_env / "plain.md").write_text("# Plain\n\nbody", encoding="utf-8")
         (tmp_plans_env / "sub-agent-deadbeef.md").write_text("# Sub\n\nbody", encoding="utf-8")
 
-        from codegraph.fts import get_fts_conn, list_plan_entries
-        from codegraph.plan_index import scan_plan_dir
+        from codegraph.core.fts import get_fts_conn, list_plan_entries
+        from codegraph.claude_state.plans import scan_plan_dir
 
         scan_plan_dir(tmp_path)
         conn = get_fts_conn(tmp_path)

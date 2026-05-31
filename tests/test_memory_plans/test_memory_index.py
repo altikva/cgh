@@ -32,7 +32,7 @@ class TestScanMemoryDir:
         _write(tmp_memory_env / "project_domain.md", "project", "Domain", "donations platform")
         _write(tmp_memory_env / "reference_api.md", "reference", "API Ref", "see openapi.json")
 
-        from codegraph.memory_index import scan_memory_dir
+        from codegraph.claude_state.memory import scan_memory_dir
 
         stats = scan_memory_dir(tmp_path)
         assert stats["indexed"] == 4
@@ -42,7 +42,7 @@ class TestScanMemoryDir:
     def test_classify_from_filename_fallback(self, tmp_memory_env, tmp_path):
         # No frontmatter — kind should come from filename prefix
         (tmp_memory_env / "feedback_no_fm.md").write_text("# Title\n\nbody", encoding="utf-8")
-        from codegraph.memory_index import classify
+        from codegraph.claude_state.memory import classify
 
         kind, title = classify(tmp_memory_env / "feedback_no_fm.md")
         assert kind == "feedback"
@@ -50,7 +50,7 @@ class TestScanMemoryDir:
 
     def test_mtime_skip(self, tmp_memory_env, tmp_path):
         _write(tmp_memory_env / "x.md", "user", "X", "body")
-        from codegraph.memory_index import scan_memory_dir
+        from codegraph.claude_state.memory import scan_memory_dir
 
         scan_memory_dir(tmp_path)
         stats = scan_memory_dir(tmp_path)
@@ -60,7 +60,7 @@ class TestScanMemoryDir:
     def test_removal_detection(self, tmp_memory_env, tmp_path):
         f = tmp_memory_env / "gone.md"
         _write(f, "user", "Gone", "will vanish")
-        from codegraph.memory_index import scan_memory_dir
+        from codegraph.claude_state.memory import scan_memory_dir
 
         scan_memory_dir(tmp_path)
         f.unlink()
@@ -76,8 +76,8 @@ class TestScanMemoryDir:
         )
         _write(tmp_memory_env / "project_stack.md", "project", "Stack", "FastAPI + Nuxt 4")
 
-        from codegraph.fts import get_fts_conn, memory_search
-        from codegraph.memory_index import scan_memory_dir
+        from codegraph.core.fts import get_fts_conn, memory_search
+        from codegraph.claude_state.memory import scan_memory_dir
 
         scan_memory_dir(tmp_path)
         conn = get_fts_conn(tmp_path)

@@ -116,53 +116,92 @@ Then reads only lines 42-55.
 
 ---
 
-## Architecture (v0.3)
+## Architecture (v0.4)
 
 ```
 codegraph/
-  __init__.py              # version only
-  __main__.py              # thin argparse + dispatch (~260 lines)
-  config.py                # layered TOML config
-  auth.py                  # MCP auth key management
+  __init__.py              # version
+  __main__.py              # thin argparse + dispatch
+  indexer.py               # parse + Kuzu ingestion engine (the only
+                           # top-level .py beside the entrypoints)
 
-  core/                    # shared utilities (single source of truth)
+  core/                    # shared infrastructure
     db.py                  # Kuzu connection manager
     schema.py              # graph DDL
-    utils.py               # rows(), short_path(), safe_id(), lang_color()
+    utils.py               # rows(), short_path(), normalize_identifier(), ...
+    config.py              # layered TOML config
+    fts.py                 # BM25 full-text search (SQLite FTS5)
 
   parsers/                 # plugin registry (auto-discovery)
     base.py                # BaseParser ABC + FileIndex dataclass
-    python.py, typescript.py, terraform.py, markdown.py, vue.py
+    builtins.py            # per-language built-in callables (filter)
+    python.py, typescript.py, vue.py
+    golang.py, rust.py, java.py
+    terraform.py, markdown.py, plaintext.py
 
-  server/                  # MCP server (split from monolith)
-    __init__.py            # FastMCP setup + main()
+  imports/                 # JS / TS import resolution
+    resolver.py            # entry point: resolves any import to a Path
+    tsconfig.py            # tsconfig.json paths + extends + JSONC
+    workspaces.py          # npm / pnpm / yarn / lerna workspace packages
+
+  state/                   # per-repo runtime state
+    auth.py                # MCP auth key
+    activity.py            # activity log (parse_error, scan events)
+    call_log.py            # per-MCP-tool call log + stats
+    scan_meta.py           # last-indexed git SHA + freshness
+    watcher.py             # watchdog-based live file watcher
+    ipc.py                 # stdio <-> HTTP bridge for cgh serve
+    pidfile.py             # single-writer lock for the owner process
+
+  analysis/                # higher-level graph analysis
+    context_builder.py     # AI context builder (graph + FTS)
+    dead_code.py           # unused symbol detection
+    federation.py          # multi-repo federation (parent reads child DBs)
+    endpoints.py           # HTTP endpoint extraction (FastAPI / Nuxt)
+    module_doc.py          # one-line module summary extraction
+    roles.py               # file role classification by path conventions
+    pattern.py             # regex / substring search across indexed files
+
+  claude_state/            # indexing of ~/.claude/* state
+    memory.py              # memory_search / memory_list FTS index
+    plans.py               # plan_search / plan_list FTS index
+
+  server/                  # MCP server
+    __init__.py            # FastMCP setup + owner process main()
     tools_query.py         # symbol_lookup, callers, callees, imports, subgraph
     tools_docs.py          # search_docs, doc_outline, doc_refs
     tools_index.py         # scan_repo, index_changed, force_index
     tools_viz.py           # visualize_graph, graph_stats
-    tools_meta.py          # fts_search, dead_code, context_for_task, call_stats
+    tools_arch.py          # arch / role / endpoint tools
+    tools_meta.py          # fts_search, dead_code, context_for_task
 
-  cli/                     # Rich CLI (split from monolith)
+  cli/                     # Rich CLI
     commands_init.py       # init, setup, parsers
-    commands_query.py      # search, lookup, callers, callees, outline
     commands_index.py      # index, watch, serve, force-index
-    commands_monitor.py    # stats, logs, history, diff, doctor, compact
+    commands_monitor.py    # stats, status, logs, history, diff, doctor
+    commands_query.py      # search, lookup, callers, callees, outline
     commands_graph.py      # graph, add-dir
+    commands_hooks.py      # _hook_precheck_grep / _hook_precheck_read
+    commands_federate.py   # federate add / list / verify
 
-  viz/                     # visualization
+  integrations/            # per-AI-tool integration glue
+    skill_installer.py     # install bundled skills to .claude/, .cursor/, ...
+    post_commit.py         # Claude Code post-commit hook handler
+    claude-code.md, cursor.md, codex.md, gemini.md
+
+  viz/                     # diagram rendering
     mermaid.py             # Mermaid diagram generators
     html.py                # HTML template + browser open
 
-  indexer.py               # parse + Kuzu ingestion engine
-  fts.py                   # BM25 full-text search (SQLite FTS5)
-  context_builder.py       # AI context builder (graph + FTS)
-  dead_code.py             # unused symbol detection
+  skills/                  # bundled Claude Code skills shipped with the package
 
-  tests/                   # 77 tests (pytest)
-    test_parsers/          # Python, TS, TF, Markdown
-    test_core/             # db, utils
-    test_indexer/          # engine, .cghignore
-    test_search/           # FTS
+tests/                     # 235+ tests (pytest)
+  test_parsers/            # Python, TS, Go, Rust, Java, tsconfig, workspaces
+  test_core/               # db, utils, normalize_identifier
+  test_indexer/            # engine, builtins, safe_extract, imports_edges
+  test_search/             # FTS
+  test_server/             # MCP server tools, federation
+  test_memory_plans/       # memory + plan indexing
 ```
 
 ---
@@ -713,7 +752,7 @@ Owners are independent: the parent reads child DBs directly as files, it does NO
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 23 tools.
+When running as an MCP server (`cgh serve`), codegraph exposes 39 tools.
 
 ### Architecture Awareness (call these FIRST)
 

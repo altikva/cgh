@@ -33,8 +33,8 @@ def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_
     import http.client
     import json as _json
 
-    from codegraph.auth import ensure_auth_key
-    from codegraph.ipc import is_owner_alive, read_owner_port
+    from codegraph.state.auth import ensure_auth_key
+    from codegraph.state.ipc import is_owner_alive, read_owner_port
 
     if not is_owner_alive(root):
         return None
@@ -101,7 +101,7 @@ def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_
 
 def cmd_graph(args) -> None:
     """Generate and display a graph visualization."""
-    from codegraph.db import get_readonly_connection
+    from codegraph.core.db import get_readonly_connection
     from codegraph.viz import (
         generate_html,
         mermaid_calls,
@@ -189,7 +189,7 @@ def cmd_graph(args) -> None:
 
 def cmd_add_dir(args) -> None:
     """Add or manage extra directories in the graph."""
-    from codegraph.config import CODEGRAPH_DIR, CONFIG_FILE
+    from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
 
     root = Path(os.path.abspath(args.root))
     config_path = root / CODEGRAPH_DIR / CONFIG_FILE

@@ -20,7 +20,7 @@ from codegraph.core.utils import short_path as _short_path
 
 def register(mcp) -> None:
     import codegraph.server as _srv
-    from codegraph.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import for_each_child_kuzu
     from codegraph.server import _get_conn, _logged_tool
 
     def _query_each_kuzu(query_fn):
@@ -75,7 +75,7 @@ def register(mcp) -> None:
         per_scope = _query_each_kuzu(query)
         scopes_out: dict[str, dict] = {}
 
-        from codegraph.roles import LAYER_ORDER
+        from codegraph.analysis.roles import LAYER_ORDER
 
         for scope, rows in per_scope:
             by_layer: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))

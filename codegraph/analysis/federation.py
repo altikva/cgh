@@ -21,7 +21,7 @@ from typing import Any
 
 import kuzu
 
-from codegraph.config import load_config
+from codegraph.core.config import load_config
 
 _DB_DIR = ".codegraph"
 _KUZU_FILE = "graph.db"
@@ -348,7 +348,7 @@ class OwnerStatus:
 
 def child_owner_status(child_path: str | Path) -> OwnerStatus:
     """Inspect whether a federated child has its own MCP owner running."""
-    from codegraph.ipc import is_owner_alive, read_owner_pid, read_owner_port
+    from codegraph.state.ipc import is_owner_alive, read_owner_pid, read_owner_port
 
     p = Path(child_path)
     return OwnerStatus(

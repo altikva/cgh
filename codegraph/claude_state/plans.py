@@ -47,8 +47,8 @@ def scan_plan_dir(repo_root: str | Path, verbose: bool = False) -> dict:
 
     Returns a summary dict.
     """
-    from codegraph.config import plans_dir as _plans_dir
-    from codegraph.fts import (
+    from codegraph.core.config import plans_dir as _plans_dir
+    from codegraph.core.fts import (
         delete_plan_entry,
         get_fts_conn,
         upsert_plan_entry,
@@ -98,7 +98,7 @@ def scan_plan_dir(repo_root: str | Path, verbose: bool = False) -> dict:
     conn.commit()
 
     try:
-        from codegraph.activity import log as _log
+        from codegraph.state.activity import log as _log
 
         _log(
             repo_root,

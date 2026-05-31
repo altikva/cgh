@@ -1,5 +1,5 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Tests for codegraph.federation — config resolution, child status, iteration.
+# Tests for codegraph.analysis.federation — config resolution, child status, iteration.
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.federation import (
+from codegraph.analysis.federation import (
     add_subrepo,
     child_paths_to_skip,
     is_under_any,

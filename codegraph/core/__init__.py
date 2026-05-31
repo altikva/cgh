@@ -6,8 +6,8 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Core utilities — single source of truth for shared helpers.
 
-from .db import get_connection, get_db_path, get_readonly_connection, reset_connection
-from .schema import init_schema
+from codegraph.core.db import get_connection, get_db_path, get_readonly_connection, reset_connection
+from codegraph.core.schema import init_schema
 from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
 __all__ = [

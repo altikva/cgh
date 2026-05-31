@@ -9,7 +9,7 @@ import pytest
 def _fresh_call_log(tmp_path, monkeypatch):
     (tmp_path / ".codegraph").mkdir()
     monkeypatch.chdir(tmp_path)
-    import codegraph.call_log as cl
+    import codegraph.state.call_log as cl
 
     cl._conn = None
     yield tmp_path
@@ -18,7 +18,7 @@ def _fresh_call_log(tmp_path, monkeypatch):
 
 class TestKnowledgeRecord:
     def test_record_and_search(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_record, knowledge_search
+        from codegraph.state.call_log import knowledge_record, knowledge_search
 
         eid = knowledge_record(
             title="Avoid Kuzu double-open",
@@ -35,7 +35,7 @@ class TestKnowledgeRecord:
         assert "kuzu" in hits[0]["tags"]
 
     def test_kind_filter(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_record, knowledge_search
+        from codegraph.state.call_log import knowledge_record, knowledge_search
 
         knowledge_record("Pattern A", "description", kind="pattern", tags="routing")
         knowledge_record("Decision A", "description", kind="decision", tags="routing")
@@ -45,7 +45,7 @@ class TestKnowledgeRecord:
         assert patterns[0]["kind"] == "pattern"
 
     def test_list_by_tag(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_list, knowledge_record
+        from codegraph.state.call_log import knowledge_list, knowledge_record
 
         knowledge_record("A", "x", tags="alpha,beta")
         knowledge_record("B", "y", tags="beta,gamma")
@@ -56,7 +56,7 @@ class TestKnowledgeRecord:
         assert {e["title"] for e in beta} == {"A", "B"}
 
     def test_list_by_session(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_list, knowledge_record
+        from codegraph.state.call_log import knowledge_list, knowledge_record
 
         knowledge_record("S1 note", "x", session_id="sess-1")
         knowledge_record("S2 note", "y", session_id="sess-2")
@@ -66,7 +66,7 @@ class TestKnowledgeRecord:
         assert s1[0]["title"] == "S1 note"
 
     def test_invalid_kind_falls_back_to_note(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_list, knowledge_record
+        from codegraph.state.call_log import knowledge_list, knowledge_record
 
         knowledge_record("X", "y", kind="weird-kind")
         entries = knowledge_list()
@@ -75,7 +75,7 @@ class TestKnowledgeRecord:
 
 class TestGlossary:
     def test_terms_aggregation(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_record, knowledge_terms
+        from codegraph.state.call_log import knowledge_record, knowledge_terms
 
         knowledge_record("A", "x", tags=["kuzu", "db"])
         knowledge_record("B", "y", tags=["kuzu", "lock"])
@@ -86,7 +86,7 @@ class TestGlossary:
         assert terms["db"] == 1
 
     def test_min_count_filter(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_record, knowledge_terms
+        from codegraph.state.call_log import knowledge_record, knowledge_terms
 
         knowledge_record("A", "x", tags=["a", "b"])
         knowledge_record("B", "y", tags=["b", "c"])
@@ -97,7 +97,7 @@ class TestGlossary:
 
 class TestForget:
     def test_forget_removes(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_forget, knowledge_list, knowledge_record
+        from codegraph.state.call_log import knowledge_forget, knowledge_list, knowledge_record
 
         eid = knowledge_record("X", "y")
         assert len(knowledge_list()) == 1
@@ -105,6 +105,6 @@ class TestForget:
         assert len(knowledge_list()) == 0
 
     def test_forget_missing_returns_false(self, _fresh_call_log):
-        from codegraph.call_log import knowledge_forget
+        from codegraph.state.call_log import knowledge_forget
 
         assert knowledge_forget(9999) is False

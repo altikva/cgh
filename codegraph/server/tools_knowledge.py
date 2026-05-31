@@ -42,7 +42,7 @@ def register(mcp) -> None:
         file_refs: comma-separated canonical file paths involved.
         session_id: optional — stamps the entry with the current session.
         """
-        from codegraph.call_log import knowledge_record as _record
+        from codegraph.state.call_log import knowledge_record as _record
 
         entry_id = _record(
             title=title,
@@ -54,7 +54,7 @@ def register(mcp) -> None:
             repo_root=_srv._root,
         )
         try:
-            from codegraph.activity import log as _log
+            from codegraph.state.activity import log as _log
 
             _log(_srv._root, "knowledge_record", f"id={entry_id} kind={kind} title={title[:60]}")
         except Exception:
@@ -71,7 +71,7 @@ def register(mcp) -> None:
 
         kind: optional filter — pattern/decision/gotcha/style/glossary/note
         """
-        from codegraph.call_log import knowledge_search as _search
+        from codegraph.state.call_log import knowledge_search as _search
 
         hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
         return json.dumps(
@@ -97,8 +97,8 @@ def register(mcp) -> None:
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
         follow up without counting locally.
         """
-        from codegraph.call_log import knowledge_count
-        from codegraph.call_log import knowledge_list as _list
+        from codegraph.state.call_log import knowledge_count
+        from codegraph.state.call_log import knowledge_list as _list
 
         entries = _list(
             kind=kind or None,
@@ -140,7 +140,7 @@ def register(mcp) -> None:
         count, sorted by frequency. Use this to discover what topics
         have been captured without reading individual entries.
         """
-        from codegraph.call_log import knowledge_terms as _terms
+        from codegraph.state.call_log import knowledge_terms as _terms
 
         terms = _terms(min_count=min_count, repo_root=_srv._root)
         return json.dumps(
@@ -155,7 +155,7 @@ def register(mcp) -> None:
     @_logged_tool
     def knowledge_forget(entry_id: int) -> str:
         """Delete a single knowledge entry by id (obtained from search/list)."""
-        from codegraph.call_log import knowledge_forget as _forget
+        from codegraph.state.call_log import knowledge_forget as _forget
 
         ok = _forget(entry_id=entry_id, repo_root=_srv._root)
         return json.dumps({"id": entry_id, "forgotten": ok})
@@ -178,7 +178,7 @@ def register(mcp) -> None:
         The session_id is stamped on the entry so you can later filter
         with knowledge_list(session_id=...).
         """
-        from codegraph.call_log import knowledge_record as _record
+        from codegraph.state.call_log import knowledge_record as _record
 
         entry_id = _record(
             title=title or f"Session digest {session_id}",
@@ -190,7 +190,7 @@ def register(mcp) -> None:
             repo_root=_srv._root,
         )
         try:
-            from codegraph.activity import log as _log
+            from codegraph.state.activity import log as _log
 
             _log(_srv._root, "session_compact", f"{session_id} id={entry_id}")
         except Exception:

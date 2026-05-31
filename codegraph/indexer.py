@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,14 @@ from .fts import commit as fts_commit
 from .fts import delete_file_symbols, get_fts_conn, upsert_symbol
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
+
+# Default Python recursion limit is 1000. Tree-sitter walks on deeply nested
+# code (long method chains, big JSX trees, generated protobufs) can blow past
+# that. Raise once at import time so we don't pay the cost on every call.
+# Ported from graphify — same constant.
+_RECURSION_LIMIT = 10_000
+if sys.getrecursionlimit() < _RECURSION_LIMIT:
+    sys.setrecursionlimit(_RECURSION_LIMIT)
 
 _fts_conn = None
 
@@ -228,14 +237,24 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn: kuzu.Connection, functions: list) -> None:
+def _resolve_calls(conn: kuzu.Connection, functions: list, lang: str = "") -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
-    names to known function names.  Best-effort: unresolved names are skipped.
+    names to known function names. Best-effort: unresolved names are skipped.
+
+    Names that match a language built-in callable for ``lang`` are skipped
+    so callees like ``isinstance``, ``len``, ``String``, ``parseInt`` don't
+    accumulate spurious edges from every call site. If a user happens to
+    define a function whose name shadows a built-in, the edge to that
+    user-defined function is also skipped — that's a conscious tradeoff
+    to keep the graph clean.
     """
+    from codegraph.parsers.builtins import is_builtin
+
     for fn in functions:
         for called_name in fn.calls:
-            # Find any function with this name (prefer same file, fall back to any)
+            if lang and is_builtin(lang, called_name):
+                continue
             conn.execute(
                 """MATCH (caller:Function {id:$cid}), (callee:Function)
                    WHERE callee.name = $n
@@ -307,8 +326,55 @@ def _ingest_code(conn: kuzu.Connection, idx: FileIndex) -> None:
                 {"cid": class_id, "fid": fn.id},
             )
 
-    _resolve_calls(conn, idx.functions)
+    _resolve_calls(conn, idx.functions, idx.lang)
     _resolve_inherits(conn, idx.classes)
+
+
+def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | None) -> None:
+    """
+    Wire IMPORTS edges from idx.imports into Kuzu.
+
+    Resolves each ImportRef.source_module to a target file via
+    import_resolver, then MERGEs a File → File IMPORTS edge. Unresolved
+    imports (bare specifiers, missing files, third-party deps) are
+    silently skipped — they're not part of the user's repo, no edge to
+    draw.
+    """
+    if not idx.imports or repo_root is None:
+        return
+    from .import_resolver import resolve_import
+
+    seen_targets: set[str] = set()
+    for imp in idx.imports:
+        target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
+        if target is None:
+            continue
+        target_str = str(target)
+        if target_str == idx.path:
+            # File importing itself — skip the self-loop.
+            continue
+
+        # Make sure the target File exists. During incremental indexing
+        # the importer may be processed before its dependency, so MERGE
+        # creates a stub node carrying just the path. Once the target's
+        # own index_file runs, the same MERGE upserts the full metadata.
+        conn.execute("MERGE (f:File {path: $p})", {"p": target_str})
+
+        # Symbol annotation on the edge. If the import named multiple
+        # symbols, write one edge per symbol so MCP tools can answer
+        # "who imports name X". Single edge with empty symbol when the
+        # import is a whole-module pull.
+        symbols = imp.symbols if imp.symbols else [""]
+        for sym in symbols:
+            edge_key = f"{target_str}::{sym}"
+            if edge_key in seen_targets:
+                continue
+            seen_targets.add(edge_key)
+            conn.execute(
+                """MATCH (src:File {path:$sp}), (tgt:File {path:$tp})
+                   MERGE (src)-[:IMPORTS {symbol: $sym}]->(tgt)""",
+                {"sp": idx.path, "tp": target_str, "sym": sym},
+            )
 
 
 def _ingest_terraform(conn: kuzu.Connection, idx: FileIndex) -> None:
@@ -546,8 +612,24 @@ def index_file(
 
     try:
         idx = parser.parse(path)
+    except RecursionError:
+        # Tree-sitter walk on extremely nested ASTs can recurse past even our
+        # raised limit. Skip the file cleanly so the rest of the scan continues.
+        from .activity import log as _act_log
+
+        msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
+        print(f"[codegraph] parse skipped — {msg}", file=sys.stderr, flush=True)
+        _act_log(root, "parse_error", msg)
+        return False
     except Exception as exc:
-        print(f"[codegraph] parse error {path}: {exc}")
+        # Catch-all: any other parse failure (decoding error, malformed source,
+        # tree-sitter binding bug, ...) skips this one file instead of taking
+        # down the whole scan.
+        from .activity import log as _act_log
+
+        msg = f"{path}: {type(exc).__name__}: {exc}"
+        print(f"[codegraph] parse error — {msg}", file=sys.stderr, flush=True)
+        _act_log(root, "parse_error", msg)
         return False
 
     lang = idx.lang
@@ -588,6 +670,12 @@ def index_file(
         _ingest_terraform(conn, idx)
     if idx.sections:
         _ingest_markdown(conn, idx)
+
+    # IMPORTS edges — wire them up after the File node exists, regardless
+    # of whether the file defines functions/classes (pure __init__.py
+    # re-export modules still have meaningful imports).
+    if idx.imports:
+        _ingest_imports(conn, idx, root)
 
     # HTTP endpoints (after functions are in place so IMPLEMENTED_BY can link)
     _ingest_endpoints(conn, path)

@@ -52,12 +52,14 @@ cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
 ```
 
-After install, both `codegraph` and `cgh` (short alias) are available:
+After install, the `cgh` CLI is on your PATH:
 
 ```bash
 cgh --version
-# codegraph 0.3.1
+# codegraph 0.4.0
 ```
+
+The Python import name is still `codegraph` (e.g. `from codegraph.parsers import ...`); only the CLI is renamed. Same pattern as `pip install pillow` then `import PIL`.
 
 ---
 
@@ -167,7 +169,7 @@ codegraph/
 
 ## CLI Reference
 
-`cgh` is a short alias for `codegraph`. All commands accept `--root <DIR>` to target a different project.
+All commands accept `--root <DIR>` to target a different project. The CLI is `cgh`; the Python import is `codegraph` (see Install above).
 
 ### Getting Started
 
@@ -792,6 +794,9 @@ codegraph supports any language through a plugin system. Adding a new language r
 | TypeScript | tree-sitter | `.ts` `.tsx` | functions, classes, imports, calls, inheritance |
 | JavaScript | tree-sitter | `.js` `.mjs` | functions, classes, imports, calls |
 | Vue | tree-sitter | `.vue` | functions, classes, imports (SFC script block) |
+| Go | tree-sitter | `.go` | functions, methods, structs, interfaces, imports, calls |
+| Rust | tree-sitter | `.rs` | functions, structs, enums, traits, impl methods, use, calls |
+| Java | tree-sitter | `.java` | classes, interfaces, methods, constructors, imports, calls |
 | Terraform | regex + brace tracker | `.tf` | resources, variables, outputs, depends_on |
 | Markdown | regex | `.md` `.mdx` | headings, internal links, code symbol references |
 

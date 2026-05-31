@@ -18,7 +18,7 @@ from codegraph.core.utils import rows as _rows
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
-    from codegraph.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import for_each_child_kuzu
     from codegraph.server import _get_conn, _logged_tool
 
     def _federate_kuzu(query_fn):
@@ -82,8 +82,8 @@ def register(mcp) -> None:
         Federated: also scans federated subrepo trees. Each hit is tagged
         with `scope` (parent / <subrepo-name>).
         """
-        from codegraph.federation import resolve_children
-        from codegraph.pattern import pattern_search as _search
+        from codegraph.analysis.federation import resolve_children
+        from codegraph.analysis.pattern import pattern_search as _search
 
         all_hits: list[dict] = []
         backend = ""

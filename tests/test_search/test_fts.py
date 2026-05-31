@@ -1,8 +1,8 @@
-"""Tests for codegraph.fts — BM25 full-text search."""
+"""Tests for codegraph.core.fts — BM25 full-text search."""
 
 import pytest
 
-from codegraph.fts import commit, delete_file_symbols, fts_search, get_fts_conn, upsert_symbol
+from codegraph.core.fts import commit, delete_file_symbols, fts_search, get_fts_conn, upsert_symbol
 
 
 @pytest.fixture

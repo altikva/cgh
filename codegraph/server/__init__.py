@@ -37,7 +37,7 @@ def _logged_tool(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        from codegraph.call_log import log_call
+        from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
         t0 = _time.perf_counter()
@@ -72,7 +72,7 @@ def _logged_tool(fn):
 def _get_conn():
     global _conn
     if _conn is None:
-        from codegraph.db import get_connection
+        from codegraph.core.db import get_connection
 
         _conn = get_connection(_root)
     return _conn
@@ -81,7 +81,7 @@ def _get_conn():
 def _get_fts():
     global _fts_conn
     if _fts_conn is None:
-        from codegraph.fts import get_fts_conn
+        from codegraph.core.fts import get_fts_conn
 
         _fts_conn = get_fts_conn(_root)
     return _fts_conn
@@ -210,7 +210,7 @@ def main() -> None:
 
     _root = Path(args.root).resolve()
 
-    from codegraph.ipc import (
+    from codegraph.state.ipc import (
         is_owner_alive,
         proxy_stdio_to_http,
         read_owner_port,
@@ -272,7 +272,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     _root = Path(root or os.getcwd()).resolve()
 
     # Single-writer guard on the owner itself
-    from codegraph.pidfile import acquire as _pidfile_acquire
+    from codegraph.state.pidfile import acquire as _pidfile_acquire
 
     acquired, other_pid = _pidfile_acquire(_root)
     if not acquired:
@@ -283,7 +283,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
         sys.exit(1)
 
     # Load / ensure the auth key for HTTP bridge security
-    from codegraph.auth import ensure_auth_key
+    from codegraph.state.auth import ensure_auth_key
 
     auth_key = ensure_auth_key(_root)
 
@@ -299,7 +299,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             print(f"[codegraph owner] reindex skipped: {exc}", file=sys.stderr, flush=True)
 
     if watch:
-        from codegraph.watcher import start_watcher
+        from codegraph.state.watcher import start_watcher
 
         try:
             start_watcher(_root)
@@ -307,7 +307,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             print(f"[codegraph owner] watcher disabled: {exc}", file=sys.stderr, flush=True)
 
     # Pick a free port + publish port file + owner pid
-    from codegraph.ipc import free_port, owner_pidfile, port_file
+    from codegraph.state.ipc import free_port, owner_pidfile, port_file
 
     port = free_port()
     port_file(_root).write_text(str(port) + "\n")
@@ -321,7 +321,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             port_file(_root).unlink(missing_ok=True)
             owner_pidfile(_root).unlink(missing_ok=True)
             # Release the single-writer pidfile the owner acquired.
-            from codegraph.pidfile import release as _pidfile_release
+            from codegraph.state.pidfile import release as _pidfile_release
 
             _pidfile_release(_root)
             # Clear the workers dir (entries + dir itself if empty).
@@ -376,7 +376,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     import threading as _th
     import time as _time
 
-    from codegraph.ipc import live_workers
+    from codegraph.state.ipc import live_workers
 
     _seen_worker = False
     _idle_since: float | None = None

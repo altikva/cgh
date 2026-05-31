@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 
 import kuzu
 
-from .core.utils import rows as _rows
-from .fts import fts_search
+from codegraph.core.utils import rows as _rows
+from codegraph.core.fts import fts_search
 
 
 @dataclass
@@ -355,7 +355,7 @@ def context_for_task(
 def _local_knowledge_hits(task: str, limit: int = 3) -> list[KnowledgeHit]:
     """Pull top knowledge entries matching the task via call_log FTS."""
     try:
-        from codegraph.call_log import knowledge_search as _search
+        from codegraph.state.call_log import knowledge_search as _search
 
         query = _keyword_query(task)
         hits = _search(query, limit=limit)
@@ -379,7 +379,7 @@ def _local_knowledge_hits(task: str, limit: int = 3) -> list[KnowledgeHit]:
 def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) -> list[MemoryDocHit]:
     """Wrap fts.memory_search with graceful fallback + keyword expansion."""
     try:
-        from codegraph.fts import memory_search as _search
+        from codegraph.core.fts import memory_search as _search
 
         query = _keyword_query(task)
         hits = _search(fts_conn, query, limit=limit)
@@ -402,7 +402,7 @@ def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) 
 def _local_plan_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 2) -> list[PlanDocHit]:
     """Wrap fts.plan_search with graceful fallback."""
     try:
-        from codegraph.fts import plan_search as _search
+        from codegraph.core.fts import plan_search as _search
 
         query = _keyword_query(task)
         hits = _search(fts_conn, query, limit=limit)

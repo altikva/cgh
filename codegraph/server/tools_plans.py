@@ -29,8 +29,8 @@ def register(mcp) -> None:
             query: keywords or natural-language description
             limit: max hits (default 10)
         """
-        from codegraph.fts import get_fts_conn
-        from codegraph.fts import plan_search as _search
+        from codegraph.core.fts import get_fts_conn
+        from codegraph.core.fts import plan_search as _search
 
         conn = get_fts_conn(_srv._root)
         hits = _search(conn, query, limit=limit)
@@ -66,7 +66,7 @@ def register(mcp) -> None:
                         agents.
             limit: max entries (default 50)
         """
-        from codegraph.fts import get_fts_conn, list_plan_entries
+        from codegraph.core.fts import get_fts_conn, list_plan_entries
 
         conn = get_fts_conn(_srv._root)
         hits = list_plan_entries(conn, agent_only=agent_only, limit=limit)
@@ -95,7 +95,7 @@ def register(mcp) -> None:
         Re-scan the plans directory and refresh the FTS index. Call this
         after creating / editing a plan if the watcher hasn't caught it.
         """
-        from codegraph.plan_index import scan_plan_dir
+        from codegraph.claude_state.plans import scan_plan_dir
 
         stats = scan_plan_dir(_srv._root, verbose=False)
         return json.dumps(stats, indent=2)

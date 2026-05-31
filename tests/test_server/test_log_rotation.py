@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.ipc import rotate_owner_log
+from codegraph.state.ipc import rotate_owner_log
 
 
 def _write_log(path: Path, size_bytes: int) -> None:

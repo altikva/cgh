@@ -21,9 +21,9 @@ from pathlib import Path
 
 import kuzu
 
-from .db import get_connection
-from .fts import commit as fts_commit
-from .fts import delete_file_symbols, get_fts_conn, upsert_symbol
+from codegraph.core.db import get_connection
+from codegraph.core.fts import commit as fts_commit
+from codegraph.core.fts import delete_file_symbols, get_fts_conn, upsert_symbol
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
 
@@ -342,7 +342,7 @@ def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | Non
     """
     if not idx.imports or repo_root is None:
         return
-    from .import_resolver import resolve_import
+    from codegraph.imports.resolver import resolve_import
 
     seen_targets: set[str] = set()
     for imp in idx.imports:
@@ -414,7 +414,7 @@ def _ingest_terraform(conn: kuzu.Connection, idx: FileIndex) -> None:
 
 def _ingest_endpoints(conn: kuzu.Connection, path: Path) -> int:
     """Extract and persist HTTP endpoints from a file. Returns count."""
-    from .endpoints import extract as _extract_endpoints
+    from codegraph.analysis.endpoints import extract as _extract_endpoints
 
     try:
         src = path.read_text(encoding="utf-8", errors="replace")
@@ -615,7 +615,7 @@ def index_file(
     except RecursionError:
         # Tree-sitter walk on extremely nested ASTs can recurse past even our
         # raised limit. Skip the file cleanly so the rest of the scan continues.
-        from .activity import log as _act_log
+        from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
         print(f"[codegraph] parse skipped — {msg}", file=sys.stderr, flush=True)
@@ -625,7 +625,7 @@ def index_file(
         # Catch-all: any other parse failure (decoding error, malformed source,
         # tree-sitter binding bug, ...) skips this one file instead of taking
         # down the whole scan.
-        from .activity import log as _act_log
+        from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: {type(exc).__name__}: {exc}"
         print(f"[codegraph] parse error — {msg}", file=sys.stderr, flush=True)
@@ -639,15 +639,15 @@ def index_file(
     blob_sha = git_blob_sha
     if blob_sha is None:
         try:
-            from .scan_meta import git_hash_object
+            from codegraph.state.scan_meta import git_hash_object
 
             blob_sha = git_hash_object(root, path)
         except Exception:
             pass
 
     # Role + layer classification + module-level summary for arch tools
-    from .module_doc import extract as _extract_doc
-    from .roles import classify as _classify_role
+    from codegraph.analysis.module_doc import extract as _extract_doc
+    from codegraph.analysis.roles import classify as _classify_role
 
     role, layer = _classify_role(path, root)
     module_doc = _extract_doc(path, lang)
@@ -696,7 +696,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
     """
     import subprocess
 
-    from .federation import child_paths_to_skip, is_under_any
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 
     subrepos = child_paths_to_skip(repo_root)
 
@@ -736,7 +736,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
 
 def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
     try:
-        from .config import resolve_include_dirs
+        from codegraph.core.config import resolve_include_dirs
 
         return resolve_include_dirs(repo_root)
     except Exception:
@@ -746,8 +746,8 @@ def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
 def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[Path]:
     """Walk configured include_dirs (config.toml) and return files not yet seen.
     Files inside any federated subrepo are skipped."""
-    from .config import resolve_include_dirs
-    from .federation import child_paths_to_skip, is_under_any
+    from codegraph.core.config import resolve_include_dirs
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 
     seen = seen or set()
     out: list[Path] = []
@@ -806,7 +806,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
 
 def _discover_os_walk(repo_root: Path) -> list[Path]:
     """Python os.walk — portable, respects _IGNORE_DIRS + .cghignore + federated subrepos."""
-    from .federation import child_paths_to_skip, is_under_any
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 
     subrepos = child_paths_to_skip(repo_root)
     out: list[Path] = []
@@ -833,7 +833,7 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
     """
     import subprocess
 
-    from .scan_meta import read_meta
+    from codegraph.state.scan_meta import read_meta
 
     meta = read_meta(repo_root)
     if not meta or not meta.get("git_head"):
@@ -899,8 +899,8 @@ def index_repo(
     if method not in VALID_METHODS:
         raise ValueError(f"method must be one of {VALID_METHODS}, got {method!r}")
 
-    from .activity import log as _activity_log
-    from .activity import rotate_if_needed
+    from codegraph.state.activity import log as _activity_log
+    from codegraph.state.activity import rotate_if_needed
 
     repo_root = Path(repo_root)
 
@@ -917,12 +917,12 @@ def index_repo(
 
     # Batch-fetch git blob SHAs once, pass to each index_file call
     try:
-        from .scan_meta import git_tree_blob_shas
+        from codegraph.state.scan_meta import git_tree_blob_shas
 
         blob_shas = git_tree_blob_shas(repo_root) or {}
     except Exception:
         blob_shas = {}
-    from .scan_meta import git_hash_object as _git_hash
+    from codegraph.state.scan_meta import git_hash_object as _git_hash
 
     # ------------------------------------------------------------------
     # File discovery — each method returns (files_to_index, actual_method)
@@ -1065,7 +1065,7 @@ def index_repo(
 
     # Persist scan metadata (git HEAD + branch + stats) for scan_status
     try:
-        from .scan_meta import write_meta
+        from codegraph.state.scan_meta import write_meta
 
         write_meta(repo_root, stats)
     except Exception:
@@ -1092,14 +1092,14 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
     Returns a dict with: mode, reindexed, deleted, unchanged, elapsed_s.
     """
-    from .activity import log as _activity_log
-    from .scan_meta import git_tree_blob_shas, write_meta
+    from codegraph.state.activity import log as _activity_log
+    from codegraph.state.scan_meta import git_tree_blob_shas, write_meta
 
     repo_root = Path(repo_root)
     t0 = time.time()
     _activity_log(repo_root, "incremental_start", str(repo_root))
 
-    from .federation import child_paths_to_skip, is_under_any
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 
     subrepos = child_paths_to_skip(repo_root)
 

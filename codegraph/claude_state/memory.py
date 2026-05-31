@@ -73,8 +73,8 @@ def scan_memory_dir(repo_root: str | Path, verbose: bool = False) -> dict:
 
     Returns a summary dict: {indexed, skipped, removed, memory_dir}.
     """
-    from codegraph.config import memory_dir as _memory_dir
-    from codegraph.fts import (
+    from codegraph.core.config import memory_dir as _memory_dir
+    from codegraph.core.fts import (
         delete_memory_entry,
         get_fts_conn,
         upsert_memory_entry,
@@ -127,7 +127,7 @@ def scan_memory_dir(repo_root: str | Path, verbose: bool = False) -> dict:
 
     # Activity + scan_meta breadcrumbs
     try:
-        from codegraph.activity import log as _log
+        from codegraph.state.activity import log as _log
 
         _log(
             repo_root,

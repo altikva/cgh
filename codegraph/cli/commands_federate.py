@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from codegraph.federation import (
+from codegraph.analysis.federation import (
     add_subrepo,
     child_owner_status,
     remove_subrepo,
@@ -122,7 +122,7 @@ def _cmd_up(args) -> None:
     The keepalive survives this CLI process, so the child's owner stays
     up across Claude sessions just like the parent owner does.
     """
-    from codegraph.ipc import is_owner_alive, register_keepalive, spawn_owner
+    from codegraph.state.ipc import is_owner_alive, register_keepalive, spawn_owner
 
     root = Path(os.path.abspath(args.root))
     children = resolve_children(root)
@@ -164,7 +164,7 @@ def _cmd_down(args) -> None:
     import os as _os
     import time as _time
 
-    from codegraph.ipc import (
+    from codegraph.state.ipc import (
         is_pid_alive,
         owner_pidfile,
         port_file,

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import kuzu
 
-from .core.utils import rows as _rows
+from codegraph.core.utils import rows as _rows
 
 # Entry-point names that are never "dead" even without incoming edges
 _ENTRY_POINTS = {

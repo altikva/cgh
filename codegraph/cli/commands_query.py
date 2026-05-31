@@ -27,7 +27,7 @@ def cmd_grep(args) -> None:
     """Regex/substring pattern search across the indexed repo."""
     import json as _json
 
-    from codegraph.pattern import pattern_search
+    from codegraph.analysis.pattern import pattern_search
 
     root = os.path.abspath(args.root)
     hits, backend = pattern_search(
@@ -78,7 +78,7 @@ def cmd_search(args) -> None:
         # Graph DB locked (MCP server is running). Fall back to FTS — SQLite
         # supports concurrent readers, so this always works.
         try:
-            from codegraph.fts import fts_search, get_fts_conn
+            from codegraph.core.fts import fts_search, get_fts_conn
 
             fts_conn = get_fts_conn(root)
             for hit in fts_search(fts_conn, query, limit=fetch):
@@ -177,7 +177,7 @@ def cmd_lookup(args) -> None:
     if conn is None:
         # Fallback to FTS when Kuzu graph DB is locked by MCP server
         try:
-            from codegraph.fts import fts_search, get_fts_conn
+            from codegraph.core.fts import fts_search, get_fts_conn
 
             fts_conn = get_fts_conn(root)
             for hit in fts_search(fts_conn, name, limit=20):

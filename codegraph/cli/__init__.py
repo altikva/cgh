@@ -33,10 +33,10 @@ def _get_conn(root, readonly=False):
     returns None instead of crashing — caller must handle.
     """
     if readonly:
-        from codegraph.db import get_readonly_connection
+        from codegraph.core.db import get_readonly_connection
 
         return get_readonly_connection(root)
-    from codegraph.db import get_connection
+    from codegraph.core.db import get_connection
 
     return get_connection(root)
 

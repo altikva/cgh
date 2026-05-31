@@ -69,7 +69,7 @@ class TestParseErrorHandling:
         assert "Traceback" not in captured.err
 
         # Activity log received the parse_error event
-        from codegraph.activity import tail as _tail
+        from codegraph.state.activity import tail as _tail
 
         events = _tail(tmp_path, n=20)
         assert any(

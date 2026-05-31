@@ -46,7 +46,7 @@ class TestIsBuiltin:
 
     def test_unknown_lang_skips_filtering(self):
         # No filter for languages we don't have a list for — safe default.
-        assert not is_builtin("rust", "println")
+        assert not is_builtin("ruby", "puts")
         assert not is_builtin("", "anything")
 
     def test_unknown_name_not_builtin(self):

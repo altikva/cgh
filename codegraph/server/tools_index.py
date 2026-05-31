@@ -17,7 +17,7 @@ def _load_config_toml(root: Path) -> tuple[Path, dict]:
     """Load .codegraph/config.toml. Returns (config_path, data)."""
     import tomllib
 
-    from codegraph.config import CODEGRAPH_DIR, CONFIG_FILE
+    from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
 
     config_path = root / CODEGRAPH_DIR / CONFIG_FILE
     if not config_path.exists():
@@ -39,7 +39,7 @@ def register(mcp) -> None:
         Call this after major changes (branch switch, rebase, pull) to refresh
         the graph. Returns stats: files indexed, errors, time elapsed.
         """
-        from codegraph.db import reset_connection
+        from codegraph.core.db import reset_connection
         from codegraph.indexer import index_repo
 
         _server._conn = None
@@ -199,7 +199,7 @@ def register(mcp) -> None:
           dirty         — working tree has uncommitted changes
           changed_files — files modified since indexed_sha (up to 200)
         """
-        from codegraph.scan_meta import scan_status as _scan_status
+        from codegraph.state.scan_meta import scan_status as _scan_status
 
         root = _server._root
         if root is None:

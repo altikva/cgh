@@ -123,7 +123,7 @@ def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> P
         return _resolve_target_with_exts(target)
 
     # 3. tsconfig path alias
-    from .tsconfig import resolve_alias
+    from codegraph.imports.tsconfig import resolve_alias
 
     for cand in resolve_alias(source_module, importer_dir):
         if hit := _resolve_target_with_exts(cand):
@@ -132,7 +132,7 @@ def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> P
     # 4. Workspace package (npm / pnpm / yarn). Imports of the form
     # `@scope/pkg` or `bare-pkg/subpath` resolve to the package's entry
     # point or the named subpath inside the workspace directory.
-    from .workspaces import resolve_workspace_import
+    from codegraph.imports.workspaces import resolve_workspace_import
 
     for cand in resolve_workspace_import(source_module, importer_dir):
         if hit := _resolve_target_with_exts(cand):

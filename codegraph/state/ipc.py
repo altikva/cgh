@@ -171,7 +171,7 @@ def rotate_owner_log(repo_root: str | Path) -> None:
     sessions, --reindex) that this bounds disk use without needing an
     interceptor process between owner stdout and the log file.
     """
-    from codegraph.config import load_config
+    from codegraph.core.config import load_config
 
     log_path = Path(repo_root) / ".codegraph" / "owner.log"
     if not log_path.exists():
@@ -276,7 +276,7 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
     """
     import http.client
 
-    from codegraph.auth import ensure_auth_key
+    from codegraph.state.auth import ensure_auth_key
 
     auth_token = ensure_auth_key(repo_root) if repo_root else os.environ.get("CODEGRAPH_AUTH_KEY", "")
 

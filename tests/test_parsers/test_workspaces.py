@@ -13,8 +13,8 @@ import textwrap
 
 import pytest
 
-from codegraph.import_resolver import resolve_js_ts
-from codegraph.workspaces import (
+from codegraph.imports.resolver import resolve_js_ts
+from codegraph.imports.workspaces import (
     _clear_cache,
     _find_workspace_root,
     _parse_yaml_packages,

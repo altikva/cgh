@@ -25,8 +25,8 @@ def register(mcp) -> None:
         `limit` is applied per scope; scores are NOT renormalized across
         repos (BM25 is corpus-relative).
         """
-        from codegraph.federation import for_each_child_fts
-        from codegraph.fts import fts_search as _fts
+        from codegraph.analysis.federation import for_each_child_fts
+        from codegraph.core.fts import fts_search as _fts
 
         def _result_to_dict(r, scope):
             return {
@@ -90,8 +90,8 @@ def register(mcp) -> None:
         the parent or another subrepo — we don't infer cross-repo edges.
         Treat the results as a per-scope candidate list, not a hard verdict.
         """
-        from codegraph.dead_code import find_dead_code as _find_dead
-        from codegraph.federation import for_each_child_kuzu
+        from codegraph.analysis.dead_code import find_dead_code as _find_dead
+        from codegraph.analysis.federation import for_each_child_kuzu
 
         all_dead: list[dict] = []
         warnings: list[dict] = []
@@ -181,9 +181,9 @@ def register(mcp) -> None:
 
         Returns structured markdown context + hit counts.
         """
-        from codegraph.call_log import filter_unseen, record_mentions
-        from codegraph.context_builder import context_for_task as _ctx
-        from codegraph.context_builder import render_context_markdown
+        from codegraph.state.call_log import filter_unseen, record_mentions
+        from codegraph.analysis.context_builder import context_for_task as _ctx
+        from codegraph.analysis.context_builder import render_context_markdown
 
         ctx = _ctx(
             task=task,
@@ -194,7 +194,7 @@ def register(mcp) -> None:
 
         # Session-scoped dedup
         if session_id and not include_shown:
-            from codegraph.activity import log as _activity_log
+            from codegraph.state.activity import log as _activity_log
 
             served_nodes = [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
             served_mem = [("memory", m.path) for m in ctx.memory_docs]
@@ -256,7 +256,7 @@ def register(mcp) -> None:
         shown entities. Useful at the start of a new task within the same
         client session.
         """
-        from codegraph.call_log import clear_session
+        from codegraph.state.call_log import clear_session
 
         removed = clear_session(session_id, repo_root=_srv._root)
         return json.dumps({"session_id": session_id, "cleared": removed})
@@ -268,7 +268,7 @@ def register(mcp) -> None:
         Show codegraph usage statistics: total calls, per-tool breakdown,
         latency percentiles, error rate, and recent calls.
         """
-        from codegraph.call_log import get_stats
+        from codegraph.state.call_log import get_stats
 
         stats = get_stats(_srv._root)
         return json.dumps(stats, indent=2)

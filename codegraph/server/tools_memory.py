@@ -31,8 +31,8 @@ def register(mcp) -> None:
             kind:   optional filter — user / feedback / project / reference
             limit:  max hits (default 10)
         """
-        from codegraph.fts import get_fts_conn
-        from codegraph.fts import memory_search as _search
+        from codegraph.core.fts import get_fts_conn
+        from codegraph.core.fts import memory_search as _search
 
         conn = get_fts_conn(_srv._root)
         hits = _search(conn, query, kind=kind or None, limit=limit)
@@ -66,7 +66,7 @@ def register(mcp) -> None:
         Args:
             kind: optional filter (user / feedback / project / reference)
         """
-        from codegraph.fts import get_fts_conn, list_memory_entries
+        from codegraph.core.fts import get_fts_conn, list_memory_entries
 
         conn = get_fts_conn(_srv._root)
         hits = list_memory_entries(conn, kind=kind or None)
@@ -96,7 +96,7 @@ def register(mcp) -> None:
         after adding / editing memory files if the watcher hasn't caught
         them yet.
         """
-        from codegraph.memory_index import scan_memory_dir
+        from codegraph.claude_state.memory import scan_memory_dir
 
         stats = scan_memory_dir(_srv._root, verbose=False)
         return json.dumps(stats, indent=2)

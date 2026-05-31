@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from codegraph.cli import LOGO, _get_conn, _lang_color, _rows, console
+from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, _rows, console
 
 # ---------------------------------------------------------------------------
 # cmd_stats
@@ -106,13 +106,13 @@ def _stats_content(root: str) -> Group:
             except Exception:
                 pass
 
-    from codegraph.call_log import get_stats
+    from codegraph.state.call_log import get_stats
 
     call_stats = get_stats(root)
 
     fts_count = 0
     try:
-        from codegraph.fts import get_fts_conn
+        from codegraph.core.fts import get_fts_conn
 
         fts_conn = get_fts_conn(root)
         fts_count = fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -132,7 +132,7 @@ def _stats_content(root: str) -> Group:
 
     # Scan freshness banner
     try:
-        from codegraph.scan_meta import scan_status as _scan_status
+        from codegraph.state.scan_meta import scan_status as _scan_status
 
         ss = _scan_status(root)
         if ss.get("indexed_sha"):
@@ -297,13 +297,13 @@ def _stats_json(root: str) -> str:
             except Exception:
                 pass
 
-    from codegraph.call_log import get_stats
+    from codegraph.state.call_log import get_stats
 
     call_stats = get_stats(root)
 
     fts_count = 0
     try:
-        from codegraph.fts import get_fts_conn
+        from codegraph.core.fts import get_fts_conn
 
         fts_conn = get_fts_conn(root)
         fts_count = fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -336,12 +336,12 @@ def cmd_status(args) -> None:
     """Quick one-screen health check: owner, freshness, counts, extra_dirs."""
     import json as _json
 
-    from codegraph.ipc import (
+    from codegraph.state.ipc import (
         is_owner_alive,
         live_workers,
         read_owner_port,
     )
-    from codegraph.scan_meta import scan_status as _scan_status
+    from codegraph.state.scan_meta import scan_status as _scan_status
 
     root = os.path.abspath(args.root)
 
@@ -450,7 +450,7 @@ def cmd_status(args) -> None:
     # which children this owner fans queries out to and whether they're up.
     subrepos: list[dict] = []
     try:
-        from codegraph.federation import child_owner_status, resolve_children, verify_child
+        from codegraph.analysis.federation import child_owner_status, resolve_children, verify_child
 
         for child in resolve_children(root):
             st = verify_child(child)
@@ -477,6 +477,7 @@ def cmd_status(args) -> None:
         pass
 
     payload = {
+        "version": VERSION,
         "root": root,
         "owner": {
             "alive": owner_alive,
@@ -537,6 +538,7 @@ def cmd_status(args) -> None:
     table = Table(box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan")
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
+    table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
@@ -611,7 +613,7 @@ def _call_owner_tool(root: str, port: int, tool: str, timeout: float) -> dict | 
     import http.client
     import json as _json
 
-    from codegraph.auth import ensure_auth_key
+    from codegraph.state.auth import ensure_auth_key
 
     try:
         token = ensure_auth_key(root)
@@ -750,7 +752,7 @@ def cmd_reset(args) -> None:
     import subprocess
     import time
 
-    from codegraph.ipc import owner_pidfile
+    from codegraph.state.ipc import owner_pidfile
 
     root = Path(os.path.abspath(args.root))
     cg_dir = root / ".codegraph"
@@ -870,7 +872,7 @@ def cmd_tail(args) -> None:
     import datetime as _dt
     import time as _t
 
-    from codegraph.activity import tail as _act_tail
+    from codegraph.state.activity import tail as _act_tail
 
     root = os.path.abspath(args.root)
     n = getattr(args, "limit", 30)
@@ -929,7 +931,7 @@ def cmd_tail(args) -> None:
 
 
 def cmd_logs(args) -> None:
-    from codegraph.call_log import clear_logs, get_logs
+    from codegraph.state.call_log import clear_logs, get_logs
 
     root = os.path.abspath(args.root)
 
@@ -1209,7 +1211,7 @@ def cmd_doctor(args) -> None:
     graph_path = codegraph_dir / "graph.db"
     if graph_path.exists():
         try:
-            from codegraph.db import get_readonly_connection
+            from codegraph.core.db import get_readonly_connection
 
             conn = get_readonly_connection(root)
             if conn is not None:
@@ -1227,7 +1229,7 @@ def cmd_doctor(args) -> None:
     fts_path = codegraph_dir / "fts.db"
     if fts_path.exists():
         try:
-            from codegraph.fts import get_fts_conn
+            from codegraph.core.fts import get_fts_conn
 
             fts_conn = get_fts_conn(root)
             fts_conn.execute("SELECT COUNT(*) FROM symbols").fetchone()
@@ -1245,7 +1247,7 @@ def cmd_doctor(args) -> None:
     call_path = codegraph_dir / "call_log.db"
     if call_path.exists():
         try:
-            from codegraph.call_log import get_stats as _cl_stats
+            from codegraph.state.call_log import get_stats as _cl_stats
 
             _cl_stats(root)
             call_ok = True
@@ -1262,7 +1264,7 @@ def cmd_doctor(args) -> None:
     config_path = codegraph_dir / "config.toml"
     if config_path.exists():
         try:
-            from codegraph.config import load_config
+            from codegraph.core.config import load_config
 
             load_config(root)
             config_ok = True

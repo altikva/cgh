@@ -10,7 +10,7 @@
 #   2. Detect patterns (openapi regen needed, entity type changes, etc.)
 #   3. Store commit context in Ruflo memory
 #
-# Usage: python -m codegraph.post_commit [--since HEAD~1]
+# Usage: python -m codegraph.integrations.post_commit [--since HEAD~1]
 
 from __future__ import annotations
 

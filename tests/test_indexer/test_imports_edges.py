@@ -1,5 +1,5 @@
 """
-Tests for IMPORTS edge ingestion (codegraph.import_resolver + indexer wire-up).
+Tests for IMPORTS edge ingestion (codegraph.imports.resolver + indexer wire-up).
 
 The indexer must create File → File IMPORTS edges for resolvable imports
 so MCP tools like `imports_of`, `who_imports`, and the recursive reach
@@ -15,7 +15,7 @@ import pytest
 
 from codegraph.core.db import get_connection, reset_connection
 from codegraph.core.utils import rows
-from codegraph.import_resolver import resolve_import, resolve_js_ts, resolve_python
+from codegraph.imports.resolver import resolve_import, resolve_js_ts, resolve_python
 from codegraph.indexer import index_file
 
 

@@ -90,8 +90,8 @@ def _incremental_via_owner(
     from rich.live import Live
     from rich.table import Table
 
-    from codegraph.activity import tail as _act_tail
-    from codegraph.auth import ensure_auth_key
+    from codegraph.state.activity import tail as _act_tail
+    from codegraph.state.auth import ensure_auth_key
 
     token = ensure_auth_key(root)
     body = _json.dumps(
@@ -291,7 +291,7 @@ def _detect_existing_state(root: Path) -> dict:
 
     # Owner status
     try:
-        from codegraph.ipc import is_owner_alive, read_owner_pid, read_owner_port
+        from codegraph.state.ipc import is_owner_alive, read_owner_pid, read_owner_port
 
         state["owner_alive"] = is_owner_alive(root)
         state["owner_pid"] = read_owner_pid(root)
@@ -301,7 +301,7 @@ def _detect_existing_state(root: Path) -> dict:
 
     # Scan meta (last indexed sha + branch)
     try:
-        from codegraph.scan_meta import read_meta
+        from codegraph.state.scan_meta import read_meta
 
         state["scan_meta"] = read_meta(root)
     except Exception:
@@ -346,7 +346,7 @@ def _detect_existing_state(root: Path) -> dict:
         except OSError:
             pass
         try:
-            from codegraph.skill_installer import detect_modified_skills
+            from codegraph.integrations.skill_installer import detect_modified_skills
 
             state["claude_skills_modified"] = detect_modified_skills(root)
         except Exception:
@@ -378,7 +378,7 @@ def cmd_init(args) -> None:
     import questionary
     from questionary import Style
 
-    from codegraph.config import init_project
+    from codegraph.core.config import init_project
 
     root = Path(os.path.abspath(args.root))
     console.print(LOGO)
@@ -518,7 +518,7 @@ def cmd_init(args) -> None:
     # Check for locally-edited skills before overwriting
     overwrite_skills = True
     if "claude" in selected_keys:
-        from codegraph.skill_installer import detect_modified_skills
+        from codegraph.integrations.skill_installer import detect_modified_skills
 
         modified = detect_modified_skills(root)
         if modified and not args.yes:
@@ -562,7 +562,7 @@ def cmd_init(args) -> None:
 
     # -- Step 3c: offer to inject codegraph usage guidelines into agent rules --
     if selected_keys:
-        from codegraph.skill_installer import install_usage_guidelines
+        from codegraph.integrations.skill_installer import install_usage_guidelines
 
         target_files = {
             "claude": "CLAUDE.md",
@@ -622,7 +622,7 @@ def cmd_init(args) -> None:
                 style=cg_style,
             ).ask()
         ):
-            from codegraph.federation import add_subrepo
+            from codegraph.analysis.federation import add_subrepo
 
             for s in detected_subrepos:
                 try:
@@ -637,7 +637,7 @@ def cmd_init(args) -> None:
     # -- Step 4: Detect parseable files --
     # Use git ls-files to match what the real indexer will process
     # (respects .gitignore). Fall back to glob if not a git repo.
-    from codegraph.federation import child_paths_to_skip, is_under_any
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
     from codegraph.parsers import get_parser_info
 
     parsers = get_parser_info()
@@ -976,7 +976,7 @@ def audit_claude_integration(root: Path) -> dict:
     """
     import json as _json
 
-    from codegraph.skill_installer import _iter_skills, detect_modified_skills
+    from codegraph.integrations.skill_installer import _iter_skills, detect_modified_skills
 
     report: dict = {}
 
@@ -1106,7 +1106,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             "args": ["-m", "codegraph", "serve", "--root", ".", "--watch", "--reindex"],
         }
 
-    from codegraph.skill_installer import (
+    from codegraph.integrations.skill_installer import (
         install_claude,
         install_codex,
         install_cursor,
@@ -1260,7 +1260,7 @@ def cmd_setup(args) -> None:
     stay in lock-step with `cgh init`. Adds the non-interactive extras
     on top: auto-accept permissions and the usage-guidelines block.
     """
-    from codegraph.skill_installer import install_usage_guidelines
+    from codegraph.integrations.skill_installer import install_usage_guidelines
 
     root = Path(os.path.abspath(args.root))
     target = args.target

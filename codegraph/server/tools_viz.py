@@ -436,8 +436,8 @@ def register(mcp) -> None:
         Differs from graph_stats: also includes scan_status and FTS count
         so you don't need multiple tool calls to assess the index health.
         """
-        from codegraph.fts import get_fts_conn
-        from codegraph.scan_meta import scan_status as _scan_status
+        from codegraph.core.fts import get_fts_conn
+        from codegraph.state.scan_meta import scan_status as _scan_status
 
         conn = _get_conn()
         nodes: dict[str, int] = {}

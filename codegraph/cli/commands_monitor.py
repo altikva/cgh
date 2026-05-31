@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from codegraph.cli import LOGO, _get_conn, _lang_color, _rows, console
+from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, _rows, console
 
 # ---------------------------------------------------------------------------
 # cmd_stats
@@ -477,6 +477,7 @@ def cmd_status(args) -> None:
         pass
 
     payload = {
+        "version": VERSION,
         "root": root,
         "owner": {
             "alive": owner_alive,
@@ -537,6 +538,7 @@ def cmd_status(args) -> None:
     table = Table(box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan")
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
+    table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""

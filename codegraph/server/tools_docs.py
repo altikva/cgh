@@ -17,7 +17,7 @@ from codegraph.core.utils import rows as _rows
 def register(mcp) -> None:
     """Register documentation tools on the given FastMCP instance."""
     import codegraph.server as _srv
-    from codegraph.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import for_each_child_kuzu
     from codegraph.server import _get_conn, _logged_tool
 
     def _query_each_kuzu(query_fn):

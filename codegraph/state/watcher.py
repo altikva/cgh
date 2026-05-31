@@ -23,9 +23,9 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from .federation import child_paths_to_skip, is_under_any
-from .indexer import _IGNORE_DIRS, _is_cghignored, index_file
-from .parsers import is_supported
+from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+from codegraph.indexer import _IGNORE_DIRS, _is_cghignored, index_file
+from codegraph.parsers import is_supported
 
 # Debounce window in seconds
 _DEBOUNCE = 0.3
@@ -111,7 +111,7 @@ class _CodeGraphHandler(FileSystemEventHandler):
             t.start()
 
     def _reindex(self, path: str) -> None:
-        from codegraph.activity import log as _activity_log
+        from codegraph.state.activity import log as _activity_log
 
         with self._lock:
             self._timers.pop(path, None)
@@ -226,9 +226,9 @@ def start_watcher(repo_root: str | Path) -> Observer:
         pass
 
     # Memory + plans dirs (auto-discovered; env / config-overridable)
-    from codegraph.config import memory_dir, plans_dir
-    from codegraph.memory_index import scan_memory_dir
-    from codegraph.plan_index import scan_plan_dir
+    from codegraph.core.config import memory_dir, plans_dir
+    from codegraph.claude_state.memory import scan_memory_dir
+    from codegraph.claude_state.plans import scan_plan_dir
 
     aux_targets: list[tuple[Path, str, object]] = []
     try:

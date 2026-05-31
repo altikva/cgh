@@ -26,7 +26,7 @@ from codegraph.cli import LOGO, _lang_color, _short_path, console
 
 def cmd_index(args) -> None:
     from codegraph.indexer import index_repo
-    from codegraph.ipc import is_owner_alive, read_owner_port
+    from codegraph.state.ipc import is_owner_alive, read_owner_port
 
     root = os.path.abspath(args.root)
     force = getattr(args, "force", False)
@@ -160,7 +160,7 @@ def _print_index_summary(stats: dict) -> None:
 
 def cmd_memory_index(args) -> None:
     """Scan the Claude Code memory directory into the FTS index."""
-    from codegraph.memory_index import scan_memory_dir
+    from codegraph.claude_state.memory import scan_memory_dir
 
     root = os.path.abspath(args.root)
     console.print(LOGO)
@@ -185,7 +185,7 @@ def cmd_memory_index(args) -> None:
 
 def cmd_plan_index(args) -> None:
     """Scan ~/.claude/plans/ into the FTS index."""
-    from codegraph.plan_index import scan_plan_dir
+    from codegraph.claude_state.plans import scan_plan_dir
 
     root = os.path.abspath(args.root)
     console.print(LOGO)
@@ -210,7 +210,7 @@ def cmd_plan_index(args) -> None:
 
 def cmd_watch(args) -> None:
     from codegraph.indexer import index_repo
-    from codegraph.watcher import watch_forever
+    from codegraph.state.watcher import watch_forever
 
     root = os.path.abspath(args.root)
 
@@ -238,7 +238,7 @@ def cmd_serve(args) -> None:
     if getattr(args, "background", False):
         from pathlib import Path
 
-        from codegraph.ipc import (
+        from codegraph.state.ipc import (
             is_owner_alive,
             read_owner_port,
             register_keepalive,
@@ -278,7 +278,7 @@ def cmd_serve(args) -> None:
         import time as _time
         from pathlib import Path
 
-        from codegraph.ipc import (
+        from codegraph.state.ipc import (
             is_owner_alive,
             is_pid_alive,
             owner_pidfile,

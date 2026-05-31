@@ -18,7 +18,7 @@ from pathlib import Path
 
 import kuzu
 
-from .schema import init_schema
+from codegraph.core.schema import init_schema
 
 _DB_DIR = ".codegraph"
 _DB_FILE = "graph.db"

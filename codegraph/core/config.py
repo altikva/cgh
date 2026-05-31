@@ -351,7 +351,7 @@ def init_project(root: Path) -> dict:
         created.append(str(config_path))
 
     # Generate auth key
-    from .auth import ensure_auth_key, ensure_gitignore_has_auth_key, get_auth_key_path
+    from codegraph.state.auth import ensure_auth_key, ensure_gitignore_has_auth_key, get_auth_key_path
 
     key_path = get_auth_key_path(root)
     if not key_path.exists():

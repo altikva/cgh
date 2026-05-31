@@ -56,7 +56,7 @@ After install, the `cgh` CLI is on your PATH:
 
 ```bash
 cgh --version
-# codegraph 0.3.1
+# codegraph 0.4.0
 ```
 
 The Python import name is still `codegraph` (e.g. `from codegraph.parsers import ...`); only the CLI is renamed. Same pattern as `pip install pillow` then `import PIL`.

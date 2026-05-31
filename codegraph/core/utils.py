@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 
@@ -30,6 +31,25 @@ def short_path(path: str, root: str | Path) -> str:
         return str(Path(path).relative_to(root))
     except ValueError:
         return path
+
+
+def normalize_identifier(text: str) -> str:
+    """NFKC-normalize an identifier so visually-identical forms collapse.
+
+    Composed (``é`` = U+00E9) and decomposed (``é`` = e + combining
+    acute) representations of the same character become byte-identical.
+    Fullwidth ``Ｆｏｏ`` collapses to ASCII ``Foo``. Critical for repos
+    with non-ASCII identifiers (CJK, accented Latin, Cyrillic, etc.) so
+    the graph doesn't fork a single symbol into two nodes.
+
+    Whitespace is preserved (callers strip it as needed); only Unicode
+    canonical compatibility composition is applied.
+
+    Ported from graphify's _make_id normalization step.
+    """
+    if not text:
+        return text
+    return unicodedata.normalize("NFKC", text)
 
 
 def safe_id(name: str) -> str:

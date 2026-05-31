@@ -35,6 +35,19 @@ def _text(node: Node, src: bytes) -> str:
     return src[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
+def _ident(node: Node, src: bytes) -> str:
+    """Like _text but NFKC-normalized for identifier nodes.
+
+    Use this anywhere the returned string will become part of a node ID
+    or a name we'll match against other identifiers. Composed and
+    decomposed Unicode forms collapse to the same string, so a single
+    symbol doesn't fork into two nodes.
+    """
+    from codegraph.core.utils import normalize_identifier
+
+    return normalize_identifier(_text(node, src))
+
+
 def _first_child_of_type(node: Node, *types: str) -> Node | None:
     for child in node.children:
         if child.type in types:
@@ -67,11 +80,13 @@ def _collect_calls(node: Node, src: bytes) -> list[str]:
         if n.type == "call":
             func_node = n.child_by_field_name("function")
             if func_node:
-                name = _text(func_node, src)
+                name = _ident(func_node, src)
                 # Strip attribute access: "self.foo" -> "foo", "obj.method" -> "method"
                 if "." in name:
                     name = name.split(".")[-1]
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+                # \w is Unicode-aware on Python 3 so non-ASCII identifiers
+                # (CJK, accented Latin, Cyrillic) survive the filter.
+                if re.match(r"^\w+$", name, re.UNICODE):
                     calls.append(name)
         for child in n.children:
             walk(child)
@@ -119,20 +134,43 @@ class PythonParser(BaseParser):
             elif node.type == "import_from_statement":
                 mod_node = node.child_by_field_name("module_name")
                 module = _text(mod_node, src) if mod_node else ""
+
+                # Relative imports: `from . import x` and `from .. import y`
+                # have no module_name field; the leading dots live in a
+                # relative_import child. Reconstruct so the resolver sees
+                # ".x" / "..y" instead of "" + a sibling-name symbol list.
+                if not module:
+                    for child in node.children:
+                        if child.type == "relative_import":
+                            prefix = _text(child, src).strip()
+                            if prefix:
+                                module = prefix
+                            break
+
                 symbols = [_text(c, src) for c in node.children if c.type == "dotted_name" and c != mod_node]
-                index.imports.append(ImportRef(source_module=module, symbols=symbols))
+
+                # When the import is purely relative + dotted names
+                # (`from . import x, y`), treat each symbol as a sibling
+                # module so the resolver can wire one edge per target.
+                if module in (".", "..") and symbols:
+                    for sym in symbols:
+                        index.imports.append(
+                            ImportRef(source_module=module + sym, symbols=[])
+                        )
+                else:
+                    index.imports.append(ImportRef(source_module=module, symbols=symbols))
 
             # --- class ---
             elif node.type == "class_definition":
                 name_node = node.child_by_field_name("name")
                 body_node = node.child_by_field_name("body")
-                name = _text(name_node, src) if name_node else "?"
+                name = _ident(name_node, src) if name_node else "?"
                 bases: list[str] = []
                 args_node = node.child_by_field_name("superclasses")
                 if args_node:
                     for arg in args_node.children:
                         if arg.type in ("identifier", "dotted_name", "attribute"):
-                            bases.append(_text(arg, src))
+                            bases.append(_ident(arg, src))
 
                 doc = _extract_docstring(body_node, src) if body_node else ""
                 index.classes.append(
@@ -165,7 +203,7 @@ class PythonParser(BaseParser):
 
                 name_node = fn_node.child_by_field_name("name")
                 body_node = fn_node.child_by_field_name("body")
-                name = _text(name_node, src) if name_node else "?"
+                name = _ident(name_node, src) if name_node else "?"
                 doc = _extract_docstring(body_node, src) if body_node else ""
                 calls = _collect_calls(fn_node, src)
                 fn_id = f"{path_str}::{current_class}.{name}" if current_class else f"{path_str}::{name}"

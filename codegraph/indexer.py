@@ -19,8 +19,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-import kuzu
-
 from codegraph.core.db import get_connection
 from codegraph.core.fts import commit as fts_commit
 from codegraph.core.fts import delete_file_symbols, get_fts_conn, upsert_symbol
@@ -126,7 +124,7 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
 
 
 def _upsert_file(
-    conn: kuzu.Connection,
+    conn,
     path: str,
     lang: str,
     mtime: float,
@@ -135,52 +133,29 @@ def _upsert_file(
     layer: str | None = None,
     module_doc: str | None = None,
 ) -> None:
-    conn.execute(
-        "MERGE (f:File {path: $p}) SET "
-        "f.lang = $l, f.mtime = $m, f.git_blob_sha = $g, "
-        "f.role = $r, f.layer = $ly, f.module_doc = $d",
+    """MERGE a File node + SET its properties via the backend-neutral helper."""
+    conn.upsert_node(
+        "File",
+        "path",
+        path,
         {
-            "p": path,
-            "l": lang,
-            "m": mtime,
-            "g": git_blob_sha,
-            "r": role,
-            "ly": layer,
-            "d": module_doc,
+            "lang": lang,
+            "mtime": mtime,
+            "git_blob_sha": git_blob_sha,
+            "role": role,
+            "layer": layer,
+            "module_doc": module_doc,
         },
     )
 
 
-def _purge_file(conn: kuzu.Connection, path: str, fts_conn=None) -> None:
-    """Delete all nodes + edges associated with a file before re-indexing it."""
-    conn.execute(
-        "MATCH (fn:Function) WHERE fn.file_path = $p DETACH DELETE fn",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (c:Class) WHERE c.file_path = $p DETACH DELETE c",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (r:TFResource) WHERE r.file_path = $p DETACH DELETE r",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (v:TFVar) WHERE v.file_path = $p DETACH DELETE v",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (s:MdSection) WHERE s.file_path = $p DETACH DELETE s",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (e:Endpoint) WHERE e.file_path = $p DETACH DELETE e",
-        {"p": path},
-    )
-    conn.execute(
-        "MATCH (f:File {path: $p})-[r:IMPORTS]->() DELETE r",
-        {"p": path},
-    )
+def _purge_file(conn, path: str, fts_conn=None) -> None:
+    """Delete all nodes + edges associated with a file before re-indexing it.
+
+    Delegates the graph cleanup to the backend's purge_file_data helper —
+    each backend knows its own table layout and constraint model.
+    """
+    conn.purge_file_data(path)
     if fts_conn is not None:
         delete_file_symbols(fts_conn, path)
 
@@ -237,17 +212,15 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn: kuzu.Connection, functions: list, lang: str = "") -> None:
+def _resolve_calls(conn, functions: list, lang: str = "") -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
     names to known function names. Best-effort: unresolved names are skipped.
 
-    Names that match a language built-in callable for ``lang`` are skipped
-    so callees like ``isinstance``, ``len``, ``String``, ``parseInt`` don't
-    accumulate spurious edges from every call site. If a user happens to
-    define a function whose name shadows a built-in, the edge to that
-    user-defined function is also skipped — that's a conscious tradeoff
-    to keep the graph clean.
+    Names matching a language built-in callable are filtered first (see
+    parsers/builtins.py) so callees like isinstance / println / parseInt
+    don't accumulate spurious edges. The actual edge-link work goes
+    through find_node_keys + ensure_edge so it stays backend-neutral.
     """
     from codegraph.parsers.builtins import is_builtin
 
@@ -255,82 +228,60 @@ def _resolve_calls(conn: kuzu.Connection, functions: list, lang: str = "") -> No
         for called_name in fn.calls:
             if lang and is_builtin(lang, called_name):
                 continue
-            conn.execute(
-                """MATCH (caller:Function {id:$cid}), (callee:Function)
-                   WHERE callee.name = $n
-                   MERGE (caller)-[:CALLS]->(callee)""",
-                {"cid": fn.id, "n": called_name},
-            )
+            for callee_id in conn.find_node_keys("Function", "name", called_name):
+                conn.ensure_edge("CALLS", fn.id, callee_id)
 
 
-def _resolve_inherits(conn: kuzu.Connection, classes: list) -> None:
+def _resolve_inherits(conn, classes: list) -> None:
     """Create INHERITS edges between Class nodes using base class names."""
     for cls in classes:
         for base_name in cls.bases:
-            conn.execute(
-                """MATCH (child:Class {id:$cid}), (parent:Class)
-                   WHERE parent.name = $n
-                   MERGE (child)-[:INHERITS]->(parent)""",
-                {"cid": cls.id, "n": base_name},
-            )
+            for parent_id in conn.find_node_keys("Class", "name", base_name):
+                conn.ensure_edge("INHERITS", cls.id, parent_id)
 
 
-def _ingest_code(conn: kuzu.Connection, idx: FileIndex) -> None:
+def _ingest_code(conn, idx: FileIndex) -> None:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
     for fn in idx.functions:
-        conn.execute(
-            """MERGE (f:Function {id: $id})
-               SET f.name=$n, f.file_path=$fp,
-                   f.start_line=$sl, f.end_line=$el, f.docstring=$doc""",
+        conn.upsert_node(
+            "Function",
+            "id",
+            fn.id,
             {
-                "id": fn.id,
-                "n": fn.name,
-                "fp": fn.file_path,
-                "sl": fn.start_line,
-                "el": fn.end_line,
-                "doc": fn.docstring,
+                "name": fn.name,
+                "file_path": fn.file_path,
+                "start_line": fn.start_line,
+                "end_line": fn.end_line,
+                "docstring": fn.docstring,
             },
         )
-        conn.execute(
-            """MATCH (f:File {path:$fp}), (fn:Function {id:$id})
-               MERGE (f)-[:DEFINES_FN]->(fn)""",
-            {"fp": fn.file_path, "id": fn.id},
-        )
+        conn.ensure_edge("DEFINES_FN", fn.file_path, fn.id)
 
     for cls in idx.classes:
-        conn.execute(
-            """MERGE (c:Class {id:$id})
-               SET c.name=$n, c.file_path=$fp,
-                   c.start_line=$sl, c.end_line=$el, c.docstring=$doc""",
+        conn.upsert_node(
+            "Class",
+            "id",
+            cls.id,
             {
-                "id": cls.id,
-                "n": cls.name,
-                "fp": cls.file_path,
-                "sl": cls.start_line,
-                "el": cls.end_line,
-                "doc": cls.docstring,
+                "name": cls.name,
+                "file_path": cls.file_path,
+                "start_line": cls.start_line,
+                "end_line": cls.end_line,
+                "docstring": cls.docstring,
             },
         )
-        conn.execute(
-            """MATCH (f:File {path:$fp}), (c:Class {id:$id})
-               MERGE (f)-[:DEFINES_CLASS]->(c)""",
-            {"fp": cls.file_path, "id": cls.id},
-        )
+        conn.ensure_edge("DEFINES_CLASS", cls.file_path, cls.id)
 
     for fn in idx.functions:
         if fn.class_name:
             class_id = f"{fn.file_path}::{fn.class_name}"
-            conn.execute(
-                """MATCH (c:Class {id:$cid}), (fn:Function {id:$fid})
-                   MERGE (c)-[:HAS_METHOD]->(fn)""",
-                {"cid": class_id, "fid": fn.id},
-            )
+            conn.ensure_edge("HAS_METHOD", class_id, fn.id)
 
     _resolve_calls(conn, idx.functions, idx.lang)
     _resolve_inherits(conn, idx.classes)
 
 
-def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | None) -> None:
+def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
     """
     Wire IMPORTS edges from idx.imports into Kuzu.
 
@@ -355,10 +306,10 @@ def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | Non
             continue
 
         # Make sure the target File exists. During incremental indexing
-        # the importer may be processed before its dependency, so MERGE
+        # the importer may be processed before its dependency, so upsert
         # creates a stub node carrying just the path. Once the target's
-        # own index_file runs, the same MERGE upserts the full metadata.
-        conn.execute("MERGE (f:File {path: $p})", {"p": target_str})
+        # own index_file runs, the same key gets upserted with full metadata.
+        conn.upsert_node("File", "path", target_str, {})
 
         # Symbol annotation on the edge. If the import named multiple
         # symbols, write one edge per symbol so MCP tools can answer
@@ -370,49 +321,42 @@ def _ingest_imports(conn: kuzu.Connection, idx: FileIndex, repo_root: Path | Non
             if edge_key in seen_targets:
                 continue
             seen_targets.add(edge_key)
-            conn.execute(
-                """MATCH (src:File {path:$sp}), (tgt:File {path:$tp})
-                   MERGE (src)-[:IMPORTS {symbol: $sym}]->(tgt)""",
-                {"sp": idx.path, "tp": target_str, "sym": sym},
-            )
+            conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
 
 
-def _ingest_terraform(conn: kuzu.Connection, idx: FileIndex) -> None:
+def _ingest_terraform(conn, idx: FileIndex) -> None:
     """Ingest terraform resources and variables from unified FileIndex."""
     for res in idx.resources:
         if res.kind in ("variable", "output"):
-            conn.execute(
-                """MERGE (v:TFVar {id:$id})
-                   SET v.name=$n, v.kind=$k, v.file_path=$fp, v.start_line=$sl""",
-                {"id": res.id, "n": res.name, "k": res.kind, "fp": res.file_path, "sl": res.start_line},
-            )
-            conn.execute(
-                """MATCH (f:File {path:$fp}), (v:TFVar {id:$id})
-                   MERGE (f)-[:DEFINES_TFVAR]->(v)""",
-                {"fp": res.file_path, "id": res.id},
-            )
-        else:
-            conn.execute(
-                """MERGE (r:TFResource {id:$id})
-                   SET r.name=$n, r.type=$t, r.file_path=$fp,
-                       r.start_line=$sl, r.end_line=$el""",
+            conn.upsert_node(
+                "TFVar",
+                "id",
+                res.id,
                 {
-                    "id": res.id,
-                    "n": res.name,
-                    "t": res.type,
-                    "fp": res.file_path,
-                    "sl": res.start_line,
-                    "el": res.end_line,
+                    "name": res.name,
+                    "kind": res.kind,
+                    "file_path": res.file_path,
+                    "start_line": res.start_line,
                 },
             )
-            conn.execute(
-                """MATCH (f:File {path:$fp}), (r:TFResource {id:$id})
-                   MERGE (f)-[:DEFINES_RESOURCE]->(r)""",
-                {"fp": res.file_path, "id": res.id},
+            conn.ensure_edge("DEFINES_TFVAR", res.file_path, res.id)
+        else:
+            conn.upsert_node(
+                "TFResource",
+                "id",
+                res.id,
+                {
+                    "name": res.name,
+                    "type": res.type,
+                    "file_path": res.file_path,
+                    "start_line": res.start_line,
+                    "end_line": res.end_line,
+                },
             )
+            conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
 
 
-def _ingest_endpoints(conn: kuzu.Connection, path: Path) -> int:
+def _ingest_endpoints(conn, path: Path) -> int:
     """Extract and persist HTTP endpoints from a file. Returns count."""
     from codegraph.analysis.endpoints import extract as _extract_endpoints
 
@@ -425,70 +369,53 @@ def _ingest_endpoints(conn: kuzu.Connection, path: Path) -> int:
     if not eps:
         return 0
 
-    # Purge old endpoints for this file first
-    conn.execute(
-        "MATCH (e:Endpoint) WHERE e.file_path = $p DETACH DELETE e",
-        {"p": str(path)},
-    )
+    # purge_file_data already cleaned old endpoints for this path during
+    # the upstream _purge_file call, so no separate purge needed here.
 
     for ep in eps:
-        conn.execute(
-            """MERGE (e:Endpoint {id: $id}) SET
-                 e.method     = $m,
-                 e.path       = $path,
-                 e.framework  = $f,
-                 e.file_path  = $fp,
-                 e.start_line = $sl""",
+        conn.upsert_node(
+            "Endpoint",
+            "id",
+            ep.id,
             {
-                "id": ep.id,
-                "m": ep.method,
+                "method": ep.method,
                 "path": ep.path,
-                "f": ep.framework,
-                "fp": ep.file_path,
-                "sl": ep.start_line,
+                "framework": ep.framework,
+                "file_path": ep.file_path,
+                "start_line": ep.start_line,
             },
         )
-        conn.execute(
-            """MATCH (f:File {path: $fp}), (e:Endpoint {id: $id})
-               MERGE (f)-[:DEFINES_ENDPOINT]->(e)""",
-            {"fp": str(path), "id": ep.id},
-        )
+        conn.ensure_edge("DEFINES_ENDPOINT", str(path), ep.id)
         if ep.handler_name:
-            # Link to the handler Function. We don't know its class so try
-            # by name only — safe, best-effort.
-            conn.execute(
-                """MATCH (e:Endpoint {id: $id}), (fn:Function)
-                   WHERE fn.name = $n AND fn.file_path = $fp
-                   MERGE (e)-[:IMPLEMENTED_BY]->(fn)""",
-                {"id": ep.id, "n": ep.handler_name, "fp": str(path)},
-            )
+            # Link to the handler Function in this same file. Use the
+            # backend's find_node_keys + ensure_edge so name resolution
+            # works on both Kuzu and DuckDB.
+            for fn_id in conn.find_node_keys("Function", "name", ep.handler_name):
+                # find_node_keys returns *all* matches; filter to this file
+                # by checking the id prefix (id = file_path + '::' + name).
+                if fn_id.startswith(f"{path}::") or f"::{path}::" in fn_id:
+                    conn.ensure_edge("IMPLEMENTED_BY", ep.id, fn_id)
     return len(eps)
 
 
-def _ingest_markdown(conn: kuzu.Connection, idx: FileIndex) -> None:
+def _ingest_markdown(conn, idx: FileIndex) -> None:
     # Sections
     for sec in idx.sections:
-        conn.execute(
-            """MERGE (s:MdSection {id: $id})
-               SET s.title=$t, s.level=$lv, s.file_path=$fp,
-                   s.start_line=$sl, s.end_line=$el,
-                   s.body_preview=$bp, s.anchor=$a""",
+        conn.upsert_node(
+            "MdSection",
+            "id",
+            sec.id,
             {
-                "id": sec.id,
-                "t": sec.title,
-                "lv": sec.level,
-                "fp": sec.file_path,
-                "sl": sec.start_line,
-                "el": sec.end_line,
-                "bp": sec.body_preview,
-                "a": sec.anchor,
+                "title": sec.title,
+                "level": sec.level,
+                "file_path": sec.file_path,
+                "start_line": sec.start_line,
+                "end_line": sec.end_line,
+                "body_preview": sec.body_preview,
+                "anchor": sec.anchor,
             },
         )
-        conn.execute(
-            """MATCH (f:File {path:$fp}), (s:MdSection {id:$id})
-               MERGE (f)-[:DEFINES_SECTION]->(s)""",
-            {"fp": sec.file_path, "id": sec.id},
-        )
+        conn.ensure_edge("DEFINES_SECTION", sec.file_path, sec.id)
 
     # Section hierarchy: parent contains child when child.level > parent.level
     # and child comes before the next same-or-higher-level section
@@ -498,30 +425,28 @@ def _ingest_markdown(conn: kuzu.Connection, idx: FileIndex) -> None:
             if child.level <= parent.level:
                 break
             if child.level == parent.level + 1:
-                conn.execute(
-                    """MATCH (p:MdSection {id:$pid}), (c:MdSection {id:$cid})
-                       MERGE (p)-[:CONTAINS_SECTION]->(c)""",
-                    {"pid": parent.id, "cid": child.id},
-                )
+                conn.ensure_edge("CONTAINS_SECTION", parent.id, child.id)
 
-    # Internal links: link markdown sections to files they reference
+    # Internal links: link markdown sections to files they reference.
+    # The original Cypher used `WHERE f.path ENDS WITH $tp` which has no
+    # direct find_node_keys equivalent; for now resolve via find_node_keys
+    # over all files and filter in Python — small N (file count) makes
+    # this cheap.
     for link in idx.links:
         target = link.target
-        # Skip external URLs and anchors
         if target.startswith(("http://", "https://", "mailto:", "#")):
             continue
-        # Strip anchor from path
         target_path = target.split("#")[0]
         if not target_path:
             continue
-        # Find which section this link belongs to
         section = _find_section_for_line(idx.sections, link.line)
-        if section:
-            conn.execute(
-                """MATCH (s:MdSection {id:$sid}), (f:File)
-                   WHERE f.path ENDS WITH $tp
-                   MERGE (s)-[:MD_LINKS_TO {label: $lb}]->(f)""",
-                {"sid": section.id, "tp": target_path, "lb": link.label},
+        if not section:
+            continue
+        for file_key in conn.find_node_keys("File", "path", target_path):
+            # Exact match path. We can extend with ENDS WITH later when a
+            # backend-neutral suffix-match helper exists.
+            conn.ensure_edge(
+                "MD_LINKS_TO", section.id, file_key, {"label": link.label}
             )
 
     # Code references: link sections to code symbols they mention
@@ -529,20 +454,14 @@ def _ingest_markdown(conn: kuzu.Connection, idx: FileIndex) -> None:
         section = _find_section_for_line(idx.sections, ref.line)
         if not section:
             continue
-        # Try to match against Function nodes
-        conn.execute(
-            """MATCH (s:MdSection {id:$sid}), (fn:Function)
-               WHERE fn.name = $sym
-               MERGE (s)-[:MD_REFS_SYMBOL {context: $ctx}]->(fn)""",
-            {"sid": section.id, "sym": ref.symbol, "ctx": ref.context},
-        )
-        # Try to match against Class nodes
-        conn.execute(
-            """MATCH (s:MdSection {id:$sid}), (c:Class)
-               WHERE c.name = $sym
-               MERGE (s)-[:MD_REFS_CLASS {context: $ctx}]->(c)""",
-            {"sid": section.id, "sym": ref.symbol, "ctx": ref.context},
-        )
+        for fn_id in conn.find_node_keys("Function", "name", ref.symbol):
+            conn.ensure_edge(
+                "MD_REFS_SYMBOL", section.id, fn_id, {"context": ref.context}
+            )
+        for cls_id in conn.find_node_keys("Class", "name", ref.symbol):
+            conn.ensure_edge(
+                "MD_REFS_CLASS", section.id, cls_id, {"context": ref.context}
+            )
 
 
 def _find_section_for_line(sections: list, line: int):
@@ -596,14 +515,10 @@ def index_file(
 
     # Check if already indexed and unchanged (skip if force)
     if not force:
-        res = conn.execute("MATCH (f:File {path:$p}) RETURN f.mtime", {"p": str(path)})
         try:
-            while res.has_next():
-                row = res.get_next()
-                stored_mtime = float(row[0])
-                if abs(stored_mtime - mtime) < 0.01:
-                    return True  # unchanged
-                break
+            stored_mtime = conn.query_node_field("File", "path", str(path), "mtime")
+            if stored_mtime is not None and abs(float(stored_mtime) - mtime) < 0.01:
+                return True  # unchanged
         except Exception:
             pass
 
@@ -988,8 +903,9 @@ def index_repo(
         conn = get_connection(repo_root)
         for gone in deletions:
             try:
-                _purge_file(conn, str(gone), fts_conn)
-                conn.execute("MATCH (f:File {path: $p}) DETACH DELETE f", {"p": str(gone)})
+                conn.delete_file_completely(str(gone))
+                if fts_conn is not None:
+                    delete_file_symbols(fts_conn, str(gone))
             except Exception:
                 pass
 
@@ -1119,10 +1035,8 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     # Load stored (path, blob_sha) pairs
     stored: dict[str, str | None] = {}
     try:
-        res = conn.execute("MATCH (f:File) RETURN f.path, f.git_blob_sha")
-        while res.has_next():
-            row = res.get_next()
-            stored[row[0]] = row[1]
+        for path, sha in conn.list_node_fields("File", ["path", "git_blob_sha"]):
+            stored[path] = sha
     except Exception:
         # Old schema / column missing — fall back
         _activity_log(repo_root, "incremental_fallback", "no git_blob_sha column")
@@ -1155,11 +1069,8 @@ def incremental_reindex(repo_root: str | Path) -> dict:
             continue
         stored_mtime: float | None = None
         try:
-            res = conn.execute("MATCH (f:File {path: $p}) RETURN f.mtime", {"p": str(p)})
-            if res.has_next():
-                row = res.get_next()
-                if row[0] is not None:
-                    stored_mtime = float(row[0])
+            raw = conn.query_node_field("File", "path", str(p), "mtime")
+            stored_mtime = float(raw) if raw is not None else None
         except Exception:
             stored_mtime = None
         if stored_mtime is None or abs(stored_mtime - disk_mtime) > 0.01:
@@ -1186,8 +1097,9 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     deleted_count = 0
     for path in to_delete:
         try:
-            _purge_file(conn, path, fts_conn)
-            conn.execute("MATCH (f:File {path: $p}) DETACH DELETE f", {"p": path})
+            conn.delete_file_completely(path)
+            if fts_conn is not None:
+                delete_file_symbols(fts_conn, path)
             deleted_count += 1
         except Exception:
             pass

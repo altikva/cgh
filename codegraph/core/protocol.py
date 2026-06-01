@@ -135,3 +135,57 @@ class GraphDB(Protocol):
         """Like purge_file_data, but also drops the File node itself.
         Used when a file is removed from the working tree.
         """
+
+    def find_nodes(
+        self,
+        label: str,
+        where: dict[str, Any] | None = None,
+        contains: dict[str, Any] | None = None,
+        return_fields: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return matching nodes as a list of field-keyed dicts.
+
+        - ``where``: ``{field: value}`` exact match, AND across fields.
+        - ``contains``: ``{field: value}`` substring search, OR across fields.
+        - ``return_fields``: which columns to include. None = all columns
+          for the label.
+        - ``limit``: optional row cap.
+
+        Used by symbol_lookup, search_symbols, doc search, and similar
+        "find me nodes matching X" tools.
+        """
+
+    def find_neighbors(
+        self,
+        edge_type: str,
+        src_key: Any | None = None,
+        dst_key: Any | None = None,
+        src_where: dict[str, Any] | None = None,
+        dst_where: dict[str, Any] | None = None,
+        return_src: list[str] | None = None,
+        return_dst: list[str] | None = None,
+        return_edge: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Walk an edge type with optional anchoring on either side.
+
+        Result dicts use prefixed keys: ``src_<field>``, ``dst_<field>``,
+        ``edge_<field>``. The caller picks which prefixed fields they
+        want via the three ``return_*`` lists; the rest are dropped.
+
+        Used by find_callers, find_callees, imports_of, who_imports,
+        and similar "walk an edge from / to a known anchor" tools.
+        """
+
+    def reach_via_edge(
+        self,
+        edge_type: str,
+        start_key: Any,
+        max_depth: int = 1,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Transitive reach along ``edge_type`` from ``start_key``.
+
+        Returns distinct destinations within ``max_depth`` hops.
+        Used by subgraph reach and the recursive IMPORTS query.
+        """

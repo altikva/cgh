@@ -12,9 +12,6 @@ from __future__ import annotations
 import json
 import os
 
-from codegraph.core.utils import rows as _rows
-
-
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
@@ -141,58 +138,59 @@ def register(mcp) -> None:
 
         def query(conn):
             out = []
-            r = conn.execute(
-                "MATCH (f:Function) WHERE f.name = $n RETURN f.file_path, f.start_line, f.end_line, f.docstring",
-                {"n": name},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "Function",
+                where={"name": name},
+                return_fields=["file_path", "start_line", "end_line", "docstring"],
+            ):
                 out.append(
                     {
                         "kind": "function",
-                        "file": row["f.file_path"],
-                        "lines": f"{row['f.start_line']}-{row['f.end_line']}",
-                        "doc": row["f.docstring"][:120] if row["f.docstring"] else "",
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
+                        "doc": (row["docstring"] or "")[:120],
                     }
                 )
-            r = conn.execute(
-                "MATCH (c:Class) WHERE c.name = $n RETURN c.file_path, c.start_line, c.end_line, c.docstring",
-                {"n": name},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "Class",
+                where={"name": name},
+                return_fields=["file_path", "start_line", "end_line", "docstring"],
+            ):
                 out.append(
                     {
                         "kind": "class",
-                        "file": row["c.file_path"],
-                        "lines": f"{row['c.start_line']}-{row['c.end_line']}",
-                        "doc": row["c.docstring"][:120] if row["c.docstring"] else "",
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
+                        "doc": (row["docstring"] or "")[:120],
                     }
                 )
-            r = conn.execute(
-                "MATCH (r:TFResource) WHERE r.name = $n RETURN r.file_path, r.type, r.start_line, r.end_line",
-                {"n": name},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "TFResource",
+                where={"name": name},
+                return_fields=["file_path", "type", "start_line", "end_line"],
+            ):
                 out.append(
                     {
                         "kind": "tf_resource",
-                        "type": row["r.type"],
-                        "file": row["r.file_path"],
-                        "lines": f"{row['r.start_line']}-{row['r.end_line']}",
+                        "type": row["type"],
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
                     }
                 )
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.title CONTAINS $n "
-                "RETURN s.file_path, s.start_line, s.end_line, s.body_preview, s.anchor",
-                {"n": name},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"title": name},
+                return_fields=[
+                    "file_path", "start_line", "end_line", "body_preview", "anchor",
+                ],
+            ):
                 out.append(
                     {
                         "kind": "md_section",
-                        "file": row["s.file_path"],
-                        "lines": f"{row['s.start_line']}-{row['s.end_line']}",
-                        "doc": row["s.body_preview"][:120] if row["s.body_preview"] else "",
-                        "anchor": row["s.anchor"],
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
+                        "doc": (row["body_preview"] or "")[:120],
+                        "anchor": row["anchor"],
                     }
                 )
             return out
@@ -220,19 +218,17 @@ def register(mcp) -> None:
         """
 
         def query(conn):
-            r = conn.execute(
-                """MATCH (caller:Function)-[:CALLS]->(callee:Function)
-                   WHERE callee.name = $n
-                   RETURN caller.name, caller.file_path, caller.start_line""",
-                {"n": fn_name},
-            )
             return [
                 {
-                    "caller": row["caller.name"],
-                    "file": row["caller.file_path"],
-                    "line": row["caller.start_line"],
+                    "caller": row["src_name"],
+                    "file": row["src_file_path"],
+                    "line": row["src_start_line"],
                 }
-                for row in _rows(r)
+                for row in conn.find_neighbors(
+                    "CALLS",
+                    dst_where={"name": fn_name},
+                    return_src=["name", "file_path", "start_line"],
+                )
             ]
 
         callers, warnings = _federate_kuzu(query)
@@ -250,19 +246,17 @@ def register(mcp) -> None:
         """
 
         def query(conn):
-            r = conn.execute(
-                """MATCH (caller:Function)-[:CALLS]->(callee:Function)
-                   WHERE caller.name = $n
-                   RETURN callee.name, callee.file_path, callee.start_line""",
-                {"n": fn_name},
-            )
             return [
                 {
-                    "callee": row["callee.name"],
-                    "file": row["callee.file_path"],
-                    "line": row["callee.start_line"],
+                    "callee": row["dst_name"],
+                    "file": row["dst_file_path"],
+                    "line": row["dst_start_line"],
                 }
-                for row in _rows(r)
+                for row in conn.find_neighbors(
+                    "CALLS",
+                    src_where={"name": fn_name},
+                    return_dst=["name", "file_path", "start_line"],
+                )
             ]
 
         callees, warnings = _federate_kuzu(query)
@@ -284,12 +278,15 @@ def register(mcp) -> None:
             file_path = str(_srv._root / file_path)
 
         def query(conn):
-            r = conn.execute(
-                """MATCH (src:File {path:$p})-[i:IMPORTS]->(tgt:File)
-                   RETURN tgt.path, i.symbol""",
-                {"p": file_path},
-            )
-            return [{"module": row["tgt.path"], "symbol": row.get("i.symbol", "")} for row in _rows(r)]
+            return [
+                {"module": row["dst_path"], "symbol": row.get("edge_symbol", "")}
+                for row in conn.find_neighbors(
+                    "IMPORTS",
+                    src_key=file_path,
+                    return_dst=["path"],
+                    return_edge=["symbol"],
+                )
+            ]
 
         imports, warnings = _federate_kuzu(query)
         out = {"file": file_path, "imports": imports}
@@ -310,48 +307,49 @@ def register(mcp) -> None:
         def run(conn):
             out = []
             for label, kind in [("Function", "function"), ("Class", "class")]:
-                r = conn.execute(
-                    f"MATCH (n:{label}) WHERE n.name CONTAINS $q RETURN n.name, n.file_path, n.start_line LIMIT $lim",
-                    {"q": query, "lim": limit},
-                )
-                for row in _rows(r):
+                for row in conn.find_nodes(
+                    label,
+                    contains={"name": query},
+                    return_fields=["name", "file_path", "start_line"],
+                    limit=limit,
+                ):
                     out.append(
                         {
                             "kind": kind,
-                            "name": row["n.name"],
-                            "file": row["n.file_path"],
-                            "line": row["n.start_line"],
+                            "name": row["name"],
+                            "file": row["file_path"],
+                            "line": row["start_line"],
                         }
                     )
-            r = conn.execute(
-                "MATCH (r:TFResource) WHERE r.name CONTAINS $q OR r.type CONTAINS $q "
-                "RETURN r.name, r.type, r.file_path, r.start_line LIMIT $lim",
-                {"q": query, "lim": limit},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "TFResource",
+                contains={"name": query, "type": query},
+                return_fields=["name", "type", "file_path", "start_line"],
+                limit=limit,
+            ):
                 out.append(
                     {
                         "kind": "tf_resource",
-                        "name": row["r.name"],
-                        "type": row["r.type"],
-                        "file": row["r.file_path"],
-                        "line": row["r.start_line"],
+                        "name": row["name"],
+                        "type": row["type"],
+                        "file": row["file_path"],
+                        "line": row["start_line"],
                     }
                 )
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.title CONTAINS $q OR s.body_preview CONTAINS $q "
-                "RETURN s.title, s.file_path, s.start_line, s.level, s.anchor LIMIT $lim",
-                {"q": query, "lim": limit},
-            )
-            for row in _rows(r):
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"title": query, "body_preview": query},
+                return_fields=["title", "file_path", "start_line", "level", "anchor"],
+                limit=limit,
+            ):
                 out.append(
                     {
                         "kind": "md_section",
-                        "name": row["s.title"],
-                        "file": row["s.file_path"],
-                        "line": row["s.start_line"],
-                        "level": row["s.level"],
-                        "anchor": row["s.anchor"],
+                        "name": row["title"],
+                        "file": row["file_path"],
+                        "line": row["start_line"],
+                        "level": row["level"],
+                        "anchor": row["anchor"],
                     }
                 )
             return out
@@ -378,22 +376,19 @@ def register(mcp) -> None:
         if depth == 1:
 
             def run_deps(conn):
-                r = conn.execute(
-                    """MATCH (src:File {path:$p})-[:IMPORTS]->(dep:File)
-                       RETURN dep.path, dep.lang""",
-                    {"p": file_path},
-                )
-                return [{"kind": "depends_on", "file": row["dep.path"], "lang": row["dep.lang"]} for row in _rows(r)]
+                return [
+                    {"kind": "depends_on", "file": row["dst_path"], "lang": row["dst_lang"]}
+                    for row in conn.find_neighbors(
+                        "IMPORTS", src_key=file_path, return_dst=["path", "lang"]
+                    )
+                ]
 
             def run_rdeps(conn):
-                r = conn.execute(
-                    """MATCH (upstream:File)-[:IMPORTS]->(src:File {path:$p})
-                       RETURN upstream.path, upstream.lang""",
-                    {"p": file_path},
-                )
                 return [
-                    {"kind": "depended_by", "file": row["upstream.path"], "lang": row["upstream.lang"]}
-                    for row in _rows(r)
+                    {"kind": "depended_by", "file": row["src_path"], "lang": row["src_lang"]}
+                    for row in conn.find_neighbors(
+                        "IMPORTS", dst_key=file_path, return_src=["path", "lang"]
+                    )
                 ]
 
             deps_all, w1 = _federate_kuzu(run_deps)
@@ -412,14 +407,14 @@ def register(mcp) -> None:
                 payload["warnings"] = warnings
             return json.dumps(payload, indent=2)
 
-        # depth 2 — two-hop traversal
+        # depth >= 2 — recursive traversal via the GraphDB helper
         def run_reach(conn):
-            r = conn.execute(
-                """MATCH (src:File {path:$p})-[:IMPORTS*1..2]->(dep:File)
-                   RETURN DISTINCT dep.path, dep.lang""",
-                {"p": file_path},
-            )
-            return [{"file": row["dep.path"], "lang": row["dep.lang"]} for row in _rows(r)]
+            return [
+                {"file": row["path"], "lang": row["lang"]}
+                for row in conn.reach_via_edge(
+                    "IMPORTS", file_path, max_depth=int(depth), return_fields=["path", "lang"]
+                )
+            ]
 
         deps, warnings = _federate_kuzu(run_reach)
         payload = {"file": file_path, "depth": depth, "reachable": deps}

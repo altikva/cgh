@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 import sys
 import time
 from pathlib import Path
@@ -24,6 +25,14 @@ from codegraph.core.schema import init_schema
 
 _DB_DIR = ".codegraph"
 _DB_FILE = "graph.db"
+_DUCKDB_FILE = "graph.duckdb"
+
+
+def _backend() -> str:
+    """Which graph backend to use. Defaults to kuzu; CGH_DB=duckdb opts
+    in to the new backend (work in progress, see codegraph/core/db_duckdb.py).
+    """
+    return (os.environ.get("CGH_DB") or "kuzu").strip().lower()
 
 # Module-level singletons — one DB + connection per process.
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
@@ -38,7 +47,9 @@ _atexit_registered = False
 
 
 def get_db_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / _DB_DIR / _DB_FILE
+    """Return the DB file path for the active backend."""
+    fname = _DUCKDB_FILE if _backend() == "duckdb" else _DB_FILE
+    return Path(repo_root) / _DB_DIR / fname
 
 
 def get_connection(repo_root: str | Path | None = None) -> GraphDB:
@@ -46,8 +57,8 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     Return (and cache) a read-write GraphDB connection.
     Retries on lock with backoff.
 
-    Today the underlying implementation is Kuzu (KuzuGraphDB adapter);
-    in 0.5 this will swap to DuckDB without changing any call site.
+    The backend is chosen by the CGH_DB env var: "duckdb" for the new
+    backend (work in progress), anything else for Kuzu (default).
     """
     global _db, _conn, _atexit_registered
 
@@ -62,6 +73,14 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     root = Path(repo_root) if repo_root else Path.cwd()
     db_dir = root / _DB_DIR
     db_dir.mkdir(parents=True, exist_ok=True)
+
+    if _backend() == "duckdb":
+        from codegraph.core.db_duckdb import DuckDBGraphDB
+
+        db_path = db_dir / _DUCKDB_FILE
+        _conn = DuckDBGraphDB(str(db_path), read_only=False)
+        return _conn
+
     db_path = db_dir / _DB_FILE
 
     retries = 3
@@ -94,7 +113,7 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
 def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | None:
     """
     Try to open a read-only GraphDB connection.
-    Returns None if the DB is locked — caller should handle gracefully.
+    Returns None if the DB is locked or absent — caller should handle gracefully.
     """
     global _ro_db, _ro_conn
 
@@ -102,8 +121,24 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
         return _ro_conn
 
     root = Path(repo_root) if repo_root else Path.cwd()
-    db_path = root / _DB_DIR / _DB_FILE
 
+    if _backend() == "duckdb":
+        from codegraph.core.db_duckdb import DuckDBGraphDB
+
+        db_path = root / _DB_DIR / _DUCKDB_FILE
+        if not db_path.exists():
+            return None
+        try:
+            _ro_conn = DuckDBGraphDB(str(db_path), read_only=True)
+            return _ro_conn
+        except Exception:
+            # DuckDB raises a few different exception classes depending on
+            # what's wrong (locked, corrupt, version mismatch). Treat all
+            # as "fall through to None" so callers degrade gracefully —
+            # symmetric with the Kuzu branch below.
+            return None
+
+    db_path = root / _DB_DIR / _DB_FILE
     if not db_path.exists():
         return None
 

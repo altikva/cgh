@@ -256,6 +256,139 @@ class DuckDBGraphDB:
         self._conn.execute("DELETE FROM edge_imports WHERE to_path = ?", [file_path])
         self._conn.execute("DELETE FROM file WHERE path = ?", [file_path])
 
+    def find_nodes(
+        self,
+        label: str,
+        where: dict[str, Any] | None = None,
+        contains: dict[str, Any] | None = None,
+        return_fields: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        if where:
+            for field, value in where.items():
+                clauses.append(f"{field} = ?")
+                params.append(value)
+        if contains:
+            sub_clauses = []
+            for field, value in contains.items():
+                # Wrap value with % for DuckDB's LIKE — case-sensitive.
+                # Cypher CONTAINS is case-sensitive too, so this matches.
+                sub_clauses.append(f"{field} LIKE ?")
+                params.append(f"%{value}%")
+            if sub_clauses:
+                clauses.append("(" + " OR ".join(sub_clauses) + ")")
+
+        select_clause = ", ".join(return_fields) if return_fields and return_fields != ["*"] else "*"
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        sql = f"SELECT {select_clause} FROM {spec.table} {where_clause} {limit_clause}"
+
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    def find_neighbors(
+        self,
+        edge_type: str,
+        src_key: Any | None = None,
+        dst_key: Any | None = None,
+        src_where: dict[str, Any] | None = None,
+        dst_where: dict[str, Any] | None = None,
+        return_src: list[str] | None = None,
+        return_dst: list[str] | None = None,
+        return_edge: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        src = NODES[edge.src_label]
+        dst = NODES[edge.dst_label]
+
+        select_parts: list[str] = []
+        for f in return_src or []:
+            select_parts.append(f"a.{f} AS src_{f}")
+        for f in return_dst or []:
+            select_parts.append(f"b.{f} AS dst_{f}")
+        for f in return_edge or []:
+            select_parts.append(f"e.{f} AS edge_{f}")
+        if not select_parts:
+            select_parts = [f"b.{dst.key_field} AS dst_{dst.key_field}"]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        clauses.append(f"e.{edge.src_column} = a.{src.key_field}")
+        clauses.append(f"e.{edge.dst_column} = b.{dst.key_field}")
+        if src_key is not None:
+            clauses.append(f"a.{src.key_field} = ?")
+            params.append(src_key)
+        if dst_key is not None:
+            clauses.append(f"b.{dst.key_field} = ?")
+            params.append(dst_key)
+        if src_where:
+            for field, value in src_where.items():
+                clauses.append(f"a.{field} = ?")
+                params.append(value)
+        if dst_where:
+            for field, value in dst_where.items():
+                clauses.append(f"b.{field} = ?")
+                params.append(value)
+
+        select_clause = ", ".join(select_parts)
+        where_clause = "WHERE " + " AND ".join(clauses)
+        sql = (
+            f"SELECT {select_clause} FROM {edge.table} e, "
+            f"{src.table} a, {dst.table} b {where_clause}"
+        )
+
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    def reach_via_edge(
+        self,
+        edge_type: str,
+        start_key: Any,
+        max_depth: int = 1,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        dst = NODES[edge.dst_label]
+        return_fields = return_fields or [dst.key_field]
+        return_clause = ", ".join(f"dst_node.{f}" for f in return_fields)
+
+        # Recursive CTE that walks edge.table to depth max_depth.
+        sql = f"""
+        WITH RECURSIVE reach(key, depth) AS (
+            SELECT {edge.dst_column}, 1 FROM {edge.table}
+            WHERE {edge.src_column} = ?
+            UNION ALL
+            SELECT e.{edge.dst_column}, r.depth + 1
+            FROM {edge.table} e
+            JOIN reach r ON e.{edge.src_column} = r.key
+            WHERE r.depth < ?
+        )
+        SELECT DISTINCT {return_clause}
+        FROM reach
+        JOIN {dst.table} dst_node ON dst_node.{dst.key_field} = reach.key
+        """
+        cursor = self._conn.execute(sql, [start_key, int(max_depth)])
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
     # Escape hatch for tooling that needs the raw DuckDB connection
     # (e.g. ATTACH for federation, EXPLAIN ANALYZE). Symmetric with
     # KuzuGraphDB.raw — both go away when the Kuzu code path is deleted.

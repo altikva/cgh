@@ -206,6 +206,160 @@ class KuzuGraphDB:
             {"_p": file_path},
         )
 
+    def find_nodes(
+        self,
+        label: str,
+        where: dict[str, Any] | None = None,
+        contains: dict[str, Any] | None = None,
+        return_fields: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+
+        # Build WHERE clause: AND of exact matches, OR of substring matches.
+        # The two groups are AND'd together when both present.
+        params: dict[str, Any] = {}
+        clauses: list[str] = []
+
+        if where:
+            for i, (field, value) in enumerate(where.items()):
+                bind = f"_w{i}"
+                clauses.append(f"n.{field} = ${bind}")
+                params[bind] = value
+
+        if contains:
+            sub_clauses: list[str] = []
+            for i, (field, value) in enumerate(contains.items()):
+                bind = f"_c{i}"
+                sub_clauses.append(f"n.{field} CONTAINS ${bind}")
+                params[bind] = value
+            if sub_clauses:
+                clauses.append("(" + " OR ".join(sub_clauses) + ")")
+
+        # RETURN list: either the requested fields or every known column.
+        if return_fields is None:
+            return_fields = ["*"]
+        if return_fields == ["*"]:
+            return_clause = "n.*"
+        else:
+            return_clause = ", ".join(f"n.{f} AS {f}" for f in return_fields)
+
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        cypher = f"MATCH (n:{label}) {where_clause} RETURN {return_clause} {limit_clause}"
+
+        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        cols = result.get_column_names()
+        out: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            # Strip "n." prefix from column names so callers get clean keys
+            out.append({c.removeprefix("n."): v for c, v in zip(cols, row)})
+        return out
+
+    def find_neighbors(
+        self,
+        edge_type: str,
+        src_key: Any | None = None,
+        dst_key: Any | None = None,
+        src_where: dict[str, Any] | None = None,
+        dst_where: dict[str, Any] | None = None,
+        return_src: list[str] | None = None,
+        return_dst: list[str] | None = None,
+        return_edge: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        src = NODES[edge.src_label]
+        dst = NODES[edge.dst_label]
+
+        params: dict[str, Any] = {}
+        match_parts = []
+
+        if src_key is not None:
+            match_parts.append(f"(a:{src.label} {{{src.key_field}: $_sk}})")
+            params["_sk"] = src_key
+        else:
+            match_parts.append(f"(a:{src.label})")
+        match_parts.append(f"-[r:{edge_type}]->")
+        if dst_key is not None:
+            match_parts.append(f"(b:{dst.label} {{{dst.key_field}: $_dk}})")
+            params["_dk"] = dst_key
+        else:
+            match_parts.append(f"(b:{dst.label})")
+
+        clauses: list[str] = []
+        if src_where:
+            for i, (field, value) in enumerate(src_where.items()):
+                bind = f"_sw{i}"
+                clauses.append(f"a.{field} = ${bind}")
+                params[bind] = value
+        if dst_where:
+            for i, (field, value) in enumerate(dst_where.items()):
+                bind = f"_dw{i}"
+                clauses.append(f"b.{field} = ${bind}")
+                params[bind] = value
+
+        # Build the RETURN list with prefixed aliases.
+        return_parts: list[str] = []
+        for f in return_src or []:
+            return_parts.append(f"a.{f} AS src_{f}")
+        for f in return_dst or []:
+            return_parts.append(f"b.{f} AS dst_{f}")
+        for f in return_edge or []:
+            return_parts.append(f"r.{f} AS edge_{f}")
+        if not return_parts:
+            # Default: dst key field so the caller has *something* to look at
+            return_parts = [f"b.{dst.key_field} AS dst_{dst.key_field}"]
+
+        match_clause = "".join(match_parts)
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        return_clause = ", ".join(return_parts)
+        cypher = f"MATCH {match_clause} {where_clause} RETURN {return_clause}"
+
+        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        cols = result.get_column_names()
+        out: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            out.append(dict(zip(cols, row)))
+        return out
+
+    def reach_via_edge(
+        self,
+        edge_type: str,
+        start_key: Any,
+        max_depth: int = 1,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        src = NODES[edge.src_label]
+        dst = NODES[edge.dst_label]
+        return_fields = return_fields or [dst.key_field]
+        return_clause = ", ".join(f"dst.{f} AS {f}" for f in return_fields)
+        cypher = (
+            f"MATCH (src:{src.label} {{{src.key_field}: $_k}})"
+            f"-[:{edge_type}*1..{int(max_depth)}]->(dst:{dst.label}) "
+            f"RETURN DISTINCT {return_clause}"
+        )
+        result = self._inner.execute(cypher, {"_k": start_key})
+        cols = result.get_column_names()
+        out: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            out.append(dict(zip(cols, row)))
+        return out
+
     # Escape hatch for code that still needs raw Kuzu objects (Kuzu-specific
     # helpers, federation that re-opens DBs read-only). Will be removed
     # alongside Kuzu in the 0.5 release that finishes the backend swap.

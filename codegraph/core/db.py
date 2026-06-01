@@ -18,16 +18,21 @@ from pathlib import Path
 
 import kuzu
 
+from codegraph.core.db_kuzu import KuzuGraphDB
+from codegraph.core.protocol import GraphDB
 from codegraph.core.schema import init_schema
 
 _DB_DIR = ".codegraph"
 _DB_FILE = "graph.db"
 
-# Module-level singletons — one DB + connection per process
+# Module-level singletons — one DB + connection per process.
+# _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
+# close them explicitly (Kuzu's file lock outlives the GC otherwise).
+# _conn / _ro_conn are the GraphDB-typed adapters callers see.
 _db: kuzu.Database | None = None
-_conn: kuzu.Connection | None = None
+_conn: GraphDB | None = None
 _ro_db: kuzu.Database | None = None
-_ro_conn: kuzu.Connection | None = None
+_ro_conn: GraphDB | None = None
 
 _atexit_registered = False
 
@@ -36,10 +41,13 @@ def get_db_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / _DB_DIR / _DB_FILE
 
 
-def get_connection(repo_root: str | Path | None = None) -> kuzu.Connection:
+def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     """
-    Return (and cache) a read-write Kuzu connection.
+    Return (and cache) a read-write GraphDB connection.
     Retries on lock with backoff.
+
+    Today the underlying implementation is Kuzu (KuzuGraphDB adapter);
+    in 0.5 this will swap to DuckDB without changing any call site.
     """
     global _db, _conn, _atexit_registered
 
@@ -60,8 +68,9 @@ def get_connection(repo_root: str | Path | None = None) -> kuzu.Connection:
     for attempt in range(retries):
         try:
             _db = kuzu.Database(str(db_path))
-            _conn = kuzu.Connection(_db)
-            init_schema(_conn)
+            raw_conn = kuzu.Connection(_db)
+            init_schema(raw_conn)
+            _conn = KuzuGraphDB(raw_conn)
             return _conn
         except RuntimeError as exc:
             if "Could not set lock" in str(exc) and attempt < retries - 1:
@@ -82,9 +91,9 @@ def get_connection(repo_root: str | Path | None = None) -> kuzu.Connection:
             raise
 
 
-def get_readonly_connection(repo_root: str | Path | None = None) -> kuzu.Connection | None:
+def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | None:
     """
-    Try to open a read-only Kuzu connection.
+    Try to open a read-only GraphDB connection.
     Returns None if the DB is locked — caller should handle gracefully.
     """
     global _ro_db, _ro_conn
@@ -100,7 +109,8 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> kuzu.Connect
 
     try:
         _ro_db = kuzu.Database(str(db_path), read_only=True)
-        _ro_conn = kuzu.Connection(_ro_db)
+        raw_conn = kuzu.Connection(_ro_db)
+        _ro_conn = KuzuGraphDB(raw_conn)
         return _ro_conn
     except RuntimeError:
         # Kuzu locks even in read_only mode — return None so caller can degrade
@@ -109,7 +119,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> kuzu.Connect
 
 def reset_connection() -> None:
     """
-    Release the Kuzu file lock and force re-open on next call.
+    Release the underlying DB file lock and force re-open on next call.
 
     Kuzu holds an OS-level write lock for the lifetime of the Database
     object. Dropping Python references alone is not enough — CPython's

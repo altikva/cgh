@@ -121,6 +121,121 @@ class TestEnsureEdge:
             graphdb.ensure_edge("BOGUS", "x", "y")
 
 
+class TestFindNodes:
+    def test_exact_where(self, graphdb):
+        graphdb.upsert_node("Function", "id", "a::foo", {"name": "foo", "file_path": "/a.py"})
+        graphdb.upsert_node("Function", "id", "a::bar", {"name": "bar", "file_path": "/a.py"})
+        rows = graphdb.find_nodes(
+            "Function", where={"name": "foo"}, return_fields=["id", "name"]
+        )
+        assert len(rows) == 1
+        assert rows[0]["name"] == "foo"
+
+    def test_contains_substring(self, graphdb):
+        graphdb.upsert_node("Function", "id", "a::handle_x", {"name": "handle_x", "file_path": "/a.py"})
+        graphdb.upsert_node("Function", "id", "a::handle_y", {"name": "handle_y", "file_path": "/a.py"})
+        graphdb.upsert_node("Function", "id", "a::other", {"name": "other", "file_path": "/a.py"})
+        rows = graphdb.find_nodes(
+            "Function", contains={"name": "handle"}, return_fields=["name"]
+        )
+        names = {r["name"] for r in rows}
+        assert names == {"handle_x", "handle_y"}
+
+    def test_contains_multi_field_or(self, graphdb):
+        graphdb.upsert_node(
+            "TFResource", "id", "r1",
+            {"name": "bucket", "type": "aws_s3_bucket", "file_path": "/a.tf"},
+        )
+        graphdb.upsert_node(
+            "TFResource", "id", "r2",
+            {"name": "queue", "type": "aws_sqs_queue", "file_path": "/a.tf"},
+        )
+        rows = graphdb.find_nodes(
+            "TFResource",
+            contains={"name": "bucket", "type": "bucket"},
+            return_fields=["id"],
+        )
+        assert len(rows) == 1
+        assert rows[0]["id"] == "r1"
+
+    def test_limit(self, graphdb):
+        for i in range(5):
+            graphdb.upsert_node(
+                "Function", "id", f"a::f{i}", {"name": f"f{i}", "file_path": "/a.py"}
+            )
+        rows = graphdb.find_nodes("Function", limit=2, return_fields=["id"])
+        assert len(rows) == 2
+
+
+class TestFindNeighbors:
+    def setup_data(self, db):
+        db.upsert_node("Function", "id", "a::caller", {"name": "caller", "file_path": "/a.py"})
+        db.upsert_node("Function", "id", "a::callee", {"name": "callee", "file_path": "/a.py"})
+        db.upsert_node("Function", "id", "a::other", {"name": "callee", "file_path": "/b.py"})
+        db.ensure_edge("CALLS", "a::caller", "a::callee")
+
+    def test_anchor_on_src(self, graphdb):
+        self.setup_data(graphdb)
+        rows = graphdb.find_neighbors(
+            "CALLS",
+            src_key="a::caller",
+            return_dst=["id", "name"],
+        )
+        assert len(rows) == 1
+        assert rows[0]["dst_name"] == "callee"
+
+    def test_anchor_on_dst_via_where(self, graphdb):
+        # find_callers pattern: anchor by callee name, return caller info.
+        self.setup_data(graphdb)
+        rows = graphdb.find_neighbors(
+            "CALLS",
+            dst_where={"name": "callee"},
+            return_src=["id", "file_path"],
+        )
+        # Two callees with name 'callee' exist (in /a.py and /b.py); only
+        # the first one has a CALLS edge incoming, so we expect 1 row.
+        assert len(rows) == 1
+        assert rows[0]["src_id"] == "a::caller"
+
+    def test_imports_edge_with_props(self, graphdb):
+        graphdb.upsert_node("File", "path", "/a.py", {})
+        graphdb.upsert_node("File", "path", "/b.py", {})
+        graphdb.ensure_edge("IMPORTS", "/a.py", "/b.py", {"symbol": "helper"})
+
+        rows = graphdb.find_neighbors(
+            "IMPORTS",
+            src_key="/a.py",
+            return_dst=["path"],
+            return_edge=["symbol"],
+        )
+        assert len(rows) == 1
+        assert rows[0]["dst_path"] == "/b.py"
+        assert rows[0]["edge_symbol"] == "helper"
+
+
+class TestReachViaEdge:
+    def test_single_hop(self, graphdb):
+        graphdb.upsert_node("File", "path", "/a.py", {})
+        graphdb.upsert_node("File", "path", "/b.py", {})
+        graphdb.ensure_edge("IMPORTS", "/a.py", "/b.py", {"symbol": "x"})
+        rows = graphdb.reach_via_edge("IMPORTS", "/a.py", max_depth=1, return_fields=["path"])
+        assert len(rows) == 1
+        assert rows[0]["path"] == "/b.py"
+
+    def test_two_hop(self, graphdb):
+        for p in ("/a.py", "/b.py", "/c.py"):
+            graphdb.upsert_node("File", "path", p, {})
+        graphdb.ensure_edge("IMPORTS", "/a.py", "/b.py", {"symbol": ""})
+        graphdb.ensure_edge("IMPORTS", "/b.py", "/c.py", {"symbol": ""})
+
+        deep = graphdb.reach_via_edge("IMPORTS", "/a.py", max_depth=2, return_fields=["path"])
+        paths = {r["path"] for r in deep}
+        assert paths == {"/b.py", "/c.py"}
+
+        shallow = graphdb.reach_via_edge("IMPORTS", "/a.py", max_depth=1, return_fields=["path"])
+        assert {r["path"] for r in shallow} == {"/b.py"}
+
+
 class TestPurgeFileData:
     def test_purge_drops_functions_and_edges(self, graphdb):
         # Set up a file with one function + a CALLS self-edge

@@ -16,9 +16,6 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
-import kuzu
-
-from codegraph.core.utils import rows as _rows
 from codegraph.core.fts import fts_search
 
 
@@ -247,7 +244,7 @@ def _keyword_query(task: str, min_len: int = 3) -> str:
 
 def context_for_task(
     task: str,
-    kuzu_conn: kuzu.Connection,
+    kuzu_conn,
     fts_conn: sqlite3.Connection,
     max_nodes: int = 15,
 ) -> TaskContext:
@@ -297,35 +294,32 @@ def context_for_task(
             relevance=min(relevance, 1.0),
         )
 
-        # Step 3: Expand via graph — find callers/callees
+        # Step 3: Expand via graph — find callers/callees (up to 3 each)
         if r.kind == "function":
-            callers = _rows(
-                kuzu_conn.execute(
-                    "MATCH (caller:Function)-[:CALLS]->(fn:Function) WHERE fn.name = $n RETURN caller.name LIMIT 3",
-                    {"n": r.name},
-                )
-            )
+            callers = kuzu_conn.find_neighbors(
+                "CALLS",
+                dst_where={"name": r.name},
+                return_src=["name"],
+            )[:3]
             for c in callers:
-                node.relationships.append(f"called by {c['caller.name']}")
+                node.relationships.append(f"called by {c['src_name']}")
 
-            callees = _rows(
-                kuzu_conn.execute(
-                    "MATCH (fn:Function)-[:CALLS]->(callee:Function) WHERE fn.name = $n RETURN callee.name LIMIT 3",
-                    {"n": r.name},
-                )
-            )
+            callees = kuzu_conn.find_neighbors(
+                "CALLS",
+                src_where={"name": r.name},
+                return_dst=["name"],
+            )[:3]
             for c in callees:
-                node.relationships.append(f"calls {c['callee.name']}")
+                node.relationships.append(f"calls {c['dst_name']}")
 
         elif r.kind == "class":
-            parents = _rows(
-                kuzu_conn.execute(
-                    "MATCH (c:Class)-[:INHERITS]->(p:Class) WHERE c.name = $n RETURN p.name LIMIT 3",
-                    {"n": r.name},
-                )
-            )
+            parents = kuzu_conn.find_neighbors(
+                "INHERITS",
+                src_where={"name": r.name},
+                return_dst=["name"],
+            )[:3]
             for p in parents:
-                node.relationships.append(f"extends {p['p.name']}")
+                node.relationships.append(f"extends {p['dst_name']}")
 
         nodes.append(node)
 

@@ -262,6 +262,7 @@ class DuckDBGraphDB:
         where: dict[str, Any] | None = None,
         contains: dict[str, Any] | None = None,
         return_fields: list[str] | None = None,
+        order_by: list[str] | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         from codegraph.core.graph_model import NODES
@@ -288,9 +289,59 @@ class DuckDBGraphDB:
 
         select_clause = ", ".join(return_fields) if return_fields and return_fields != ["*"] else "*"
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        order_clause = "ORDER BY " + ", ".join(order_by) if order_by else ""
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
-        sql = f"SELECT {select_clause} FROM {spec.table} {where_clause} {limit_clause}"
+        sql = (
+            f"SELECT {select_clause} FROM {spec.table} "
+            f"{where_clause} {order_clause} {limit_clause}"
+        )
 
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    def find_nodes_without_incoming(
+        self,
+        label: str,
+        edge_type: str,
+        contains: dict[str, Any] | None = None,
+        exclude_name_prefix: str | None = None,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = NODES[label]
+        edge = EDGES[edge_type]
+
+        if not return_fields:
+            return_fields = [spec.key_field, "name", "file_path", "start_line", "end_line"]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        # LEFT ANTI-JOIN via NOT EXISTS — works on every DuckDB version.
+        clauses.append(
+            f"NOT EXISTS (SELECT 1 FROM {edge.table} e WHERE e.{edge.dst_column} = n.{spec.key_field})"
+        )
+        if exclude_name_prefix:
+            # Plain SUBSTR avoids LIKE wildcard collision (`_` and `%` are
+            # LIKE metachars in DuckDB; user code that calls this with
+            # exclude_name_prefix='_' wants the literal underscore).
+            clauses.append("substr(n.name, 1, ?) <> ?")
+            params.append(len(exclude_name_prefix))
+            params.append(exclude_name_prefix)
+        if contains:
+            for field, value in contains.items():
+                clauses.append(f"n.{field} LIKE ?")
+                params.append(f"%{value}%")
+
+        select_clause = ", ".join(f"n.{f}" for f in return_fields)
+        sql = (
+            f"SELECT {select_clause} FROM {spec.table} n WHERE {' AND '.join(clauses)}"
+        )
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]

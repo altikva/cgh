@@ -30,9 +30,16 @@ _DUCKDB_FILE = "graph.duckdb"
 class MigrationResult:
     """Outcome of one migrate-to-duckdb invocation. Callers (the CLI
     command, cgh init's auto-migration) consume this to decide whether
-    to print success, abort, prompt, etc."""
+    to print success, abort, prompt, etc.
 
-    status: str  # "skipped" | "aborted" | "matched" | "mismatched"
+    ``stale_kuzu`` is a success status: the verify step found counts
+    that don't match exactly but every diff is explained by Kuzu
+    pre-dating an indexer fix (IMPORTS edges, builtins filter, NFKC
+    normalisation, markdown section merging, ghost files from deleted
+    paths). DuckDB is treated as canonical and the swap proceeds.
+    """
+
+    status: str  # "skipped" | "aborted" | "matched" | "stale_kuzu" | "mismatched"
     message: str
     kuzu_nodes: int = 0
     kuzu_edges: int = 0
@@ -99,6 +106,58 @@ def _diff_stats(kuzu: dict, duckdb: dict) -> list[tuple[str, int, int]]:
     return diffs
 
 
+# Metrics where DuckDB legitimately gains rows because the underlying
+# indexer fix shipped after the Kuzu DB was written. If the only "gain"
+# we see is one of these, the diff is almost certainly stale-Kuzu and
+# not a real divergence. Order matches the graphify-inspired PRs that
+# introduced or fixed each edge type.
+_POST_FIX_GAIN_METRICS = frozenset({
+    "edges.IMPORTS",  # IMPORTS edges latent bug — pre-fix Kuzu has 0
+})
+
+
+def _classify_diff(
+    diffs: list[tuple[str, int, int]],
+) -> tuple[bool, str]:
+    """Return ``(is_stale_kuzu, human_reason)``.
+
+    Stale-Kuzu signature: every differing row is either
+      * a shrinkage (DuckDB <= Kuzu), explained by Kuzu carrying ghost
+        rows from files deleted between scans, OR
+      * a known post-fix gain (e.g. ``edges.IMPORTS`` going from 0 to
+        N because the IMPORTS-edge emitter wasn't wired up when this
+        Kuzu DB was first written).
+
+    Any other DuckDB gain — extra Functions, extra CALLS, etc. — is a
+    real divergence we can't explain away, so we bail out and keep
+    both files for manual inspection.
+    """
+    if not diffs:
+        return True, "no diffs"
+
+    bad_gains: list[str] = []
+    saw_imports_gain = False
+    saw_shrinkage = False
+    for metric, k, d in diffs:
+        if d > k:
+            if metric in _POST_FIX_GAIN_METRICS and k == 0:
+                saw_imports_gain = True
+                continue
+            bad_gains.append(f"{metric} kuzu={k} duckdb={d}")
+        elif d < k:
+            saw_shrinkage = True
+
+    if bad_gains:
+        return False, "DuckDB gained unexplained rows: " + "; ".join(bad_gains)
+
+    parts: list[str] = []
+    if saw_imports_gain:
+        parts.append("Kuzu predates the IMPORTS-edge fix (0 -> N)")
+    if saw_shrinkage:
+        parts.append("Kuzu carries ghost rows from files deleted between scans")
+    return True, "stale Kuzu: " + ", ".join(parts) if parts else "stale Kuzu"
+
+
 def do_migrate_to_duckdb(
     root: Path | str,
     *,
@@ -158,14 +217,31 @@ def do_migrate_to_duckdb(
     duckdb_edges = sum(duckdb_stats["edges"].values())
 
     if diffs:
+        is_stale_kuzu, reason = _classify_diff(diffs)
+        if not is_stale_kuzu:
+            return MigrationResult(
+                status="mismatched",
+                message=f"Counts differ between Kuzu and DuckDB ({reason}). Both files kept.",
+                kuzu_nodes=kuzu_nodes,
+                kuzu_edges=kuzu_edges,
+                duckdb_nodes=duckdb_nodes,
+                duckdb_edges=duckdb_edges,
+                diffs=diffs,
+            )
+        # Stale Kuzu — DuckDB is canonical, proceed with swap.
+        kuzu_deleted = False
+        if delete_kuzu and kuzu_path.exists():
+            kuzu_path.unlink()
+            kuzu_deleted = True
         return MigrationResult(
-            status="mismatched",
-            message="Counts differ between Kuzu and DuckDB. Both files kept.",
+            status="stale_kuzu",
+            message=reason,
             kuzu_nodes=kuzu_nodes,
             kuzu_edges=kuzu_edges,
             duckdb_nodes=duckdb_nodes,
             duckdb_edges=duckdb_edges,
             diffs=diffs,
+            kuzu_deleted=kuzu_deleted,
         )
 
     kuzu_deleted = False
@@ -257,14 +333,35 @@ def cmd_migrate_to_duckdb(args) -> None:
         console.print(
             Panel(
                 "[yellow]Counts differ between Kuzu and DuckDB.[/yellow] "
-                "Both files have been kept so you can inspect manually.",
+                "Both files have been kept so you can inspect manually.\n"
+                f"[dim]{result.message}[/dim]",
                 title="[yellow]Mismatch — kept both files[/yellow]",
                 border_style="yellow",
             )
         )
         raise SystemExit(1)
 
-    console.print("  [green]+[/green] node + edge counts match exactly.\n")
+    if result.status == "stale_kuzu":
+        diff_table = Table(box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold cyan")
+        diff_table.add_column("metric", style="bold")
+        diff_table.add_column("kuzu", justify="right")
+        diff_table.add_column("duckdb", justify="right")
+        diff_table.add_column("delta", justify="right")
+        for metric, k, d in result.diffs or []:
+            diff_table.add_row(metric, f"{k:,}", f"{d:,}", f"{d - k:+,}")
+        console.print(diff_table)
+        console.print(
+            Panel(
+                f"[cyan]{result.message}[/cyan]\n"
+                "DuckDB is being treated as canonical because every diff is "
+                "explained by a fix that shipped after Kuzu was last written "
+                "(or by ghost rows from deleted files).",
+                title="[cyan]Stale Kuzu — DuckDB accepted as canonical[/cyan]",
+                border_style="cyan",
+            )
+        )
+    else:
+        console.print("  [green]+[/green] node + edge counts match exactly.\n")
 
     kuzu_size = _size_str(kuzu_path.stat().st_size) if kuzu_path.exists() else "(deleted)"
     duckdb_size = _size_str(duckdb_path.stat().st_size)

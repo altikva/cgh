@@ -468,6 +468,7 @@ def cmd_status(args) -> None:
 
     payload = {
         "version": VERSION,
+        "backend": _backend_info(root),
         "root": root,
         "owner": {
             "alive": owner_alive,
@@ -529,6 +530,7 @@ def cmd_status(args) -> None:
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
     table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
+    table.add_row("Backend", _backend_status_line(root))
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
@@ -553,6 +555,101 @@ def cmd_status(args) -> None:
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
+
+
+def _backend_info(root: str) -> dict:
+    """Structured backend info for the --json payload.
+
+    Always returns the same shape — caller can switch on ``on_disk`` to
+    distinguish the empty case without checking for missing keys.
+    """
+    cg = Path(root) / ".codegraph"
+    duck = cg / "graph.duckdb"
+    kuzu_file = cg / "graph.db"
+
+    on_disk: list[str] = []
+    if duck.exists():
+        on_disk.append("duckdb")
+    if kuzu_file.exists():
+        on_disk.append("kuzu")
+
+    env_value = (os.environ.get("CGH_DB") or "").strip().lower()
+    env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
+
+    if not on_disk:
+        active = None
+    elif len(on_disk) == 1:
+        active = on_disk[0]
+    else:
+        # Tie-break matches _detect_backend_file in federation.py.
+        active = "duckdb"
+
+    return {
+        "on_disk": on_disk,
+        "active": active,
+        "env_var": env_value or None,
+        "env_implies": env_backend if env_value else None,
+        "mismatch": bool(active and env_value and env_backend != active),
+    }
+
+
+def _backend_status_line(root: str) -> str:
+    """One-line description of which graph backend is in use for ``root``.
+
+    Reports:
+      - the backend currently on disk (graph.duckdb / graph.db / none)
+      - file size for the present DB
+      - the CGH_DB env var if set, with a warning when it disagrees with
+        what's on disk (the next `cgh index` would write a second file)
+    """
+    cg = Path(root) / ".codegraph"
+    duck = cg / "graph.duckdb"
+    kuzu_file = cg / "graph.db"
+
+    on_disk: list[tuple[str, Path]] = []
+    if duck.exists():
+        on_disk.append(("duckdb", duck))
+    if kuzu_file.exists():
+        on_disk.append(("kuzu", kuzu_file))
+
+    env_value = (os.environ.get("CGH_DB") or "").strip().lower()
+    env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
+    env_was_set = bool(env_value)
+
+    if not on_disk:
+        if env_was_set:
+            return (
+                f"[dim]none on disk[/dim]  "
+                f"[dim](CGH_DB={env_value!r} — next `cgh index` writes a {env_backend} DB)[/dim]"
+            )
+        return "[dim]none on disk[/dim]  [dim](would create graph.db)[/dim]"
+
+    def _size(p: Path) -> str:
+        size = p.stat().st_size
+        if size > 1024 * 1024:
+            return f"{size / 1024 / 1024:.1f} MB"
+        return f"{size / 1024:.0f} KB"
+
+    if len(on_disk) == 1:
+        kind, path = on_disk[0]
+        colour = "green" if kind == "duckdb" else "magenta"
+        label = f"[{colour}]{kind}[/{colour}] ([dim]{path.name}, {_size(path)}[/dim])"
+        if env_was_set and env_backend != kind:
+            return label + f"  [yellow]CGH_DB={env_value!r} mismatch — next index would create a {env_backend} DB[/yellow]"
+        return label
+
+    # Both present (rare — half-migrated repo).
+    duck_p = on_disk[0][1]
+    kuzu_p = on_disk[1][1]
+    label = (
+        f"[yellow]both[/yellow] ([dim]graph.duckdb {_size(duck_p)}, "
+        f"graph.db {_size(kuzu_p)}[/dim])"
+    )
+    if env_was_set:
+        label += f"  [dim]CGH_DB={env_value!r} -> {env_backend} wins[/dim]"
+    else:
+        label += "  [dim]duckdb wins by default detection[/dim]"
+    return label
 
 
 def _format_subrepos_cell(subrepos: list[dict]) -> str:

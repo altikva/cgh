@@ -99,16 +99,20 @@ class TestBackendSelection:
     """core.db.get_connection() picks the backend from CGH_DB env var or
     auto-detection of what's on disk."""
 
-    def test_default_backend_is_kuzu_for_fresh_repo(self, tmp_path, monkeypatch):
-        """No env var + no .codegraph/ files -> kuzu (preserves prior behaviour)."""
+    def test_default_backend_is_duckdb_for_fresh_repo(self, tmp_path, monkeypatch):
+        """No env var + no .codegraph/ files -> duckdb (v0.5 default).
+
+        Existing repos with a graph.db on disk still resolve to Kuzu
+        via auto-detection (covered in test_auto_detect_kuzu_when_only_kuzu_on_disk);
+        only brand-new repos get the new default.
+        """
         monkeypatch.delenv("CGH_DB", raising=False)
         from codegraph.core.db import get_connection, reset_connection
-        from codegraph.core.db_kuzu import KuzuGraphDB
 
         reset_connection()
         try:
             conn = get_connection(tmp_path)
-            assert isinstance(conn, KuzuGraphDB)
+            assert isinstance(conn, DuckDBGraphDB)
         finally:
             reset_connection()
 

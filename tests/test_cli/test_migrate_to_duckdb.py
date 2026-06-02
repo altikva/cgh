@@ -22,13 +22,21 @@ from codegraph.core.db import reset_connection
 
 
 def _seed_kuzu(repo_root: Path) -> None:
-    """Run the indexer once on Kuzu so graph.db exists."""
-    os.environ.pop("CGH_DB", None)
+    """Run the indexer once on Kuzu so graph.db exists.
+
+    The repo-default backend flipped from kuzu to duckdb in v0.5, so we
+    must explicitly set CGH_DB=kuzu here — popping the env var would now
+    seed a DuckDB DB and the migration would have nothing to convert.
+    """
+    os.environ["CGH_DB"] = "kuzu"
     reset_connection()
     from codegraph.indexer import index_repo
 
-    index_repo(str(repo_root))
-    reset_connection()
+    try:
+        index_repo(str(repo_root))
+    finally:
+        reset_connection()
+        os.environ.pop("CGH_DB", None)
 
 
 @pytest.fixture

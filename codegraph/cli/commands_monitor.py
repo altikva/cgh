@@ -636,6 +636,10 @@ def _backend_status_line(root: str) -> str:
         label = f"[{colour}]{kind}[/{colour}] ([dim]{path.name}, {_size(path)}[/dim])"
         if env_was_set and env_backend != kind:
             return label + f"  [yellow]CGH_DB={env_value!r} mismatch — next index would create a {env_backend} DB[/yellow]"
+        if kind == "kuzu":
+            # Gentle nudge toward DuckDB — about 18x faster + 5x smaller
+            # on the wb-backend stress test. Opt-in, not automatic.
+            label += "  [dim]· run [cyan]cgh migrate-to-duckdb[/cyan] for faster + smaller DB[/dim]"
         return label
 
     # Both present (rare — half-migrated repo).

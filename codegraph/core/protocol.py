@@ -208,6 +208,10 @@ class GraphDB(Protocol):
         row just to call ``len()``.
         """
 
+    def count_edges(self, edge_type: str) -> int:
+        """Count edges of ``edge_type``. Used by the CLI stats display
+        which surfaces per-edge-type counts."""
+
     def reach_via_edge(
         self,
         edge_type: str,

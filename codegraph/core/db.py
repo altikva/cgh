@@ -28,11 +28,34 @@ _DB_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
 
 
-def _backend() -> str:
-    """Which graph backend to use. Defaults to kuzu; CGH_DB=duckdb opts
-    in to the new backend (work in progress, see codegraph/core/db_duckdb.py).
+def _backend(repo_root: str | Path | None = None) -> str:
+    """Pick which graph backend to use for ``repo_root``.
+
+    Resolution order:
+      1. CGH_DB env var if set (``duckdb`` or ``kuzu``).
+      2. Auto-detect from the files actually present in ``.codegraph/``:
+         ``graph.duckdb`` -> duckdb, ``graph.db`` -> kuzu.
+      3. Fall back to kuzu for a brand-new (no .codegraph/) repo, so
+         existing behaviour is preserved when no signals are present.
+
+    Without auto-detection a repo previously indexed on DuckDB but
+    invoked without CGH_DB=duckdb would silently get a fresh Kuzu DB
+    next to the existing DuckDB one. The reverse direction (Kuzu file
+    on disk, no env) breaks ``cgh status`` because it would try to
+    open a non-existent ``graph.db``.
     """
-    return (os.environ.get("CGH_DB") or "kuzu").strip().lower()
+    env_value = (os.environ.get("CGH_DB") or "").strip().lower()
+    if env_value in ("duckdb", "kuzu"):
+        return env_value
+
+    if repo_root is not None:
+        cg = Path(repo_root) / _DB_DIR
+        if (cg / _DUCKDB_FILE).exists():
+            return "duckdb"
+        if (cg / _DB_FILE).exists():
+            return "kuzu"
+
+    return "kuzu"
 
 # Module-level singletons — one DB + connection per process.
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
@@ -47,8 +70,9 @@ _atexit_registered = False
 
 
 def get_db_path(repo_root: str | Path) -> Path:
-    """Return the DB file path for the active backend."""
-    fname = _DUCKDB_FILE if _backend() == "duckdb" else _DB_FILE
+    """Return the DB file path for the active backend, auto-detected from
+    what's on disk under ``repo_root`` when CGH_DB isn't set."""
+    fname = _DUCKDB_FILE if _backend(repo_root) == "duckdb" else _DB_FILE
     return Path(repo_root) / _DB_DIR / fname
 
 
@@ -74,7 +98,7 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     db_dir = root / _DB_DIR
     db_dir.mkdir(parents=True, exist_ok=True)
 
-    if _backend() == "duckdb":
+    if _backend(root) == "duckdb":
         from codegraph.core.db_duckdb import DuckDBGraphDB
 
         db_path = db_dir / _DUCKDB_FILE
@@ -122,7 +146,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
 
     root = Path(repo_root) if repo_root else Path.cwd()
 
-    if _backend() == "duckdb":
+    if _backend(root) == "duckdb":
         from codegraph.core.db_duckdb import DuckDBGraphDB
 
         db_path = root / _DB_DIR / _DUCKDB_FILE

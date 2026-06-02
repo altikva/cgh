@@ -96,9 +96,11 @@ class TestExplicitPurge:
 
 
 class TestBackendSelection:
-    """core.db.get_connection() picks the backend from the CGH_DB env var."""
+    """core.db.get_connection() picks the backend from CGH_DB env var or
+    auto-detection of what's on disk."""
 
-    def test_default_backend_is_kuzu(self, tmp_path, monkeypatch):
+    def test_default_backend_is_kuzu_for_fresh_repo(self, tmp_path, monkeypatch):
+        """No env var + no .codegraph/ files -> kuzu (preserves prior behaviour)."""
         monkeypatch.delenv("CGH_DB", raising=False)
         from codegraph.core.db import get_connection, reset_connection
         from codegraph.core.db_kuzu import KuzuGraphDB
@@ -124,3 +126,53 @@ class TestBackendSelection:
         finally:
             reset_connection()
             monkeypatch.delenv("CGH_DB", raising=False)
+
+    def test_auto_detect_duckdb_when_only_duckdb_on_disk(self, tmp_path, monkeypatch):
+        """No env var + a graph.duckdb on disk -> pick DuckDB automatically."""
+        monkeypatch.delenv("CGH_DB", raising=False)
+        from codegraph.core.db import get_readonly_connection, reset_connection
+
+        # Seed: create a duckdb-backed graph with the schema initialized.
+        cg = tmp_path / ".codegraph"
+        cg.mkdir()
+        seed = DuckDBGraphDB(str(cg / "graph.duckdb"))
+        seed.upsert_node("File", "path", "/a.py", {"lang": "python"})
+        seed.close()
+
+        reset_connection()
+        try:
+            conn = get_readonly_connection(tmp_path)
+            assert isinstance(conn, DuckDBGraphDB)
+            assert conn.count_nodes("File") == 1
+        finally:
+            reset_connection()
+
+    def test_auto_detect_kuzu_when_only_kuzu_on_disk(self, tmp_path, monkeypatch):
+        """No env var + a graph.db on disk -> pick Kuzu automatically.
+
+        This is the bug surfaced on wb-backend after we deleted the Kuzu
+        file: cgh status reported "graph locked" because the CLI defaulted
+        to Kuzu while the only file on disk was graph.duckdb. Auto-detect
+        prevents the symmetric case (graph.db only, env unset) from
+        causing the same mismatch.
+        """
+        monkeypatch.delenv("CGH_DB", raising=False)
+        from codegraph.core.db import get_readonly_connection, reset_connection
+        from codegraph.core.db_kuzu import KuzuGraphDB
+
+        # Seed a Kuzu file via the normal API.
+        monkeypatch.setenv("CGH_DB", "kuzu")
+        from codegraph.core.db import get_connection
+
+        reset_connection()
+        seeded = get_connection(tmp_path)
+        seeded.upsert_node("File", "path", "/a.py", {"lang": "python"})
+        reset_connection()
+        monkeypatch.delenv("CGH_DB", raising=False)
+
+        try:
+            conn = get_readonly_connection(tmp_path)
+            assert isinstance(conn, KuzuGraphDB)
+            assert conn.count_nodes("File") == 1
+        finally:
+            reset_connection()

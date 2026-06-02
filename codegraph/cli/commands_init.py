@@ -421,10 +421,23 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
             "graph.db deleted.\n"
         )
         return
+    if result.status == "stale_kuzu":
+        console.print(
+            f"    [green]+[/green] re-indexed into graph.duckdb "
+            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
+            "graph.db deleted."
+        )
+        console.print(
+            f"    [dim]Note: {result.message} — DuckDB accepted as canonical.[/dim]\n"
+        )
+        return
     # mismatched
     console.print(
         f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
         f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
+    )
+    console.print(
+        f"    [dim]{result.message}[/dim]"
     )
     console.print(
         "    [dim]Inspect with [cyan]cgh status[/cyan], then "

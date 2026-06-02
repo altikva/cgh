@@ -300,6 +300,23 @@ class DuckDBGraphDB:
         cols = [d[0] for d in (cursor.description or [])]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
+    def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        params: list[Any] = []
+        clauses: list[str] = []
+        if where:
+            for field, value in where.items():
+                clauses.append(f"{field} = ?")
+                params.append(value)
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = f"SELECT count(*) FROM {spec.table} {where_clause}"
+        row = self._conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
     def find_nodes_without_incoming(
         self,
         label: str,
@@ -356,6 +373,7 @@ class DuckDBGraphDB:
         return_src: list[str] | None = None,
         return_dst: list[str] | None = None,
         return_edge: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         from codegraph.core.graph_model import EDGES, NODES
 
@@ -396,9 +414,10 @@ class DuckDBGraphDB:
 
         select_clause = ", ".join(select_parts)
         where_clause = "WHERE " + " AND ".join(clauses)
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
         sql = (
             f"SELECT {select_clause} FROM {edge.table} e, "
-            f"{src.table} a, {dst.table} b {where_clause}"
+            f"{src.table} a, {dst.table} b {where_clause} {limit_clause}"
         )
 
         cursor = self._conn.execute(sql, params)

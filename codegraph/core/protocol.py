@@ -188,15 +188,24 @@ class GraphDB(Protocol):
         return_src: list[str] | None = None,
         return_dst: list[str] | None = None,
         return_edge: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Walk an edge type with optional anchoring on either side.
 
         Result dicts use prefixed keys: ``src_<field>``, ``dst_<field>``,
         ``edge_<field>``. The caller picks which prefixed fields they
         want via the three ``return_*`` lists; the rest are dropped.
+        ``limit`` caps the row count.
 
         Used by find_callers, find_callees, imports_of, who_imports,
         and similar "walk an edge from / to a known anchor" tools.
+        """
+
+    def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
+        """Count nodes of ``label`` matching the optional ``where`` filter.
+
+        Used by graph_stats and friends — cheaper than fetching every
+        row just to call ``len()``.
         """
 
     def reach_via_edge(

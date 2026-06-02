@@ -267,6 +267,25 @@ class KuzuGraphDB:
             out.append({c.removeprefix("n."): v for c, v in zip(cols, row)})
         return out
 
+    def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        params: dict[str, Any] = {}
+        clauses: list[str] = []
+        if where:
+            for i, (field, value) in enumerate(where.items()):
+                bind = f"_w{i}"
+                clauses.append(f"n.{field} = ${bind}")
+                params[bind] = value
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        cypher = f"MATCH (n:{label}) {where_clause} RETURN count(n) AS c"
+        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        if result.has_next():
+            return int(result.get_next()[0])
+        return 0
+
     def find_nodes_without_incoming(
         self,
         label: str,
@@ -318,6 +337,7 @@ class KuzuGraphDB:
         return_src: list[str] | None = None,
         return_dst: list[str] | None = None,
         return_edge: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         from codegraph.core.graph_model import EDGES, NODES
 
@@ -369,7 +389,11 @@ class KuzuGraphDB:
         match_clause = "".join(match_parts)
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
         return_clause = ", ".join(return_parts)
-        cypher = f"MATCH {match_clause} {where_clause} RETURN {return_clause}"
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        cypher = (
+            f"MATCH {match_clause} {where_clause} "
+            f"RETURN {return_clause} {limit_clause}"
+        )
 
         result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
         cols = result.get_column_names()

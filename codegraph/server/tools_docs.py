@@ -11,9 +11,6 @@ from __future__ import annotations
 import json
 import os
 
-from codegraph.core.utils import rows as _rows
-
-
 def register(mcp) -> None:
     """Register documentation tools on the given FastMCP instance."""
     import codegraph.server as _srv
@@ -45,53 +42,47 @@ def register(mcp) -> None:
 
         q_str = query  # capture before shadowing
 
+        section_fields = [
+            "title", "level", "file_path", "start_line", "end_line",
+            "body_preview", "anchor",
+        ]
+
+        def _format(row):
+            return {
+                "title": row["title"],
+                "level": row["level"],
+                "file": row["file_path"],
+                "lines": f"{row['start_line']}-{row['end_line']}",
+                "preview": (row.get("body_preview") or "")[:200],
+                "anchor": row["anchor"],
+            }
+
         def run(conn):
             out: list[dict] = []
             seen_ids: set[str] = set()
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.title CONTAINS $q "
-                "RETURN s.title, s.level, s.file_path, s.start_line, s.end_line, "
-                "s.body_preview, s.anchor LIMIT $lim",
-                {"q": q_str, "lim": limit},
-            )
-            for row in _rows(r):
-                key = f"{row['s.file_path']}:{row['s.start_line']}"
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"title": q_str},
+                return_fields=section_fields,
+                limit=limit,
+            ):
+                key = f"{row['file_path']}:{row['start_line']}"
                 if key in seen_ids:
                     continue
                 seen_ids.add(key)
-                out.append(
-                    {
-                        "title": row["s.title"],
-                        "level": row["s.level"],
-                        "file": row["s.file_path"],
-                        "lines": f"{row['s.start_line']}-{row['s.end_line']}",
-                        "preview": row["s.body_preview"][:200] if row["s.body_preview"] else "",
-                        "anchor": row["s.anchor"],
-                    }
-                )
+                out.append(_format(row))
             if len(out) < limit:
-                remaining = limit - len(out)
-                r = conn.execute(
-                    "MATCH (s:MdSection) WHERE s.body_preview CONTAINS $q "
-                    "RETURN s.title, s.level, s.file_path, s.start_line, s.end_line, "
-                    "s.body_preview, s.anchor LIMIT $lim",
-                    {"q": q_str, "lim": remaining},
-                )
-                for row in _rows(r):
-                    key = f"{row['s.file_path']}:{row['s.start_line']}"
+                for row in conn.find_nodes(
+                    "MdSection",
+                    contains={"body_preview": q_str},
+                    return_fields=section_fields,
+                    limit=limit - len(out),
+                ):
+                    key = f"{row['file_path']}:{row['start_line']}"
                     if key in seen_ids:
                         continue
                     seen_ids.add(key)
-                    out.append(
-                        {
-                            "title": row["s.title"],
-                            "level": row["s.level"],
-                            "file": row["s.file_path"],
-                            "lines": f"{row['s.start_line']}-{row['s.end_line']}",
-                            "preview": row["s.body_preview"][:200] if row["s.body_preview"] else "",
-                            "anchor": row["s.anchor"],
-                        }
-                    )
+                    out.append(_format(row))
             return out
 
         results: list[dict] = []
@@ -112,27 +103,26 @@ def register(mcp) -> None:
             file_path = str(_srv._root / file_path)
 
         def query(conn):
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.file_path = $p "
-                "RETURN s.title, s.level, s.start_line, s.end_line, s.anchor "
-                "ORDER BY s.start_line",
-                {"p": file_path},
+            return conn.find_nodes(
+                "MdSection",
+                where={"file_path": file_path},
+                return_fields=["title", "level", "start_line", "end_line", "anchor"],
+                order_by=["start_line"],
             )
-            return _rows(r)
 
         outline: list[dict] = []
         for scope, rows in _query_each_kuzu(query):
             for row in rows:
-                indent = "  " * (row["s.level"] - 1)
+                indent = "  " * (row["level"] - 1)
                 outline.append(
                     {
                         "scope": scope,
-                        "title": row["s.title"],
-                        "level": row["s.level"],
-                        "line": row["s.start_line"],
-                        "end_line": row["s.end_line"],
-                        "anchor": row["s.anchor"],
-                        "display": f"{indent}{'#' * row['s.level']} {row['s.title']} (L{row['s.start_line']})",
+                        "title": row["title"],
+                        "level": row["level"],
+                        "line": row["start_line"],
+                        "end_line": row["end_line"],
+                        "anchor": row["anchor"],
+                        "display": f"{indent}{'#' * row['level']} {row['title']} (L{row['start_line']})",
                     }
                 )
         if not outline:
@@ -149,54 +139,54 @@ def register(mcp) -> None:
 
         def query(conn):
             out: list[dict] = []
-            r = conn.execute(
-                """MATCH (s:MdSection)-[r:MD_REFS_SYMBOL]->(fn:Function)
-                   WHERE fn.name = $n
-                   RETURN s.title, s.file_path, s.start_line, s.end_line, r.context""",
-                {"n": symbol_name},
-            )
-            for row in _rows(r):
+            # find_neighbors anchored on dst (the Function/Class side),
+            # returning src (MdSection) fields + edge context.
+            for row in conn.find_neighbors(
+                "MD_REFS_SYMBOL",
+                dst_where={"name": symbol_name},
+                return_src=["title", "file_path", "start_line", "end_line"],
+                return_edge=["context"],
+            ):
                 out.append(
                     {
-                        "section": row["s.title"],
-                        "file": row["s.file_path"],
-                        "lines": f"{row['s.start_line']}-{row['s.end_line']}",
+                        "section": row["src_title"],
+                        "file": row["src_file_path"],
+                        "lines": f"{row['src_start_line']}-{row['src_end_line']}",
                         "ref_type": "function",
-                        "context": row["r.context"],
+                        "context": row.get("edge_context") or "",
                     }
                 )
-            r = conn.execute(
-                """MATCH (s:MdSection)-[r:MD_REFS_CLASS]->(c:Class)
-                   WHERE c.name = $n
-                   RETURN s.title, s.file_path, s.start_line, s.end_line, r.context""",
-                {"n": symbol_name},
-            )
-            for row in _rows(r):
+            for row in conn.find_neighbors(
+                "MD_REFS_CLASS",
+                dst_where={"name": symbol_name},
+                return_src=["title", "file_path", "start_line", "end_line"],
+                return_edge=["context"],
+            ):
                 out.append(
                     {
-                        "section": row["s.title"],
-                        "file": row["s.file_path"],
-                        "lines": f"{row['s.start_line']}-{row['s.end_line']}",
+                        "section": row["src_title"],
+                        "file": row["src_file_path"],
+                        "lines": f"{row['src_start_line']}-{row['src_end_line']}",
                         "ref_type": "class",
-                        "context": row["r.context"],
+                        "context": row.get("edge_context") or "",
                     }
                 )
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.body_preview CONTAINS $n "
-                "RETURN s.title, s.file_path, s.start_line, s.end_line LIMIT 10",
-                {"n": symbol_name},
-            )
             seen = {(it["file"], it["lines"]) for it in out}
-            for row in _rows(r):
-                key = (row["s.file_path"], f"{row['s.start_line']}-{row['s.end_line']}")
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"body_preview": symbol_name},
+                return_fields=["title", "file_path", "start_line", "end_line"],
+                limit=10,
+            ):
+                key = (row["file_path"], f"{row['start_line']}-{row['end_line']}")
                 if key in seen:
                     continue
                 seen.add(key)
                 out.append(
                     {
-                        "section": row["s.title"],
-                        "file": row["s.file_path"],
-                        "lines": f"{row['s.start_line']}-{row['s.end_line']}",
+                        "section": row["title"],
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
                         "ref_type": "text_mention",
                         "context": "body",
                     }

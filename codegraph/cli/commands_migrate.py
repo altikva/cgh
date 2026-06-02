@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich import box
@@ -23,6 +24,22 @@ from codegraph.cli import LOGO, console
 _DB_DIR = ".codegraph"
 _KUZU_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
+
+
+@dataclass
+class MigrationResult:
+    """Outcome of one migrate-to-duckdb invocation. Callers (the CLI
+    command, cgh init's auto-migration) consume this to decide whether
+    to print success, abort, prompt, etc."""
+
+    status: str  # "skipped" | "aborted" | "matched" | "mismatched"
+    message: str
+    kuzu_nodes: int = 0
+    kuzu_edges: int = 0
+    duckdb_nodes: int = 0
+    duckdb_edges: int = 0
+    diffs: list[tuple[str, int, int]] | None = None
+    kuzu_deleted: bool = False
 
 
 def _size_str(size_bytes: int) -> str:
@@ -82,25 +99,98 @@ def _diff_stats(kuzu: dict, duckdb: dict) -> list[tuple[str, int, int]]:
     return diffs
 
 
-def cmd_migrate_to_duckdb(args) -> None:
-    """Re-index a Kuzu-backed repo into DuckDB and verify the migration.
+def do_migrate_to_duckdb(
+    root: Path | str,
+    *,
+    delete_kuzu: bool = True,
+    force: bool = False,
+) -> MigrationResult:
+    """Run the migration. CLI-free entry point — usable from
+    cmd_migrate_to_duckdb AND from cmd_init's auto-migration hook.
 
-    Workflow:
-      1. Check that ``.codegraph/graph.db`` exists (else nothing to migrate).
-      2. Snapshot the current Kuzu graph counts as the baseline.
-      3. Run a full re-index with ``CGH_DB=duckdb`` so the new file is
-         populated from the source repo (NOT copied from Kuzu — fresh
-         index, so a buggy Kuzu graph is also corrected).
-      4. Snapshot the DuckDB counts and diff against the baseline.
-      5. On a clean match: optionally delete graph.db. The user is
-         prompted unless ``--yes`` or ``--keep-kuzu`` is passed.
-      6. On a mismatch: keep both files, print the diff, exit non-zero.
+    NOTE: do NOT .resolve() the root path. On macOS /tmp is a symlink to
+    /private/tmp; resolving would change the file_path strings the
+    indexer writes, so the verify step would see "different" rows even
+    though the data is identical. Stick with what the caller gave us.
     """
-    # NOTE: do NOT .resolve() the root path. On macOS / Linux a symlinked
-    # path (e.g. /tmp/x -> /private/tmp/x) would change which absolute path
-    # the indexer records in File.path nodes, and the verify step would
-    # see "different" rows even though the data is identical. Stick with
-    # the path the user typed.
+    root_p = Path(root)
+    cg = root_p / _DB_DIR
+    kuzu_path = cg / _KUZU_FILE
+    duckdb_path = cg / _DUCKDB_FILE
+
+    if not kuzu_path.exists():
+        return MigrationResult(
+            status="skipped",
+            message="No graph.db found — nothing to migrate.",
+        )
+
+    if duckdb_path.exists() and not force:
+        return MigrationResult(
+            status="aborted",
+            message=(
+                f"graph.duckdb already exists "
+                f"({_size_str(duckdb_path.stat().st_size)}). "
+                "Pass force=True to overwrite."
+            ),
+        )
+
+    if duckdb_path.exists() and force:
+        duckdb_path.unlink()
+
+    os.environ.pop("CGH_DB", None)
+    kuzu_stats = _stats_snapshot(root_p)
+    kuzu_nodes = sum(kuzu_stats["nodes"].values())
+    kuzu_edges = sum(kuzu_stats["edges"].values())
+
+    os.environ["CGH_DB"] = "duckdb"
+    from codegraph.core.db import reset_connection
+    from codegraph.indexer import index_repo
+
+    reset_connection()
+    try:
+        index_repo(str(root_p), verbose=False)
+    finally:
+        reset_connection()
+
+    duckdb_stats = _stats_snapshot(root_p)
+    diffs = _diff_stats(kuzu_stats, duckdb_stats)
+    duckdb_nodes = sum(duckdb_stats["nodes"].values())
+    duckdb_edges = sum(duckdb_stats["edges"].values())
+
+    if diffs:
+        return MigrationResult(
+            status="mismatched",
+            message="Counts differ between Kuzu and DuckDB. Both files kept.",
+            kuzu_nodes=kuzu_nodes,
+            kuzu_edges=kuzu_edges,
+            duckdb_nodes=duckdb_nodes,
+            duckdb_edges=duckdb_edges,
+            diffs=diffs,
+        )
+
+    kuzu_deleted = False
+    if delete_kuzu and kuzu_path.exists():
+        kuzu_path.unlink()
+        kuzu_deleted = True
+
+    return MigrationResult(
+        status="matched",
+        message="Counts match exactly.",
+        kuzu_nodes=kuzu_nodes,
+        kuzu_edges=kuzu_edges,
+        duckdb_nodes=duckdb_nodes,
+        duckdb_edges=duckdb_edges,
+        kuzu_deleted=kuzu_deleted,
+    )
+
+
+def cmd_migrate_to_duckdb(args) -> None:
+    """CLI wrapper — Rich rendering on top of ``do_migrate_to_duckdb``.
+
+    Handles the interactive "delete graph.db?" prompt that's specific to
+    the command-line flow. Other callers (cgh init) pass delete_kuzu
+    directly.
+    """
     root = Path(args.root)
     cg = root / _DB_DIR
     kuzu_path = cg / _KUZU_FILE
@@ -109,6 +199,8 @@ def cmd_migrate_to_duckdb(args) -> None:
     console.print(LOGO)
     console.print(f"[dim]Repository:[/dim] [bold]{root}[/bold]\n")
 
+    # Pre-flight: render a friendlier "nothing to do" panel than the bare
+    # MigrationResult.message gives us.
     if not kuzu_path.exists():
         console.print(
             Panel(
@@ -132,60 +224,40 @@ def cmd_migrate_to_duckdb(args) -> None:
         )
         return
 
-    if duckdb_path.exists() and args.force:
-        console.print(f"[dim]Removing existing graph.duckdb ({_size_str(duckdb_path.stat().st_size)})...[/dim]")
-        duckdb_path.unlink()
+    # Defer deletion until after the post-match prompt unless --yes
+    # was passed (or --keep-kuzu, which means never delete).
+    delete_via_function = bool(args.yes and not args.keep_kuzu)
 
-    # Step 1: Kuzu baseline
     console.print("[bold]Step 1[/bold] · Reading current Kuzu graph counts...")
-    os.environ.pop("CGH_DB", None)  # auto-detect picks Kuzu since graph.db exists
-    kuzu_stats = _stats_snapshot(root)
-    kuzu_total_nodes = sum(kuzu_stats["nodes"].values())
-    kuzu_total_edges = sum(kuzu_stats["edges"].values())
-    console.print(
-        f"  [dim]Kuzu graph:[/dim] [bold]{kuzu_total_nodes:,}[/bold] nodes, "
-        f"[bold]{kuzu_total_edges:,}[/bold] edges\n"
-    )
-
-    # Step 2: Re-index into DuckDB
     console.print("[bold]Step 2[/bold] · Re-indexing into DuckDB...")
-    os.environ["CGH_DB"] = "duckdb"
-    from codegraph.core.db import reset_connection
-    from codegraph.indexer import index_repo
+    console.print("[bold]Step 3[/bold] · Verifying DuckDB graph against Kuzu baseline...\n")
 
-    reset_connection()
-    try:
-        stats = index_repo(str(root), verbose=False)
-    finally:
-        # leave CGH_DB set so the post-checks see the duckdb conn
-        reset_connection()
-    console.print(
-        f"  [dim]Indexed:[/dim] {stats.get('indexed', 0)} files, "
-        f"{stats.get('errors', 0)} errors, "
-        f"elapsed [cyan]{stats.get('elapsed_s', '?')}s[/cyan]\n"
+    result = do_migrate_to_duckdb(
+        args.root, delete_kuzu=delete_via_function, force=args.force
     )
 
-    # Step 3: DuckDB counts + diff
-    console.print("[bold]Step 3[/bold] · Verifying DuckDB graph against Kuzu baseline...")
-    duckdb_stats = _stats_snapshot(root)
-    diffs = _diff_stats(kuzu_stats, duckdb_stats)
+    console.print(
+        f"  [dim]Kuzu graph:[/dim] [bold]{result.kuzu_nodes:,}[/bold] nodes, "
+        f"[bold]{result.kuzu_edges:,}[/bold] edges"
+    )
+    console.print(
+        f"  [dim]DuckDB:[/dim]    [bold]{result.duckdb_nodes:,}[/bold] nodes, "
+        f"[bold]{result.duckdb_edges:,}[/bold] edges\n"
+    )
 
-    if diffs:
+    if result.status == "mismatched":
         diff_table = Table(box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold yellow")
         diff_table.add_column("metric", style="bold")
         diff_table.add_column("kuzu", justify="right")
         diff_table.add_column("duckdb", justify="right")
         diff_table.add_column("delta", justify="right", style="yellow")
-        for metric, k, d in diffs:
+        for metric, k, d in result.diffs or []:
             diff_table.add_row(metric, f"{k:,}", f"{d:,}", f"{d - k:+,}")
         console.print(diff_table)
         console.print(
             Panel(
                 "[yellow]Counts differ between Kuzu and DuckDB.[/yellow] "
-                "Both files have been kept so you can inspect manually. "
-                "Common cause: an interim Kuzu / parser change between when "
-                "the Kuzu graph was indexed and now — a re-index of both "
-                "backends from the same source should agree.",
+                "Both files have been kept so you can inspect manually.",
                 title="[yellow]Mismatch — kept both files[/yellow]",
                 border_style="yellow",
             )
@@ -194,8 +266,7 @@ def cmd_migrate_to_duckdb(args) -> None:
 
     console.print("  [green]+[/green] node + edge counts match exactly.\n")
 
-    # Step 4: optionally drop the old Kuzu graph
-    kuzu_size = _size_str(kuzu_path.stat().st_size)
+    kuzu_size = _size_str(kuzu_path.stat().st_size) if kuzu_path.exists() else "(deleted)"
     duckdb_size = _size_str(duckdb_path.stat().st_size)
 
     summary = Table(box=box.SIMPLE_HEAD, title="Migration summary", title_style="bold cyan")
@@ -214,7 +285,7 @@ def cmd_migrate_to_duckdb(args) -> None:
         )
         return
 
-    if not args.yes:
+    if kuzu_path.exists() and not args.yes:
         try:
             answer = console.input(
                 f"Delete the old [bold]graph.db[/bold] ({kuzu_size})? [Y/n] "
@@ -227,6 +298,7 @@ def cmd_migrate_to_duckdb(args) -> None:
                 "and use DuckDB anyway.[/dim]"
             )
             return
+        kuzu_path.unlink()
 
-    kuzu_path.unlink()
-    console.print(f"\n[green]Deleted graph.db ({kuzu_size}). Repo is now DuckDB-only.[/green]")
+    if not kuzu_path.exists():
+        console.print("\n[green]Deleted graph.db. Repo is now DuckDB-only.[/green]")

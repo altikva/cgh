@@ -367,6 +367,72 @@ def _detect_existing_state(root: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Auto-migration: detect a Kuzu graph.db and re-index it into DuckDB
+# ---------------------------------------------------------------------------
+
+
+def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
+    """If ``root/.codegraph/graph.db`` exists and no graph.duckdb is there
+    yet, re-index into DuckDB transparently. cgh init is a deliberate
+    user action that signals "set this repo up properly", so we don't
+    prompt — we just do it and report.
+
+    Mismatch handling: if the verify step finds drift between the two
+    backends, both files are kept and we print a warning. cgh status will
+    show the "both files" state; the user can re-run ``cgh migrate-to-duckdb
+    --force`` once they understand the cause. We do NOT exit cgh init
+    on mismatch — the rest of the install flow (MCP server, skills,
+    indexing) should still proceed.
+    """
+    cg = root / ".codegraph"
+    kuzu_path = cg / "graph.db"
+    duckdb_path = cg / "graph.duckdb"
+
+    if not kuzu_path.exists() or duckdb_path.exists():
+        return  # nothing to do — fresh repo or already migrated
+
+    from codegraph.cli.commands_migrate import do_migrate_to_duckdb
+
+    console.print(
+        "  [bold]Auto-migrating from Kuzu to DuckDB[/bold]  "
+        "[dim](DuckDB is the v0.5 default — ~18× faster index, ~5× smaller DB)[/dim]"
+    )
+    try:
+        result = do_migrate_to_duckdb(root, delete_kuzu=True, force=False)
+    except Exception as exc:
+        console.print(
+            f"    [yellow]Migration failed: {type(exc).__name__}: {exc}[/yellow]"
+        )
+        console.print(
+            "    [dim]Continuing with the existing Kuzu graph. "
+            "Run [cyan]cgh migrate-to-duckdb[/cyan] manually to retry.[/dim]\n"
+        )
+        return
+
+    if result.status == "skipped":
+        return
+    if result.status == "aborted":
+        console.print(f"    [dim]{result.message}[/dim]\n")
+        return
+    if result.status == "matched":
+        console.print(
+            f"    [green]+[/green] re-indexed into graph.duckdb "
+            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
+            "graph.db deleted.\n"
+        )
+        return
+    # mismatched
+    console.print(
+        f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
+        f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
+    )
+    console.print(
+        "    [dim]Inspect with [cyan]cgh status[/cyan], then "
+        "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # cmd_init
 # ---------------------------------------------------------------------------
 
@@ -436,6 +502,9 @@ def cmd_init(args) -> None:
         if not bits:
             console.print("    [dim](initialized but empty — safe to full scan)[/dim]")
         console.print()
+
+    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
+    _auto_migrate_kuzu_to_duckdb(root)
 
     # -- Step 1: Create .codegraph/ --
     with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):

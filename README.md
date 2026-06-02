@@ -3,8 +3,6 @@
   / __\___   __| | ___  __ _ _ __ __ _ _ __ | |__
  / /  / _ \ / _` |/ _ \/ _` | '__/ _` | '_ \| '_ \
 / /__| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |
-\____/\___/ \__,_|\___|\__, |_|  \__,_| .__/|_| |_|
-                       |___/          |_|
 ```
 
 **Local code graph index for AI coding assistants.**
@@ -17,9 +15,11 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 
 ## Install
 
-**Python 3.11, 3.12, or 3.13.** Python 3.14 is not supported yet because Kuzu
-(the underlying graph DB) does not publish cp314 wheels at the time of this
-release. The cap will be lifted as soon as Kuzu ships them.
+**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.5 the default graph backend is
+DuckDB, which ships cp3.14 wheels on every platform. Existing Kuzu repos are
+auto-migrated to DuckDB on the next `cgh init`. The legacy Kuzu backend is
+still available via `CGH_DB=kuzu` if you need it (and your Python version has
+wheels for it).
 
 ```bash
 # From PyPI (most users)
@@ -39,10 +39,6 @@ pipx install .
 uv pip install -e .
 uv tool install .
 ```
-
-> On Windows with Python 3.14 you will see a `kuzu` source build that fails
-> with `WinError 2`. Install on Python 3.13 instead (`py -3.13 -m pip install cgh`
-> or `uv tool install --python 3.13 cgh`).
 
 Once installed, the `cgh` CLI is on your PATH:
 
@@ -90,9 +86,10 @@ AI Assistant (Claude / Cursor / Codex / Gemini)
     |  context_for_task("fix auth bug")
     v
 MCP server (codegraph)          <-- stdio, no network
-    |  Cypher query + BM25 FTS
+    |  SQL graph query + BM25 FTS
     v
-Kuzu graph DB (.codegraph/graph.db)   <-- embedded, file-based
+DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based (default)
+                                            -- or Kuzu graph.db via CGH_DB=kuzu
 SQLite FTS5 (.codegraph/fts.db)       <-- BM25 full-text search
     |  indexed from
     v
@@ -122,11 +119,11 @@ Then reads only lines 42-55.
 codegraph/
   __init__.py              # version
   __main__.py              # thin argparse + dispatch
-  indexer.py               # parse + Kuzu ingestion engine (the only
+  indexer.py               # parse + graph ingestion engine (the only
                            # top-level .py beside the entrypoints)
 
   core/                    # shared infrastructure
-    db.py                  # Kuzu connection manager
+    db.py                  # GraphDB connection manager (DuckDB default, Kuzu opt-in)
     schema.py              # graph DDL
     utils.py               # rows(), short_path(), normalize_identifier(), ...
     config.py              # layered TOML config
@@ -610,7 +607,7 @@ cgh compact
  Database          Before   After   Saved
  fts.db            2.3 MB   2.1 MB  -200 KB
  call_log.db       52 KB    48 KB   -4 KB
- graph.db (Kuzu)   12.4 MB  --      N/A
+ graph.duckdb      2.5 MB   2.5 MB  --
 
 +----------------------------------+
 | Reclaimed: 204 KB               |

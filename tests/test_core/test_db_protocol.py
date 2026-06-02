@@ -17,7 +17,12 @@ from codegraph.core.protocol import GraphDB, QueryResult
 
 
 @pytest.fixture(autouse=True)
-def clean_db():
+def clean_db(monkeypatch):
+    # These tests target the Kuzu adapter specifically (isinstance checks
+    # against KuzuGraphDB, .raw exposing kuzu.Connection, Cypher-flavoured
+    # queries like 'RETURN $n'). The DuckDB-side protocol coverage lives
+    # in tests/test_core/test_db_duckdb.py.
+    monkeypatch.setenv("CGH_DB", "kuzu")
     reset_connection()
     yield
     reset_connection()

@@ -15,7 +15,6 @@ import textwrap
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import rows
 from codegraph.indexer import index_file
 from codegraph.parsers.builtins import is_builtin
 
@@ -74,12 +73,8 @@ class TestBuiltinCallsFiltered:
         assert ok is True
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (caller:Function)-[:CALLS]->(callee:Function) "
-            "WHERE callee.name = 'len' RETURN count(*) AS c"
-        )
-        data = rows(result)
-        assert data[0]["c"] == 0, "expected zero CALLS edges to a builtin-shadowing function"
+        edges = conn.find_neighbors("CALLS", dst_where={"name": "len"})
+        assert len(edges) == 0, "expected zero CALLS edges to a builtin-shadowing function"
 
     def test_non_builtin_calls_still_resolve(self, tmp_path):
         """Sanity: filtering must not affect legitimate user-to-user edges."""
@@ -96,12 +91,12 @@ class TestBuiltinCallsFiltered:
         index_file(f, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (caller:Function {name:'main'})-[:CALLS]->(callee:Function {name:'helper'}) "
-            "RETURN count(*) AS c"
+        edges = conn.find_neighbors(
+            "CALLS",
+            src_where={"name": "main"},
+            dst_where={"name": "helper"},
         )
-        data = rows(result)
-        assert data[0]["c"] == 1, "expected a CALLS edge from main to helper"
+        assert len(edges) == 1, "expected a CALLS edge from main to helper"
 
     def test_python_isinstance_call_skipped(self, tmp_path):
         """A user file calling isinstance() should not create a CALLS edge
@@ -131,12 +126,12 @@ class TestBuiltinCallsFiltered:
         index_file(f2, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (caller:Function {name:'main'})-[:CALLS]->(callee:Function {name:'isinstance'}) "
-            "RETURN count(*) AS c"
+        edges = conn.find_neighbors(
+            "CALLS",
+            src_where={"name": "main"},
+            dst_where={"name": "isinstance"},
         )
-        data = rows(result)
-        assert data[0]["c"] == 0, "main → isinstance edge should be filtered"
+        assert len(edges) == 0, "main → isinstance edge should be filtered"
 
     def test_typescript_builtin_call_skipped(self, tmp_path):
         """parseInt / Number / String calls should not produce CALLS
@@ -162,9 +157,9 @@ class TestBuiltinCallsFiltered:
         index_file(f2, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (caller:Function {name:'main'})-[:CALLS]->(callee:Function {name:'parseInt'}) "
-            "RETURN count(*) AS c"
+        edges = conn.find_neighbors(
+            "CALLS",
+            src_where={"name": "main"},
+            dst_where={"name": "parseInt"},
         )
-        data = rows(result)
-        assert data[0]["c"] == 0, "main → parseInt edge should be filtered"
+        assert len(edges) == 0, "main → parseInt edge should be filtered"

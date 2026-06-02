@@ -35,14 +35,12 @@ def _backend(repo_root: str | Path | None = None) -> str:
       1. CGH_DB env var if set (``duckdb`` or ``kuzu``).
       2. Auto-detect from the files actually present in ``.codegraph/``:
          ``graph.duckdb`` -> duckdb, ``graph.db`` -> kuzu.
-      3. Fall back to kuzu for a brand-new (no .codegraph/) repo, so
-         existing behaviour is preserved when no signals are present.
+      3. Fall back to duckdb for a brand-new (no .codegraph/) repo.
 
-    Without auto-detection a repo previously indexed on DuckDB but
-    invoked without CGH_DB=duckdb would silently get a fresh Kuzu DB
-    next to the existing DuckDB one. The reverse direction (Kuzu file
-    on disk, no env) breaks ``cgh status`` because it would try to
-    open a non-existent ``graph.db``.
+    The fresh-repo default flipped from kuzu to duckdb in the 0.5
+    cycle. Repos with an existing ``graph.db`` keep being read as
+    Kuzu (via step 2) so existing installs aren't broken; the
+    `cgh init` auto-migration handles the transition.
     """
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
     if env_value in ("duckdb", "kuzu"):
@@ -55,7 +53,7 @@ def _backend(repo_root: str | Path | None = None) -> str:
         if (cg / _DB_FILE).exists():
             return "kuzu"
 
-    return "kuzu"
+    return "duckdb"
 
 # Module-level singletons — one DB + connection per process.
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can

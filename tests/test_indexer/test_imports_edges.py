@@ -14,7 +14,6 @@ import textwrap
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import rows
 from codegraph.imports.resolver import resolve_import, resolve_js_ts, resolve_python
 from codegraph.indexer import index_file
 
@@ -149,13 +148,14 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (src:File)-[r:IMPORTS]->(tgt:File) "
-            "RETURN src.path, tgt.path, r.symbol"
+        edges = conn.find_neighbors(
+            "IMPORTS",
+            return_src=["path"],
+            return_dst=["path"],
+            return_edge=["symbol"],
         )
-        edges = rows(result)
         assert any(
-            "main.py" in e["src.path"] and "helpers.py" in e["tgt.path"]
+            "main.py" in e["src_path"] and "helpers.py" in e["dst_path"]
             for e in edges
         ), f"expected main.py → helpers.py IMPORTS edge, got {edges}"
 
@@ -168,13 +168,11 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (src:File)-[r:IMPORTS]->(tgt:File) "
-            "RETURN src.path, tgt.path, r.symbol"
+        edges = conn.find_neighbors(
+            "IMPORTS", return_src=["path"], return_dst=["path"]
         )
-        edges = rows(result)
         assert any(
-            "main.ts" in e["src.path"] and "utils.ts" in e["tgt.path"]
+            "main.ts" in e["src_path"] and "utils.ts" in e["dst_path"]
             for e in edges
         ), f"expected main.ts → utils.ts IMPORTS edge, got {edges}"
 
@@ -185,9 +183,7 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (src:File)-[r:IMPORTS]->(tgt:File) RETURN count(*) AS c")
-        edges = rows(result)
-        assert edges[0]["c"] == 0, "no edge should exist for bare 'react' import"
+        assert conn.count_edges("IMPORTS") == 0
 
     def test_target_file_stub_created_on_demand(self, tmp_path):
         """If we index the importer before the target, the IMPORTS edge
@@ -205,20 +201,18 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (src:File)-[r:IMPORTS]->(tgt:File) RETURN tgt.path"
-        )
-        edges = rows(result)
+        edges = conn.find_neighbors("IMPORTS", return_dst=["path"])
         assert len(edges) == 1
-        assert "utils.ts" in edges[0]["tgt.path"]
+        assert "utils.ts" in edges[0]["dst_path"]
 
         # Now index the target — same node should be upserted with full data
         index_file(target, tmp_path)
-        result = conn.execute(
-            "MATCH (f:File) WHERE f.path ENDS WITH 'utils.ts' RETURN f.lang"
-        )
-        nodes = rows(result)
-        assert nodes[0]["f.lang"] == "typescript"
+        files_with_lang = [
+            f for f in conn.find_nodes("File", return_fields=["path", "lang"])
+            if f["path"].endswith("utils.ts")
+        ]
+        assert len(files_with_lang) == 1
+        assert files_with_lang[0]["lang"] == "typescript"
 
     def test_imports_edges_purged_on_reindex(self, tmp_path):
         """Re-indexing a file should not duplicate IMPORTS edges or
@@ -237,10 +231,13 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (src:File)-[r:IMPORTS]->(tgt:File) "
-            "WHERE src.path ENDS WITH 'main.ts' RETURN r.symbol ORDER BY r.symbol"
+        edges = conn.find_neighbors(
+            "IMPORTS",
+            return_src=["path"],
+            return_edge=["symbol"],
         )
-        symbols = [row["r.symbol"] for row in rows(result)]
+        symbols = sorted(
+            e["edge_symbol"] for e in edges if e["src_path"].endswith("main.ts")
+        )
         assert "a" in symbols
         assert "b" not in symbols, f"stale 'b' edge should have been purged, got {symbols}"

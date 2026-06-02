@@ -84,10 +84,27 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     The backend is chosen by the CGH_DB env var: "duckdb" for the new
     backend (work in progress), anything else for Kuzu (default).
     """
-    global _db, _conn, _atexit_registered
+    global _db, _conn, _ro_db, _ro_conn, _atexit_registered
 
     if _conn is not None:
         return _conn
+
+    # DuckDB refuses to open a RW connection in a process that already
+    # holds a RO connection to the same file ("Can't open a connection
+    # to same database file with a different configuration"). cgh init
+    # hits this: it opens RO for the existing-state probe, then asks
+    # for RW to index. Close any cached RO conn before opening RW so
+    # both backends behave consistently.
+    if _ro_conn is not None or _ro_db is not None:
+        for obj in (_ro_conn, _ro_db):
+            if obj is None:
+                continue
+            try:
+                obj.close()
+            except Exception:
+                pass
+        _ro_conn = None
+        _ro_db = None
 
     # Ensure we release the lock on process exit (SIGTERM, etc.)
     if not _atexit_registered:
@@ -143,6 +160,13 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
 
     if _ro_conn is not None:
         return _ro_conn
+
+    # Same-process RO+RW on the same file is rejected by DuckDB. If a
+    # RW connection is already cached, hand it back — every GraphDB
+    # method we call from "readonly" callers is a pure read, so this is
+    # safe and avoids the connection conflict.
+    if _conn is not None:
+        return _conn
 
     root = Path(repo_root) if repo_root else Path.cwd()
 

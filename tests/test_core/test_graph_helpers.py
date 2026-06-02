@@ -167,6 +167,46 @@ class TestFindNodes:
         assert len(rows) == 2
 
 
+class TestFindNodesOrderBy:
+    def test_order_by_field(self, graphdb):
+        graphdb.upsert_node("Function", "id", "a::z", {"name": "z", "file_path": "/a.py", "start_line": 30})
+        graphdb.upsert_node("Function", "id", "a::a", {"name": "a", "file_path": "/a.py", "start_line": 10})
+        graphdb.upsert_node("Function", "id", "a::m", {"name": "m", "file_path": "/a.py", "start_line": 20})
+        rows = graphdb.find_nodes(
+            "Function", return_fields=["name"], order_by=["start_line"]
+        )
+        assert [r["name"] for r in rows] == ["a", "m", "z"]
+
+
+class TestFindNodesWithoutIncoming:
+    def test_function_with_no_callers_returned(self, graphdb):
+        # foo() is never called
+        graphdb.upsert_node("Function", "id", "a::foo", {"name": "foo", "file_path": "/a.py", "start_line": 1, "end_line": 2})
+        # bar() is called by baz()
+        graphdb.upsert_node("Function", "id", "a::bar", {"name": "bar", "file_path": "/a.py", "start_line": 4, "end_line": 5})
+        graphdb.upsert_node("Function", "id", "a::baz", {"name": "baz", "file_path": "/a.py", "start_line": 8, "end_line": 9})
+        graphdb.ensure_edge("CALLS", "a::baz", "a::bar")
+
+        rows = graphdb.find_nodes_without_incoming(
+            "Function", "CALLS", return_fields=["name"]
+        )
+        names = {r["name"] for r in rows}
+        assert "foo" in names
+        # baz is never called either; foo + baz expected. bar has caller -> excluded.
+        assert "baz" in names
+        assert "bar" not in names
+
+    def test_exclude_underscore_prefix(self, graphdb):
+        graphdb.upsert_node("Function", "id", "a::_priv", {"name": "_priv", "file_path": "/a.py", "start_line": 1, "end_line": 2})
+        graphdb.upsert_node("Function", "id", "a::pub", {"name": "pub", "file_path": "/a.py", "start_line": 4, "end_line": 5})
+        rows = graphdb.find_nodes_without_incoming(
+            "Function", "CALLS", exclude_name_prefix="_", return_fields=["name"]
+        )
+        names = {r["name"] for r in rows}
+        assert "pub" in names
+        assert "_priv" not in names
+
+
 class TestFindNeighbors:
     def setup_data(self, db):
         db.upsert_node("Function", "id", "a::caller", {"name": "caller", "file_path": "/a.py"})

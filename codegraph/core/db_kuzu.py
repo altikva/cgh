@@ -212,6 +212,7 @@ class KuzuGraphDB:
         where: dict[str, Any] | None = None,
         contains: dict[str, Any] | None = None,
         return_fields: list[str] | None = None,
+        order_by: list[str] | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         from codegraph.core.graph_model import NODES
@@ -248,8 +249,14 @@ class KuzuGraphDB:
             return_clause = ", ".join(f"n.{f} AS {f}" for f in return_fields)
 
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        order_clause = (
+            "ORDER BY " + ", ".join(f"n.{f}" for f in order_by) if order_by else ""
+        )
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
-        cypher = f"MATCH (n:{label}) {where_clause} RETURN {return_clause} {limit_clause}"
+        cypher = (
+            f"MATCH (n:{label}) {where_clause} "
+            f"RETURN {return_clause} {order_clause} {limit_clause}"
+        )
 
         result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
         cols = result.get_column_names()
@@ -258,6 +265,47 @@ class KuzuGraphDB:
             row = result.get_next()
             # Strip "n." prefix from column names so callers get clean keys
             out.append({c.removeprefix("n."): v for c, v in zip(cols, row)})
+        return out
+
+    def find_nodes_without_incoming(
+        self,
+        label: str,
+        edge_type: str,
+        contains: dict[str, Any] | None = None,
+        exclude_name_prefix: str | None = None,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import EDGES, NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = NODES[label]
+
+        params: dict[str, Any] = {}
+        clauses: list[str] = [f"NOT (n)<-[:{edge_type}]-()"]
+        if exclude_name_prefix:
+            clauses.append("NOT n.name STARTS WITH $_pref")
+            params["_pref"] = exclude_name_prefix
+        if contains:
+            for i, (field, value) in enumerate(contains.items()):
+                bind = f"_c{i}"
+                clauses.append(f"n.{field} CONTAINS ${bind}")
+                params[bind] = value
+
+        if not return_fields:
+            return_fields = [spec.key_field, "name", "file_path", "start_line", "end_line"]
+        return_clause = ", ".join(f"n.{f} AS {f}" for f in return_fields)
+        cypher = (
+            f"MATCH (n:{label}) WHERE {' AND '.join(clauses)} RETURN {return_clause}"
+        )
+        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        cols = result.get_column_names()
+        out: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            out.append(dict(zip(cols, row)))
         return out
 
     def find_neighbors(

@@ -142,6 +142,7 @@ class GraphDB(Protocol):
         where: dict[str, Any] | None = None,
         contains: dict[str, Any] | None = None,
         return_fields: list[str] | None = None,
+        order_by: list[str] | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return matching nodes as a list of field-keyed dicts.
@@ -150,10 +151,31 @@ class GraphDB(Protocol):
         - ``contains``: ``{field: value}`` substring search, OR across fields.
         - ``return_fields``: which columns to include. None = all columns
           for the label.
+        - ``order_by``: list of field names to sort ascending by.
         - ``limit``: optional row cap.
 
         Used by symbol_lookup, search_symbols, doc search, and similar
         "find me nodes matching X" tools.
+        """
+
+    def find_nodes_without_incoming(
+        self,
+        label: str,
+        edge_type: str,
+        contains: dict[str, Any] | None = None,
+        exclude_name_prefix: str | None = None,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return nodes of ``label`` that have no incoming edge of
+        ``edge_type``.
+
+        ``exclude_name_prefix`` (e.g. ``"_"``) filters out names starting
+        with that prefix before the result is returned — used by the
+        dead-code detector to skip dunder / underscore methods that
+        wouldn't be called from outside.
+
+        Used by analysis.dead_code to find functions with no callers and
+        classes with no subclasses.
         """
 
     def find_neighbors(

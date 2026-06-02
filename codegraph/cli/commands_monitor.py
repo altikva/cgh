@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, _rows, console
+from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, console
 
 # ---------------------------------------------------------------------------
 # cmd_stats
@@ -78,10 +78,7 @@ def _stats_content(root: str) -> Group:
     if conn is not None:
         for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
             try:
-                query = "MATCH (n:" + label + ") RETURN count(n) AS c"
-                r = conn.execute(query)
-                for row in _rows(r):
-                    graph[label] = row["c"]
+                graph[label] = conn.count_nodes(label)
             except Exception:
                 pass
 
@@ -98,11 +95,9 @@ def _stats_content(root: str) -> Group:
             "CONTAINS_SECTION",
         ):
             try:
-                query = "MATCH ()-[r:" + edge_type + "]->() RETURN count(r) AS c"
-                r = conn.execute(query)
-                for row in _rows(r):
-                    if row["c"] > 0:
-                        edges[edge_type] = row["c"]
+                c = conn.count_edges(edge_type)
+                if c > 0:
+                    edges[edge_type] = c
             except Exception:
                 pass
 
@@ -272,9 +267,7 @@ def _stats_json(root: str) -> str:
     if conn is not None:
         for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
             try:
-                r = conn.execute("MATCH (n:" + label + ") RETURN count(n) AS c")
-                for row in _rows(r):
-                    graph[label] = row["c"]
+                graph[label] = conn.count_nodes(label)
             except Exception:
                 pass
         for edge_type in (
@@ -290,10 +283,9 @@ def _stats_json(root: str) -> str:
             "CONTAINS_SECTION",
         ):
             try:
-                r = conn.execute("MATCH ()-[r:" + edge_type + "]->() RETURN count(r) AS c")
-                for row in _rows(r):
-                    if row["c"] > 0:
-                        edges[edge_type] = row["c"]
+                c = conn.count_edges(edge_type)
+                if c > 0:
+                    edges[edge_type] = c
             except Exception:
                 pass
 
@@ -415,10 +407,8 @@ def cmd_status(args) -> None:
 
             conn = get_readonly_connection(root)
             if conn is not None:
-                r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
-                file_count = r.get_next()[0]
-                r = conn.execute("MATCH (e:Endpoint) RETURN count(e) AS c")
-                endpoint_count = r.get_next()[0]
+                file_count = conn.count_nodes("File")
+                endpoint_count = conn.count_nodes("Endpoint")
                 counts_source = "ro"
         except Exception:
             pass

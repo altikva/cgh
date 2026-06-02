@@ -1,4 +1,7 @@
-"""Tests for codegraph.core.db — Kuzu connection management."""
+"""Tests for codegraph.core.db — GraphDB connection management.
+
+Fresh repos default to DuckDB (graph.duckdb) since v0.5.
+"""
 
 from pathlib import Path
 
@@ -6,14 +9,16 @@ from codegraph.core.db import get_connection, get_db_path, reset_connection
 
 
 class TestGetDbPath:
-    def test_returns_correct_path(self, tmp_path):
+    def test_returns_duckdb_path_on_fresh_repo(self, tmp_path):
+        """No graph.* files present + no env var -> default backend
+        (duckdb) chosen."""
         result = get_db_path(tmp_path)
-        assert result == tmp_path / ".codegraph" / "graph.db"
+        assert result == tmp_path / ".codegraph" / "graph.duckdb"
 
     def test_string_input(self, tmp_path):
         result = get_db_path(str(tmp_path))
         assert isinstance(result, Path)
-        assert result.name == "graph.db"
+        assert result.name == "graph.duckdb"
 
 
 class TestGetConnection:
@@ -21,12 +26,8 @@ class TestGetConnection:
         reset_connection()
         conn = get_connection(tmp_path)
         assert conn is not None
-
-        # Verify schema was created — File table should exist
-        result = conn.execute("MATCH (f:File) RETURN count(f) AS cnt")
-        row = result.get_next()
-        assert row[0] == 0  # empty but table exists
-
+        # Schema was created — File table accessible, zero rows.
+        assert conn.count_nodes("File") == 0
         reset_connection()
 
     def test_connection_is_cached(self, tmp_path):
@@ -40,11 +41,8 @@ class TestGetConnection:
         reset_connection()
         conn = get_connection(tmp_path)
 
-        # Check all node tables
-        for table in ["File", "Function", "Class", "TFResource", "TFVar", "MdSection"]:
-            query = "MATCH (n:" + table + ") RETURN count(n)"
-            result = conn.execute(query)
-            assert result.get_next()[0] == 0
+        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
+            assert conn.count_nodes(label) == 0
 
         reset_connection()
 

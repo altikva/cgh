@@ -107,6 +107,58 @@ class TestPrechecks:
         assert (repo / ".codegraph" / "graph.duckdb").read_bytes() != b"dummy"
 
 
+class TestStaleKuzuPath:
+    def test_stale_kuzu_signature_proceeds_with_swap(self, repo, monkeypatch):
+        """If the verify step finds only stale-Kuzu signature diffs, the
+        migration proceeds and graph.db gets deleted just like the
+        exact-match path. Drives do_migrate_to_duckdb directly with a
+        forged kuzu-stats snapshot so we hit the classifier branch
+        without needing a real stale Kuzu DB."""
+        from codegraph.cli import commands_migrate
+        from codegraph.cli.commands_migrate import do_migrate_to_duckdb
+
+        # Override _stats_snapshot so the first call (Kuzu baseline)
+        # returns a snapshot that looks like a stale pre-IMPORTS-fix
+        # Kuzu DB carrying ghost rows, and the second call (DuckDB)
+        # returns the real fresh snapshot.
+        real_snapshot = commands_migrate._stats_snapshot
+        call_count = {"n": 0}
+
+        def fake_snapshot(root):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # Fake Kuzu baseline: every metric inflated above what
+                # the fresh DuckDB scan will produce (ghost rows from
+                # deleted files), except IMPORTS which is the post-fix
+                # gain signature (Kuzu has 0, DuckDB will have >0).
+                inflated = 99
+                return {
+                    "nodes": {
+                        "File": inflated, "Function": inflated, "Class": inflated,
+                        "TFResource": inflated, "TFVar": inflated,
+                        "MdSection": inflated,
+                    },
+                    "edges": {
+                        "IMPORTS": 0,  # post-fix gain
+                        "CALLS": inflated, "DEFINES_FN": inflated,
+                        "DEFINES_CLASS": inflated, "INHERITS": inflated,
+                        "HAS_METHOD": inflated, "DEFINES_SECTION": inflated,
+                        "MD_REFS_SYMBOL": inflated, "MD_REFS_CLASS": inflated,
+                        "CONTAINS_SECTION": inflated,
+                    },
+                }
+            return real_snapshot(root)
+
+        monkeypatch.setattr(commands_migrate, "_stats_snapshot", fake_snapshot)
+
+        result = do_migrate_to_duckdb(repo, delete_kuzu=True)
+
+        assert result.status == "stale_kuzu", result.message
+        assert result.kuzu_deleted is True
+        assert not (repo / ".codegraph" / "graph.db").exists()
+        assert (repo / ".codegraph" / "graph.duckdb").exists()
+
+
 class TestPostState:
     def test_migration_followed_by_status_works(self, repo):
         """After migrating + deleting graph.db, get_readonly_connection

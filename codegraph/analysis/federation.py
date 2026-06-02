@@ -19,13 +19,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import kuzu
-
 from codegraph.core.config import load_config
+from codegraph.core.protocol import GraphDB
 
 _DB_DIR = ".codegraph"
 _KUZU_FILE = "graph.db"
+_DUCKDB_FILE = "graph.duckdb"
 _FTS_FILE = "fts.db"
+
+
+def _detect_backend_file(repo_root: Path) -> tuple[str, Path] | None:
+    """Return ('duckdb' | 'kuzu', file_path) for whichever graph DB exists
+    in ``repo_root/.codegraph/``. DuckDB wins when both are present so a
+    half-migrated repo (Kuzu cached + new DuckDB) reads the new one.
+    Returns None when no graph DB is present.
+    """
+    cg = repo_root / _DB_DIR
+    duck_path = cg / _DUCKDB_FILE
+    kuzu_path = cg / _KUZU_FILE
+    if duck_path.exists():
+        return ("duckdb", duck_path)
+    if kuzu_path.exists():
+        return ("kuzu", kuzu_path)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +56,19 @@ class ChildStatus:
     path: Path
     exists: bool
     initialized: bool  # has a .codegraph/ dir
-    has_kuzu: bool  # graph.db is present
-    has_fts: bool  # fts.db is present
+    has_kuzu: bool  # graph.db present
+    has_duckdb: bool  # graph.duckdb present
+    has_fts: bool  # fts.db present
     is_git_repo: bool  # has a .git dir (informational)
     error: str | None = None  # populated when something failed
 
     @property
+    def has_graphdb(self) -> bool:
+        return self.has_kuzu or self.has_duckdb
+
+    @property
     def ok(self) -> bool:
-        return self.exists and self.initialized and self.has_kuzu and not self.error
+        return self.exists and self.initialized and self.has_graphdb and not self.error
 
 
 def resolve_children(repo_root: str | Path) -> list[Path]:
@@ -112,6 +133,7 @@ def verify_child(child_path: str | Path) -> ChildStatus:
             exists=False,
             initialized=False,
             has_kuzu=False,
+            has_duckdb=False,
             has_fts=False,
             is_git_repo=False,
             error="path does not exist",
@@ -123,6 +145,7 @@ def verify_child(child_path: str | Path) -> ChildStatus:
         exists=True,
         initialized=cg.is_dir(),
         has_kuzu=(cg / _KUZU_FILE).exists(),
+        has_duckdb=(cg / _DUCKDB_FILE).exists(),
         has_fts=(cg / _FTS_FILE).exists(),
         is_git_repo=(p / ".git").exists(),
     )
@@ -136,31 +159,63 @@ def verify_child(child_path: str | Path) -> ChildStatus:
 
 
 @contextmanager
-def open_kuzu_ro(repo_root: Path) -> Iterator[kuzu.Connection | None]:
+def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
     """
-    Open a fresh read-only Kuzu connection for `repo_root`. Yields None if
-    the DB is missing or locked (caller should skip this scope). Always
-    closes — Kuzu holds an OS file lock that must be released.
+    Open a fresh read-only GraphDB connection for ``repo_root``, regardless
+    of which backend the child repo uses. Detection looks at the file
+    actually on disk: ``graph.duckdb`` -> DuckDB, ``graph.db`` -> Kuzu.
+
+    Yields None when the DB is missing, locked, or unreadable. Always
+    closes the connection — Kuzu holds an OS file lock that must be
+    released so the child's own owner can keep writing.
     """
-    db_path = repo_root / _DB_DIR / _KUZU_FILE
-    if not db_path.exists():
+    detected = _detect_backend_file(repo_root)
+    if detected is None:
         yield None
         return
+    backend, _ = detected
+
+    if backend == "duckdb":
+        from codegraph.core.db_duckdb import DuckDBGraphDB
+
+        db_path = repo_root / _DB_DIR / _DUCKDB_FILE
+        conn: GraphDB | None = None
+        try:
+            try:
+                conn = DuckDBGraphDB(str(db_path), read_only=True)
+            except Exception:
+                yield None
+                return
+            yield conn
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+        return
+
+    # Kuzu path
+    import kuzu
+
+    from codegraph.core.db_kuzu import KuzuGraphDB
+
+    db_path = repo_root / _DB_DIR / _KUZU_FILE
     db = None
-    conn = None
+    raw = None
     try:
         try:
             db = kuzu.Database(str(db_path), read_only=True)
-            conn = kuzu.Connection(db)
+            raw = kuzu.Connection(db)
         except RuntimeError:
             # Locked or schema mismatch — caller should treat as "skipped"
             yield None
             return
-        yield conn
+        yield KuzuGraphDB(raw)
     finally:
         try:
-            if conn is not None:
-                conn.close()
+            if raw is not None:
+                raw.close()
         except Exception:
             pass
         try:
@@ -168,6 +223,11 @@ def open_kuzu_ro(repo_root: Path) -> Iterator[kuzu.Connection | None]:
                 db.close()
         except Exception:
             pass
+
+
+# Backward-compat alias for callers that import the old name. New code
+# should prefer open_graphdb_ro.
+open_kuzu_ro = open_graphdb_ro
 
 
 @contextmanager
@@ -233,42 +293,42 @@ def _scope_name(repo_root: Path, parent: Path) -> str:
     return repo_root.name
 
 
-def for_each_kuzu(
+def for_each_graphdb(
     repo_root: str | Path,
-    fn: Callable[[kuzu.Connection, Path], Any],
+    fn: Callable[[GraphDB, Path], Any],
 ) -> list[ScopedResult]:
     """
-    Run `fn(conn, scope_path)` against the Kuzu DB of the parent and each
-    initialized subrepo. Failures are captured per-scope. Tries to RO-open
-    the parent — only works when no other process holds the write lock.
-    For tools running inside the parent's owner (which already holds a
-    write conn), use `for_each_child_kuzu` instead and call your local
-    write conn for the parent scope yourself.
+    Run ``fn(conn, scope_path)`` against the graph DB of the parent and
+    each initialized subrepo. Failures are captured per-scope. Tries to
+    RO-open the parent — only works when no other process holds the
+    write lock. For tools running inside the parent's owner (which
+    already holds a write conn), use ``for_each_child_graphdb`` instead
+    and call your local write conn for the parent scope yourself.
     """
     parent = Path(repo_root).resolve()
-    return [_run_one_kuzu(root, parent, fn) for root in iter_db_roots(parent)]
+    return [_run_one_graphdb(root, parent, fn) for root in iter_db_roots(parent)]
 
 
-def for_each_child_kuzu(
+def for_each_child_graphdb(
     repo_root: str | Path,
-    fn: Callable[[kuzu.Connection, Path], Any],
+    fn: Callable[[GraphDB, Path], Any],
 ) -> list[ScopedResult]:
     """
     Children-only iteration. The caller (typically a parent-owner MCP tool)
-    is expected to have already queried its own DB via `_get_conn()` and
-    is now fanning out to the subrepos to aggregate cross-repo results.
+    is expected to have already queried its own DB and is now fanning out
+    to the subrepos to aggregate cross-repo results.
     """
     parent = Path(repo_root).resolve()
-    return [_run_one_kuzu(root, parent, fn) for root in iter_db_roots(parent)[1:]]
+    return [_run_one_graphdb(root, parent, fn) for root in iter_db_roots(parent)[1:]]
 
 
-def _run_one_kuzu(
+def _run_one_graphdb(
     root: Path,
     parent: Path,
-    fn: Callable[[kuzu.Connection, Path], Any],
+    fn: Callable[[GraphDB, Path], Any],
 ) -> ScopedResult:
     scope = _scope_name(root, parent)
-    with open_kuzu_ro(root) as conn:
+    with open_graphdb_ro(root) as conn:
         if conn is None:
             return ScopedResult(
                 scope=scope,
@@ -286,6 +346,14 @@ def _run_one_kuzu(
                 payload=None,
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+
+# Backward-compat aliases for callers that import the old names. New
+# code should prefer the _graphdb variants — these will be removed in
+# the 0.6 release that also deletes the Kuzu-specific code paths.
+for_each_kuzu = for_each_graphdb
+for_each_child_kuzu = for_each_child_graphdb
+_run_one_kuzu = _run_one_graphdb
 
 
 def for_each_fts(

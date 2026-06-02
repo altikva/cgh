@@ -286,6 +286,18 @@ class KuzuGraphDB:
             return int(result.get_next()[0])
         return 0
 
+    def count_edges(self, edge_type: str) -> int:
+        from codegraph.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        result = self._inner.execute(
+            f"MATCH ()-[r:{edge_type}]->() RETURN count(r) AS c"
+        )
+        if result.has_next():
+            return int(result.get_next()[0])
+        return 0
+
     def find_nodes_without_incoming(
         self,
         label: str,

@@ -47,4 +47,8 @@ jobs:
         run: uvx ruff check .
 
       - name: Run pytest
-        run: uv run --with pytest pytest -q
+        # `--extra kuzu` so the Kuzu adapter is importable; the test
+        # suite still covers cgh's behaviour when kuzu is missing via
+        # tests/test_core/test_kuzu_optional.py (which masks kuzu via
+        # sys.modules at runtime).
+        run: uv run --with pytest --extra kuzu pytest -q

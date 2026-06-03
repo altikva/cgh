@@ -15,7 +15,7 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 
 ## Install
 
-**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.5 the default graph backend is
+**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.4 the default graph backend is
 DuckDB, which ships cp3.14 wheels on every platform. Existing Kuzu repos are
 auto-migrated to DuckDB on the next `cgh init`. The legacy Kuzu backend is
 still available via `CGH_DB=kuzu` if you need it (and your Python version has
@@ -113,7 +113,7 @@ Then reads only lines 42-55.
 
 ---
 
-## Architecture (v0.5)
+## Architecture (v0.4)
 
 ```
 codegraph/
@@ -125,7 +125,7 @@ codegraph/
   core/                    # shared infrastructure
     protocol.py            # GraphDB / QueryResult Protocols (backend boundary)
     db.py                  # backend selection + cached conns
-    db_duckdb.py           # DuckDB adapter (default backend since v0.5)
+    db_duckdb.py           # DuckDB adapter (default backend since v0.4)
     db_kuzu.py             # Kuzu adapter (opt-in via CGH_DB=kuzu)
     graph_model.py         # NODES / EDGES schema dicts shared by both backends
     schema.py              # Kuzu DDL

@@ -11,9 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db import get_connection, get_readonly_connection, reset_connection
-from codegraph.core.db_kuzu import KuzuGraphDB, KuzuQueryResult
-from codegraph.core.protocol import GraphDB, QueryResult
+# Kuzu is an optional extra since v0.4.2 — skip the whole module if it
+# isn't installed. The DuckDB-side protocol coverage in
+# tests/test_core/test_db_duckdb.py runs unconditionally.
+pytest.importorskip("kuzu")
+
+from codegraph.core.db import get_connection, get_readonly_connection, reset_connection  # noqa: E402
+from codegraph.core.db_kuzu import KuzuGraphDB, KuzuQueryResult  # noqa: E402
+from codegraph.core.protocol import GraphDB, QueryResult  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

@@ -17,8 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
-from codegraph.core.db import reset_connection
+# Whole module requires kuzu — every test seeds a real Kuzu graph.db
+# before verifying the migration. Skip on DuckDB-only installs.
+pytest.importorskip("kuzu")
+
+from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb  # noqa: E402
+from codegraph.core.db import reset_connection  # noqa: E402
 
 
 def _seed_kuzu(repo_root: Path) -> None:

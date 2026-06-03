@@ -321,7 +321,7 @@ Use `cgh compact` to vacuum the SQLite databases and reclaim space.
 
 ## Backend selection
 
-Since v0.5 the default graph backend is **DuckDB**. Resolution order when opening a repo's graph:
+Since v0.4 the default graph backend is **DuckDB**. Resolution order when opening a repo's graph:
 
 1. `CGH_DB` env var, if set to `duckdb` or `kuzu`.
 2. Auto-detect from `.codegraph/`: `graph.duckdb` → DuckDB, `graph.db` → Kuzu.

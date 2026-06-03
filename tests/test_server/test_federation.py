@@ -18,12 +18,20 @@ from codegraph.analysis.federation import (
 )
 
 
-def _mk_repo(root: Path, with_kuzu: bool = True, with_fts: bool = False, git: bool = False) -> Path:
+def _mk_repo(
+    root: Path,
+    with_kuzu: bool = True,
+    with_duckdb: bool = False,
+    with_fts: bool = False,
+    git: bool = False,
+) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     cg = root / ".codegraph"
     cg.mkdir(parents=True, exist_ok=True)
     if with_kuzu:
         (cg / "graph.db").write_bytes(b"fake")
+    if with_duckdb:
+        (cg / "graph.duckdb").write_bytes(b"fake")
     if with_fts:
         (cg / "fts.db").write_bytes(b"fake")
     if git:
@@ -100,11 +108,14 @@ class TestVerifyChild:
         assert not st.initialized
         assert not st.ok
 
-    def test_initialized_no_kuzu(self, tmp_path):
+    def test_initialized_no_graphdb(self, tmp_path):
+        # .codegraph/ but neither graph.db nor graph.duckdb.
         _mk_repo(tmp_path / "p", with_kuzu=False)
         st = verify_child(tmp_path / "p")
         assert st.exists and st.initialized
         assert not st.has_kuzu
+        assert not st.has_duckdb
+        assert not st.has_graphdb
         assert not st.ok
 
     def test_full(self, tmp_path):
@@ -113,6 +124,18 @@ class TestVerifyChild:
         assert st.ok
         assert st.has_fts
         assert st.is_git_repo
+
+    def test_duckdb_only_subrepo_is_ok(self, tmp_path):
+        # The bug: a subrepo indexed on DuckDB (graph.duckdb, no graph.db)
+        # must verify as OK. Before the fix, federate add reported
+        # "graph.db missing" and treated it as broken.
+        _mk_repo(tmp_path / "p", with_kuzu=False, with_duckdb=True)
+        st = verify_child(tmp_path / "p")
+        assert st.exists and st.initialized
+        assert not st.has_kuzu
+        assert st.has_duckdb
+        assert st.has_graphdb
+        assert st.ok
 
 
 class TestAddRemoveSubrepo:

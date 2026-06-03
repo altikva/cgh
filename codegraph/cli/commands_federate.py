@@ -66,9 +66,10 @@ def _cmd_add(args) -> None:
                 f"[yellow]⚠ {child}:[/yellow] added to config but no .codegraph/ found.\n"
                 f"  Run [cyan]cgh init[/cyan] inside the subrepo first."
             )
-        elif not status.has_kuzu:
+        elif not status.has_graphdb:
             console.print(
-                f"[yellow]⚠ {child}:[/yellow] .codegraph/ exists but graph.db missing.\n"
+                f"[yellow]⚠ {child}:[/yellow] .codegraph/ exists but no graph DB "
+                f"(graph.duckdb / graph.db) found.\n"
                 f"  Run [cyan]cgh index[/cyan] inside the subrepo."
             )
         else:
@@ -135,7 +136,7 @@ def _cmd_up(args) -> None:
         if not st.ok:
             console.print(
                 f"[yellow]⚠ {child.name}[/yellow] skipped — "
-                f"{'not initialized' if not st.initialized else 'no graph.db'}"
+                f"{'not initialized' if not st.initialized else 'no graph DB'}"
             )
             continue
         if is_owner_alive(child):
@@ -227,10 +228,11 @@ def _render_status_table(
             badge = "[red]missing[/red]"
         elif not status.initialized:
             badge = "[yellow]not initialized[/yellow]"
-        elif not status.has_kuzu:
-            badge = "[yellow]no graph.db[/yellow]"
+        elif not status.has_graphdb:
+            badge = "[yellow]no graph DB[/yellow]"
         else:
-            badge = "[green]ok[/green]"
+            backend = "duckdb" if status.has_duckdb else "kuzu"
+            badge = f"[green]ok[/green] [dim]({backend})[/dim]"
 
         if status.ok:
             owner = child_owner_status(child)

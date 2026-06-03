@@ -14,7 +14,6 @@ import textwrap
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import rows
 from codegraph.indexer import _RECURSION_LIMIT, index_file
 
 
@@ -138,8 +137,10 @@ class TestParseErrorHandling:
         assert index_file(good_c, tmp_path) is True  # C still works
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (fn:Function) RETURN fn.name ORDER BY fn.name")
-        names = [row["fn.name"] for row in rows(result)]
+        names = [
+            f["name"]
+            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+        ]
         assert "a_func" in names
         assert "c_func" in names
         # b_func may or may not exist (the parser failed before producing it)

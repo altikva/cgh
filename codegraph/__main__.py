@@ -33,6 +33,7 @@ from codegraph.cli.commands_index import (
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
+from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
     cmd_compact,
@@ -109,6 +110,7 @@ def _print_help():
             [
                 ("doctor", "Health check --- verify all components are working"),
                 ("compact", "Vacuum SQLite DBs and reclaim space"),
+                ("migrate-to-duckdb", "Re-index Kuzu repos onto DuckDB (faster + smaller)"),
             ],
         ),
         (
@@ -273,6 +275,25 @@ def main() -> None:
     p.add_argument("--drop-extra-dirs", action="store_true", help="Also remove extra_dirs from config.toml")
     p.add_argument("--no-reindex", action="store_true", help="Don't re-index after cleaning")
 
+    # --- migrate-to-duckdb ---
+    p = sub.add_parser(
+        "migrate-to-duckdb",
+        help="Re-index a Kuzu-backed repo into DuckDB, verify counts match, optionally delete graph.db",
+    )
+    p.add_argument("--root", default=os.getcwd())
+    p.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the 'delete graph.db?' confirmation",
+    )
+    p.add_argument(
+        "--keep-kuzu", action="store_true",
+        help="Always keep graph.db even after a clean migration",
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing graph.duckdb (default: abort if present)",
+    )
+
     p = sub.add_parser("status", help="Owner state, scan freshness, counts, extra_dirs in one glance")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--json", action="store_true", help="Output as JSON")
@@ -397,6 +418,7 @@ def main() -> None:
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
+        "migrate-to-duckdb": cmd_migrate_to_duckdb,
         "stats": cmd_stats,
         "status": cmd_status,
         "tail": cmd_tail,

@@ -9,7 +9,12 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Kuzu graph schema — node and edge table DDL for the code index.
 
-import kuzu
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import kuzu
 
 # ---------------------------------------------------------------------------
 # Node tables

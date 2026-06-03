@@ -160,6 +160,7 @@ class TestBackendSelection:
         prevents the symmetric case (graph.db only, env unset) from
         causing the same mismatch.
         """
+        pytest.importorskip("kuzu")  # kuzu is optional since v0.4.2
         monkeypatch.delenv("CGH_DB", raising=False)
         from codegraph.core.db import get_readonly_connection, reset_connection
         from codegraph.core.db_kuzu import KuzuGraphDB

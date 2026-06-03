@@ -15,7 +15,7 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 
 ## Install
 
-**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.5 the default graph backend is
+**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.4 the default graph backend is
 DuckDB, which ships cp3.14 wheels on every platform. Existing Kuzu repos are
 auto-migrated to DuckDB on the next `cgh init`. The legacy Kuzu backend is
 still available via `CGH_DB=kuzu` if you need it (and your Python version has
@@ -123,8 +123,13 @@ codegraph/
                            # top-level .py beside the entrypoints)
 
   core/                    # shared infrastructure
-    db.py                  # GraphDB connection manager (DuckDB default, Kuzu opt-in)
-    schema.py              # graph DDL
+    protocol.py            # GraphDB / QueryResult Protocols (backend boundary)
+    db.py                  # backend selection + cached conns
+    db_duckdb.py           # DuckDB adapter (default backend since v0.4)
+    db_kuzu.py             # Kuzu adapter (opt-in via CGH_DB=kuzu)
+    graph_model.py         # NODES / EDGES schema dicts shared by both backends
+    schema.py              # Kuzu DDL
+    schema_duckdb.py       # DuckDB DDL
     utils.py               # rows(), short_path(), normalize_identifier(), ...
     config.py              # layered TOML config
     fts.py                 # BM25 full-text search (SQLite FTS5)
@@ -466,10 +471,10 @@ cgh stats --json
 
          Index Info
  FTS symbols          1,533
- graph.db             12.4 MB
+ graph.duckdb          2.5 MB
  fts.db                2.1 MB
  call_log.db            48 KB
- Total storage        14.5 MB
+ Total storage         4.7 MB
 
        MCP Tool Calls
  Tool               Calls  Avg ms  Max ms  Errors
@@ -580,7 +585,7 @@ cgh doctor
             Health Check
  Component        Status
  .codegraph/ dir  OK  initialized
- graph.db         OK  accessible
+ graph.duckdb     OK  accessible
  fts.db           OK  accessible
  call_log.db      OK  accessible
  config.toml      OK  valid

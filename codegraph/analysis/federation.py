@@ -195,8 +195,14 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
                 pass
         return
 
-    # Kuzu path
-    import kuzu
+    # Kuzu path. Kuzu is an optional extra since v0.4.2 — a subrepo can
+    # be on Kuzu while this (parent) install has no kuzu package. Degrade
+    # to None rather than crashing the whole federated query.
+    try:
+        import kuzu
+    except ImportError:
+        yield None
+        return
 
     from codegraph.core.db_kuzu import KuzuGraphDB
 

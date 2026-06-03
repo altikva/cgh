@@ -15,11 +15,12 @@ Parses your repo into a graph of files, functions, classes, Terraform resources,
 
 ## Install
 
-**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.4 the default graph backend is
-DuckDB, which ships cp3.14 wheels on every platform. Existing Kuzu repos are
-auto-migrated to DuckDB on the next `cgh init`. The legacy Kuzu backend is
-still available via `CGH_DB=kuzu` if you need it (and your Python version has
-wheels for it).
+**Python 3.11, 3.12, or 3.13.** Since v0.4 the default graph backend is
+DuckDB, but Kuzu is still bundled as a mandatory dependency, so the Python
+cap follows Kuzu's wheel availability (no cp3.14 wheels yet). Making Kuzu
+optional and lifting the cap to 3.14 is tracked for a follow-up release.
+Existing Kuzu repos are auto-migrated to DuckDB on the next `cgh init`.
+The legacy Kuzu backend is still available via `CGH_DB=kuzu` if you need it.
 
 ```bash
 # From PyPI (most users)

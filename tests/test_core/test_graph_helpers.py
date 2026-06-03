@@ -12,8 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db_duckdb import DuckDBGraphDB
-from codegraph.core.db_kuzu import KuzuGraphDB
+# Kuzu is an optional extra since v0.4.2. The parity tests in this file
+# require both backends to be importable; skip the whole module when
+# kuzu isn't available so DuckDB-only installs (e.g. Python 3.14) get
+# a clean run.
+pytest.importorskip("kuzu")
+
+from codegraph.core.db_duckdb import DuckDBGraphDB  # noqa: E402
+from codegraph.core.db_kuzu import KuzuGraphDB  # noqa: E402
 
 # ---- per-backend factories -------------------------------------------------
 

@@ -16,16 +16,34 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
-import kuzu
-
-from codegraph.core.db_kuzu import KuzuGraphDB
 from codegraph.core.protocol import GraphDB
-from codegraph.core.schema import init_schema
 
 _DB_DIR = ".codegraph"
 _DB_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
+
+_KUZU_MISSING_MSG = (
+    "The Kuzu graph backend is selected but the `kuzu` package is not installed. "
+    "Install it with `pip install cgh[kuzu]` (or `uv tool install cgh --with kuzu`), "
+    "or convert this repo to DuckDB by running `cgh migrate-to-duckdb`. "
+    "DuckDB is the default backend since v0.4 — see docs/CONFIGURATION.md."
+)
+
+
+def _import_kuzu():
+    """Import kuzu lazily with a friendly error when it's missing.
+
+    Kuzu became an optional dependency in v0.4.2 so cp3.14 users could
+    install cgh (Kuzu has no cp3.14 wheels yet). Anything that needs
+    the Kuzu backend resolves it through this helper.
+    """
+    try:
+        import kuzu as _kuzu
+    except ImportError as exc:
+        raise RuntimeError(_KUZU_MISSING_MSG) from exc
+    return _kuzu
 
 
 def _backend(repo_root: str | Path | None = None) -> str:
@@ -59,9 +77,12 @@ def _backend(repo_root: str | Path | None = None) -> str:
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
 # close them explicitly (Kuzu's file lock outlives the GC otherwise).
 # _conn / _ro_conn are the GraphDB-typed adapters callers see.
-_db: kuzu.Database | None = None
+# _db / _ro_db hold raw kuzu.Database refs (typed as Any so the module
+# can import without kuzu installed). DuckDB doesn't need a separate
+# "db" handle — its connection is self-contained.
+_db: Any | None = None
 _conn: GraphDB | None = None
-_ro_db: kuzu.Database | None = None
+_ro_db: Any | None = None
 _ro_conn: GraphDB | None = None
 
 _atexit_registered = False
@@ -121,6 +142,10 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
         return _conn
 
     db_path = db_dir / _DB_FILE
+
+    kuzu = _import_kuzu()
+    from codegraph.core.db_kuzu import KuzuGraphDB
+    from codegraph.core.schema import init_schema
 
     retries = 3
     for attempt in range(retries):
@@ -187,6 +212,16 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
     db_path = root / _DB_DIR / _DB_FILE
     if not db_path.exists():
         return None
+
+    try:
+        kuzu = _import_kuzu()
+    except RuntimeError:
+        # Kuzu backend selected but package not installed → degrade to
+        # None (same shape as a lock failure below). Callers that need
+        # an authoritative answer rather than "soft None" should call
+        # get_connection(), which raises with the install hint.
+        return None
+    from codegraph.core.db_kuzu import KuzuGraphDB
 
     try:
         _ro_db = kuzu.Database(str(db_path), read_only=True)

@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.4.1"
+version = "0.4.2"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 30+ MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.14"
-# Upper bound is for kuzu, not cgh itself. Kuzu (0.11.x) does not yet
-# publish cp314 wheels, so pip would fall back to building from source
-# on Python 3.14 and fail without MSVC + CMake on Windows. Lift this
-# cap as soon as kuzu ships cp314 wheels.
+requires-python = ">=3.11"
+# No upper cap as of v0.4.2: DuckDB is the default backend and ships
+# cp3.14 wheels. Kuzu moved to an optional extra (`pip install cgh[kuzu]`)
+# precisely so 3.14 users could install cgh without Kuzu's missing wheel
+# blocking them.
 keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -27,13 +27,13 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 
 dependencies = [
-    "kuzu>=0.7",
     "duckdb>=1.0",
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
@@ -47,6 +47,14 @@ dependencies = [
     "rich>=13.0",
     "questionary>=2.0",
 ]
+
+[project.optional-dependencies]
+# Install with `pip install cgh[kuzu]` to enable the legacy Kuzu backend
+# (selected via `CGH_DB=kuzu` or on-disk detection of an existing
+# `.codegraph/graph.db`). Kuzu has no cp3.14 wheels yet, so on Python
+# 3.14 you'll either need a source build (CMake + a C++17 compiler) or
+# you can skip the extra entirely and use the default DuckDB backend.
+kuzu = ["kuzu>=0.7"]
 
 [project.urls]
 Homepage = "https://github.com/altikva/cgh"

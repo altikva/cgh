@@ -8,7 +8,7 @@ from __future__ import annotations
 import textwrap
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import normalize_identifier, rows
+from codegraph.core.utils import normalize_identifier
 from codegraph.indexer import index_file
 
 
@@ -67,8 +67,10 @@ class TestParserNormalization:
         index_file(f, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (fn:Function) RETURN fn.name ORDER BY fn.name")
-        names = [row["fn.name"] for row in rows(result)]
+        names = [
+            f["name"]
+            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+        ]
         # We expect "café" (NFKC composed) appearing once, plus the caller.
         assert names.count("café") == 1, (
             f"expected one normalized 'café' entry, got names={names}"
@@ -84,8 +86,7 @@ class TestParserNormalization:
         index_file(f, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (fn:Function) RETURN fn.name")
-        names = [row["fn.name"] for row in rows(result)]
+        names = [f["name"] for f in conn.find_nodes("Function", return_fields=["name"])]
         assert "Foo" in names, f"fullwidth Ｆoo should normalize to 'Foo', got {names}"
 
     def test_typescript_composed_decomposed_collapse(self, tmp_path):
@@ -106,8 +107,10 @@ class TestParserNormalization:
         index_file(f, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (fn:Function) RETURN fn.name ORDER BY fn.name")
-        names = [row["fn.name"] for row in rows(result)]
+        names = [
+            f["name"]
+            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+        ]
         assert names.count("café") == 1, (
             f"expected one normalized 'café' entry, got names={names}"
         )
@@ -130,11 +133,12 @@ class TestParserNormalization:
         index_file(f, tmp_path)
 
         conn = get_connection(tmp_path)
-        result = conn.execute(
-            "MATCH (caller:Function {name: 'main'})-[:CALLS]->(callee:Function) "
-            "RETURN callee.name"
-        )
-        names = [row["callee.name"] for row in rows(result)]
+        names = [
+            e["dst_name"]
+            for e in conn.find_neighbors(
+                "CALLS", src_where={"name": "main"}, return_dst=["name"]
+            )
+        ]
         assert "計算" in names, (
             f"expected CALLS edge to CJK function, got names={names}"
         )

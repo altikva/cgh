@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 
-from codegraph.core.utils import rows as _rows
 from codegraph.core.utils import safe_id as _safe_id
 
 
@@ -30,21 +29,31 @@ def register(mcp) -> None:
         if file_path:
             if not os.path.isabs(file_path) and _srv._root:
                 file_path = str(_srv._root / file_path)
-            r = conn.execute(
-                """MATCH (src:File {path:$p})-[:IMPORTS]->(dep:File)
-                   RETURN src.path AS src, dep.path AS tgt
-                   UNION ALL
-                   MATCH (up:File)-[:IMPORTS]->(src:File {path:$p})
-                   RETURN up.path AS src, src.path AS tgt""",
-                {"p": file_path},
+            # Outgoing imports (file imports X) + incoming imports (X imports file)
+            outgoing = conn.find_neighbors(
+                "IMPORTS",
+                src_key=file_path,
+                return_src=["path"],
+                return_dst=["path"],
             )
+            incoming = conn.find_neighbors(
+                "IMPORTS",
+                dst_key=file_path,
+                return_src=["path"],
+                return_dst=["path"],
+            )
+            rows = [{"src": r["src_path"], "tgt": r["dst_path"]} for r in outgoing + incoming]
         else:
-            r = conn.execute(
-                f"MATCH (src:File)-[:IMPORTS]->(tgt:File) "
-                f"RETURN src.path AS src, tgt.path AS tgt LIMIT {max_nodes * 2}",
-            )
+            rows = [
+                {"src": r["src_path"], "tgt": r["dst_path"]}
+                for r in conn.find_neighbors(
+                    "IMPORTS",
+                    return_src=["path"],
+                    return_dst=["path"],
+                    limit=max_nodes * 2,
+                )
+            ]
 
-        rows = _rows(r)
         if not rows:
             return "graph LR\n  NO_IMPORTS[No import edges found]"
 
@@ -74,23 +83,41 @@ def register(mcp) -> None:
             return "\n".join(lines)
 
     def _viz_call_graph(conn, symbol_name: str, max_nodes: int, fmt: str) -> str:
+        return_args = dict(
+            return_src=["name", "file_path"],
+            return_dst=["name", "file_path"],
+        )
         if symbol_name:
-            r = conn.execute(
-                """MATCH (caller:Function)-[:CALLS]->(callee:Function)
-                   WHERE caller.name = $n OR callee.name = $n
-                   RETURN caller.name AS src, callee.name AS tgt,
-                          caller.file_path AS src_file, callee.file_path AS tgt_file
-                   LIMIT $lim""",
-                {"n": symbol_name, "lim": max_nodes * 2},
+            # Cypher's "WHERE caller.name = $n OR callee.name = $n" → two
+            # filtered queries unioned in Python. Most names point to a
+            # handful of edges, so the duplication is cheap.
+            edges_a = conn.find_neighbors(
+                "CALLS",
+                src_where={"name": symbol_name},
+                **return_args,
+                limit=max_nodes * 2,
             )
+            edges_b = conn.find_neighbors(
+                "CALLS",
+                dst_where={"name": symbol_name},
+                **return_args,
+                limit=max_nodes * 2,
+            )
+            edges = edges_a + edges_b
         else:
-            r = conn.execute(
-                f"MATCH (caller:Function)-[:CALLS]->(callee:Function) "
-                f"RETURN caller.name AS src, callee.name AS tgt, "
-                f"caller.file_path AS src_file, callee.file_path AS tgt_file LIMIT {max_nodes * 2}",
+            edges = conn.find_neighbors(
+                "CALLS", **return_args, limit=max_nodes * 2,
             )
 
-        rows = _rows(r)
+        rows = [
+            {
+                "src": r["src_name"],
+                "tgt": r["dst_name"],
+                "src_file": r["src_file_path"],
+                "tgt_file": r["dst_file_path"],
+            }
+            for r in edges
+        ]
         if not rows:
             return "graph LR\n  NO_CALLS[No call edges found]"
 
@@ -118,23 +145,37 @@ def register(mcp) -> None:
             return "\n".join(lines)
 
     def _viz_class_hierarchy(conn, symbol_name: str, max_nodes: int, fmt: str) -> str:
+        return_args = dict(
+            return_src=["name", "file_path"],
+            return_dst=["name"],
+        )
         if symbol_name:
-            r = conn.execute(
-                """MATCH (child:Class)-[:INHERITS]->(parent:Class)
-                   WHERE child.name = $n OR parent.name = $n
-                   RETURN child.name AS child, parent.name AS parent,
-                          child.file_path AS child_file
-                   LIMIT $lim""",
-                {"n": symbol_name, "lim": max_nodes},
+            edges_a = conn.find_neighbors(
+                "INHERITS",
+                src_where={"name": symbol_name},
+                **return_args,
+                limit=max_nodes,
             )
+            edges_b = conn.find_neighbors(
+                "INHERITS",
+                dst_where={"name": symbol_name},
+                **return_args,
+                limit=max_nodes,
+            )
+            edges = edges_a + edges_b
         else:
-            r = conn.execute(
-                f"MATCH (child:Class)-[:INHERITS]->(parent:Class) "
-                f"RETURN child.name AS child, parent.name AS parent, "
-                f"child.file_path AS child_file LIMIT {max_nodes}",
+            edges = conn.find_neighbors(
+                "INHERITS", **return_args, limit=max_nodes,
             )
 
-        rows = _rows(r)
+        rows = [
+            {
+                "child": r["src_name"],
+                "parent": r["dst_name"],
+                "child_file": r["src_file_path"],
+            }
+            for r in edges
+        ]
         if not rows:
             return "graph BT\n  NO_INHERITANCE[No inheritance edges found]"
 
@@ -170,41 +211,39 @@ def register(mcp) -> None:
         short = _short_path(file_path)
         file_id = _safe_id(short)
 
-        # Functions
-        r_fn = conn.execute(
-            "MATCH (fn:Function) WHERE fn.file_path = $p RETURN fn.name, fn.start_line ORDER BY fn.start_line",
-            {"p": file_path},
+        fns = conn.find_nodes(
+            "Function",
+            where={"file_path": file_path},
+            return_fields=["name", "start_line"],
+            order_by=["start_line"],
         )
-        fns = _rows(r_fn)
-
-        # Classes
-        r_cls = conn.execute(
-            "MATCH (c:Class) WHERE c.file_path = $p RETURN c.name, c.start_line ORDER BY c.start_line",
-            {"p": file_path},
+        classes = conn.find_nodes(
+            "Class",
+            where={"file_path": file_path},
+            return_fields=["name", "start_line"],
+            order_by=["start_line"],
         )
-        classes = _rows(r_cls)
-
-        # MdSections
-        r_md = conn.execute(
-            "MATCH (s:MdSection) WHERE s.file_path = $p RETURN s.title, s.level, s.start_line ORDER BY s.start_line",
-            {"p": file_path},
+        sections = conn.find_nodes(
+            "MdSection",
+            where={"file_path": file_path},
+            return_fields=["title", "level", "start_line"],
+            order_by=["start_line"],
         )
-        sections = _rows(r_md)
 
         if fmt == "mermaid":
             lines = ["graph TD", f'  {file_id}["{short}"]:::file']
             for cls in classes:
-                cls_id = _safe_id(f"cls_{cls['c.name']}")
-                lines.append(f'  {cls_id}["{cls["c.name"]} (L{cls["c.start_line"]})"]:::class')
+                cls_id = _safe_id(f"cls_{cls['name']}")
+                lines.append(f'  {cls_id}["{cls["name"]} (L{cls["start_line"]})"]:::class')
                 lines.append(f"  {file_id} --> {cls_id}")
             for fn in fns:
-                fn_id = _safe_id(f"fn_{fn['fn.name']}_{fn['fn.start_line']}")
-                lines.append(f'  {fn_id}["{fn["fn.name"]}() L{fn["fn.start_line"]}"]:::func')
+                fn_id = _safe_id(f"fn_{fn['name']}_{fn['start_line']}")
+                lines.append(f'  {fn_id}["{fn["name"]}() L{fn["start_line"]}"]:::func')
                 lines.append(f"  {file_id} --> {fn_id}")
             for sec in sections:
-                sec_id = _safe_id(f"sec_{sec['s.title']}_{sec['s.start_line']}")
-                prefix = "#" * sec["s.level"]
-                lines.append(f'  {sec_id}["{prefix} {sec["s.title"]} L{sec["s.start_line"]}"]:::doc')
+                sec_id = _safe_id(f"sec_{sec['title']}_{sec['start_line']}")
+                prefix = "#" * sec["level"]
+                lines.append(f'  {sec_id}["{prefix} {sec["title"]} L{sec["start_line"]}"]:::doc')
                 lines.append(f"  {file_id} --> {sec_id}")
             lines.append("  classDef file fill:#e1f5fe,stroke:#0288d1")
             lines.append("  classDef class fill:#fff3e0,stroke:#f57c00")
@@ -214,32 +253,34 @@ def register(mcp) -> None:
         else:
             lines = ["digraph file_symbols {", "  rankdir=TD;", f'  "{short}" [shape=folder];']
             for cls in classes:
-                lines.append(f'  "{cls["c.name"]}" [shape=box,style=filled,fillcolor=lightyellow];')
-                lines.append(f'  "{short}" -> "{cls["c.name"]}";')
+                lines.append(f'  "{cls["name"]}" [shape=box,style=filled,fillcolor=lightyellow];')
+                lines.append(f'  "{short}" -> "{cls["name"]}";')
             for fn in fns:
-                lines.append(f'  "{fn["fn.name"]}" [shape=ellipse];')
-                lines.append(f'  "{short}" -> "{fn["fn.name"]}";')
+                lines.append(f'  "{fn["name"]}" [shape=ellipse];')
+                lines.append(f'  "{short}" -> "{fn["name"]}";')
             lines.append("}")
             return "\n".join(lines)
 
     def _viz_doc_structure(conn, file_path: str, max_nodes: int, fmt: str) -> str:
+        common_fields = ["id", "title", "level", "start_line", "file_path"]
         if file_path:
             if not os.path.isabs(file_path) and _srv._root:
                 file_path = str(_srv._root / file_path)
-            r = conn.execute(
-                "MATCH (s:MdSection) WHERE s.file_path = $p "
-                "RETURN s.id, s.title, s.level, s.start_line, s.file_path "
-                "ORDER BY s.start_line LIMIT $lim",
-                {"p": file_path, "lim": max_nodes},
+            rows = conn.find_nodes(
+                "MdSection",
+                where={"file_path": file_path},
+                return_fields=common_fields,
+                order_by=["start_line"],
+                limit=max_nodes,
             )
         else:
-            r = conn.execute(
-                f"MATCH (s:MdSection) "
-                f"RETURN s.id, s.title, s.level, s.start_line, s.file_path "
-                f"ORDER BY s.file_path, s.start_line LIMIT {max_nodes}",
+            rows = conn.find_nodes(
+                "MdSection",
+                return_fields=common_fields,
+                order_by=["file_path", "start_line"],
+                limit=max_nodes,
             )
 
-        rows = _rows(r)
         if not rows:
             return "graph TD\n  NO_DOCS[No markdown sections found]"
 
@@ -247,7 +288,7 @@ def register(mcp) -> None:
             lines = ["graph TD"]
             by_file: dict[str, list] = {}
             for row in rows:
-                fp = _short_path(row["s.file_path"])
+                fp = _short_path(row["file_path"])
                 by_file.setdefault(fp, []).append(row)
 
             for fp, secs in by_file.items():
@@ -255,11 +296,11 @@ def register(mcp) -> None:
                 lines.append(f'  {fp_id}["{fp}"]:::file')
                 prev_by_level: dict[int, str] = {}
                 for sec in secs:
-                    sec_id = _safe_id(f"s_{sec['s.start_line']}_{fp}")
-                    prefix = "#" * sec["s.level"]
-                    lines.append(f'  {sec_id}["{prefix} {sec["s.title"]}"]:::h{min(sec["s.level"], 3)}')
+                    sec_id = _safe_id(f"s_{sec['start_line']}_{fp}")
+                    prefix = "#" * sec["level"]
+                    lines.append(f'  {sec_id}["{prefix} {sec["title"]}"]:::h{min(sec["level"], 3)}')
                     parent_id = None
-                    for lvl in range(sec["s.level"] - 1, 0, -1):
+                    for lvl in range(sec["level"] - 1, 0, -1):
                         if lvl in prev_by_level:
                             parent_id = prev_by_level[lvl]
                             break
@@ -267,7 +308,7 @@ def register(mcp) -> None:
                         lines.append(f"  {parent_id} --> {sec_id}")
                     else:
                         lines.append(f"  {fp_id} --> {sec_id}")
-                    prev_by_level[sec["s.level"]] = sec_id
+                    prev_by_level[sec["level"]] = sec_id
 
             lines.append("  classDef file fill:#e1f5fe,stroke:#0288d1")
             lines.append("  classDef h1 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px")
@@ -277,35 +318,45 @@ def register(mcp) -> None:
         else:
             lines = ["digraph docs {", "  rankdir=TD;"]
             for row in rows:
-                fp = _short_path(row["s.file_path"])
-                lines.append(f'  "{row["s.title"]}" [label="{"#" * row["s.level"]} {row["s.title"]}"];')
+                lines.append(
+                    f'  "{row["title"]}" [label="{"#" * row["level"]} {row["title"]}"];'
+                )
             lines.append("}")
             return "\n".join(lines)
 
     def _viz_full_overview(conn, max_nodes: int, fmt: str) -> str:
         """High-level codebase overview: files grouped by language with counts."""
-        r = conn.execute(
-            "MATCH (f:File) RETURN f.lang AS lang, count(f) AS cnt ORDER BY cnt DESC",
+        # Aggregate "files per language" in Python — small N, no benefit from
+        # GROUP BY at the backend.
+        from collections import Counter
+
+        files = conn.find_nodes("File", return_fields=["path", "lang"])
+        lang_counts = Counter(f.get("lang") for f in files)
+        lang_stats = [
+            {"lang": lang, "cnt": cnt}
+            for lang, cnt in sorted(lang_counts.items(), key=lambda kv: -kv[1])
+        ]
+
+        fn_count = conn.count_nodes("Function")
+        cls_count = conn.count_nodes("Class")
+        md_count = conn.count_nodes("MdSection")
+
+        # Top files by symbol density: count DEFINES_FN edges per file.
+        # find_neighbors gives us (file_path, function_id) pairs; tally.
+        defines = conn.find_neighbors(
+            "DEFINES_FN", return_src=["path", "lang"]
         )
-        lang_stats = _rows(r)
-
-        fn_rows = _rows(conn.execute("MATCH (n:Function) RETURN count(n) AS c"))
-        fn_count = fn_rows[0]["c"] if fn_rows else 0
-
-        cls_rows = _rows(conn.execute("MATCH (n:Class) RETURN count(n) AS c"))
-        cls_count = cls_rows[0]["c"] if cls_rows else 0
-
-        md_rows = _rows(conn.execute("MATCH (n:MdSection) RETURN count(n) AS c"))
-        md_count = md_rows[0]["c"] if md_rows else 0
-
-        # Top files by symbol density
-        r5 = conn.execute(
-            "MATCH (f:File)-[:DEFINES_FN]->(fn:Function) "
-            "RETURN f.path AS file, f.lang AS lang, count(fn) AS fn_count "
-            "ORDER BY fn_count DESC LIMIT $lim",
-            {"lim": max_nodes},
-        )
-        top_files = _rows(r5)
+        fn_per_file: dict[tuple[str, str | None], int] = {}
+        for r in defines:
+            key = (r["src_path"], r.get("src_lang"))
+            fn_per_file[key] = fn_per_file.get(key, 0) + 1
+        top_files = sorted(
+            (
+                {"file": path, "lang": lang, "fn_count": cnt}
+                for (path, lang), cnt in fn_per_file.items()
+            ),
+            key=lambda r: -r["fn_count"],
+        )[:max_nodes]
 
         if fmt == "mermaid":
             lines = ["graph TD"]
@@ -415,13 +466,10 @@ def register(mcp) -> None:
         Useful to confirm the index is populated.
         """
         conn = _get_conn()
-        stats = {}
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            # Kuzu Cypher requires literal labels — safe: fixed allowlist
-            query = "MATCH (n:" + label + ") RETURN count(n) AS c"
-            r = conn.execute(query)
-            rows = _rows(r)
-            stats[label] = rows[0]["c"] if rows else 0
+        stats = {
+            label: conn.count_nodes(label)
+            for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection")
+        }
         return json.dumps(stats, indent=2)
 
     @mcp.tool()
@@ -443,10 +491,7 @@ def register(mcp) -> None:
         nodes: dict[str, int] = {}
         for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
             try:
-                query = "MATCH (n:" + label + ") RETURN count(n) AS c"
-                r = conn.execute(query)
-                rows = _rows(r)
-                nodes[label] = rows[0]["c"] if rows else 0
+                nodes[label] = conn.count_nodes(label)
             except Exception:
                 nodes[label] = 0
 

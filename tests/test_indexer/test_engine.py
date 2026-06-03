@@ -3,7 +3,6 @@
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import rows
 from codegraph.indexer import index_file, index_repo
 
 
@@ -21,18 +20,15 @@ class TestIndexFile:
         assert ok is True
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (f:File) RETURN f.path, f.lang")
-        data = rows(result)
-        assert len(data) == 1
-        assert data[0]["f.lang"] == "python"
+        files = conn.find_nodes("File", return_fields=["path", "lang"])
+        assert len(files) == 1
+        assert files[0]["lang"] == "python"
 
     def test_index_creates_function_nodes(self, sample_python, tmp_path):
         index_file(sample_python, tmp_path)
         conn = get_connection(tmp_path)
 
-        result = conn.execute("MATCH (fn:Function) RETURN fn.name")
-        data = rows(result)
-        fn_names = [d["fn.name"] for d in data]
+        fn_names = [f["name"] for f in conn.find_nodes("Function", return_fields=["name"])]
         assert "validate" in fn_names
         assert "main" in fn_names
 
@@ -40,9 +36,7 @@ class TestIndexFile:
         index_file(sample_python, tmp_path)
         conn = get_connection(tmp_path)
 
-        result = conn.execute("MATCH (c:Class) RETURN c.name")
-        data = rows(result)
-        cls_names = [d["c.name"] for d in data]
+        cls_names = [c["name"] for c in conn.find_nodes("Class", return_fields=["name"])]
         assert "BaseHandler" in cls_names
         assert "DonationHandler" in cls_names
 
@@ -57,18 +51,18 @@ class TestIndexFile:
         assert ok is True
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (r:TFResource) RETURN r.name, r.type")
-        data = rows(result)
-        assert any(d["r.name"] == "main" for d in data)
+        data = conn.find_nodes("TFResource", return_fields=["name", "type"])
+        assert any(d["name"] == "main" for d in data)
 
     def test_index_markdown(self, sample_markdown, tmp_path):
         ok = index_file(sample_markdown, tmp_path)
         assert ok is True
 
         conn = get_connection(tmp_path)
-        result = conn.execute("MATCH (s:MdSection) RETURN s.title")
-        data = rows(result)
-        titles = [d["s.title"] for d in data]
+        titles = [
+            s["title"]
+            for s in conn.find_nodes("MdSection", return_fields=["title"])
+        ]
         assert "Architecture" in titles
 
     def test_index_skips_unchanged(self, sample_python, tmp_path):

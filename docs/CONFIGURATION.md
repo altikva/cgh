@@ -209,7 +209,7 @@ child's owner is mid-write when the parent queries it, that scope returns
 **Edge cases**
 
 - Subrepo not initialized → `cgh federate add` warns, skipped at query time
-- Subrepo's Kuzu DB locked by its own owner → that scope returns
+- Subrepo's graph DB locked by its own owner → that scope returns
   `error: db unavailable`; results include `partial: true` + `warnings: [...]`
 - Subrepo deleted from disk → marked `unreachable` in `cgh federate list`,
   silently skipped at query time
@@ -306,15 +306,35 @@ After initialization and indexing, the `.codegraph/` directory contains:
 
 ```
 .codegraph/
-    config.toml     # project configuration
-    graph.db/       # Kuzu graph database (nodes + edges)
-    fts.db          # SQLite FTS5 full-text search index
-    call_log.db     # SQLite log of MCP tool calls
+    config.toml      # project configuration
+    graph.duckdb     # DuckDB graph database (nodes + edges) — default backend
+    graph.db/        # Kuzu graph database (nodes + edges) — only when CGH_DB=kuzu
+    fts.db           # SQLite FTS5 full-text search index
+    call_log.db      # SQLite log of MCP tool calls
 ```
 
-Typical storage usage for a 200-file project: 10-20 MB total.
+Typical storage usage for a 200-file project: 4-8 MB total on DuckDB (~3x smaller than the legacy Kuzu layout).
 
 Use `cgh compact` to vacuum the SQLite databases and reclaim space.
+
+---
+
+## Backend selection
+
+Since v0.4 the default graph backend is **DuckDB**. Resolution order when opening a repo's graph:
+
+1. `CGH_DB` env var, if set to `duckdb` or `kuzu`.
+2. Auto-detect from `.codegraph/`: `graph.duckdb` → DuckDB, `graph.db` → Kuzu.
+3. Fresh repos with no `.codegraph/` → DuckDB.
+
+`cgh init` auto-migrates repos that only have `graph.db` by re-indexing into `graph.duckdb` and verifying counts. See [`cgh migrate-to-duckdb`](CLI_REFERENCE.md#migrate-to-duckdb) for the manual command and its `stale_kuzu` classifier rules.
+
+Pin a specific backend per shell:
+
+```bash
+CGH_DB=duckdb cgh index    # force DuckDB
+CGH_DB=kuzu   cgh index    # opt back into Kuzu (kept for parity / debugging)
+```
 
 ---
 

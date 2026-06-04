@@ -21,11 +21,13 @@ from codegraph.cli import LOGO, VERSION, console
 from codegraph.core.db import KuzuNotInstalled
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
+from codegraph.cli.commands_githooks import cmd_githooks
 from codegraph.cli.commands_index import (
     cmd_force_index,
     cmd_index,
     cmd_memory_index,
     cmd_plan_index,
+    cmd_reindex_hook,
     cmd_serve,
     cmd_watch,
 )
@@ -111,6 +113,7 @@ def _print_help():
             [
                 ("doctor", "Health check --- verify all components are working"),
                 ("compact", "Vacuum SQLite DBs and reclaim space"),
+                ("hooks", "Install git hooks that reindex after pull/merge/checkout"),
                 ("migrate-to-duckdb", "Re-index Kuzu repos onto DuckDB (faster + smaller)"),
             ],
         ),
@@ -404,6 +407,26 @@ def main() -> None:
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
+    # --- hooks ---
+    p = sub.add_parser("hooks", help="Manage git hooks that refresh the graph after pull/merge/checkout/rebase")
+    p.add_argument(
+        "action",
+        nargs="?",
+        choices=["install", "uninstall", "status"],
+        default="status",
+        help="Action (default: status)",
+    )
+    p.add_argument(
+        "--shared",
+        action="store_true",
+        help="Allow install into a shared core.hooksPath (affects every repo)",
+    )
+    p.add_argument("--root", default=os.getcwd())
+
+    # --- _reindex_hook (internal: invoked by the git hooks) ---
+    p = sub.add_parser("_reindex_hook")
+    p.add_argument("--root", default=os.getcwd())
+
     args = ap.parse_args()
 
     if args.help or not args.cmd:
@@ -442,6 +465,8 @@ def main() -> None:
         "add-dir": cmd_add_dir,
         "federate": cmd_federate,
         "force-index": cmd_force_index,
+        "hooks": cmd_githooks,
+        "_reindex_hook": cmd_reindex_hook,
     }
 
     handler = dispatch.get(args.cmd)

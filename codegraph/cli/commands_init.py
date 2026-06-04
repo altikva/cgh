@@ -445,6 +445,31 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
     )
 
 
+def _install_git_reindex_hooks(root: Path) -> None:
+    """Install the git hooks that refresh the graph after a pull, merge,
+    branch switch, or rebase. Quiet and safe: skips a non-git repo, and skips
+    a shared core.hooksPath (with a one-line hint) so init never touches a
+    machine-global hooks directory on its own.
+    """
+    from codegraph.state.git_hooks import hooks_target_info, install_git_hooks
+
+    target, is_shared = hooks_target_info(root)
+    if target is None:
+        return  # not a git repo
+    if is_shared:
+        console.print(
+            "  [dim]git hooks skipped: core.hooksPath is shared. Run "
+            "[/dim][cyan]cgh hooks install --shared[/cyan][dim] to add them there.[/dim]"
+        )
+        return
+    written = install_git_hooks(root)
+    if written:
+        console.print(
+            f"  [green]+[/green] git hooks ({', '.join(written)}) "
+            "[dim]reindex after pull / merge / checkout / rebase[/dim]"
+        )
+
+
 # ---------------------------------------------------------------------------
 # cmd_init
 # ---------------------------------------------------------------------------
@@ -530,6 +555,9 @@ def cmd_init(args) -> None:
         console.print("  [dim].codegraph/ already exists[/dim]")
 
     console.print()
+
+    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
+    _install_git_reindex_hooks(root)
 
     # -- Step 2: Detect AI tools --
     console.print("  [bold]Detecting AI tools...[/bold]\n")

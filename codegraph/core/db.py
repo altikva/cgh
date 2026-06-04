@@ -34,6 +34,13 @@ _KUZU_MISSING_MSG = (
 )
 
 
+class KuzuNotInstalled(RuntimeError):
+    """Raised when the Kuzu backend is selected but the `kuzu` package
+    is not importable. Carries the remediation text in its message. The
+    CLI catches this at the top level and prints a clean message instead
+    of a traceback (unless --verbose). See codegraph/__main__.py."""
+
+
 def _import_kuzu():
     """Import kuzu lazily with a friendly error when it's missing.
 
@@ -44,7 +51,7 @@ def _import_kuzu():
     try:
         import kuzu as _kuzu
     except ImportError as exc:
-        raise RuntimeError(_KUZU_MISSING_MSG) from exc
+        raise KuzuNotInstalled(_KUZU_MISSING_MSG) from exc
     return _kuzu
 
 

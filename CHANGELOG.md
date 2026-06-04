@@ -8,6 +8,24 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-06-04
+
+### Fixed
+- The error shown when a repo is on the Kuzu backend but the `kuzu` package
+  is not installed no longer dumps a Python traceback. It prints a clean
+  panel with the reason and the ways to fix it, and re-raises the full stack
+  only under `--verbose`. The error has its own `KuzuNotInstalled` type, still
+  a `RuntimeError` subclass so existing handlers keep working.
+- That same message no longer points at `docs/CONFIGURATION.md`, which is not
+  shipped in the wheel, so pip and uv-tool users could not open it. It now
+  lists copy-pasteable commands, one per line, including "delete graph.db and
+  run `cgh index`" to reindex fresh on DuckDB.
+
+### Changed
+- Documentation now states the dual license is conjunctive: MIT **and**
+  CC BY-NC-SA 4.0 apply together, not a choice between them. Added a
+  `CHANGELOG.md` and a Changelog link in the package metadata.
+
 ## [0.4.3] - 2026-06-03
 
 ### Fixed
@@ -105,7 +123,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/altikva/cgh/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/altikva/cgh/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/altikva/cgh/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/altikva/cgh/compare/v0.3.1...v0.4.1

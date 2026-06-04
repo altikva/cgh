@@ -58,7 +58,7 @@ def _slugify(title: str) -> str:
 
 @register_parser(".md", ".mdx")
 class MarkdownParser(BaseParser):
-    """Regex-based Markdown/MDX parser — sections, links, code references."""
+    """Regex-based Markdown/MDX parser, sections, links, code references."""
 
     lang = "markdown"
     extensions = [".md", ".mdx"]
@@ -125,7 +125,7 @@ class MarkdownParser(BaseParser):
                         )
                     )
 
-        # Build sections from headings — each section spans until the next
+        # Build sections from headings, each section spans until the next
         # heading of same or higher level (or EOF)
         total_lines = len(lines)
         for i, (line_no, level, title) in enumerate(headings):

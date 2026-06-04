@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Bare identifier: starts with a letter or underscore, followed by 2+ word
 # chars, no regex metachars. Matches names like `user_manager` or `MyClass`
-# but skips `.*`, `foo|bar`, `auth_.*`, etc. — patterns that wouldn't map
+# but skips `.*`, `foo|bar`, `auth_.*`, etc., patterns that wouldn't map
 # cleanly onto cgh's symbol search.
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,}$")
 
@@ -30,7 +30,7 @@ def cmd_hook_precheck_grep(args) -> None:
     """
     PreToolUse hook for Grep. Reads the hook payload from stdin, and when
     the pattern looks like a bare identifier prints a suggestion to stderr
-    pointing at cgh's symbol-search MCP tools. Always exits 0 — advisory,
+    pointing at cgh's symbol-search MCP tools. Always exits 0, advisory,
     never blocking, so Claude can still run Grep when it really wants to.
     """
     try:
@@ -60,7 +60,7 @@ def cmd_hook_precheck_read(args) -> None:
     """
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
     Read is a full read (no offset/limit), suggest file_outline / symbols_in_file
-    first — both return structured summaries for a fraction of the tokens of
+    first, both return structured summaries for a fraction of the tokens of
     a raw Read. Advisory: always exits 0.
     """
     try:
@@ -73,7 +73,7 @@ def cmd_hook_precheck_read(args) -> None:
     if not isinstance(file_path, str) or not file_path:
         sys.exit(0)
 
-    # Sliced reads mean the caller already knows the range they want — skip.
+    # Sliced reads mean the caller already knows the range they want, skip.
     if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
         sys.exit(0)
 

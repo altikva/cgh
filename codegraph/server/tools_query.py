@@ -29,7 +29,7 @@ def register(mcp) -> None:
         """
         all_results: list[dict] = []
         warnings: list[dict] = []
-        # Parent — direct hit on the in-process write connection
+        # Parent, direct hit on the in-process write connection
         try:
             for item in query_fn(_get_conn()) or []:
                 item["scope"] = "parent"
@@ -37,7 +37,7 @@ def register(mcp) -> None:
         except Exception as exc:
             warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
 
-        # Children — fresh RO conns, errors per child
+        # Children, fresh RO conns, errors per child
         if _srv._root is not None:
             for scoped in for_each_child_kuzu(_srv._root, lambda c, _r: query_fn(c)):
                 if scoped.error:
@@ -60,7 +60,7 @@ def register(mcp) -> None:
         """
         Regex / substring pattern search across the indexed repo. Use this
         INSTEAD of the Grep tool for any "find all occurrences of X"
-        question — returns structured {file, line, text} hits so you can
+        question, returns structured {file, line, text} hits so you can
         then Read the exact line ranges that matter (never whole files).
 
         Respects .gitignore (via ripgrep / git-grep). Automatically scans
@@ -212,7 +212,7 @@ def register(mcp) -> None:
     @_logged_tool
     def find_callers(fn_name: str) -> str:
         """
-        Find all functions that call `fn_name`. Federated across subrepos —
+        Find all functions that call `fn_name`. Federated across subrepos,
         each result tagged with `scope`. Note: cross-repo CALLS edges are
         not inferred (each subrepo's graph is canonical for its own code).
         """
@@ -271,7 +271,7 @@ def register(mcp) -> None:
     def imports_of(file_path: str) -> str:
         """
         Return all modules imported by `file_path`. Federated: the file may
-        live in the parent or in any subrepo — we query all and aggregate.
+        live in the parent or in any subrepo, we query all and aggregate.
         Pass a path relative to the parent's repo root or absolute.
         """
         if not os.path.isabs(file_path) and _srv._root:
@@ -300,7 +300,7 @@ def register(mcp) -> None:
     def search_symbols(query: str, limit: int = 20) -> str:
         """
         Fuzzy search for symbols (functions, classes, TF resources) by name.
-        Uses substring match. Federated — `limit` is per scope, results are
+        Uses substring match. Federated, `limit` is per scope, results are
         concatenated; sort/trim downstream if needed.
         """
 
@@ -366,7 +366,7 @@ def register(mcp) -> None:
     def subgraph(file_path: str, depth: int = 1) -> str:
         """
         Return files related to `file_path` within `depth` import hops.
-        Federated. Inter-repo edges are not modeled — each subrepo's IMPORTS
+        Federated. Inter-repo edges are not modeled, each subrepo's IMPORTS
         graph is canonical for its own files. Useful for blast radius
         within a single scope; results are concatenated across scopes.
         """
@@ -407,7 +407,7 @@ def register(mcp) -> None:
                 payload["warnings"] = warnings
             return json.dumps(payload, indent=2)
 
-        # depth >= 2 — recursive traversal via the GraphDB helper
+        # depth >= 2, recursive traversal via the GraphDB helper
         def run_reach(conn):
             return [
                 {"file": row["path"], "lang": row["lang"]}

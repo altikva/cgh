@@ -31,11 +31,11 @@ Add to `AGENTS.md` to teach Codex to use codegraph:
 ## Code Navigation
 
 This project uses codegraph for code indexing. Use MCP tools to navigate:
-- symbol_lookup(name) — find symbol definitions (use instead of grep/find)
-- context_for_task(description) — get ranked context before starting any task
-- search_docs(query) — search project documentation
-- find_callers(fn) / find_callees(fn) — understand call relationships
-- scan_repo() — refresh index after major changes
+- symbol_lookup(name): find symbol definitions (use instead of grep/find)
+- context_for_task(description): get ranked context before starting any task
+- search_docs(query): search project documentation
+- find_callers(fn) / find_callees(fn): understand call relationships
+- scan_repo(): refresh index after major changes
 
 Always use codegraph tools before reading files to minimize token usage.
 ```

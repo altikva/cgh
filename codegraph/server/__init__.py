@@ -102,14 +102,14 @@ mcp = FastMCP(
     name="codegraph",
     instructions=(
         "Local code graph + Claude Code memory/plan index.\n\n"
-        "CALL THESE TOOLS BEFORE READING FILES — they return exact file paths\n"
+        "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
         "and line numbers so you only read the specific lines you need.\n\n"
         "Tool execution is SERVER-SIDE and costs zero model tokens. Only the\n"
         "JSON response counts (capped + truncated). When in doubt: call the\n"
         "tool. It is almost always cheaper than Read/Grep over full files.\n\n"
         "Workflow matrix:\n"
         "  • Task kickoff / broad question ('how does X work', 'where to add Y'):\n"
-        "       1. context_for_task(task, session_id?) — merges code + memory + plans\n"
+        "       1. context_for_task(task, session_id?), merges code + memory + plans\n"
         "       2. architecture_overview() or domain_map(keyword) for structure\n"
         "       3. endpoints(path_pattern) for API questions\n"
         "  • Known user preference territory (commit style, naming, workflow):\n"
@@ -117,24 +117,24 @@ mcp = FastMCP(
         "  • User hints at a past plan ('the refactor we planned'):\n"
         "       1. plan_search(query)\n"
         "  • Problem that might have been solved before (gotchas, patterns):\n"
-        "       1. knowledge_search(query)  — persisted learnings across sessions\n"
+        "       1. knowledge_search(query), persisted learnings across sessions\n"
         "  • You learn something worth remembering:\n"
         "       1. knowledge_record(title, body, kind, tags)\n"
         "  • Context ~80% full (long session, many results):\n"
         "       1. knowledge_record(...) for EVERY non-trivial insight\n"
         "       2. compact_session(session_id, title, digest)\n"
-        "       These survive compaction — raw conversation does NOT.\n"
+        "       These survive compaction, raw conversation does NOT.\n"
         "  • After compaction / session resume / new session:\n"
-        "       1. knowledge_list(limit=20) — reload recent learnings\n"
-        "       2. knowledge_search(query) — targeted reload\n"
-        "       3. memory_search(query) — user preferences + feedback\n"
-        "       4. plan_search(query) — active plans\n"
+        "       1. knowledge_list(limit=20), reload recent learnings\n"
+        "       2. knowledge_search(query), targeted reload\n"
+        "       3. memory_search(query), user preferences + feedback\n"
+        "       4. plan_search(query), active plans\n"
         "       CRITICAL: without reload you restart from zero.\n"
         "  • Symbol lookup ('where is Foo', 'what calls Bar'):\n"
         "       1. symbol_lookup / find_callers / find_callees\n"
         "       2. search_symbols for fuzzy, fts_search for docstrings\n"
         "  • Text/regex pattern search ('find every occurrence of X'):\n"
-        "       1. pattern_search(pattern, glob?)  — INSTEAD of Grep\n"
+        "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
         "          Returns {file, line, text}. Then Read only those lines.\n"
         "  • After git pull / checkout / rebase:\n"
         "       1. scan_status, then incremental_reindex if stale\n"
@@ -150,15 +150,15 @@ mcp = FastMCP(
         "  • Each result has a `scope` field: 'parent' or '<subrepo-name>'.\n"
         "    Use it to disambiguate when the same symbol exists in multiple\n"
         "    repos, and to route file Read calls to the right tree.\n"
-        "  • Cross-repo edges are NOT inferred — find_callers in subrepo A\n"
+        "  • Cross-repo edges are NOT inferred, find_callers in subrepo A\n"
         "    won't surface callers from subrepo B; subgraph imports stop at\n"
         "    repo boundaries. Treat scopes as independent islands.\n"
         "  • find_dead_code is per-scope: a 'dead' symbol may actually be\n"
         "    called from another repo. Don't delete blindly across scopes.\n"
         "  • If a child DB is locked or unavailable, the response includes\n"
         "    `partial: true` and `warnings: [{scope, error}]`. Results are\n"
-        "    still useful — just incomplete for that scope. Re-query later.\n"
-        "  • Knowledge / memory / plans are NEVER federated — each project\n"
+        "    still useful, just incomplete for that scope. Re-query later.\n"
+        "  • Knowledge / memory / plans are NEVER federated, each project\n"
         "    keeps its own. knowledge_search reads only the parent's store.\n"
         "Only use Read for the exact line range returned above.\n"
     ),
@@ -175,7 +175,7 @@ from codegraph.server.tools_plans import register as _register_plans  # noqa: E4
 from codegraph.server.tools_query import register as _register_query  # noqa: E402
 from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
 
-_register_arch(mcp)  # architecture_overview, domain_map, endpoints — use FIRST
+_register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)
 _register_docs(mcp)
 _register_index(mcp)
@@ -263,7 +263,7 @@ def main() -> None:
 
 def owner_main(root: str | None = None, watch: bool = False, reindex: bool = False) -> None:
     """
-    Backend entrypoint — runs FastMCP over HTTP on a loopback port.
+    Backend entrypoint, runs FastMCP over HTTP on a loopback port.
     Spawned by the proxy via `python -m codegraph _serve_owner`. Claude
     Code never launches this directly.
     """
@@ -341,7 +341,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
 
     _atexit.register(_cleanup)
 
-    # Build auth middleware — rejects any request without the bearer token
+    # Build auth middleware, rejects any request without the bearer token
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
     from starlette.types import ASGIApp
@@ -383,7 +383,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
 
     def _shutdown(reason: str) -> None:
         print(f"[codegraph owner] {reason}, shutting down", file=sys.stderr, flush=True)
-        # Run cleanup explicitly — SIGTERM + os._exit would skip atexit.
+        # Run cleanup explicitly, SIGTERM + os._exit would skip atexit.
         try:
             _cleanup()
         except Exception:
@@ -395,7 +395,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             reset_connection()
         except Exception:
             pass
-        # Hard exit — uvicorn has its own signal handlers and blocks
+        # Hard exit, uvicorn has its own signal handlers and blocks
         # cooperative shutdown from threads; os._exit gets us out reliably.
         os._exit(0)
 

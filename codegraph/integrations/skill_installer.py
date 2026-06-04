@@ -29,40 +29,40 @@ _BLOCK_END = "<!-- codegraph-skills:end -->"
 _USAGE_BLOCK_START = "<!-- codegraph-usage:start -->"
 _USAGE_BLOCK_END = "<!-- codegraph-usage:end -->"
 
-# Canonical "when to use codegraph" guidance — injected into the agent's
+# Canonical "when to use codegraph" guidance, injected into the agent's
 # root rules file (CLAUDE.md / AGENTS.md / GEMINI.md) when the user opts in.
-_USAGE_BODY = """## codegraph — use MCP tools before Read/Grep
+_USAGE_BODY = """## codegraph, use MCP tools before Read/Grep
 
-This project is indexed by **codegraph** — a local code graph +
+This project is indexed by **codegraph**, a local code graph +
 Claude Code memory + plans + persistent knowledge, all exposed via
 MCP. Always prefer codegraph tools over reading files directly.
 
 **Token cost mental model**: MCP tool execution is server-side and
 costs ZERO model tokens. The only tokens you spend are on the JSON
-response — which is capped, truncated, and structured. Read/Grep,
+response, which is capped, truncated, and structured. Read/Grep,
 in contrast, pull the full file into the transcript. Rule of thumb:
 when in doubt, call a codegraph tool; it's almost always cheaper
 than reading.
 
-**Workflow matrix — when to call what**
+**Workflow matrix, when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
   1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
-     — merges graph + memory + plans + knowledge in one call
+, merges graph + memory + plans + knowledge in one call
   2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
   3. `mcp__codegraph__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
   2. `search_symbols` for fuzzy, `fts_search` for docstrings
 - **Text/regex pattern search** (*"find every occurrence of X"*):
-  1. `pattern_search(pattern, glob?, max_results?)` — INSTEAD of Grep.
+  1. `pattern_search(pattern, glob?, max_results?)`, INSTEAD of Grep.
      Returns structured {file, line, text}. Then Read only those lines.
 - **Known-preference territory** (commit style, naming, workflow):
   1. `memory_search(query, kind="feedback")` BEFORE asking the user
 - **User hints at a past plan** (*"the refactor we planned"*):
   1. `plan_search(query)`
 - **Problem that might have been solved before**:
-  1. `knowledge_search(query)` — persisted learnings across sessions
+  1. `knowledge_search(query)`, persisted learnings across sessions
   2. `knowledge_terms()` for the glossary of captured topics
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
@@ -71,18 +71,18 @@ than reading.
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)
 
-**Federation — multi-repo workspaces**
+**Federation, multi-repo workspaces**
 
 When this project declares `subrepos = […]` in `.codegraph/config.toml`
 (check via `cgh federate list`), every read tool above transparently
 fans out to each subrepo's read-only DB and aggregates results. You
-don't call extra tools — same `symbol_lookup`, same `find_callers`,
+don't call extra tools, same `symbol_lookup`, same `find_callers`,
 same `pattern_search`. What changes is the response shape:
 
 - **Every result has a `scope` field**: `"parent"` or `"<subrepo-name>"`.
   Use it to disambiguate when the same symbol exists in multiple repos
   (common for utility names like `init`, `Config`, `handler`), and to
-  know which working tree to pass to `Read` — child symbols live under
+  know which working tree to pass to `Read`, child symbols live under
   the child's path, not the parent's.
 - **Cross-repo edges are NOT inferred**. `find_callers("foo")` in
   subrepo A won't list callers from subrepo B. `subgraph` import edges
@@ -99,16 +99,16 @@ same `pattern_search`. What changes is the response shape:
   that scope. Re-query in a moment if you need full coverage.
 - **NOT federated**: `knowledge_*`, `memory_*`, `plan_*`. Each project
   keeps its own. `knowledge_search` from the parent only sees the
-  parent's stored entries — to learn from a child's knowledge, you'd
+  parent's stored entries, to learn from a child's knowledge, you'd
   need to switch context to that child or import explicitly.
 - **Setup**: `cgh federate add <path>`, `cgh federate list`,
   `cgh federate verify`. Init auto-detects nested `.codegraph/` dirs and
   offers federation when run from a workspace folder.
 
-**Context lifecycle — persist before compaction, reload after**
+**Context lifecycle, persist before compaction, reload after**
 
 Your context window is finite. codegraph knowledge survives across
-sessions and compactions — but only if you write it before the window
+sessions and compactions, but only if you write it before the window
 shrinks and reload it after.
 
 - **When context usage exceeds ~80%** (you feel the window tightening,
@@ -118,13 +118,13 @@ shrinks and reload it after.
      that is NOT already captured. Better to over-record than to lose.
   2. Call `compact_session(session_id, title, digest, tags)` to persist
      a structured summary of the full session into knowledge.
-  3. These survive compaction — raw conversation context does not.
+  3. These survive compaction, raw conversation context does not.
 
 - **Immediately after context compaction / session resume**:
-  1. `knowledge_list(limit=20)` — reload recent learnings
-  2. `knowledge_search(query)` — targeted reload for the current task
-  3. `memory_search(query)` — reload user preferences and feedback
-  4. `plan_search(query)` — reload any active plan
+  1. `knowledge_list(limit=20)`, reload recent learnings
+  2. `knowledge_search(query)`, targeted reload for the current task
+  3. `memory_search(query)`, reload user preferences and feedback
+  4. `plan_search(query)`, reload any active plan
   5. This is CRITICAL: without this step you restart from zero. With it,
      you resume with full cross-session continuity.
 
@@ -133,7 +133,7 @@ shrinks and reload it after.
   2. `knowledge_terms()` to see the glossary of what's been captured
 
 Only use `Read` on the exact line ranges returned by a codegraph tool.
-Never `ls`/`find`/`tree` for structure — `architecture_overview` has it.
+Never `ls`/`find`/`tree` for structure, `architecture_overview` has it.
 Never re-derive a fact that could be looked up via `memory_search` or
 `knowledge_search`.
 """
@@ -221,7 +221,7 @@ def install_claude(project_root: str | Path, overwrite_modified: bool = True) ->
             dest = target_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             if not overwrite_modified and dest.exists() and _file_content_differs(f, dest):
-                # Local customization — leave it alone.
+                # Local customization, leave it alone.
                 continue
             shutil.copy2(f, dest)
         installed.append(name)
@@ -312,7 +312,7 @@ def _format_agents_md_section() -> tuple[str, list[str]]:
         "",
         "## codegraph skills",
         "",
-        "These guidelines come from codegraph (auto-maintained — edit via `cgh setup`).",
+        "These guidelines come from codegraph (auto-maintained, edit via `cgh setup`).",
         "",
     ]
     names: list[str] = []

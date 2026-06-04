@@ -67,7 +67,7 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             name, docstring, content='symbols', content_rowid='rowid'
         )
     """)
-    # Memory entries — indexed from ~/.claude/projects/<slug>/memory/
+    # Memory entries, indexed from ~/.claude/projects/<slug>/memory/
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memory_entries (
             path        TEXT PRIMARY KEY,
@@ -83,7 +83,7 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             content='memory_entries', content_rowid='rowid'
         )
     """)
-    # Plan documents — indexed from ~/.claude/plans/
+    # Plan documents, indexed from ~/.claude/plans/
     conn.execute("""
         CREATE TABLE IF NOT EXISTS plan_entries (
             path        TEXT PRIMARY KEY,
@@ -339,7 +339,7 @@ def memory_search(
 
 
 def list_memory_entries(conn: sqlite3.Connection, kind: str | None = None) -> list[MemoryHit]:
-    """All memory entries, newest first — cheap index read."""
+    """All memory entries, newest first, cheap index read."""
     sql = "SELECT path, kind, title, body, mtime FROM memory_entries"
     params: list = []
     if kind:

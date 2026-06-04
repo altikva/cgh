@@ -75,7 +75,7 @@ def cmd_search(args) -> None:
 
     conn = _get_conn(root, readonly=True)
     if conn is None:
-        # Graph DB locked (MCP server is running). Fall back to FTS — SQLite
+        # Graph DB locked (MCP server is running). Fall back to FTS, SQLite
         # supports concurrent readers, so this always works.
         try:
             from codegraph.core.fts import fts_search, get_fts_conn
@@ -88,7 +88,7 @@ def cmd_search(args) -> None:
             return
     else:
         for label, kind in [("Function", "function"), ("Class", "class"), ("MdSection", "md_section")]:
-            # Kuzu Cypher requires literal labels — safe: fixed allowlist
+            # Kuzu Cypher requires literal labels, safe: fixed allowlist
             if label == "MdSection":
                 q = (
                     "MATCH (n:" + label + ") WHERE n.title CONTAINS $q "
@@ -149,7 +149,7 @@ def cmd_search(args) -> None:
     end = offset + len(page)
     if has_more:
         console.print(
-            f"[dim]Showing {start}–{end}. More results — next page:[/dim] "
+            f"[dim]Showing {start}-{end}. More results, next page:[/dim] "
             f"[cyan]cgh search {query} --offset {offset + limit} -n {limit}[/cyan]"
         )
     else:

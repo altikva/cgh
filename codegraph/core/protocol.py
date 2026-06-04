@@ -170,7 +170,7 @@ class GraphDB(Protocol):
         ``edge_type``.
 
         ``exclude_name_prefix`` (e.g. ``"_"``) filters out names starting
-        with that prefix before the result is returned — used by the
+        with that prefix before the result is returned, used by the
         dead-code detector to skip dunder / underscore methods that
         wouldn't be called from outside.
 
@@ -204,7 +204,7 @@ class GraphDB(Protocol):
     def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
         """Count nodes of ``label`` matching the optional ``where`` filter.
 
-        Used by graph_stats and friends — cheaper than fetching every
+        Used by graph_stats and friends, cheaper than fetching every
         row just to call ``len()``.
         """
 

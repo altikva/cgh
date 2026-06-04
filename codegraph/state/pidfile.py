@@ -33,7 +33,7 @@ def _is_process_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Process exists and belongs to someone else — still alive
+        # Process exists and belongs to someone else, still alive
         return True
     except OSError:
         return False
@@ -58,8 +58,8 @@ def acquire(repo_root: str | Path) -> tuple[bool, int | None]:
     """
     Try to claim the single-writer slot for this repo.
     Returns (acquired, other_pid):
-      - (True, None)      — we now own the pidfile
-      - (False, pid)      — another live cgh serve holds it
+      - (True, None), we now own the pidfile
+      - (False, pid), another live cgh serve holds it
     Stale pidfiles (process no longer alive) are overwritten.
     """
     path = _pidfile_path(repo_root)

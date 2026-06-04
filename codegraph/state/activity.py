@@ -23,7 +23,7 @@ def _log_path(repo_root: str | Path) -> Path:
 
 def log(repo_root: str | Path | None, event: str, detail: str = "") -> None:
     """
-    Append an event to the activity log. Non-fatal — never raises.
+    Append an event to the activity log. Non-fatal, never raises.
     Format: TAB-separated "<unix_ts>\t<event>\t<detail>"
     """
     if repo_root is None:

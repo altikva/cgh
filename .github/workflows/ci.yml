@@ -1,9 +1,6 @@
-# Lint + test gate. Fires on every PR and on pushes to long-lived branches
-# (develop and main) so the integration history stays green. release.yml
-# stays the only workflow that touches PyPI; this one is purely advisory.
-#
-# No uv.lock in this repo (setuptools is the build backend) so we skip
-# enable-cache on setup-uv, matching release.yml.
+# Lint + test gate. Fires on every PR and on pushes to the long-lived
+# branches (develop, main) so the integration history stays green.
+# release.yml is the only workflow that touches PyPI.
 
 name: CI
 
@@ -15,40 +12,73 @@ on:
       - main
 
 jobs:
+  # Gating job: lint + the full supported Python matrix. Kuzu has no cp3.14
+  # wheel, so the kuzu extra is installed only on 3.11-3.13; 3.14 runs the
+  # default DuckDB-only install and the Kuzu tests skip themselves.
   test:
     name: Lint + tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
-      # Surface matrix values via env so run: blocks don't interpolate
-      # ${{ ... }} directly (defense-in-depth even though matrix values
-      # are workflow-internal, not user input).
+      # Surface the matrix value via env so run: blocks never interpolate
+      # ${{ ... }} straight into the shell.
       PYTHON_VERSION: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          # uv.lock is committed, so the cache key is stable.
+          enable-cache: true
 
       - name: Install Python
         run: uv python install "$PYTHON_VERSION"
 
       - name: Lint with ruff
-        # ruff and pytest aren't project dependencies, so we run them via
-        # `uvx` (uv tool run) instead of `uv run`, which only picks up
-        # what's in the project env.
-        #
-        # Format check is intentionally NOT enabled yet — 46 pre-existing
-        # files would fail on day one. Run `uvx ruff format .` in a
-        # dedicated chore/ruff-format PR, then add the format check here.
+        # ruff is not a project dependency, so run it via uvx. The format
+        # check is not enabled yet (69 files would reformat); do that in a
+        # dedicated chore/ruff-format PR, then add `uvx ruff format --check .`.
         run: uvx ruff check .
 
       - name: Run pytest
-        # `--extra kuzu` so the Kuzu adapter is importable; the test
-        # suite still covers cgh's behaviour when kuzu is missing via
-        # tests/test_core/test_kuzu_optional.py (which masks kuzu via
-        # sys.modules at runtime).
-        run: uv run --with pytest --extra kuzu pytest -q
+        run: |
+          if [ "$PYTHON_VERSION" = "3.14" ]; then
+            uv run --python "$PYTHON_VERSION" --with pytest pytest -q
+          else
+            uv run --python "$PYTHON_VERSION" --with pytest --extra kuzu pytest -q
+          fi
+
+  # Advisory early-warning job: resolve the newest deps allowed by the
+  # pyproject floors instead of the locked versions. Catches "an upstream
+  # release broke us" without blocking PRs on transitive breakage.
+  # continue-on-error keeps it non-gating.
+  test-latest:
+    name: Newest deps, advisory (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    env:
+      PYTHON_VERSION: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install Python
+        run: uv python install "$PYTHON_VERSION"
+
+      - name: Test on newest deps within floors
+        run: |
+          if [ "$PYTHON_VERSION" = "3.14" ]; then
+            uv run --python "$PYTHON_VERSION" --upgrade --with pytest pytest -q
+          else
+            uv run --python "$PYTHON_VERSION" --upgrade --with pytest --extra kuzu pytest -q
+          fi

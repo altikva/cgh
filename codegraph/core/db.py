@@ -25,11 +25,26 @@ _DB_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
 
 _KUZU_MISSING_MSG = (
-    "The Kuzu graph backend is selected but the `kuzu` package is not installed. "
-    "Install it with `pip install cgh[kuzu]` (or `uv tool install cgh --with kuzu`), "
-    "or convert this repo to DuckDB by running `cgh migrate-to-duckdb`. "
-    "DuckDB is the default backend since v0.4 — see docs/CONFIGURATION.md."
+    "This repo uses the Kuzu graph backend (it has a .codegraph/graph.db), "
+    "but the kuzu package is not installed. Pick one of these.\n"
+    "\n"
+    "Keep Kuzu, install the extra:\n"
+    "    uv tool install cgh --with kuzu\n"
+    "    pip install cgh[kuzu]\n"
+    "\n"
+    "Move to DuckDB (the default since v0.4, no extra package):\n"
+    "    cgh migrate-to-duckdb\n"
+    "\n"
+    "Or start fresh on DuckDB:\n"
+    "    rm .codegraph/graph.db && cgh index"
 )
+
+
+class KuzuNotInstalled(RuntimeError):
+    """Raised when the Kuzu backend is selected but the `kuzu` package
+    is not importable. Carries the remediation text in its message. The
+    CLI catches this at the top level and prints a clean message instead
+    of a traceback (unless --verbose). See codegraph/__main__.py."""
 
 
 def _import_kuzu():
@@ -42,7 +57,7 @@ def _import_kuzu():
     try:
         import kuzu as _kuzu
     except ImportError as exc:
-        raise RuntimeError(_KUZU_MISSING_MSG) from exc
+        raise KuzuNotInstalled(_KUZU_MISSING_MSG) from exc
     return _kuzu
 
 

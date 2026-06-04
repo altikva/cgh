@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex/substring pattern search across the indexed repo.
 #              Replaces the need for Claude to call Grep / Read whole
-#              files — returns structured hits with file + line + text.
+#              files: returns structured hits with file + line + text.
 
 from __future__ import annotations
 

@@ -8,7 +8,7 @@
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Rich-powered CLI for codegraph — thin dispatch layer.
+# Description: Rich-powered CLI for codegraph: thin dispatch layer.
 
 import argparse
 import os

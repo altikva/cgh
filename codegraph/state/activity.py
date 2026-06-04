@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Activity log — append-only file tracking indexer/watcher events
+# Description: Activity log: append-only file tracking indexer/watcher events
 #              so `cgh tail` can surface live progress even when the indexer
 #              is running inside an MCP server process the user can't see.
 

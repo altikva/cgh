@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Core utilities — single source of truth for shared helpers.
+# Description: Core utilities: single source of truth for shared helpers.
 
 from codegraph.core.db import get_connection, get_db_path, get_readonly_connection, reset_connection
 from .utils import lang_color, normalize_identifier, rows, safe_id, short_path

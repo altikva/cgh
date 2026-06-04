@@ -5,7 +5,7 @@
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Scan Claude Code plan files into the FTS index.
-#              Default location is ~/.claude/plans/ — overridable via
+#              Default location is ~/.claude/plans/, overridable via
 #              CG_PLANS_DIR env or [paths] in config.toml.
 
 from __future__ import annotations

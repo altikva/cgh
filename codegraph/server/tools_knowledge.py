@@ -40,7 +40,7 @@ def register(mcp) -> None:
         kind: pattern | decision | gotcha | style | glossary | note
         tags: comma-separated, short. These ARE the glossary index.
         file_refs: comma-separated canonical file paths involved.
-        session_id: optional — stamps the entry with the current session.
+        session_id: optional, stamps the entry with the current session.
         """
         from codegraph.state.call_log import knowledge_record as _record
 
@@ -69,7 +69,7 @@ def register(mcp) -> None:
         you suspect has been solved before, or when looking up a pattern
         by keyword / tag.
 
-        kind: optional filter — pattern/decision/gotcha/style/glossary/note
+        kind: optional filter, pattern/decision/gotcha/style/glossary/note
         """
         from codegraph.state.call_log import knowledge_search as _search
 
@@ -136,7 +136,7 @@ def register(mcp) -> None:
     @_logged_tool
     def knowledge_terms(min_count: int = 1) -> str:
         """
-        Return the knowledge glossary — every tag with its occurrence
+        Return the knowledge glossary, every tag with its occurrence
         count, sorted by frequency. Use this to discover what topics
         have been captured without reading individual entries.
         """

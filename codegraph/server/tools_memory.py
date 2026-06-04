@@ -24,11 +24,11 @@ def register(mcp) -> None:
 
         Use this BEFORE asking the user about preferences / past decisions.
         Results include the file path so you can read the full entry if
-        needed — but the snippet is usually enough.
+        needed, but the snippet is usually enough.
 
         Args:
             query:  keywords or natural language
-            kind:   optional filter — user / feedback / project / reference
+            kind:   optional filter, user / feedback / project / reference
             limit:  max hits (default 10)
         """
         from codegraph.core.fts import get_fts_conn
@@ -60,7 +60,7 @@ def register(mcp) -> None:
     def memory_list(kind: str = "") -> str:
         """
         List every memory entry known to codegraph, newest first.
-        Cheap browse — doesn't touch FTS. Useful to see what's been
+        Cheap browse, doesn't touch FTS. Useful to see what's been
         recorded about the user / project.
 
         Args:

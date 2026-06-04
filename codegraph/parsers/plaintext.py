@@ -20,13 +20,13 @@ from . import register_parser
 from .base import BaseParser, FileIndex, ResourceDef, SectionDef
 
 # ---------------------------------------------------------------------------
-# Dockerfile parser — extracts FROM stages
+# Dockerfile parser, extracts FROM stages
 # ---------------------------------------------------------------------------
 
 
 @register_parser(".dockerfile")
 class DockerfileParser(BaseParser):
-    """Dockerfile — extracts FROM stages and build targets."""
+    """Dockerfile, extracts FROM stages and build targets."""
 
     lang = "dockerfile"
     extensions = [".dockerfile"]
@@ -58,13 +58,13 @@ class DockerfileParser(BaseParser):
 
 
 # ---------------------------------------------------------------------------
-# YAML / TOML — extracts top-level keys as sections
+# YAML / TOML, extracts top-level keys as sections
 # ---------------------------------------------------------------------------
 
 
 @register_parser(".yaml", ".yml")
 class YamlParser(BaseParser):
-    """YAML config files — extracts top-level keys."""
+    """YAML config files, extracts top-level keys."""
 
     lang = "yaml"
     extensions = [".yaml", ".yml"]
@@ -95,7 +95,7 @@ class YamlParser(BaseParser):
 
 @register_parser(".toml")
 class TomlParser(BaseParser):
-    """TOML config files — extracts [section] headers."""
+    """TOML config files, extracts [section] headers."""
 
     lang = "toml"
     extensions = [".toml"]
@@ -125,13 +125,13 @@ class TomlParser(BaseParser):
 
 
 # ---------------------------------------------------------------------------
-# JSON / XML — file node only (no symbol extraction)
+# JSON / XML, file node only (no symbol extraction)
 # ---------------------------------------------------------------------------
 
 
 @register_parser(".json", ".jsonc")
 class JsonParser(BaseParser):
-    """JSON/JSONC data files — indexed as File nodes."""
+    """JSON/JSONC data files, indexed as File nodes."""
 
     lang = "json"
     extensions = [".json", ".jsonc"]
@@ -143,7 +143,7 @@ class JsonParser(BaseParser):
 
 @register_parser(".xml", ".xsl", ".xslt", ".svg")
 class XmlParser(BaseParser):
-    """XML/SVG files — indexed as File nodes."""
+    """XML/SVG files, indexed as File nodes."""
 
     lang = "xml"
     extensions = [".xml", ".xsl", ".xslt", ".svg"]
@@ -160,7 +160,7 @@ class XmlParser(BaseParser):
 
 @register_parser(".env", ".ini", ".cfg", ".conf", ".properties")
 class ConfigParser(BaseParser):
-    """Generic config files — indexed as File nodes."""
+    """Generic config files, indexed as File nodes."""
 
     lang = "config"
     extensions = [".env", ".ini", ".cfg", ".conf", ".properties"]
@@ -172,7 +172,7 @@ class ConfigParser(BaseParser):
 
 @register_parser(".sh", ".bash", ".zsh")
 class ShellParser(BaseParser):
-    """Shell scripts — extracts function definitions."""
+    """Shell scripts, extracts function definitions."""
 
     lang = "shell"
     extensions = [".sh", ".bash", ".zsh"]
@@ -205,7 +205,7 @@ class ShellParser(BaseParser):
 
 @register_parser(".sql")
 class SqlParser(BaseParser):
-    """SQL files — indexed as File nodes."""
+    """SQL files, indexed as File nodes."""
 
     lang = "sql"
     extensions = [".sql"]

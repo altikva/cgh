@@ -37,7 +37,7 @@ def resolve_python(source_module: str, importer_path: Path, repo_root: Path) -> 
     the import. Returns the absolute path of the target file, or None
     if it can't be resolved (external dependency, virtual env, etc.).
 
-    Best-effort filesystem-only resolution — no sys.path traversal, no
+    Best-effort filesystem-only resolution, no sys.path traversal, no
     site-packages lookup. We're modeling the user's repo, not their
     full dependency tree.
     """
@@ -59,12 +59,12 @@ def resolve_python(source_module: str, importer_path: Path, repo_root: Path) -> 
             base = base.parent
         parts = rest.split(".") if rest else []
     else:
-        # Absolute import — anchor at the repo root.
+        # Absolute import, anchor at the repo root.
         base = repo_root.resolve()
         parts = source_module.split(".")
 
     if not parts:
-        # `from . import x` — treat as the package's __init__.
+        # `from . import x`, treat as the package's __init__.
         return _try_paths([base / "__init__.py"])
 
     target_dir = base.joinpath(*parts[:-1]) if len(parts) > 1 else base
@@ -102,7 +102,7 @@ def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> P
       3. tsconfig.json compilerOptions.paths aliases (``"@/utils"``)
 
     Bare specifiers without a tsconfig alias hit (``"react"``,
-    ``"lodash"``) return None — they're third-party deps, not user code.
+    ``"lodash"``) return None, they're third-party deps, not user code.
     Workspace packages are intentionally NOT handled here; see follow-up
     PRs.
     """
@@ -112,7 +112,7 @@ def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> P
     importer = importer_path.resolve()
     importer_dir = importer.parent
 
-    # 1. Relative — anchor at the importer's directory.
+    # 1. Relative, anchor at the importer's directory.
     if source_module.startswith("."):
         target = (importer_dir / source_module).resolve()
         return _resolve_target_with_exts(target)
@@ -150,7 +150,7 @@ def resolve_import(
     """
     Resolve any supported language's import to a file path.
 
-    Returns None when the import can't be resolved — that's the common
+    Returns None when the import can't be resolved, that's the common
     case (third-party deps, virtual env imports, missing files). Callers
     should skip the IMPORTS edge silently for those.
     """

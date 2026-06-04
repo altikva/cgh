@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Shared data classes — all parsers produce these
+# Shared data classes, all parsers produce these
 # ---------------------------------------------------------------------------
 
 
@@ -140,7 +140,7 @@ class BaseParser(ABC):
       4. Implement parse()
       5. Decorate with @register_parser(".ext1", ".ext2")
 
-    That's it — codegraph auto-discovers and uses it.
+    That's it, codegraph auto-discovers and uses it.
     """
 
     # --- Class attributes (override in subclass) ---

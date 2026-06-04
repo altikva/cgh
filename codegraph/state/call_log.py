@@ -79,7 +79,7 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_call_log_ts ON call_log(timestamp)
     """)
-    # Session-scoped dedup — track which entities a context_for_task /
+    # Session-scoped dedup, track which entities a context_for_task /
     # session_context call has already surfaced for a given session_id.
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS session_mentions (
@@ -94,7 +94,7 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_session_mentions_session
             ON session_mentions(session_id)
     """)
-    # Knowledge store — patterns, decisions, gotchas, style preferences,
+    # Knowledge store, patterns, decisions, gotchas, style preferences,
     # glossary entries. Explicitly written by Claude via the knowledge_*
     # MCP tools. Backed by an FTS5 virtual table for BM25 search.
     _conn.execute("""
@@ -225,7 +225,7 @@ def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Knowledge store — patterns, decisions, gotchas, glossary
+# Knowledge store, patterns, decisions, gotchas, glossary
 # ---------------------------------------------------------------------------
 
 
@@ -247,7 +247,7 @@ def knowledge_record(
 
     kind ∈ {pattern, decision, gotcha, style, glossary, note}.
     tags can be a list or a comma/space-separated string.
-    file_refs is similar — canonical paths the entry refers to.
+    file_refs is similar, canonical paths the entry refers to.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
@@ -346,7 +346,7 @@ def knowledge_count(
     session_id: str | None = None,
     repo_root: str | Path | None = None,
 ) -> int:
-    """Total matching entries — use alongside knowledge_list for pagination."""
+    """Total matching entries, use alongside knowledge_list for pagination."""
     conn = _get_conn(repo_root)
     sql = "SELECT count(*) FROM knowledge"
     where: list[str] = []
@@ -371,7 +371,7 @@ def knowledge_terms(
     repo_root: str | Path | None = None,
 ) -> list[tuple[str, int]]:
     """
-    Return the glossary — every tag with its occurrence count, sorted by
+    Return the glossary, every tag with its occurrence count, sorted by
     frequency. Acts as the "dict" of knowledge.
     """
     conn = _get_conn(repo_root)

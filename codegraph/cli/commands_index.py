@@ -37,7 +37,7 @@ def cmd_index(args) -> None:
     # Owner-aware routing: when an owner is alive it holds Kuzu's write lock
     # for its entire lifetime, so a direct index_repo() call would race the
     # lock and fail. Route through the owner's incremental_reindex MCP tool
-    # instead — it re-checks every File node's blob SHA against HEAD,
+    # instead, it re-checks every File node's blob SHA against HEAD,
     # re-indexes drifted files, and advances scan_meta.git_head. The --force
     # escape hatch preserves the old "fail loud if locked" behavior for
     # users who really want a fresh local lock attempt.
@@ -47,7 +47,7 @@ def cmd_index(args) -> None:
             from codegraph.cli.commands_monitor import _ask_owner_incremental_reindex
 
             console.print(
-                f"[dim]Owner alive on port {owner_port} — routing through "
+                f"[dim]Owner alive on port {owner_port}, routing through "
                 "incremental_reindex (drifted blobs only).[/dim]"
             )
             console.print(
@@ -118,7 +118,7 @@ def cmd_index(args) -> None:
                     Panel(
                         "[yellow]Database is locked by another cgh process.[/yellow]\n\n"
                         "An MCP owner is holding the Kuzu write lock for this repo.\n"
-                        "Default [cyan]cgh index[/cyan] routes through the owner via MCP — "
+                        "Default [cyan]cgh index[/cyan] routes through the owner via MCP, "
                         "[cyan]--force[/cyan] was passed, which skips that path.\n\n"
                         "Either drop [cyan]--force[/cyan], or stop the owner first:\n"
                         "  [cyan]cgh serve --stop[/cyan]",
@@ -301,7 +301,7 @@ def cmd_serve(args) -> None:
                 while _time.time() < deadline and is_pid_alive(pid):
                     _time.sleep(0.1)
                 if is_pid_alive(pid):
-                    os.kill(pid, 9)  # SIGKILL — escalate
+                    os.kill(pid, 9)  # SIGKILL, escalate
                     _time.sleep(0.2)
                     console.print(f"[yellow]Owner (pid {pid}) force-killed after timeout.[/yellow]")
                 else:

@@ -198,7 +198,7 @@ class DuckDBGraphDB:
             )
 
         # Step 3: drop File-level outbound IMPORTS edges. The File node
-        # itself stays — the indexer reuses its primary key when re-upserting.
+        # itself stays, the indexer reuses its primary key when re-upserting.
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
 
     def find_node_keys(
@@ -280,7 +280,7 @@ class DuckDBGraphDB:
         if contains:
             sub_clauses = []
             for field, value in contains.items():
-                # Wrap value with % for DuckDB's LIKE — case-sensitive.
+                # Wrap value with % for DuckDB's LIKE, case-sensitive.
                 # Cypher CONTAINS is case-sensitive too, so this matches.
                 sub_clauses.append(f"{field} LIKE ?")
                 params.append(f"%{value}%")
@@ -348,7 +348,7 @@ class DuckDBGraphDB:
 
         params: list[Any] = []
         clauses: list[str] = []
-        # LEFT ANTI-JOIN via NOT EXISTS — works on every DuckDB version.
+        # LEFT ANTI-JOIN via NOT EXISTS, works on every DuckDB version.
         clauses.append(
             f"NOT EXISTS (SELECT 1 FROM {edge.table} e WHERE e.{edge.dst_column} = n.{spec.key_field})"
         )
@@ -470,7 +470,7 @@ class DuckDBGraphDB:
 
     # Escape hatch for tooling that needs the raw DuckDB connection
     # (e.g. ATTACH for federation, EXPLAIN ANALYZE). Symmetric with
-    # KuzuGraphDB.raw — both go away when the Kuzu code path is deleted.
+    # KuzuGraphDB.raw, both go away when the Kuzu code path is deleted.
     @property
     def raw(self) -> duckdb.DuckDBPyConnection:
         return self._conn

@@ -42,7 +42,7 @@ def register(mcp) -> None:
         all_results: list[dict] = []
         warnings: list[dict] = []
 
-        # Parent — use cached conn from server
+        # Parent, use cached conn from server
         try:
             parent_results = _fts(
                 _get_fts(),
@@ -54,7 +54,7 @@ def register(mcp) -> None:
         except Exception as exc:
             warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
 
-        # Children — fresh RO conns
+        # Children, fresh RO conns
         if _srv._root is not None:
             for scoped in for_each_child_fts(
                 _srv._root,
@@ -65,7 +65,7 @@ def register(mcp) -> None:
                     continue
                 all_results.extend(_result_to_dict(r, scoped.scope) for r in scoped.payload or [])
 
-        # Sort across federation by score (BM25 returns negative — higher abs is better)
+        # Sort across federation by score (BM25 returns negative, higher abs is better)
         all_results.sort(key=lambda x: -x["score"])
 
         out: dict = {"query": query, "results": all_results}
@@ -87,7 +87,7 @@ def register(mcp) -> None:
 
         FEDERATION CAVEAT: results are computed per scope (parent + each
         subrepo). A symbol "dead" in subrepo X may actually be called from
-        the parent or another subrepo — we don't infer cross-repo edges.
+        the parent or another subrepo, we don't infer cross-repo edges.
         Treat the results as a per-scope candidate list, not a hard verdict.
         """
         from codegraph.analysis.dead_code import find_dead_code as _find_dead
@@ -143,7 +143,7 @@ def register(mcp) -> None:
         out: dict = {
             "dead_symbols": all_dead,
             "count": len(all_dead),
-            "note": "per-scope analysis — a symbol may be live via cross-repo callers",
+            "note": "per-scope analysis, a symbol may be live via cross-repo callers",
         }
         if warnings:
             out["partial"] = True
@@ -162,8 +162,8 @@ def register(mcp) -> None:
         THE FIRST TOOL TO CALL for any coding task.
         Given a natural-language task description, builds a compact, ranked context
         block containing the most relevant symbols, their docstrings, and their
-        graph relationships — plus Claude Code memory entries and related plan
-        files — WITHOUT reading any files.
+        graph relationships, plus Claude Code memory entries and related plan
+        files, WITHOUT reading any files.
 
         Use this before any file reads. It will cut exploration tokens by 60-90%.
 
@@ -173,7 +173,7 @@ def register(mcp) -> None:
                        "add a new GCS bucket resource"
                        "refactor the DataLoader class"
             max_nodes: max symbols to include (default 15)
-            session_id: optional — when passed, already-surfaced entities
+            session_id: optional, when passed, already-surfaced entities
                   from previous calls in THIS session are hidden. Pass the
                   same id across calls to avoid re-serving the same nodes.
             include_shown: if true, ignore session dedup and return
@@ -251,7 +251,7 @@ def register(mcp) -> None:
     @_logged_tool
     def session_reset(session_id: str) -> str:
         """
-        Clear the dedup cache for a session — subsequent `context_for_task`
+        Clear the dedup cache for a session, subsequent `context_for_task`
         calls with this session_id will be allowed to re-surface previously
         shown entities. Useful at the start of a new task within the same
         client session.

@@ -34,19 +34,19 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
    correct for branch switches, pulls, rebases.
 
 3. If `incremental_reindex` returns `mode=fallback_full` (old index
-   without blob tracking), it already ran a full scan — you're done.
+   without blob tracking), it already ran a full scan: you're done.
 
 4. Only call `mcp__codegraph__scan_repo` if the user explicitly asks
    for a full rebuild.
 
-5. Report the result to the user briefly (e.g. "Refreshed codegraph —
+5. Report the result to the user briefly (e.g. "Refreshed codegraph:
    12 files re-indexed, 2 deleted.").
 
 ## Don't
 
 - Don't reindex on every unrelated message; only when a git operation that
   changes many files has just occurred.
-- Don't ask the user to restart the MCP server — `scan_repo` handles it
+- Don't ask the user to restart the MCP server: `scan_repo` handles it
   live through the existing connection.
 - Don't re-scan if `fresh=true`; it wastes time and load.
 

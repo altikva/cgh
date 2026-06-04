@@ -26,7 +26,7 @@ def extract(path: str | Path, lang: str | None = None) -> str:
     p = Path(path)
     suffix = p.suffix.lower()
     try:
-        # Only read a small prefix — module docs live in the first ~200 lines
+        # Only read a small prefix, module docs live in the first ~200 lines
         with open(p, encoding="utf-8", errors="replace") as f:
             head = f.read(8000)
     except OSError:
@@ -97,7 +97,7 @@ def _py_doc(src: str) -> str:
             buf.append(line)
             i += 1
         return " ".join(buf)
-    # No docstring — fallback to comment banner (ALTIKVA style headers)
+    # No docstring, fallback to comment banner (ALTIKVA style headers)
     return _header_comment(src, prefix="#")
 
 
@@ -159,7 +159,7 @@ def _md_doc(src: str) -> str:
                     break
             break
     if title and body:
-        return f"{title} — {body}"
+        return f"{title}, {body}"
     return title or body
 
 
@@ -198,5 +198,5 @@ def _json_description(src: str) -> str:
     desc = data.get("description")
     name = data.get("name")
     if desc and name:
-        return f"{name} — {desc}"
+        return f"{name}, {desc}"
     return desc or name or ""

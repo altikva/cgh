@@ -193,7 +193,7 @@ def _component_name_from_path(file_path: str) -> str:
 
 @register_parser(".vue")
 class VueParser(BaseParser):
-    """Vue/Nuxt SFC parser — extracts script, template refs, composables, and Nuxt conventions."""
+    """Vue/Nuxt SFC parser, extracts script, template refs, composables, and Nuxt conventions."""
 
     lang = "vue"
     extensions = [".vue"]
@@ -479,7 +479,7 @@ def _detect_http_method(file_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Nuxt config files (.ts) — registered separately
+# Nuxt config files (.ts), registered separately
 # ---------------------------------------------------------------------------
 
 

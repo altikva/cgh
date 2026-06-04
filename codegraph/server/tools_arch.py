@@ -113,7 +113,7 @@ def register(mcp) -> None:
         All files related to a domain/feature keyword, grouped by role.
 
         Use when the user names a concept ("stats", "donor merge", "Cerfa")
-        to find every handler/router/model/etc touching it — faster than
+        to find every handler/router/model/etc touching it, faster than
         grep because it respects the role taxonomy.
 
         Matches against file path, role, and module_doc (case-insensitive).
@@ -175,8 +175,8 @@ def register(mcp) -> None:
         List HTTP endpoints in the codebase.
 
         Optional filters:
-          path_pattern — glob like "*/donations*" or "/api/stats/*"
-          method       — GET / POST / PUT / PATCH / DELETE (case-insensitive)
+          path_pattern, glob like "*/donations*" or "/api/stats/*"
+          method, GET / POST / PUT / PATCH / DELETE (case-insensitive)
 
         Returns: [{method, path, framework, file, line, handler}] grouped by
         framework. Includes both FastAPI decorators and Nuxt server/api

@@ -31,7 +31,7 @@ _JS_TS_BUILTINS: frozenset[str] = frozenset(
 )
 
 
-# Python builtins (the callable ones — types and built-in functions).
+# Python builtins (the callable ones, types and built-in functions).
 _PYTHON_BUILTINS: frozenset[str] = frozenset(
     {
         "str", "int", "float", "bool", "list", "dict", "set", "tuple", "bytes",
@@ -91,7 +91,7 @@ _JAVA_BUILTINS: frozenset[str] = frozenset(
 
 
 # Map a FileIndex.lang value to the matching built-in set.
-# Languages we don't have a list for fall back to the empty frozenset — no
+# Languages we don't have a list for fall back to the empty frozenset, no
 # filtering happens, behaviour matches pre-filter cgh.
 _BUILTINS_BY_LANG: dict[str, frozenset[str]] = {
     "python": _PYTHON_BUILTINS,

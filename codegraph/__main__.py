@@ -8,7 +8,7 @@
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Rich-powered CLI for codegraph — thin dispatch layer.
+# Description: Rich-powered CLI for codegraph: thin dispatch layer.
 
 import argparse
 import os
@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
+from codegraph.core.db import KuzuNotInstalled
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
 from codegraph.cli.commands_index import (
@@ -443,10 +444,31 @@ def main() -> None:
     }
 
     handler = dispatch.get(args.cmd)
-    if handler:
-        handler(args)
-    else:
+    if not handler:
         _print_help()
+        return
+
+    try:
+        handler(args)
+    except KuzuNotInstalled as exc:
+        # Known, recoverable situation (Kuzu repo + kuzu not installed).
+        # Print the message and how to fix it, not a traceback. Pass
+        # --verbose to see the full stack.
+        if getattr(args, "verbose", False):
+            raise
+        # Render the message as literal text. It contains `cgh[kuzu]`,
+        # which Rich would otherwise parse as markup and drop.
+        from rich.text import Text
+
+        console.print(
+            Panel(
+                Text(str(exc)),
+                title="[red]Kuzu backend not available[/red]",
+                border_style="red",
+            )
+        )
+        console.print("[dim]Run with --verbose to see the full traceback.[/dim]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

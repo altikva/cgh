@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: MCP visualization tools — visualize_graph, graph_stats.
+# Description: MCP visualization tools: visualize_graph, graph_stats.
 #              Internal helpers generate Mermaid/DOT diagrams using _root-aware
 #              _short_path from the server package.
 

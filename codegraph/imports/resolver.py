@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Resolve ImportRef.source_module to a file path on disk so
 # the indexer can wire IMPORTS edges between File nodes. Filesystem-based
-# only — no tsconfig aliases or workspace packages yet (those come in
+# only: no tsconfig aliases or workspace packages yet (those come in
 # follow-up PRs that build on this).
 
 from __future__ import annotations

@@ -8,7 +8,7 @@
 #
 # Status: schema works end-to-end (CREATE TABLE / SELECT / INSERT all run).
 # The indexer and MCP tools still emit Cypher and therefore can't yet talk to
-# this backend — that's the next PR in the chain. Selecting this backend
+# this backend: that's the next PR in the chain. Selecting this backend
 # today via `CGH_DB=duckdb` is intended for the DuckDB-port work, not
 # end-user use.
 

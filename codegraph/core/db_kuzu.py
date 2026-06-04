@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Kuzu backend implementing the GraphDB protocol.
 #
-# This is a thin passthrough adapter — Kuzu's native Connection already
+# This is a thin passthrough adapter: Kuzu's native Connection already
 # matches the protocol structurally, so the adapter exists primarily as
 # a named seam for the DuckDB backend to slot in alongside.
 

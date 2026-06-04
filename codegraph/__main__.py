@@ -174,7 +174,8 @@ def main() -> None:
         _print_help()
         return
     if sys.argv[1] in ("--version", "-V"):
-        console.print(f"[bold cyan]codegraph[/bold cyan] {VERSION}")
+        console.print(LOGO)
+        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
         return
 
     class _LogoArgumentParser(argparse.ArgumentParser):

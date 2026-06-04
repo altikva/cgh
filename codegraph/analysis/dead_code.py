@@ -7,7 +7,7 @@
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Dead code detector — finds symbols with no incoming edges.
+# Description: Dead code detector: finds symbols with no incoming edges.
 
 from __future__ import annotations
 

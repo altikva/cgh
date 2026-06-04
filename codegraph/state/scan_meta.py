@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Scan metadata — tags each indexing run with the git HEAD + branch.
+# Description: Scan metadata: tags each indexing run with the git HEAD + branch.
 #              Lets tools like `cgh stats`, `scan_status` MCP tool, and skills
 #              decide whether the graph is fresh relative to the working tree.
 

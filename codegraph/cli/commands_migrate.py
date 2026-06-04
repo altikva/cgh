@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: `cgh migrate-to-duckdb` — re-index a repo currently on the
+# Description: `cgh migrate-to-duckdb`: re-index a repo currently on the
 # Kuzu backend into DuckDB, verify counts match, optionally delete the
 # old graph.db. Safe to run mid-flight: keeps the old DB around until
 # the user confirms.

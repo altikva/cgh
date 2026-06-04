@@ -245,7 +245,7 @@ def main() -> None:
         port = read_owner_port(_root)
         print(f"[codegraph] attaching to existing owner on port {port}", file=sys.stderr)
     else:
-        print("[codegraph] no owner running — launching one", file=sys.stderr)
+        print("[codegraph] no owner running, launching one", file=sys.stderr)
         port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
         if port is None:
             print(
@@ -382,7 +382,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     _idle_since: float | None = None
 
     def _shutdown(reason: str) -> None:
-        print(f"[codegraph owner] {reason} — shutting down", file=sys.stderr, flush=True)
+        print(f"[codegraph owner] {reason}, shutting down", file=sys.stderr, flush=True)
         # Run cleanup explicitly — SIGTERM + os._exit would skip atexit.
         try:
             _cleanup()

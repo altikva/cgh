@@ -46,7 +46,7 @@ def cmd_stats(args) -> None:
 
     if getattr(args, "live", False):
         console.print(LOGO)
-        console.print("[dim]Live stats — Ctrl-C to stop[/dim]\n")
+        console.print("[dim]Live stats (Ctrl-C to stop)[/dim]\n")
         try:
             with Live(
                 _build_stats_group(root),
@@ -356,7 +356,7 @@ def cmd_status(args) -> None:
     # when they all match.
     if getattr(args, "refresh", False):
         if not owner_alive or not owner_port:
-            console.print("[yellow]Cannot refresh — owner is not running.[/yellow]")
+            console.print("[yellow]Cannot refresh: owner is not running.[/yellow]")
             console.print(
                 "[dim]Start it with:[/dim] [cyan]cgh serve --background --watch[/cyan] [dim]then re-run.[/dim]\n"
             )
@@ -1006,7 +1006,7 @@ def cmd_tail(args) -> None:
         console.print(_build())
         return
 
-    console.print("[dim]Tailing codegraph activity — Ctrl-C to stop[/dim]\n")
+    console.print("[dim]Tailing codegraph activity (Ctrl-C to stop)[/dim]\n")
     try:
         with Live(_build(), console=console, refresh_per_second=2, screen=False) as live:
             while True:
@@ -1141,7 +1141,7 @@ def cmd_history(args) -> None:
     conn.close()
 
     table = Table(
-        title=f"Activity — Last {days} Day(s)",
+        title=f"Activity: Last {days} Day(s)",
         box=box.ROUNDED,
         title_style="bold cyan",
     )

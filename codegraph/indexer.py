@@ -533,7 +533,7 @@ def index_file(
         from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
-        print(f"[codegraph] parse skipped — {msg}", file=sys.stderr, flush=True)
+        print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
         return False
     except Exception as exc:
@@ -543,7 +543,7 @@ def index_file(
         from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: {type(exc).__name__}: {exc}"
-        print(f"[codegraph] parse error — {msg}", file=sys.stderr, flush=True)
+        print(f"[codegraph] parse error: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
         return False
 

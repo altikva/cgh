@@ -5,7 +5,7 @@
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Scan Claude Code memory files into the FTS index.
-#              Default location is ~/.claude/projects/-<slug>/memory/ —
+#              Default location is ~/.claude/projects/-<slug>/memory/,
 #              overridable via CG_MEMORY_DIR env or [paths] in config.toml.
 
 from __future__ import annotations

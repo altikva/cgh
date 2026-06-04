@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Single source of truth for the cgh graph model — what
+# Description: Single source of truth for the cgh graph model: what
 # nodes exist, what edges exist, and how each backend names them.
 # Both KuzuGraphDB and DuckDBGraphDB consume this when implementing
 # the upsert/edge/purge helpers from core.protocol.GraphDB.

@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: HTML generation — self-contained HTML files with Mermaid diagrams
+# Description: HTML generation: self-contained HTML files with Mermaid diagrams
 #              and browser opening.
 
 from __future__ import annotations

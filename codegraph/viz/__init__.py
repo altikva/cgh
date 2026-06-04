@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Visualization package — Mermaid diagram generators and HTML rendering.
+# Description: Visualization package: Mermaid diagram generators and HTML rendering.
 
 from codegraph.viz.html import generate_html, open_in_browser
 from codegraph.viz.mermaid import (

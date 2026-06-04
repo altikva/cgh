@@ -154,7 +154,7 @@ class BaseParser(ABC):
     def parse(self, path: Path) -> FileIndex:
         """
         Parse a source file and return a FileIndex.
-        Must not raise on malformed input — return partial results instead.
+        Must not raise on malformed input. Return partial results instead.
         """
         ...
 

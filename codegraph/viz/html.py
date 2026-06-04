@@ -169,7 +169,7 @@ def generate_html(
     repo_name = Path(root).name
 
     return _HTML_TEMPLATE.format(
-        title=f"{repo_name} — {scope}",
+        title=f"{repo_name}: {scope}",
         scope=scope,
         meta=meta or repo_name,
         mermaid=html.escape(mermaid_code),

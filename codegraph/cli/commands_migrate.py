@@ -335,7 +335,7 @@ def cmd_migrate_to_duckdb(args) -> None:
                 "[yellow]Counts differ between Kuzu and DuckDB.[/yellow] "
                 "Both files have been kept so you can inspect manually.\n"
                 f"[dim]{result.message}[/dim]",
-                title="[yellow]Mismatch — kept both files[/yellow]",
+                title="[yellow]Mismatch, kept both files[/yellow]",
                 border_style="yellow",
             )
         )
@@ -356,7 +356,7 @@ def cmd_migrate_to_duckdb(args) -> None:
                 "DuckDB is being treated as canonical because every diff is "
                 "explained by a fix that shipped after Kuzu was last written "
                 "(or by ghost rows from deleted files).",
-                title="[cyan]Stale Kuzu — DuckDB accepted as canonical[/cyan]",
+                title="[cyan]Stale Kuzu: DuckDB accepted as canonical[/cyan]",
                 border_style="cyan",
             )
         )

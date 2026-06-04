@@ -153,7 +153,7 @@ def cmd_search(args) -> None:
             f"[cyan]cgh search {query} --offset {offset + limit} -n {limit}[/cyan]"
         )
     else:
-        console.print(f"[dim]Showing {start}–{end} (end of results).[/dim]")
+        console.print(f"[dim]Showing {start}-{end} (end of results).[/dim]")
 
 
 # ---------------------------------------------------------------------------

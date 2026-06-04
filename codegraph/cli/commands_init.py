@@ -79,7 +79,7 @@ def _incremental_via_owner(
     activity log every 500ms. Either branch finishing the scan wins.
     """
     if not port:
-        console_obj.print("  [yellow]owner port not known — skipping[/yellow]")
+        console_obj.print("  [yellow]owner port not known, skipping[/yellow]")
         return
 
     import http.client
@@ -142,7 +142,7 @@ def _incremental_via_owner(
         tbl.add_column("event", width=16)
         tbl.add_column("detail", overflow="fold")
         if not entries:
-            tbl.add_row("—", "[dim]waiting[/dim]", "[dim]activity log empty[/dim]")
+            tbl.add_row("-", "[dim]waiting[/dim]", "[dim]activity log empty[/dim]")
         now = _t.time()
         for ts, event, detail in entries:
             age = now - ts
@@ -157,7 +157,7 @@ def _incremental_via_owner(
                 _t.sleep(0.5)
                 live.update(_render())
     except KeyboardInterrupt:
-        console_obj.print("\n  [yellow]stopped watching — owner may still be working in the background[/yellow]")
+        console_obj.print("\n  [yellow]stopped watching, owner may still be working in the background[/yellow]")
         return
 
     # Report result
@@ -513,7 +513,7 @@ def cmd_init(args) -> None:
         for b in bits:
             console.print(f"    • {b}")
         if not bits:
-            console.print("    [dim](initialized but empty — safe to full scan)[/dim]")
+            console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
         console.print()
 
     # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
@@ -613,7 +613,7 @@ def cmd_init(args) -> None:
                 style=cg_style,
             ).ask()
             if not overwrite_skills:
-                console.print("  [green]Keeping your edits[/green] — will refresh only new / unmodified skills.\n")
+                console.print("  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n")
 
     for key in selected_keys:
         _install_integration(root, key, overwrite_skills=overwrite_skills)
@@ -794,13 +794,13 @@ def cmd_init(args) -> None:
         choice = None
 
         if owner_alive:
-            console.print("  [yellow]The MCP owner is running — it already watches this repo.[/yellow]")
+            console.print("  [yellow]The MCP owner is running, it already watches this repo.[/yellow]")
             if not args.yes:
                 choice = (
                     questionary.select(
                         "What do you want to do?",
                         choices=[
-                            questionary.Choice(title="Skip — owner keeps the index fresh", value="skip"),
+                            questionary.Choice(title="Skip, owner keeps the index fresh", value="skip"),
                             questionary.Choice(
                                 title="Incremental rescan through the owner (no lock fight)",
                                 value="mcp_scan",
@@ -827,7 +827,7 @@ def cmd_init(args) -> None:
                                 value="incremental",
                             ),
                             questionary.Choice(title="Full scan (re-parse everything)", value="full"),
-                            questionary.Choice(title="Skip — keep as-is", value="skip"),
+                            questionary.Choice(title="Skip, keep as-is", value="skip"),
                         ],
                         style=cg_style,
                     ).ask()

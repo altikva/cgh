@@ -60,6 +60,7 @@ kuzu = ["kuzu>=0.7"]
 Homepage = "https://github.com/altikva/cgh"
 Repository = "https://github.com/altikva/cgh"
 Issues = "https://github.com/altikva/cgh/issues"
+Changelog = "https://github.com/altikva/cgh/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cgh = "codegraph.__main__:main"

@@ -378,3 +378,35 @@ def cmd_force_index(args) -> None:
                 console.print(f"  [red]x[/red] {p} (not found)")
 
     console.print(f"[green]Force-indexed {indexed} file(s)[/green]")
+
+
+def cmd_reindex_hook(args) -> None:
+    """Hidden command invoked by the cgh git hooks (post-merge, post-checkout,
+    post-rewrite). Quietly runs an incremental reindex so the graph tracks the
+    content brought in by a pull, merge, branch switch, or rebase.
+
+    Never raises and never blocks: any failure here must not disturb the git
+    operation that triggered it. The hook script also backgrounds this and
+    redirects all output, so it stays invisible in normal use.
+    """
+    try:
+        root = os.path.abspath(getattr(args, "root", os.getcwd()))
+        if not (Path(root) / ".codegraph").is_dir():
+            return  # repo is not indexed by cgh, nothing to do
+
+        from codegraph.state.ipc import is_owner_alive, read_owner_port
+
+        if is_owner_alive(root):
+            port = read_owner_port(root)
+            if port:
+                from codegraph.cli.commands_monitor import _ask_owner_incremental_reindex
+
+                _ask_owner_incremental_reindex(root, port)
+                return
+
+        from codegraph.indexer import index_repo
+
+        index_repo(root, method="incremental")
+    except Exception:
+        # A reindex failure must never break the user's git operation.
+        pass

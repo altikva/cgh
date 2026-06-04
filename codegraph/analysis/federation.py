@@ -99,7 +99,7 @@ def resolve_children(repo_root: str | Path) -> list[Path]:
 
 def child_paths_to_skip(repo_root: str | Path) -> list[Path]:
     """
-    Paths the parent indexer / watcher must NOT touch — every declared
+    Paths the parent indexer / watcher must NOT touch, every declared
     subrepo, regardless of whether it's currently initialized. We skip
     even un-initialized ones so adding a subrepo later doesn't require
     re-indexing the parent.
@@ -152,7 +152,7 @@ def verify_child(child_path: str | Path) -> ChildStatus:
 
 
 # ---------------------------------------------------------------------------
-# Read-only connections — fresh per call, NOT cached. Federation calls these
+# Read-only connections, fresh per call, NOT cached. Federation calls these
 # many times per query (one per subrepo) and connections must be released so
 # subrepo owners can keep writing.
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
     actually on disk: ``graph.duckdb`` -> DuckDB, ``graph.db`` -> Kuzu.
 
     Yields None when the DB is missing, locked, or unreadable. Always
-    closes the connection — Kuzu holds an OS file lock that must be
+    closes the connection, Kuzu holds an OS file lock that must be
     released so the child's own owner can keep writing.
     """
     detected = _detect_backend_file(repo_root)
@@ -195,7 +195,7 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
                 pass
         return
 
-    # Kuzu path. Kuzu is an optional extra since v0.4.2 — a subrepo can
+    # Kuzu path. Kuzu is an optional extra since v0.4.2, a subrepo can
     # be on Kuzu while this (parent) install has no kuzu package. Degrade
     # to None rather than crashing the whole federated query.
     try:
@@ -214,7 +214,7 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
             db = kuzu.Database(str(db_path), read_only=True)
             raw = kuzu.Connection(db)
         except RuntimeError:
-            # Locked or schema mismatch — caller should treat as "skipped"
+            # Locked or schema mismatch, caller should treat as "skipped"
             yield None
             return
         yield KuzuGraphDB(raw)
@@ -293,7 +293,7 @@ class ScopedResult:
 
 
 def _scope_name(repo_root: Path, parent: Path) -> str:
-    """Short label for a repo — 'parent' for the root, basename otherwise."""
+    """Short label for a repo, 'parent' for the root, basename otherwise."""
     if repo_root == parent:
         return "parent"
     return repo_root.name
@@ -306,7 +306,7 @@ def for_each_graphdb(
     """
     Run ``fn(conn, scope_path)`` against the graph DB of the parent and
     each initialized subrepo. Failures are captured per-scope. Tries to
-    RO-open the parent — only works when no other process holds the
+    RO-open the parent, only works when no other process holds the
     write lock. For tools running inside the parent's owner (which
     already holds a write conn), use ``for_each_child_graphdb`` instead
     and call your local write conn for the parent scope yourself.
@@ -355,7 +355,7 @@ def _run_one_graphdb(
 
 
 # Backward-compat aliases for callers that import the old names. New
-# code should prefer the _graphdb variants — these will be removed in
+# code should prefer the _graphdb variants, these will be removed in
 # the 0.6 release that also deletes the Kuzu-specific code paths.
 for_each_kuzu = for_each_graphdb
 for_each_child_kuzu = for_each_child_graphdb
@@ -375,7 +375,7 @@ def for_each_child_fts(
     repo_root: str | Path,
     fn: Callable[[sqlite3.Connection, Path], Any],
 ) -> list[ScopedResult]:
-    """Children-only FTS iteration — the parent caller uses its cached conn."""
+    """Children-only FTS iteration, the parent caller uses its cached conn."""
     parent = Path(repo_root).resolve()
     return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)[1:]]
 
@@ -407,7 +407,7 @@ def _run_one_fts(
 
 
 def has_subrepos(repo_root: str | Path) -> bool:
-    """Cheap check — useful for tools to take a fast no-op path when off."""
+    """Cheap check, useful for tools to take a fast no-op path when off."""
     return bool(resolve_children(repo_root))
 
 
@@ -440,7 +440,7 @@ def child_owner_status(child_path: str | Path) -> OwnerStatus:
 def add_subrepo(repo_root: str | Path, child_path: str | Path) -> tuple[Path, ChildStatus]:
     """
     Append `child_path` to the parent's config.toml and return its status.
-    Idempotent — if already present, just returns the current status.
+    Idempotent, if already present, just returns the current status.
     Raises ValueError if the child path doesn't exist.
     """
     parent = Path(repo_root).resolve()
@@ -513,7 +513,7 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# TOML I/O — minimal, preserves only what we touch (codegraph table). Other
+# TOML I/O, minimal, preserves only what we touch (codegraph table). Other
 # tables are pass-through. We don't pull in tomli-w to keep deps light.
 # ---------------------------------------------------------------------------
 

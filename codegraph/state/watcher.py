@@ -62,7 +62,7 @@ class _CodeGraphHandler(FileSystemEventHandler):
         if _is_cghignored(p, self._root):
             return True
 
-        # 4. Federated subrepo — owned by its own index
+        # 4. Federated subrepo, owned by its own index
         if self._subrepos and is_under_any(p, self._subrepos):
             return True
 
@@ -146,7 +146,7 @@ _active_handler: _CodeGraphHandler | None = None
 class _AuxRescanHandler(FileSystemEventHandler):
     """
     Debounced handler that triggers a folder-level rescan callback on
-    any .md change. Used for the memory dir and the plans dir — we
+    any .md change. Used for the memory dir and the plans dir, we
     re-scan the entire (small) folder instead of tracking per-file state.
     """
 

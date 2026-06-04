@@ -3,7 +3,7 @@ name: cgh-record-knowledge
 description: Persist patterns, decisions, gotchas, style preferences, and session digests into codegraph's knowledge store so they survive across sessions and context compactions. Complements cgh-use-memory (which is about READING). Triggers proactively after an "aha" moment, after diagnosing a non-obvious bug, or near the end of a long session.
 ---
 
-# Record knowledge — codegraph write side
+# Record knowledge: codegraph write side
 
 Codegraph has a persistent knowledge store backed by SQLite FTS. Unlike
 memory files (which the user curates via their own memory skill), the
@@ -25,10 +25,10 @@ Call `mcp__codegraph__knowledge_record` when you notice any of:
 | Any other reusable insight | "Watcher debounce is 300ms in codegraph" | `note` |
 
 Do NOT record:
-- Things that are already in CLAUDE.md / memory files — those are already
+- Things that are already in CLAUDE.md / memory files: those are already
   surfaced via `memory_search`.
 - Trivia only relevant to the current conversation turn.
-- The user's questions themselves — only your answers + insights.
+- The user's questions themselves: only your answers + insights.
 
 ## How to record
 
@@ -43,13 +43,13 @@ knowledge_record(
 )
 ```
 
-**Tag discipline**: tags ARE the glossary. Use 2–5 short lowercase tags
-per entry. Reuse existing tags when possible — call `knowledge_terms()`
+**Tag discipline**: tags ARE the glossary. Use 2-5 short lowercase tags
+per entry. Reuse existing tags when possible: call `knowledge_terms()`
 first to see what's already in use.
 
-## Context lifecycle — persist before compaction, reload after
+## Context lifecycle: persist before compaction, reload after
 
-Your context window is finite. Knowledge survives compaction — raw
+Your context window is finite. Knowledge survives compaction: raw
 conversation does not. This is the most important workflow in codegraph.
 
 ### Before compaction (~80% context usage)
@@ -76,13 +76,13 @@ system warns about approaching limits):
 
 ### After compaction / session resume
 
-This is CRITICAL — without this step you restart from zero:
+This is CRITICAL: without this step you restart from zero:
 
-1. `knowledge_list(limit=20)` — reload recent learnings
-2. `knowledge_search(query)` — targeted reload for the current task
-3. `memory_search(query)` — reload user preferences and feedback
-4. `plan_search(query)` — reload any active plan
-5. `knowledge_terms()` — see the full glossary of captured topics
+1. `knowledge_list(limit=20)`: reload recent learnings
+2. `knowledge_search(query)`: targeted reload for the current task
+3. `memory_search(query)`: reload user preferences and feedback
+4. `plan_search(query)`: reload any active plan
+5. `knowledge_terms()`: see the full glossary of captured topics
 
 ### Session start (new conversation)
 
@@ -93,7 +93,7 @@ context_for_task(task="<what the user wants>", session_id=<new_id>)
 This automatically merges code graph + memory + plans + knowledge.
 Then supplement with targeted `knowledge_search` if needed.
 
-## Before recording — check for duplicates
+## Before recording: check for duplicates
 
 1. `knowledge_search(query="<your planned title>")`
 2. If a near-duplicate exists, consider `knowledge_forget(id)` then
@@ -104,5 +104,5 @@ Then supplement with targeted `knowledge_search` if needed.
 - Don't record the user's raw prompts.
 - Don't record secrets, tokens, or PII (the DB sits in `.codegraph/`
   which is gitignored but users may inspect it).
-- Don't create an entry per line of a decision — one per coherent insight.
-- Don't skip `tags` — without them the glossary can't aggregate the topic.
+- Don't create an entry per line of a decision: one per coherent insight.
+- Don't skip `tags`: without them the glossary can't aggregate the topic.

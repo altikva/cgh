@@ -25,7 +25,7 @@ from pathlib import Path
 #   - Terraform, Kubernetes
 #   - Docs, tests, scripts
 _DEFAULT_PATH_RULES: list[tuple[str, str, str]] = [
-    # --- Backend — routing / HTTP ---
+    # --- Backend, routing / HTTP ---
     ("/routers/", "router", "presentation"),
     ("/routes/", "router", "presentation"),
     ("/controllers/", "controller", "presentation"),
@@ -33,7 +33,7 @@ _DEFAULT_PATH_RULES: list[tuple[str, str, str]] = [
     ("/middleware/", "middleware", "presentation"),
     ("/server/api/", "api_route", "presentation"),
     ("/server/middleware/", "middleware", "presentation"),
-    # --- Backend — business logic ---
+    # --- Backend, business logic ---
     ("/handlers/", "handler", "application"),
     ("/managers/", "manager", "application"),
     ("/services/", "service", "application"),
@@ -47,14 +47,14 @@ _DEFAULT_PATH_RULES: list[tuple[str, str, str]] = [
     ("/events/", "event", "application"),
     ("/subscribers/", "subscriber", "application"),
     ("/validators/", "validator", "application"),
-    # --- Backend — domain ---
+    # --- Backend, domain ---
     ("/models/", "model", "domain"),
     ("/entities/", "entity", "domain"),
     ("/domain/", "domain_obj", "domain"),
     ("/schemas/", "schema", "domain"),
     ("/dto/", "dto", "domain"),
     ("/types/", "type", "domain"),
-    # --- Backend — infra ---
+    # --- Backend, infra ---
     ("/providers/", "provider", "infra"),
     ("/adapters/", "adapter", "infra"),
     ("/repositories/", "repository", "infra"),
@@ -69,14 +69,14 @@ _DEFAULT_PATH_RULES: list[tuple[str, str, str]] = [
     ("/migrations/", "migration", "infra"),
     ("/alembic/versions/", "migration", "infra"),
     ("/prisma/migrations/", "migration", "infra"),
-    # --- Frontend — presentation ---
+    # --- Frontend, presentation ---
     ("/components/", "component", "presentation"),
     ("/pages/", "page", "presentation"),
     ("/views/", "view", "presentation"),
     ("/layouts/", "layout", "presentation"),
     ("/routes/", "page", "presentation"),  # Remix / SvelteKit
     ("/app/", "page", "presentation"),  # Next.js app router
-    # --- Frontend — logic ---
+    # --- Frontend, logic ---
     ("/composables/", "composable", "application"),
     ("/hooks/", "hook", "application"),
     ("/stores/", "store", "application"),
@@ -187,8 +187,8 @@ def classify(path: str | Path, repo_root: str | Path | None = None) -> tuple[str
     """
     Return (role, layer) for a file path.
 
-    role:  narrow semantic category — "handler", "component", "router", etc.
-    layer: coarse architectural layer — "presentation" | "application" |
+    role:  narrow semantic category, "handler", "component", "router", etc.
+    layer: coarse architectural layer, "presentation" | "application" |
            "domain" | "infra" | "test" | "doc" | "other".
 
     Matching order:
@@ -206,13 +206,13 @@ def classify(path: str | Path, repo_root: str | Path | None = None) -> tuple[str
     rel_posix = "/" + str(rel).replace("\\", "/").lstrip("/")  # ensure leading slash
     rel_lower = rel_posix.lower()
 
-    # 1. Custom rules first — team overrides the built-ins
+    # 1. Custom rules first, team overrides the built-ins
     if repo_root is not None:
         for fragment, role, layer in _load_custom_rules(repo_root):
             if fragment in rel_lower:
                 return role, layer
 
-    # 2. Built-in defaults — prefer the MOST SPECIFIC match (longest wins)
+    # 2. Built-in defaults, prefer the MOST SPECIFIC match (longest wins)
     best_match: tuple[str, str] | None = None
     best_len = -1
     for fragment, role, layer in _DEFAULT_PATH_RULES:

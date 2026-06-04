@@ -135,7 +135,7 @@ def _cmd_up(args) -> None:
         st = verify_child(child)
         if not st.ok:
             console.print(
-                f"[yellow]⚠ {child.name}[/yellow] skipped — "
+                f"[yellow]⚠ {child.name}[/yellow] skipped, "
                 f"{'not initialized' if not st.initialized else 'no graph DB'}"
             )
             continue
@@ -159,7 +159,7 @@ def _cmd_up(args) -> None:
 def _cmd_down(args) -> None:
     """Stop the owner of each federated child (if running) and remove its
     keepalive marker. Doesn't touch children whose owners were started by
-    something other than `cgh federate up` — they'll just lose their
+    something other than `cgh federate up`, they'll just lose their
     keepalive and exit on their own when their last worker disconnects.
     """
     import os as _os
@@ -241,7 +241,7 @@ def _render_status_table(
             else:
                 owner_cell = "[dim]down[/dim]"
         else:
-            owner_cell = "[dim]—[/dim]"
+            owner_cell = "[dim], [/dim]"
 
         git = "[dim]yes[/dim]" if status.is_git_repo else "[dim]no[/dim]"
         table.add_row(child.name, badge, owner_cell, git, display)

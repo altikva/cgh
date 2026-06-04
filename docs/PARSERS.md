@@ -396,7 +396,7 @@ No config changes, no registry edits. The `@register_parser` decorator and auto-
 
 ## Dependencies
 
-As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java) is a core dependency in `pyproject.toml` — no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
+As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java) is a core dependency in `pyproject.toml`: no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
 
 ```toml
 dependencies = [

@@ -12,7 +12,7 @@ only read the lines you actually need.
 **Token economics**: MCP tool execution runs server-side and costs zero
 model tokens. The only token cost is the JSON response, which is capped
 and truncated. Read/Grep, in contrast, pulls the entire file into the
-transcript. Call codegraph tools liberally — they're almost always
+transcript. Call codegraph tools liberally: they're almost always
 cheaper than reading. Default bias: call the tool, don't hesitate.
 
 ## Triggers → tool
@@ -24,8 +24,8 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 | "What does `fn` call?" | `mcp__codegraph__find_callees(fn_name="fn")` |
 | Fuzzy / partial name | `mcp__codegraph__search_symbols(query="...")` |
 | Full-text (docstrings, names) | `mcp__codegraph__fts_search(query="...")` |
-| **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)` — INSTEAD of Grep |
-| "How does [feature] work?" — starting a non-trivial task | `mcp__codegraph__context_for_task(task="...")` |
+| **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)`: INSTEAD of Grep |
+| "How does [feature] work?": starting a non-trivial task | `mcp__codegraph__context_for_task(task="...")` |
 | "What docs mention `X`?" | `mcp__codegraph__search_docs` / `doc_refs` |
 | "Blast radius of `file.py`" | `mcp__codegraph__subgraph(file_path="...")` |
 | "Is `fn` dead / unused?" | `mcp__codegraph__find_dead_code` |
@@ -35,13 +35,13 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 1. Identify the target (symbol name, file, or task description).
 2. Call the relevant codegraph tool.
 3. Use the returned `file_path` + `start_line`/`end_line` to `Read` only the
-   needed range — not the whole file.
+   needed range: not the whole file.
 
 ## Don't
 
 - Don't Grep / Read a file "to find where X is" if `symbol_lookup` would
   return it directly.
-- Don't read an entire file just to list its functions — use `doc_outline`
+- Don't read an entire file just to list its functions: use `doc_outline`
   for markdown or walk symbols via `search_symbols`.
 - Don't run manual `cgh` CLI commands during a session; use MCP tools so
   results are logged and cached.

@@ -32,7 +32,7 @@ class NodeSpec:
 
 
 # Node labels used by the indexer. Order matters for purge: edges first,
-# then nodes — within nodes, no inter-table FK, so any order works.
+# then nodes, within nodes, no inter-table FK, so any order works.
 NODES: dict[str, NodeSpec] = {
     "File": NodeSpec("File", "file", "path", False),
     "Function": NodeSpec("Function", "function", "id", True),

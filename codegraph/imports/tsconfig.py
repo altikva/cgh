@@ -97,7 +97,7 @@ def _read_tsconfig(tsconfig: Path, seen: set[Path] | None = None) -> dict:
     merged: dict = {}
     extends = data.get("extends")
     if isinstance(extends, str):
-        # `extends` resolves like a bare import would — supports relative
+        # `extends` resolves like a bare import would, supports relative
         # path or a path-aliased / node_modules-style ref. We only handle
         # relative for now (the common case).
         if extends.startswith(".") or extends.startswith("/"):
@@ -152,7 +152,7 @@ def resolve_alias(raw_import: str, importer_dir: Path) -> list[Path]:
     """
     Resolve a TS import string against the nearest tsconfig.json's
     compilerOptions.paths. Returns the list of candidate file paths to
-    try (without extension — caller layers JS/TS extensions on top).
+    try (without extension, caller layers JS/TS extensions on top).
 
     Empty list when no tsconfig is reachable or no alias pattern matches.
     """
@@ -183,5 +183,5 @@ def resolve_alias(raw_import: str, importer_dir: Path) -> list[Path]:
 
 
 def _clear_cache() -> None:
-    """Test hook — reset the per-directory alias cache."""
+    """Test hook, reset the per-directory alias cache."""
     _ALIAS_CACHE.clear()

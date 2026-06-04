@@ -12,6 +12,16 @@ on:
       - main
 
 jobs:
+  # Style gate: no em or en dashes in shipped prose (the no-ai-tells
+  # convention). Cheap, no Python deps, runs once.
+  no-ai-tells:
+    name: no-ai-tells (no em dashes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check shipped prose for em/en dashes
+        run: python3 scripts/check_no_em_dashes.py
+
   # Gating job: lint + the full supported Python matrix. Kuzu has no cp3.14
   # wheel, so the kuzu extra is installed only on 3.11-3.13; 3.14 runs the
   # default DuckDB-only install and the Kuzu tests skip themselves.

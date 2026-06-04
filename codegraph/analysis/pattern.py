@@ -82,19 +82,19 @@ def pattern_search(
         except Exception:
             pass
 
-    # Strategy 1 — ripgrep (preferred, fastest, respects .gitignore)
+    # Strategy 1, ripgrep (preferred, fastest, respects .gitignore)
     if shutil.which("rg"):
         hits, ok = _run_rg(roots, pattern, glob, max_results, regex, case_sensitive)
         if ok:
             return hits[:max_results], "rg"
 
-    # Strategy 2 — git grep (respects .gitignore; repo-by-repo)
+    # Strategy 2, git grep (respects .gitignore; repo-by-repo)
     if shutil.which("git"):
         hits, ok = _run_git_grep(roots, pattern, glob, max_results, regex, case_sensitive)
         if ok:
             return hits[:max_results], "git-grep"
 
-    # Strategy 3 — Python walk + re (slowest, always available)
+    # Strategy 3, Python walk + re (slowest, always available)
     hits = _run_python(roots, pattern, glob, max_results, regex, case_sensitive)
     return hits[:max_results], "python-fallback"
 
@@ -215,7 +215,7 @@ def _run_python(
         else:
             # Compile a fast literal matcher
             needle = pattern if case_sensitive else pattern.lower()
-            rx = None  # sentinel — handled below
+            rx = None  # sentinel, handled below
     except re.error:
         return []
 

@@ -74,29 +74,29 @@ def _detect_patterns(files: list[str]) -> list[str]:
     router_or_schema = [f for f in files if f.startswith("api/routers/") or f.startswith("api/schemas/")]
     if router_or_schema:
         alerts.append(
-            "OPENAPI_REGEN: Router/schema files changed — openapi.json may need regeneration + frontend backlog issue"
+            "OPENAPI_REGEN: Router/schema files changed, openapi.json may need regeneration + frontend backlog issue"
         )
 
     model_files = [f for f in files if f.startswith("api/models/")]
     if model_files:
         alerts.append(
-            f"MIGRATION_CHECK: {len(model_files)} model file(s) changed — check if Alembic migration is needed"
+            f"MIGRATION_CHECK: {len(model_files)} model file(s) changed, check if Alembic migration is needed"
         )
 
     webhook_files = [f for f in files if "webhook" in f.lower()]
     if webhook_files:
-        alerts.append("SECURITY_CHECK: Webhook handler changed — verify SSRF guards and signature validation")
+        alerts.append("SECURITY_CHECK: Webhook handler changed, verify SSRF guards and signature validation")
 
     handler_files = [f for f in files if f.startswith("api/handlers/")]
     if handler_files:
         alerts.append(
-            f"HANDLER_CHANGE: {len(handler_files)} handler(s) changed — "
+            f"HANDLER_CHANGE: {len(handler_files)} handler(s) changed, "
             "verify cross-table search includes tags/custom fields if list() modified"
         )
 
     tenant_files = [f for f in files if "tenant" in f.lower() or "rls" in f.lower() or "auth" in f.lower()]
     if tenant_files:
-        alerts.append("TENANT_SECURITY: Tenant/auth file changed — verify RLS context is always set, never swallowed")
+        alerts.append("TENANT_SECURITY: Tenant/auth file changed, verify RLS context is always set, never swallowed")
 
     return alerts
 

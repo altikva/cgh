@@ -16,7 +16,7 @@ from codegraph.core.utils import safe_id as _safe_id
 from codegraph.core.utils import short_path as _short_path
 
 # ---------------------------------------------------------------------------
-# Mermaid generators (from visualize.py — used by CLI cmd_graph)
+# Mermaid generators (from visualize.py, used by CLI cmd_graph)
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +182,7 @@ def mermaid_overview(conn, root: str, max_nodes: int = 30) -> str:
 
     counts = {}
     for label in ("Function", "Class", "MdSection"):
-        # Kuzu Cypher requires literal labels — safe: fixed allowlist
+        # Kuzu Cypher requires literal labels, safe: fixed allowlist
         query = "MATCH (n:" + label + ") RETURN count(n) AS c"
         r2 = conn.execute(query)
         for row in _rows(r2):

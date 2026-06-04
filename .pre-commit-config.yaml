@@ -1,0 +1,22 @@
+# Local pre-commit hooks. Run `pre-commit install` once to enable them, then
+# they run on every `git commit`. CI runs the same checks, so the hooks are a
+# fast local mirror, not the source of truth.
+#
+#   pip install pre-commit   (or: uv tool install pre-commit)
+#   pre-commit install
+
+repos:
+  - repo: local
+    hooks:
+      - id: no-ai-tells
+        name: no-ai-tells (no em dashes in shipped prose)
+        entry: python3 scripts/check_no_em_dashes.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff
+        name: ruff check
+        entry: uvx ruff check
+        language: system
+        types: [python]

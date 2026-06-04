@@ -26,11 +26,17 @@ _DUCKDB_FILE = "graph.duckdb"
 
 _KUZU_MISSING_MSG = (
     "This repo uses the Kuzu graph backend (it has a .codegraph/graph.db), "
-    "but the `kuzu` package is not installed. You have two options. "
-    "Install Kuzu: `uv tool install cgh --with kuzu` (or `pip install cgh[kuzu]`). "
-    "Or move this repo to DuckDB, the default backend since v0.4, which needs no "
-    "extra package: run `cgh migrate-to-duckdb`, or delete .codegraph/graph.db "
-    "and run `cgh index` again to reindex fresh on DuckDB."
+    "but the kuzu package is not installed. Pick one of these.\n"
+    "\n"
+    "Keep Kuzu, install the extra:\n"
+    "    uv tool install cgh --with kuzu\n"
+    "    pip install cgh[kuzu]\n"
+    "\n"
+    "Move to DuckDB (the default since v0.4, no extra package):\n"
+    "    cgh migrate-to-duckdb\n"
+    "\n"
+    "Or start fresh on DuckDB:\n"
+    "    rm .codegraph/graph.db && cgh index"
 )
 
 

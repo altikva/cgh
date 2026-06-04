@@ -10,7 +10,7 @@
 #   1. Create a file in codegraph/parsers/ (e.g., rust.py)
 #   2. Subclass BaseParser
 #   3. Decorate with @register_parser
-#   4. Done — codegraph auto-discovers it on import
+#   4. Done: codegraph auto-discovers it on import
 #
 # Example:
 #   @register_parser(".rs")

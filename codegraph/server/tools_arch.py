@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: MCP architecture-awareness tools — architecture_overview,
+# Description: MCP architecture-awareness tools: architecture_overview,
 #              domain_map, endpoints. Designed to be the FIRST tools Claude
 #              calls for new-feature / code-exploration tasks.
 

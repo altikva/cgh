@@ -9,7 +9,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex-based parser for Markdown files (plugin architecture).
 #              Extracts headings (sections), internal links, and code block references.
-#              No tree-sitter dependency — pure Python regex.
+#              No tree-sitter dependency: pure Python regex.
 
 from __future__ import annotations
 

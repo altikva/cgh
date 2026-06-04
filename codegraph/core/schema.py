@@ -7,7 +7,7 @@
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Kuzu graph schema — node and edge table DDL for the code index.
+# Description: Kuzu graph schema: node and edge table DDL for the code index.
 
 from __future__ import annotations
 

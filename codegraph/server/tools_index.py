@@ -74,7 +74,7 @@ def register(mcp) -> None:
 
         root = _server._root
 
-        # Step 1: Preview — collect files that would be indexed
+        # Step 1: Preview, collect files that would be indexed
         preview_files = []
         for p in paths:
             target = Path(p) if os.path.isabs(p) else (root / p) if root else Path(p)
@@ -104,7 +104,7 @@ def register(mcp) -> None:
                 indent=2,
             )
 
-        # Step 2: Confirmed — actually index
+        # Step 2: Confirmed, actually index
         indexed = []
         skipped = []
         errors = []
@@ -191,13 +191,13 @@ def register(mcp) -> None:
         false, call scan_repo to refresh the index.
 
         Returns JSON with:
-          fresh         — true if indexed sha == HEAD and working tree is clean
-          indexed_sha   — git commit the graph was built at
-          indexed_at    — ISO timestamp of last scan
-          current_sha   — git HEAD now
-          behind_by     — commits between indexed and HEAD
-          dirty         — working tree has uncommitted changes
-          changed_files — files modified since indexed_sha (up to 200)
+          fresh, true if indexed sha == HEAD and working tree is clean
+          indexed_sha, git commit the graph was built at
+          indexed_at, ISO timestamp of last scan
+          current_sha, git HEAD now
+          behind_by, commits between indexed and HEAD
+          dirty, working tree has uncommitted changes
+          changed_files, files modified since indexed_sha (up to 200)
         """
         from codegraph.state.scan_meta import scan_status as _scan_status
 
@@ -225,7 +225,7 @@ def register(mcp) -> None:
         - Resolves the path relative to the repo root
         - Persists it to .codegraph/config.toml (extra_dirs)
         - Immediately scans all parseable files in the directory
-        - Extends the file watcher to include the new path (hot reload —
+        - Extends the file watcher to include the new path (hot reload,
           no need to restart the MCP server)
 
         Args:
@@ -314,7 +314,7 @@ def register(mcp) -> None:
                 "errors": errors[:5],
                 "watcher_extended": watcher_extended,
                 "note": (
-                    "Directory added and indexed. File watcher extended — no restart needed."
+                    "Directory added and indexed. File watcher extended, no restart needed."
                     if watcher_extended
                     else "Directory added and indexed. Watcher will pick up changes after next MCP server restart."
                 ),
@@ -327,7 +327,7 @@ def register(mcp) -> None:
     def index_changed_files(since: str = "HEAD~1") -> str:
         """
         Re-index only files changed since a git ref (default: last commit).
-        Much faster than a full scan — perfect for post-commit or mid-work refresh.
+        Much faster than a full scan, perfect for post-commit or mid-work refresh.
 
         Args:
             since: git ref to diff against ("HEAD~1", "main", "abc1234", "HEAD")

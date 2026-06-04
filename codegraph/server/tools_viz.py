@@ -326,7 +326,7 @@ def register(mcp) -> None:
 
     def _viz_full_overview(conn, max_nodes: int, fmt: str) -> str:
         """High-level codebase overview: files grouped by language with counts."""
-        # Aggregate "files per language" in Python — small N, no benefit from
+        # Aggregate "files per language" in Python, small N, no benefit from
         # GROUP BY at the backend.
         from collections import Counter
 
@@ -478,7 +478,7 @@ def register(mcp) -> None:
         """
         Lightweight snapshot of the index: node counts, FTS symbol count,
         scan freshness (git HEAD vs indexed), and a timestamp. Designed
-        for polling — call it repeatedly to watch the graph change during
+        for polling, call it repeatedly to watch the graph change during
         an ongoing scan or watcher burst.
 
         Differs from graph_stats: also includes scan_status and FTS count

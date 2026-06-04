@@ -140,10 +140,10 @@ def scan_status(repo_root: str | Path) -> dict:
     Returns a dict with:
       indexed_sha, indexed_branch, indexed_at  (from meta)
       current_sha, current_branch               (live from git)
-      dirty                                      (bool | None — working tree)
-      behind_by                                  (int | None — commits)
-      changed_files                              (list[str] — since indexed_sha)
-      fresh                                      (bool — no drift)
+      dirty                                      (bool | None, working tree)
+      behind_by                                  (int | None, commits)
+      changed_files                              (list[str], since indexed_sha)
+      fresh                                      (bool, no drift)
     """
     root = Path(repo_root)
     meta = read_meta(root) or {}
@@ -162,7 +162,7 @@ def scan_status(repo_root: str | Path) -> dict:
         changed = changed_files(root, indexed_sha, current_sha)
 
     # Fresh means the graph matches HEAD. Dirty (uncommitted changes) is
-    # NOT stale — the watcher keeps the index in sync on each file save.
+    # NOT stale, the watcher keeps the index in sync on each file save.
     # If the watcher is down, a separate check would be needed, but the
     # git-vs-index sha comparison alone is the right coarse signal.
     fresh = indexed_sha is not None and current_sha is not None and indexed_sha == current_sha

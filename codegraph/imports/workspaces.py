@@ -50,7 +50,7 @@ def _find_workspace_root(start_dir: Path) -> Path | None:
 def _parse_yaml_packages(text: str) -> list[str]:
     """Pull the `packages` glob list out of pnpm-workspace.yaml.
 
-    We avoid a pyyaml dep — pnpm-workspace.yaml is a tiny YAML
+    We avoid a pyyaml dep, pnpm-workspace.yaml is a tiny YAML
     file with a single root key we can scrape with primitive line parsing.
     Handles list form (``packages:\\n  - apps/*``) and flow form
     (``packages: ['apps/*', 'libs/*']``).
@@ -214,7 +214,7 @@ def _entry_candidates(pkg_dir: Path, subpath: str) -> list[Path]:
     """Compute candidate file paths for `pkg_dir/subpath`.
 
     For a bare package import (subpath = "") this consults package.json's
-    "main" / "module" / "exports" fields (string form only — full
+    "main" / "module" / "exports" fields (string form only, full
     subpath-exports parsing is out of scope) and falls back to standard
     src/index files. For a subpath import it returns the joined path as-is
     (caller adds extensions).
@@ -261,5 +261,5 @@ def _entry_candidates(pkg_dir: Path, subpath: str) -> list[Path]:
 
 
 def _clear_cache() -> None:
-    """Test hook — reset the per-workspace cache."""
+    """Test hook, reset the per-workspace cache."""
     _WORKSPACE_CACHE.clear()

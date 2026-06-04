@@ -112,7 +112,7 @@ def _diff_stats(kuzu: dict, duckdb: dict) -> list[tuple[str, int, int]]:
 # not a real divergence. Order matches the graphify-inspired PRs that
 # introduced or fixed each edge type.
 _POST_FIX_GAIN_METRICS = frozenset({
-    "edges.IMPORTS",  # IMPORTS edges latent bug — pre-fix Kuzu has 0
+    "edges.IMPORTS",  # IMPORTS edges latent bug, pre-fix Kuzu has 0
 })
 
 
@@ -128,7 +128,7 @@ def _classify_diff(
         N because the IMPORTS-edge emitter wasn't wired up when this
         Kuzu DB was first written).
 
-    Any other DuckDB gain — extra Functions, extra CALLS, etc. — is a
+    Any other DuckDB gain, extra Functions, extra CALLS, etc., is a
     real divergence we can't explain away, so we bail out and keep
     both files for manual inspection.
     """
@@ -164,7 +164,7 @@ def do_migrate_to_duckdb(
     delete_kuzu: bool = True,
     force: bool = False,
 ) -> MigrationResult:
-    """Run the migration. CLI-free entry point — usable from
+    """Run the migration. CLI-free entry point, usable from
     cmd_migrate_to_duckdb AND from cmd_init's auto-migration hook.
 
     NOTE: do NOT .resolve() the root path. On macOS /tmp is a symlink to
@@ -180,7 +180,7 @@ def do_migrate_to_duckdb(
     if not kuzu_path.exists():
         return MigrationResult(
             status="skipped",
-            message="No graph.db found — nothing to migrate.",
+            message="No graph.db found, nothing to migrate.",
         )
 
     if duckdb_path.exists() and not force:
@@ -228,7 +228,7 @@ def do_migrate_to_duckdb(
                 duckdb_edges=duckdb_edges,
                 diffs=diffs,
             )
-        # Stale Kuzu — DuckDB is canonical, proceed with swap.
+        # Stale Kuzu, DuckDB is canonical, proceed with swap.
         kuzu_deleted = False
         if delete_kuzu and kuzu_path.exists():
             kuzu_path.unlink()
@@ -261,7 +261,7 @@ def do_migrate_to_duckdb(
 
 
 def cmd_migrate_to_duckdb(args) -> None:
-    """CLI wrapper — Rich rendering on top of ``do_migrate_to_duckdb``.
+    """CLI wrapper, Rich rendering on top of ``do_migrate_to_duckdb``.
 
     Handles the interactive "delete graph.db?" prompt that's specific to
     the command-line flow. Other callers (cgh init) pass delete_kuzu
@@ -280,7 +280,7 @@ def cmd_migrate_to_duckdb(args) -> None:
     if not kuzu_path.exists():
         console.print(
             Panel(
-                "[yellow]No graph.db found in this repo — nothing to migrate.[/yellow]\n"
+                "[yellow]No graph.db found in this repo, nothing to migrate.[/yellow]\n"
                 "If you wanted to start fresh on DuckDB, just run "
                 "[cyan]CGH_DB=duckdb cgh index[/cyan].",
                 title="[yellow]Skipped[/yellow]",
@@ -335,7 +335,7 @@ def cmd_migrate_to_duckdb(args) -> None:
                 "[yellow]Counts differ between Kuzu and DuckDB.[/yellow] "
                 "Both files have been kept so you can inspect manually.\n"
                 f"[dim]{result.message}[/dim]",
-                title="[yellow]Mismatch — kept both files[/yellow]",
+                title="[yellow]Mismatch, kept both files[/yellow]",
                 border_style="yellow",
             )
         )
@@ -356,7 +356,7 @@ def cmd_migrate_to_duckdb(args) -> None:
                 "DuckDB is being treated as canonical because every diff is "
                 "explained by a fix that shipped after Kuzu was last written "
                 "(or by ghost rows from deleted files).",
-                title="[cyan]Stale Kuzu — DuckDB accepted as canonical[/cyan]",
+                title="[cyan]Stale Kuzu: DuckDB accepted as canonical[/cyan]",
                 border_style="cyan",
             )
         )
@@ -377,7 +377,7 @@ def cmd_migrate_to_duckdb(args) -> None:
 
     if args.keep_kuzu:
         console.print(
-            "[dim]--keep-kuzu was passed — graph.db left in place.[/dim]\n"
+            "[dim]--keep-kuzu was passed, graph.db left in place.[/dim]\n"
             "[dim]Future cgh commands will auto-detect graph.duckdb and use DuckDB.[/dim]"
         )
         return

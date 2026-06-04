@@ -12,6 +12,19 @@ on:
       - main
 
 jobs:
+  # Keep uv.lock honest: fail if it has drifted from pyproject.toml. The
+  # lock is committed, so the matrix install and the setup-uv cache both
+  # rely on it being current.
+  lockfile:
+    name: uv.lock is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+      - name: Check lockfile matches pyproject
+        run: uv lock --check
+
   # Style gate: no em or en dashes in shipped prose (the no-ai-tells
   # convention). Cheap, no Python deps, runs once.
   no-ai-tells:

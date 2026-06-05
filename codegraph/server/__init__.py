@@ -329,8 +329,8 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     from codegraph.state.ipc import free_port, owner_pidfile, port_file
 
     port = free_port()
-    port_file(_root).write_text(str(port) + "\n")
-    owner_pidfile(_root).write_text(str(os.getpid()) + "\n")
+    port_file(_root).write_text(str(port) + "\n", encoding="utf-8")
+    owner_pidfile(_root).write_text(str(os.getpid()) + "\n", encoding="utf-8")
 
     # Cleanup on exit
     import atexit as _atexit

@@ -23,20 +23,52 @@ def _pidfile_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _PID_FILE
 
 
-def _is_process_alive(pid: int) -> bool:
-    """Check if a PID corresponds to a live process (best-effort, POSIX)."""
+def process_alive(pid: int) -> bool:
+    """True if a process with this pid is running. Cross-platform.
+
+    POSIX uses ``os.kill(pid, 0)``, a no-op probe. That is unsafe on
+    Windows: ``os.kill`` there sends TerminateProcess for any signal other
+    than the CTRL events, so a "0" probe would kill the process being
+    checked. On Windows we query the process via OpenProcess instead.
+    """
     if pid <= 0:
         return False
+    if os.name == "nt":
+        return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Process exists and belongs to someone else — still alive
+        # Process exists and belongs to someone else, still alive.
         return True
     except OSError:
         return False
+
+
+def _windows_process_alive(pid: int) -> bool:
+    """Liveness via the Win32 API, never via os.kill (which would terminate)."""
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        code = wintypes.DWORD()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return code.value == STILL_ACTIVE
+        return True  # couldn't read the exit code, assume alive
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+# Back-compat alias for the in-module caller.
+_is_process_alive = process_alive
 
 
 def read_existing_pid(repo_root: str | Path) -> int | None:
@@ -58,8 +90,8 @@ def acquire(repo_root: str | Path) -> tuple[bool, int | None]:
     """
     Try to claim the single-writer slot for this repo.
     Returns (acquired, other_pid):
-      - (True, None)      — we now own the pidfile
-      - (False, pid)      — another live cgh serve holds it
+      - (True, None), we now own the pidfile
+      - (False, pid), another live cgh serve holds it
     Stale pidfiles (process no longer alive) are overwritten.
     """
     path = _pidfile_path(repo_root)

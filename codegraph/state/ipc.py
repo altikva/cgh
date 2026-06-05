@@ -81,7 +81,7 @@ def live_workers(repo_root: str | Path) -> list[int]:
         if is_pid_alive(pid):
             alive.append(pid)
         else:
-            # Stale — drop it
+            # Stale, drop it
             entry.unlink(missing_ok=True)
     return alive
 
@@ -125,17 +125,11 @@ def read_owner_pid(repo_root: str | Path) -> int | None:
 
 
 def is_pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
+    # Delegate to the cross-platform probe; os.kill(pid, 0) is unsafe on
+    # Windows (it would terminate the process being checked).
+    from codegraph.state.pidfile import process_alive
+
+    return process_alive(pid)
 
 
 def is_owner_alive(repo_root: str | Path) -> bool:
@@ -145,7 +139,7 @@ def is_owner_alive(repo_root: str | Path) -> bool:
         return False
     if not is_pid_alive(pid):
         return False
-    # Probe the port — owner may be mid-shutdown
+    # Probe the port, owner may be mid-shutdown
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.2)
         try:
@@ -167,7 +161,7 @@ def rotate_owner_log(repo_root: str | Path) -> None:
     Rotate .codegraph/owner.log if it exceeds `log_max_mb`. Keeps the
     last `log_backup_count` rotations as `owner.log.1` … `owner.log.N`.
 
-    Called at owner spawn — owners restart often enough (stop/start, new
+    Called at owner spawn, owners restart often enough (stop/start, new
     sessions, --reindex) that this bounds disk use without needing an
     interceptor process between owner stdout and the log file.
     """
@@ -213,7 +207,7 @@ def rotate_owner_log(repo_root: str | Path) -> None:
         log_path.rename(log_path.with_suffix(".log.1"))
     except OSError:
         # If rename fails (e.g. file held open on Windows) we bail rather
-        # than truncate — losing logs silently is worse than a big file.
+        # than truncate, losing logs silently is worse than a big file.
         pass
 
 

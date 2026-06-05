@@ -111,7 +111,7 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
     """
     Query Ruflo memory + pattern stores via MCP subprocess.
     Returns merged results from both knowledge memory and review patterns.
-    Returns empty list if Ruflo is not installed — codegraph works standalone.
+    Returns empty list if Ruflo is not installed, codegraph works standalone.
     """
     if not _check_ruflo_available():
         return []
@@ -211,7 +211,7 @@ def _keyword_query(task: str, min_len: int = 3) -> str:
     """
     import re
 
-    # \w matches Unicode letters by default in Python — captures accented chars
+    # \w matches Unicode letters by default in Python, captures accented chars
     tokens = re.findall(r"[^\W\d_]+", task, flags=re.UNICODE)
     expanded: list[str] = []
     for t in tokens:
@@ -264,7 +264,7 @@ def context_for_task(
     knowledge_docs = _local_knowledge_hits(task, limit=3)
 
     # Step 1: FTS search to find seed symbols. Natural-language sentences
-    # don't match symbol names directly — extract keywords first.
+    # don't match symbol names directly, extract keywords first.
     query = _keyword_query(task)
     fts_results = fts_search(fts_conn, query, limit=max_nodes * 2)
     if not fts_results and query != task:
@@ -294,7 +294,7 @@ def context_for_task(
             relevance=min(relevance, 1.0),
         )
 
-        # Step 3: Expand via graph — find callers/callees (up to 3 each)
+        # Step 3: Expand via graph, find callers/callees (up to 3 each)
         if r.kind == "function":
             callers = kuzu_conn.find_neighbors(
                 "CALLS",
@@ -425,7 +425,7 @@ def render_context_markdown(ctx: TaskContext) -> str:
         kind_icon = {"function": "fn", "class": "cls", "md_section": "doc", "tf_resource": "tf"}.get(
             node.kind, node.kind
         )
-        lines.append(f"### [{kind_icon}] `{node.name}` — {node.file_path}:{node.start_line}")
+        lines.append(f"### [{kind_icon}] `{node.name}`, {node.file_path}:{node.start_line}")
         if node.docstring:
             lines.append(f"> {node.docstring[:150]}")
         if node.relationships:
@@ -449,11 +449,11 @@ def render_context_markdown(ctx: TaskContext) -> str:
         lines.append("")
         for p in ctx.plan_docs:
             agent = f" (agent {p.agent_id[:8]})" if p.agent_id else ""
-            lines.append(f"- **{p.slug}**{agent} — {p.title}")
+            lines.append(f"- **{p.slug}**{agent}, {p.title}")
             lines.append(f"  `{p.path}`")
             lines.append("")
 
-    # Persisted knowledge — patterns, decisions, gotchas
+    # Persisted knowledge, patterns, decisions, gotchas
     if ctx.knowledge_docs:
         lines.append("---")
         lines.append("## Learned Knowledge")

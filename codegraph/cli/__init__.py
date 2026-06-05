@@ -30,7 +30,7 @@ LOGO = r"""[bold cyan]
 def _get_conn(root, readonly=False):
     """
     Get a Kuzu connection. If readonly=True and DB is locked,
-    returns None instead of crashing — caller must handle.
+    returns None instead of crashing, caller must handle.
     """
     if readonly:
         from codegraph.core.db import get_readonly_connection

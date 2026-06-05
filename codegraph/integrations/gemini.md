@@ -32,16 +32,16 @@ Add to `GEMINI.md` to teach Gemini to use codegraph:
 
 This project is indexed by codegraph. Use its MCP tools for efficient navigation:
 
-- symbol_lookup(name) — find where any function/class/section is defined
-- context_for_task(task) — build ranked context from the code graph + docs
-- search_symbols(query) — fuzzy search across all symbols
-- search_docs(query) — search markdown documentation
-- find_callers(fn) — who calls this function?
-- find_callees(fn) — what does this function call?
-- doc_outline(file) — table of contents for markdown files
-- visualize_graph(scope) — generate Mermaid diagrams of relationships
+- symbol_lookup(name): find where any function/class/section is defined
+- context_for_task(task): build ranked context from the code graph + docs
+- search_symbols(query): fuzzy search across all symbols
+- search_docs(query): search markdown documentation
+- find_callers(fn): who calls this function?
+- find_callees(fn): what does this function call?
+- doc_outline(file): table of contents for markdown files
+- visualize_graph(scope): generate Mermaid diagrams of relationships
 
-Prefer codegraph tools over reading entire files — they return exact file:line references.
+Prefer codegraph tools over reading entire files: they return exact file:line references.
 ```
 
 ## Environment variable

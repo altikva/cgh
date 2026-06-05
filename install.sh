@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# codegraph installer — works on macOS, Linux, and WSL
+# cgh installer for bash environments: macOS, Linux, WSL, and Git Bash (Windows).
 # Usage: curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
+#
+# Detects the environment, installs cgh (uv tool, then pipx, then pip --user),
+# and offers to add the cgh command to your PATH. On native Windows PowerShell
+# or cmd, use install.ps1 instead.
 
 set -euo pipefail
 
-BOLD="\033[1m"
-GREEN="\033[32m"
-CYAN="\033[36m"
-YELLOW="\033[33m"
-RED="\033[31m"
-RESET="\033[0m"
+BOLD="\033[1m"; GREEN="\033[32m"; CYAN="\033[36m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
 
 echo -e "${CYAN}${BOLD}"
 echo '   ___          _                          _'
@@ -19,53 +18,78 @@ echo '/ /__| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |'
 echo '\____/\___/ \__,_|\___|\__, |_|  \__,_| .__/|_| |_|'
 echo '                       |___/          |_|'
 echo -e "${RESET}"
-echo -e "${BOLD}Installing codegraph...${RESET}\n"
 
-# Check Python 3.11+
-if command -v python3 &>/dev/null; then
-    PY=python3
-elif command -v python &>/dev/null; then
-    PY=python
+# --- detect the environment -------------------------------------------------
+detect_env() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*) echo "gitbash" ;;
+    Linux)
+      if grep -qi microsoft /proc/version 2>/dev/null; then echo "wsl"; else echo "linux"; fi ;;
+    Darwin) echo "macos" ;;
+    *) echo "unknown" ;;
+  esac
+}
+ENVIRON="$(detect_env)"
+echo -e "${BOLD}Installing cgh${RESET} ${CYAN}(${ENVIRON})${RESET}\n"
+
+# --- find a Python 3.11+ ----------------------------------------------------
+if command -v python3 >/dev/null 2>&1; then PY=python3
+elif command -v python >/dev/null 2>&1; then PY=python
 else
-    echo -e "${RED}Error: Python 3.11+ is required but not found.${RESET}"
-    echo "Install Python: https://python.org/downloads/"
-    exit 1
+  echo -e "${RED}Error: Python 3.11+ is required but not found.${RESET}"
+  echo "Install Python: https://python.org/downloads/"
+  exit 1
 fi
 
-PY_VERSION=$($PY -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PY_MAJOR=$($PY -c "import sys; print(sys.version_info.major)")
-PY_MINOR=$($PY -c "import sys; print(sys.version_info.minor)")
-
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
-    echo -e "${RED}Error: Python 3.11+ required, found $PY_VERSION${RESET}"
-    exit 1
+PY_VERSION=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+if ! "$PY" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"; then
+  echo -e "${RED}Error: Python 3.11+ required, found $PY_VERSION${RESET}"
+  exit 1
 fi
-
 echo -e "${GREEN}+${RESET} Python $PY_VERSION found"
 
-# Prefer pipx for isolated install, fall back to pip
-if command -v pipx &>/dev/null; then
-    echo -e "${GREEN}+${RESET} Using pipx for isolated install"
-    pipx install codegraph 2>/dev/null || pipx install git+https://github.com/altikva/cgh.git
-elif command -v uv &>/dev/null; then
-    echo -e "${GREEN}+${RESET} Using uv for install"
-    uv tool install codegraph 2>/dev/null || uv pip install codegraph
+# --- install ----------------------------------------------------------------
+# The PyPI package is `cgh` (not `codegraph`, which is an unrelated project).
+INSTALLER=""
+if command -v uv >/dev/null 2>&1; then
+  echo -e "${GREEN}+${RESET} Installing with uv tool"
+  uv tool install cgh && INSTALLER="uv"
+elif command -v pipx >/dev/null 2>&1; then
+  echo -e "${GREEN}+${RESET} Installing with pipx"
+  pipx install cgh && INSTALLER="pipx"
 else
-    echo -e "${YELLOW}!${RESET} pipx not found, using pip (consider: pip install pipx)"
-    $PY -m pip install --user cgh 2>/dev/null || $PY -m pip install --user git+https://github.com/altikva/cgh.git
+  echo -e "${YELLOW}!${RESET} uv and pipx not found, using pip --user"
+  "$PY" -m pip install --user cgh && INSTALLER="pip"
 fi
 
-# Verify
-if command -v cgh &>/dev/null; then
-    echo -e "\n${GREEN}${BOLD}cgh installed successfully!${RESET}"
-    cgh --version
-    echo -e "\n${CYAN}Quick start:${RESET}"
-    echo "  cd your-project"
-    echo "  cgh init"
-    echo "  cgh index"
-    echo "  cgh stats"
+# --- verify, and offer to fix PATH ------------------------------------------
+if command -v cgh >/dev/null 2>&1; then
+  echo -e "\n${GREEN}${BOLD}cgh installed and on your PATH.${RESET}"
+  cgh --version || true
 else
-    echo -e "\n${YELLOW}Installed but 'cgh' not in PATH.${RESET}"
-    echo "Try: $PY -m codegraph --version"
-    echo "Or add ~/.local/bin to your PATH"
+  echo -e "\n${YELLOW}cgh installed, but the command is not on your PATH yet.${RESET}"
+  ADD="y"
+  if [ -e /dev/tty ]; then
+    printf "Add cgh to your PATH now? [Y/n] "
+    read -r ADD < /dev/tty || ADD="y"
+  fi
+  case "${ADD:-y}" in
+    [Nn]*)
+      echo -e "${CYAN}Skipped.${RESET} You can always run it as: ${BOLD}$PY -m cgh${RESET}"
+      ;;
+    *)
+      case "$INSTALLER" in
+        uv)   uv tool update-shell || true ;;
+        pipx) pipx ensurepath || true ;;
+        *)    "$PY" -m cgh ensurepath --yes || true ;;
+      esac
+      echo -e "${CYAN}Open a new terminal (or source your shell profile), then:${RESET} ${BOLD}cgh --version${RESET}"
+      ;;
+  esac
 fi
+
+echo -e "\n${CYAN}${BOLD}Quick start:${RESET}"
+echo "  cd your-project"
+echo "  cgh init        # or: $PY -m cgh init"
+echo "  cgh index"
+echo "  cgh stats"

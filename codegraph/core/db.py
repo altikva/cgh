@@ -88,13 +88,13 @@ def _backend(repo_root: str | Path | None = None) -> str:
 
     return "duckdb"
 
-# Module-level singletons — one DB + connection per process.
+# Module-level singletons, one DB + connection per process.
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
 # close them explicitly (Kuzu's file lock outlives the GC otherwise).
 # _conn / _ro_conn are the GraphDB-typed adapters callers see.
 # _db / _ro_db hold raw kuzu.Database refs (typed as Any so the module
 # can import without kuzu installed). DuckDB doesn't need a separate
-# "db" handle — its connection is self-contained.
+# "db" handle, its connection is self-contained.
 _db: Any | None = None
 _conn: GraphDB | None = None
 _ro_db: Any | None = None
@@ -192,7 +192,7 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
 def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | None:
     """
     Try to open a read-only GraphDB connection.
-    Returns None if the DB is locked or absent — caller should handle gracefully.
+    Returns None if the DB is locked or absent, caller should handle gracefully.
     """
     global _ro_db, _ro_conn
 
@@ -200,7 +200,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
         return _ro_conn
 
     # Same-process RO+RW on the same file is rejected by DuckDB. If a
-    # RW connection is already cached, hand it back — every GraphDB
+    # RW connection is already cached, hand it back, every GraphDB
     # method we call from "readonly" callers is a pure read, so this is
     # safe and avoids the connection conflict.
     if _conn is not None:
@@ -220,7 +220,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
         except Exception:
             # DuckDB raises a few different exception classes depending on
             # what's wrong (locked, corrupt, version mismatch). Treat all
-            # as "fall through to None" so callers degrade gracefully —
+            # as "fall through to None" so callers degrade gracefully,
             # symmetric with the Kuzu branch below.
             return None
 
@@ -244,7 +244,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
         _ro_conn = KuzuGraphDB(raw_conn)
         return _ro_conn
     except RuntimeError:
-        # Kuzu locks even in read_only mode — return None so caller can degrade
+        # Kuzu locks even in read_only mode, return None so caller can degrade
         return None
 
 
@@ -253,7 +253,7 @@ def reset_connection() -> None:
     Release the underlying DB file lock and force re-open on next call.
 
     Kuzu holds an OS-level write lock for the lifetime of the Database
-    object. Dropping Python references alone is not enough — CPython's
+    object. Dropping Python references alone is not enough, CPython's
     GC may defer destruction, and the lock lingers until the process
     exits. We explicitly close the Connection + Database here so the
     lock is released immediately.

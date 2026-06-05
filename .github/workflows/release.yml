@@ -1,6 +1,6 @@
 # Publish cgh to PyPI on every tag push.
 #
-# Auth model: PyPI Trusted Publisher (OIDC). No tokens, no secrets — PyPI
+# Auth model: PyPI Trusted Publisher (OIDC). No tokens, no secrets. PyPI
 # verifies this workflow's GitHub OIDC identity matches the trusted publisher
 # configured on https://pypi.org/manage/project/cgh/settings/publishing/
 #
@@ -12,8 +12,9 @@
 #
 # Release flow:
 #   1. Bump version in pyproject.toml + commit + push to main
-#   2. git tag v0.3.1 && git push --tags
-#   3. This workflow builds, publishes to PyPI, attaches dists to the GitHub release.
+#   2. git tag v0.4.4 && git push --tags
+#   3. This workflow validates, builds, publishes to PyPI, and attaches the
+#      dists to the GitHub release.
 
 name: Release
 
@@ -24,17 +25,20 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build:
-    name: Build sdist + wheel
+  # Gate: do not build or publish unless the tag matches the version and the
+  # suite is green. CI already runs on the merge to main, but the tag can point
+  # at any commit, so re-check here.
+  validate:
+    name: Validate (tag + lint + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        # No `enable-cache: true` — this repo has no uv.lock (setuptools is
-        # the build backend, uv is only used as the build front-end). Without
-        # a lockfile the cache action errors out trying to compute the key.
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          # uv.lock is committed, so the cache key is stable.
+          enable-cache: true
 
       - name: Verify tag matches pyproject version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -42,20 +46,49 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PYPROJECT_VERSION=$(grep -E '^version[[:space:]]*=' pyproject.toml | head -1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)"/\1/')
+          PYPROJECT_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           if [ "$TAG" != "$PYPROJECT_VERSION" ]; then
             echo "::error::tag v$TAG does not match pyproject version $PYPROJECT_VERSION"
             exit 1
           fi
-          echo "Building cgh $PYPROJECT_VERSION"
+          echo "Releasing cgh $PYPROJECT_VERSION"
+
+      - name: Lint with ruff
+        run: uvx ruff check .
+
+      - name: Run pytest
+        # Validate on the default Python with the kuzu extra so both backends
+        # are exercised. The full 3.11-3.14 matrix runs in ci.yml on the PR.
+        run: uv run --with pytest --extra kuzu pytest -q
+
+  build:
+    name: Build sdist + wheel
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
 
       - name: Build
         run: uv build
 
-      - name: Inspect artifacts
+      - name: Check metadata
         run: |
           ls -lh dist/
           uvx twine check dist/*
+
+      - name: Smoke-test the built wheel
+        # Install the wheel into a clean venv (default extras, no kuzu) and run
+        # the CLI, so a broken entry point or missing data file fails here
+        # rather than in a user's terminal.
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python dist/*.whl
+          /tmp/smoke/bin/cgh --version
 
       - uses: actions/upload-artifact@v5
         with:
@@ -67,13 +100,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # `pypi` environment scopes the OIDC token PyPI trusts. Create it in
-    # repo Settings → Environments (no required reviewers unless you want
-    # a manual gate before each release).
+    # repo Settings -> Environments (no required reviewers unless you want a
+    # manual gate before each release).
     environment:
       name: pypi
       url: https://pypi.org/project/cgh/
     permissions:
-      # Required for PyPI Trusted Publisher OIDC exchange
+      # Required for the PyPI Trusted Publisher OIDC exchange.
       id-token: write
     steps:
       - uses: actions/download-artifact@v5
@@ -83,8 +116,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Defaults to https://upload.pypi.org/legacy/ — no settings needed
-        # when the trusted publisher is configured on PyPI.
+        # Defaults to https://upload.pypi.org/legacy/ when the trusted
+        # publisher is configured on PyPI.
 
   github-release:
     name: Attach dists to GitHub Release

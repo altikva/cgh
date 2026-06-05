@@ -347,7 +347,7 @@ def init_project(root: Path) -> dict:
 
     config_path = cg_dir / CONFIG_FILE
     if not config_path.exists():
-        config_path.write_text(generate_default_config())
+        config_path.write_text(generate_default_config(), encoding="utf-8")
         created.append(str(config_path))
 
     # Generate auth key
@@ -361,9 +361,9 @@ def init_project(root: Path) -> dict:
     # Add .codegraph to .gitignore if not already there
     gitignore = root / ".gitignore"
     if gitignore.exists():
-        content = gitignore.read_text()
+        content = gitignore.read_text(encoding="utf-8")
         if ".codegraph" not in content:
-            with open(gitignore, "a") as f:
+            with open(gitignore, "a", encoding="utf-8") as f:
                 f.write("\n# codegraph index\n.codegraph/\n")
             created.append(".gitignore (updated)")
 

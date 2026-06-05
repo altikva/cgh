@@ -47,12 +47,27 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
+def _claude_project_slug_from_abs(abs_path: str) -> str:
+    """Slug Claude Code uses for ~/.claude/projects/<slug>/.
+
+    Every path separator becomes a dash. On POSIX ``/Users/joy/x`` becomes
+    ``-Users-joy-x`` (the leading slash gives the leading dash). On Windows
+    ``C:\\Users\\x`` becomes ``C--Users-x``: the drive colon and each
+    backslash both turn into a dash. Verified against real Claude Code
+    project directories on both platforms.
+    """
+    slug = abs_path
+    for sep in (":", "\\", "/"):
+        slug = slug.replace(sep, "-")
+    return slug
+
+
 def _claude_memory_dir_for(project_root: str | Path) -> Path:
     """
     Claude Code stores per-project memory at
-    ~/.claude/projects/-<abs-path-with-slashes-as-dashes>/memory/.
+    ~/.claude/projects/<slug>/memory/.
     """
-    slug = str(Path(project_root).resolve()).replace("/", "-")
+    slug = _claude_project_slug_from_abs(str(Path(project_root).resolve()))
     return CLAUDE_HOME / "projects" / slug / "memory"
 
 

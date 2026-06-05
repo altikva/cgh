@@ -22,41 +22,61 @@ supported Python and is the default everywhere. Existing Kuzu repos are
 auto-migrated to DuckDB on the next `cgh init`. Use `CGH_DB=kuzu` (with
 the extra installed) to keep using Kuzu if you have a reason to.
 
+### One-line install
+
+The install scripts detect your environment (macOS, Linux, WSL, Git Bash, or
+native Windows), install cgh, and offer to add the `cgh` command to your PATH.
+
+macOS, Linux, WSL, Git Bash ([install.sh](./install.sh)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
+```
+
+Windows PowerShell ([install.ps1](./install.ps1)):
+
+```powershell
+irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
+```
+
+### With pip, pipx, or uv
+
 ```bash
 # From PyPI (most users)
 pip install cgh
 
+# Isolated install that also handles PATH for you
+pipx install cgh        # or: uv tool install cgh
+
 # From source (for development)
 git clone https://github.com/altikva/cgh.git
 cd cgh
-
-# pip
-pip install -e .
-
-# pipx (isolated install)
-pipx install .
-
-# uv
-uv pip install -e .
-uv tool install .
+uv pip install -e .     # or: pip install -e .
 ```
 
-Once installed, the `cgh` CLI is on your PATH:
-
 ```bash
-cgh --help
+cgh --version
 cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
 ```
 
-After install, the `cgh` CLI is on your PATH:
+### If `cgh` is not found after install
+
+`pip install` drops the `cgh` executable in a Scripts directory that is not
+always on PATH (common on Windows). Two fixes:
 
 ```bash
-cgh --version
-# codegraph 0.4.0
+# Run it as a module, no PATH change needed
+python -m cgh --version
+
+# Or add the cgh command's directory to your PATH
+python -m cgh ensurepath
 ```
 
-The Python import name is still `codegraph` (e.g. `from codegraph.parsers import ...`); only the CLI is renamed. Same pattern as `pip install pillow` then `import PIL`.
+`pipx install cgh` and `uv tool install cgh` avoid this by managing PATH
+themselves. The Python import name is still `codegraph` (e.g.
+`from codegraph.parsers import ...`); only the CLI is named `cgh`, same
+pattern as `pip install pillow` then `import PIL`.
 
 ---
 

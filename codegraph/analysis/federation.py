@@ -250,8 +250,9 @@ def open_fts_ro(repo_root: Path) -> Iterator[sqlite3.Connection | None]:
     try:
         # mode=ro requires URI form. immutable=0 because subrepos can be
         # written to by their own owners while we read.
-        uri = f"file:{db_path}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        from codegraph.core.utils import ro_sqlite_uri
+
+        conn = sqlite3.connect(ro_sqlite_uri(db_path), uri=True, check_same_thread=False)
         yield conn
     except sqlite3.Error:
         yield None

@@ -67,7 +67,9 @@ cgh = "codegraph.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["codegraph", "codegraph.*"]
+# `cgh` is a thin entry shim so `python -m cgh` works; the real code lives in
+# `codegraph` (import name stays `codegraph`, like pillow / PIL).
+include = ["codegraph", "codegraph.*", "cgh"]
 
 [tool.setuptools.package-data]
 codegraph = ["skills/*/SKILL.md", "skills/*/*.md"]

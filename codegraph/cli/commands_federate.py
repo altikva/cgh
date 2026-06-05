@@ -163,7 +163,6 @@ def _cmd_down(args) -> None:
     keepalive and exit on their own when their last worker disconnects.
     """
     import os as _os
-    import time as _time
 
     from codegraph.state.ipc import (
         is_pid_alive,
@@ -186,12 +185,10 @@ def _cmd_down(args) -> None:
             continue
         try:
             pid = int(pf.read_text().strip())
-            _os.kill(pid, 15)
-            deadline = _time.time() + 5.0
-            while _time.time() < deadline and is_pid_alive(pid):
-                _time.sleep(0.1)
+            from codegraph.state.pidfile import terminate
+
+            terminate(pid, graceful_timeout=5.0)
             if is_pid_alive(pid):
-                _os.kill(pid, 9)
                 console.print(f"[yellow]⚠ {child.name}[/yellow] force-killed pid {pid}")
             else:
                 console.print(f"[green]✓ {child.name}[/green] stopped pid {pid}")

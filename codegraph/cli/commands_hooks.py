@@ -103,7 +103,9 @@ def cmd_hook_precheck_read(args) -> None:
 
     fts_db = repo_root / ".codegraph" / "fts.db"
     try:
-        conn = sqlite3.connect(f"file:{fts_db}?mode=ro", uri=True, timeout=0.5)
+        from codegraph.core.utils import ro_sqlite_uri
+
+        conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
         row = conn.execute(
             "SELECT count(*) FROM symbols WHERE file_path IN (?, ?)",
             (abs_path, rel_path),

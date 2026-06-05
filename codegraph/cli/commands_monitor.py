@@ -419,7 +419,9 @@ def cmd_status(args) -> None:
 
             fts_path = Path(root) / ".codegraph" / "fts.db"
             if fts_path.exists():
-                c = _sql.connect(f"file:{fts_path}?mode=ro", uri=True)
+                from codegraph.core.utils import ro_sqlite_uri
+
+                c = _sql.connect(ro_sqlite_uri(fts_path), uri=True)
                 fts_symbols = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
                 c.close()
                 counts_source = "fts_only"
@@ -783,7 +785,7 @@ def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
         r = subprocess.run(
             ["ps", "-o", "pid=,tty=,lstart=,command=", "-p", ",".join(str(p) for p in pids)],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=3,
         )
         lines = [ln.rstrip() for ln in r.stdout.splitlines() if ln.strip()]
@@ -867,12 +869,18 @@ def cmd_reset(args) -> None:
         except (ValueError, ProcessLookupError, OSError):
             pass
 
-    # Defensive: kill any stray cgh serve / owner
-    subprocess.run(
-        ["pkill", "-9", "-f", "codegraph _serve_owner"],
-        capture_output=True,
-        timeout=3,
-    )
+    # Defensive: kill any stray cgh serve / owner. pkill is POSIX-only, so it
+    # is missing on native Windows and in Git Bash (raising FileNotFoundError);
+    # the pidfile-based stop above already handled the known owner, so just
+    # skip the name-based sweep where pkill is unavailable.
+    try:
+        subprocess.run(
+            ["pkill", "-9", "-f", "codegraph _serve_owner"],
+            capture_output=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, OSError):
+        pass
 
     # 2. Confirm destructive deletion
     targets = []
@@ -1186,7 +1194,7 @@ def cmd_diff(args) -> None:
         result = subprocess.run(
             ["git", "diff", "--name-only", since],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=root,
         )
         changed_files = [f for f in result.stdout.strip().splitlines() if f]
@@ -1199,7 +1207,7 @@ def cmd_diff(args) -> None:
         result_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=root,
         )
         untracked_files = [f for f in result_untracked.stdout.strip().splitlines() if f]

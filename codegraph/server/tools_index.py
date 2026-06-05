@@ -348,7 +348,7 @@ def register(mcp) -> None:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 cwd=str(root),
             )
             files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]

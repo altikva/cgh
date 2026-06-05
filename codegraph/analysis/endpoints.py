@@ -20,7 +20,7 @@ from pathlib import Path
 class EndpointDef:
     id: str  # "<file>::<method>::<path>"
     method: str  # GET, POST, PUT, PATCH, DELETE
-    path: str  # URL path — "/donations/{id}"
+    path: str  # URL path, "/donations/{id}"
     framework: str  # "fastapi", "nuxt", "express", "flask", ...
     file_path: str
     start_line: int
@@ -28,7 +28,7 @@ class EndpointDef:
 
 
 # ---------------------------------------------------------------------------
-# Python — FastAPI / Flask / Starlette decorators
+# Python, FastAPI / Flask / Starlette decorators
 # ---------------------------------------------------------------------------
 
 # Captures @router.get("/path") / @app.post("/path", ...) / @bp.route(...)
@@ -101,7 +101,7 @@ def _build_py_endpoint(
 
 
 # ---------------------------------------------------------------------------
-# Nuxt — file-based routes under server/api/
+# Nuxt, file-based routes under server/api/
 # ---------------------------------------------------------------------------
 
 _NUXT_METHOD_SUFFIX = re.compile(r"\.(get|post|put|patch|delete|head|options)\.(ts|js|mjs)$", re.IGNORECASE)
@@ -152,7 +152,7 @@ def extract_nuxt(path: str | Path, src: str) -> list[EndpointDef]:
 
 
 # ---------------------------------------------------------------------------
-# Express / Fastify — app.get("/x", handler)
+# Express / Fastify, app.get("/x", handler)
 # ---------------------------------------------------------------------------
 
 _JS_METHOD_CALL = re.compile(
@@ -165,7 +165,7 @@ _JS_METHOD_CALL = re.compile(
 
 
 def extract_express(path: str | Path, src: str) -> list[EndpointDef]:
-    """Heuristic Express/Fastify extraction — very light, may produce noise."""
+    """Heuristic Express/Fastify extraction, very light, may produce noise."""
     out: list[EndpointDef] = []
     for i, line in enumerate(src.splitlines(), start=1):
         m = _JS_METHOD_CALL.search(line)

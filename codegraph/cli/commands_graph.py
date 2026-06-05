@@ -43,7 +43,7 @@ def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_
         return None
     token = ensure_auth_key(root)
 
-    # CLI scope names differ from the MCP tool's — translate
+    # CLI scope names differ from the MCP tool's, translate
     scope_map = {
         "imports": "file_imports",
         "calls": "call_graph",
@@ -119,12 +119,12 @@ def cmd_graph(args) -> None:
     file = getattr(args, "file", "") or ""
     max_nodes = args.max_nodes
 
-    # Try the owner's HTTP endpoint first — it works even when the
+    # Try the owner's HTTP endpoint first, it works even when the
     # Kuzu lock is held (which blocks readonly connections from CLI).
     mermaid_code: str | None = _fetch_mermaid_via_owner(root, scope, symbol, file, max_nodes)
 
     if mermaid_code is None:
-        # Owner not running — open Kuzu directly.
+        # Owner not running, open Kuzu directly.
         conn = get_readonly_connection(root)
         if conn is None:
             console.print(

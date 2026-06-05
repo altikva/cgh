@@ -29,7 +29,7 @@ from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, console
 
 
 def _build_stats_group(root: str) -> Group:
-    """Build the stats display as a Rich Group — reusable for --live mode."""
+    """Build the stats display as a Rich Group, reusable for --live mode."""
     # Reset cached readonly connection so we see fresh counts every tick
     from codegraph.core.db import reset_connection as _rst
 
@@ -46,7 +46,7 @@ def cmd_stats(args) -> None:
 
     if getattr(args, "live", False):
         console.print(LOGO)
-        console.print("[dim]Live stats — Ctrl-C to stop[/dim]\n")
+        console.print("[dim]Live stats (Ctrl-C to stop)[/dim]\n")
         try:
             with Live(
                 _build_stats_group(root),
@@ -135,7 +135,7 @@ def _stats_content(root: str) -> Group:
             branch = ss.get("indexed_branch") or "?"
             dirty = ss.get("dirty")
             if ss.get("fresh"):
-                msg = f"[green]fresh[/green] — indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]"
+                msg = f"[green]fresh[/green], indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]"
             else:
                 behind = ss.get("behind_by")
                 curr = (ss.get("current_sha") or "")[:7]
@@ -149,7 +149,7 @@ def _stats_content(root: str) -> Group:
                     drift_bits.append(f"branch {branch} → {curr_branch}")
                 drift = ", ".join(drift_bits) or "drifted"
                 msg = (
-                    f"[yellow]stale[/yellow] — indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]  "
+                    f"[yellow]stale[/yellow], indexed at [bold]{sha_short}[/bold] on [bold]{branch}[/bold]  "
                     f"[dim]→ HEAD {curr} ({drift})[/dim]  "
                     f"[dim]run scan_repo to refresh[/dim]"
                 )
@@ -351,18 +351,18 @@ def cmd_status(args) -> None:
 
     # --refresh: ask the owner to run incremental_reindex BEFORE we read
     # scan_meta. The watcher keeps individual files fresh on each save but
-    # never advances scan_meta.git_head — running incremental_reindex does,
+    # never advances scan_meta.git_head, running incremental_reindex does,
     # by checking every file's blob against HEAD and recording the new SHA
     # when they all match.
     if getattr(args, "refresh", False):
         if not owner_alive or not owner_port:
-            console.print("[yellow]Cannot refresh — owner is not running.[/yellow]")
+            console.print("[yellow]Cannot refresh: owner is not running.[/yellow]")
             console.print(
                 "[dim]Start it with:[/dim] [cyan]cgh serve --background --watch[/cyan] [dim]then re-run.[/dim]\n"
             )
         else:
             console.print(
-                "[dim]Calling incremental_reindex via owner — verifying every file's blob against HEAD…[/dim]"
+                "[dim]Calling incremental_reindex via owner, verifying every file's blob against HEAD…[/dim]"
             )
             stats = _ask_owner_incremental_reindex(root, owner_port)
             if stats is None:
@@ -378,10 +378,10 @@ def cmd_status(args) -> None:
     ss = _scan_status(root)
 
     # Counts. Kuzu holds an exclusive lock for the lifetime of an open
-    # write Database — so when our owner is alive, even a read-only open
+    # write Database, so when our owner is alive, even a read-only open
     # from this CLI process is blocked. Order of attempts:
     #   1. If the owner is alive AND we know its port, ask it via MCP
-    #      (live_graph_stats) — authoritative + cheap.
+    #      (live_graph_stats), authoritative + cheap.
     #   2. Else try a local RO open (works only when no owner is up).
     #   3. As a final fallback, read the FTS sqlite (always RO-safe).
     file_count = endpoint_count = 0
@@ -395,7 +395,7 @@ def cmd_status(args) -> None:
             if stats is not None:
                 nodes = stats.get("nodes") or {}
                 file_count = int(nodes.get("File", 0))
-                # endpoint count not in live_graph_stats — derive separately if 0
+                # endpoint count not in live_graph_stats, derive separately if 0
                 fts_symbols = int(stats.get("fts_symbols", 0))
                 counts_source = "owner"
         except Exception:
@@ -436,7 +436,7 @@ def cmd_status(args) -> None:
     except Exception:
         pass
 
-    # Federated subrepos — surface them in status so users see at a glance
+    # Federated subrepos, surface them in status so users see at a glance
     # which children this owner fans queries out to and whether they're up.
     subrepos: list[dict] = []
     try:
@@ -524,7 +524,7 @@ def cmd_status(args) -> None:
             f"HEAD [bold]{payload['scan']['current_sha']}[/bold]" + (f"  ({', '.join(drift)})" if drift else "")
         )
     else:
-        scan_line = "[dim]no scan recorded — run cgh index[/dim]"
+        scan_line = "[dim]no scan recorded, run cgh index[/dim]"
 
     table = Table(box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan")
     table.add_column("", style="bold")
@@ -542,10 +542,10 @@ def cmd_status(args) -> None:
         endpoints_cell = f"{endpoint_count:,}"
     elif counts_source == "fts_only":
         files_cell = f"[dim]graph locked[/dim]{fts_suffix}"
-        endpoints_cell = "[dim]—[/dim]"
+        endpoints_cell = "[dim], [/dim]"
     else:
         files_cell = "[dim]unknown[/dim]"
-        endpoints_cell = "[dim]—[/dim]"
+        endpoints_cell = "[dim], [/dim]"
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
@@ -560,7 +560,7 @@ def cmd_status(args) -> None:
 def _backend_info(root: str) -> dict:
     """Structured backend info for the --json payload.
 
-    Always returns the same shape — caller can switch on ``on_disk`` to
+    Always returns the same shape, caller can switch on ``on_disk`` to
     distinguish the empty case without checking for missing keys.
     """
     cg = Path(root) / ".codegraph"
@@ -620,7 +620,7 @@ def _backend_status_line(root: str) -> str:
         if env_was_set:
             return (
                 f"[dim]none on disk[/dim]  "
-                f"[dim](CGH_DB={env_value!r} — next `cgh index` writes a {env_backend} DB)[/dim]"
+                f"[dim](CGH_DB={env_value!r}, next `cgh index` writes a {env_backend} DB)[/dim]"
             )
         return "[dim]none on disk[/dim]  [dim](would create graph.db)[/dim]"
 
@@ -635,14 +635,14 @@ def _backend_status_line(root: str) -> str:
         colour = "green" if kind == "duckdb" else "magenta"
         label = f"[{colour}]{kind}[/{colour}] ([dim]{path.name}, {_size(path)}[/dim])"
         if env_was_set and env_backend != kind:
-            return label + f"  [yellow]CGH_DB={env_value!r} mismatch — next index would create a {env_backend} DB[/yellow]"
+            return label + f"  [yellow]CGH_DB={env_value!r} mismatch, next index would create a {env_backend} DB[/yellow]"
         if kind == "kuzu":
-            # Gentle nudge toward DuckDB — about 18x faster + 5x smaller
+            # Gentle nudge toward DuckDB, about 18x faster + 5x smaller
             # on the wb-backend stress test. Opt-in, not automatic.
             label += "  [dim]· run [cyan]cgh migrate-to-duckdb[/cyan] for faster + smaller DB[/dim]"
         return label
 
-    # Both present (rare — half-migrated repo).
+    # Both present (rare, half-migrated repo).
     duck_p = on_disk[0][1]
     kuzu_p = on_disk[1][1]
     label = (
@@ -681,7 +681,7 @@ def _ask_owner_incremental_reindex(root: str, port: int) -> dict | None:
     """
     HTTP-call the owner's `incremental_reindex` MCP tool. This compares every
     File node's stored git blob SHA to the current HEAD blob, re-indexes any
-    that drifted, and writes scan_meta with HEAD's SHA on success — which is
+    that drifted, and writes scan_meta with HEAD's SHA on success, which is
     what `cgh status --refresh` needs to advance the recorded SHA.
 
     Generous timeout (5 min) since on a large repo with many drifted files
@@ -944,13 +944,10 @@ def cmd_reset(args) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, OSError):
-        return False
+    # Cross-platform; os.kill(pid, 0) would terminate the process on Windows.
+    from codegraph.state.pidfile import process_alive
+
+    return process_alive(pid)
 
 
 # ---------------------------------------------------------------------------
@@ -1006,7 +1003,7 @@ def cmd_tail(args) -> None:
         console.print(_build())
         return
 
-    console.print("[dim]Tailing codegraph activity — Ctrl-C to stop[/dim]\n")
+    console.print("[dim]Tailing codegraph activity (Ctrl-C to stop)[/dim]\n")
     try:
         with Live(_build(), console=console, refresh_per_second=2, screen=False) as live:
             while True:
@@ -1141,7 +1138,7 @@ def cmd_history(args) -> None:
     conn.close()
 
     table = Table(
-        title=f"Activity — Last {days} Day(s)",
+        title=f"Activity: Last {days} Day(s)",
         box=box.ROUNDED,
         title_style="bold cyan",
     )
@@ -1281,7 +1278,7 @@ def cmd_diff(args) -> None:
 
 
 def cmd_doctor(args) -> None:
-    """Health check — verify all codegraph components are working."""
+    """Health check, verify all codegraph components are working."""
     import shutil
 
     root = Path(os.path.abspath(args.root))
@@ -1436,7 +1433,7 @@ def cmd_doctor(args) -> None:
             )
         )
 
-    # Claude Code integration audit — separate section since it answers
+    # Claude Code integration audit, separate section since it answers
     # a different question (is what's installed in .claude/ up-to-date with
     # this cgh version) and the fix command is also different (cgh setup
     # claude, not anything in this repo's .codegraph/).
@@ -1546,7 +1543,7 @@ def cmd_compact(args) -> None:
             return f"{size_bytes / 1024 / 1024:.1f} MB"
         return f"{size_bytes / 1024:.0f} KB"
 
-    # DBs to vacuum (SQLite only — graph.db is Kuzu, not vacuumable here)
+    # DBs to vacuum (SQLite only, graph.db is Kuzu, not vacuumable here)
     sqlite_dbs = ["fts.db", "call_log.db"]
     results: list[tuple[str, int, int]] = []
 
@@ -1608,7 +1605,7 @@ def cmd_compact(args) -> None:
         Panel(
             f"[bold]Reclaimed: {_fmt_size(total_saved)}[/bold]"
             if total_saved > 0
-            else "[bold]Already compact — no space reclaimed.[/bold]",
+            else "[bold]Already compact, no space reclaimed.[/bold]",
             border_style="green" if total_saved > 0 else "dim",
         )
     )

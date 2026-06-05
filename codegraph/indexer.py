@@ -28,7 +28,7 @@ from .parsers.base import FileIndex
 # Default Python recursion limit is 1000. Tree-sitter walks on deeply nested
 # code (long method chains, big JSX trees, generated protobufs) can blow past
 # that. Raise once at import time so we don't pay the cost on every call.
-# Ported from graphify — same constant.
+# Ported from graphify, same constant.
 _RECURSION_LIMIT = 10_000
 if sys.getrecursionlimit() < _RECURSION_LIMIT:
     sys.setrecursionlimit(_RECURSION_LIMIT)
@@ -76,7 +76,7 @@ def _load_cghignore(repo_root: Path) -> list[str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Skip negation patterns (!) — we don't support them in our simple matcher
+        # Skip negation patterns (!), we don't support them in our simple matcher
         if line.startswith("!"):
             continue
         patterns.append(line)
@@ -152,7 +152,7 @@ def _upsert_file(
 def _purge_file(conn, path: str, fts_conn=None) -> None:
     """Delete all nodes + edges associated with a file before re-indexing it.
 
-    Delegates the graph cleanup to the backend's purge_file_data helper —
+    Delegates the graph cleanup to the backend's purge_file_data helper,
     each backend knows its own table layout and constraint model.
     """
     conn.purge_file_data(path)
@@ -288,7 +288,7 @@ def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
     Resolves each ImportRef.source_module to a target file via
     import_resolver, then MERGEs a File → File IMPORTS edge. Unresolved
     imports (bare specifiers, missing files, third-party deps) are
-    silently skipped — they're not part of the user's repo, no edge to
+    silently skipped, they're not part of the user's repo, no edge to
     draw.
     """
     if not idx.imports or repo_root is None:
@@ -302,7 +302,7 @@ def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
             continue
         target_str = str(target)
         if target_str == idx.path:
-            # File importing itself — skip the self-loop.
+            # File importing itself, skip the self-loop.
             continue
 
         # Make sure the target File exists. During incremental indexing
@@ -430,7 +430,7 @@ def _ingest_markdown(conn, idx: FileIndex) -> None:
     # Internal links: link markdown sections to files they reference.
     # The original Cypher used `WHERE f.path ENDS WITH $tp` which has no
     # direct find_node_keys equivalent; for now resolve via find_node_keys
-    # over all files and filter in Python — small N (file count) makes
+    # over all files and filter in Python, small N (file count) makes
     # this cheap.
     for link in idx.links:
         target = link.target
@@ -493,7 +493,7 @@ def index_file(
         path: File to index.
         repo_root: Repository root (default: CWD).
         force: If True, index even if the file is in .gitignore or .git/info/exclude.
-               Skips mtime cache check too — always re-parses.
+               Skips mtime cache check too, always re-parses.
     """
     path = Path(path)
     suffix = path.suffix.lower()
@@ -533,7 +533,7 @@ def index_file(
         from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
-        print(f"[codegraph] parse skipped — {msg}", file=sys.stderr, flush=True)
+        print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
         return False
     except Exception as exc:
@@ -543,7 +543,7 @@ def index_file(
         from codegraph.state.activity import log as _act_log
 
         msg = f"{path}: {type(exc).__name__}: {exc}"
-        print(f"[codegraph] parse error — {msg}", file=sys.stderr, flush=True)
+        print(f"[codegraph] parse error: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
         return False
 
@@ -586,7 +586,7 @@ def index_file(
     if idx.sections:
         _ingest_markdown(conn, idx)
 
-    # IMPORTS edges — wire them up after the File node exists, regardless
+    # IMPORTS edges, wire them up after the File node exists, regardless
     # of whether the file defines functions/classes (pure __init__.py
     # re-export modules still have meaningful imports).
     if idx.imports:
@@ -605,7 +605,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
     """
     Use `git ls-files` to get tracked + untracked-not-ignored files.
     Also filters out _IGNORE_DIRS (node_modules, .venv, etc.) as extra safety.
-    Files inside any federated subrepo path are skipped — those repos
+    Files inside any federated subrepo path are skipped, those repos
     own their own index and the parent acts as a passe-plat for them.
     Returns None if not a git repo or git command fails (fallback to os.walk).
     """
@@ -720,7 +720,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
 
 
 def _discover_os_walk(repo_root: Path) -> list[Path]:
-    """Python os.walk — portable, respects _IGNORE_DIRS + .cghignore + federated subrepos."""
+    """Python os.walk, portable, respects _IGNORE_DIRS + .cghignore + federated subrepos."""
     from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 
     subrepos = child_paths_to_skip(repo_root)
@@ -743,7 +743,7 @@ def _discover_os_walk(repo_root: Path) -> list[Path]:
 def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
     """
     Return (changed_files, deleted_files) since the last scan (from scan_meta).
-    Falls back to an empty list when no prior scan exists — caller should
+    Falls back to an empty list when no prior scan exists, caller should
     switch to a full method in that case.
     """
     import subprocess
@@ -840,7 +840,7 @@ def index_repo(
     from codegraph.state.scan_meta import git_hash_object as _git_hash
 
     # ------------------------------------------------------------------
-    # File discovery — each method returns (files_to_index, actual_method)
+    # File discovery, each method returns (files_to_index, actual_method)
     # ------------------------------------------------------------------
     actual_method = method
     candidates: list[Path] = []
@@ -864,7 +864,7 @@ def index_repo(
     elif method == "find":
         candidates = _discover_find(repo_root)
         if not candidates:
-            # Tool missing or errored — fall back
+            # Tool missing or errored, fall back
             actual_method = "os_walk"
             candidates = _discover_os_walk(repo_root)
 
@@ -1021,7 +1021,7 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
     head_shas = git_tree_blob_shas(repo_root)
     if head_shas is None:
-        # Not a git repo — fall back to full scan
+        # Not a git repo, fall back to full scan
         _activity_log(repo_root, "incremental_fallback", "no git")
         return {"mode": "fallback_full", **index_repo(repo_root)}
 
@@ -1038,12 +1038,12 @@ def incremental_reindex(repo_root: str | Path) -> dict:
         for path, sha in conn.list_node_fields("File", ["path", "git_blob_sha"]):
             stored[path] = sha
     except Exception:
-        # Old schema / column missing — fall back
+        # Old schema / column missing, fall back
         _activity_log(repo_root, "incremental_fallback", "no git_blob_sha column")
         return {"mode": "fallback_full", **index_repo(repo_root)}
 
     # If nothing is stored OR none of the stored entries have a sha, the
-    # index predates per-file blob tracking — do a full scan to populate.
+    # index predates per-file blob tracking, do a full scan to populate.
     if not stored or all(sha is None for sha in stored.values()):
         _activity_log(repo_root, "incremental_fallback", "no stored blob shas")
         return {"mode": "fallback_full", **index_repo(repo_root)}
@@ -1076,7 +1076,7 @@ def incremental_reindex(repo_root: str | Path) -> dict:
         if stored_mtime is None or abs(stored_mtime - disk_mtime) > 0.01:
             include_extras.append(p)
 
-    # Paths that are gone from HEAD (deleted on this branch) — but don't delete
+    # Paths that are gone from HEAD (deleted on this branch), but don't delete
     # include_dir files just because they're absent from git HEAD.
     include_roots = [str(r) for r in resolve_include_dirs_safe(repo_root)]
     head_abs = {str(repo_root / p) for p in head_shas}

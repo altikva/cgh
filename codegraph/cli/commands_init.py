@@ -79,7 +79,7 @@ def _incremental_via_owner(
     activity log every 500ms. Either branch finishing the scan wins.
     """
     if not port:
-        console_obj.print("  [yellow]owner port not known — skipping[/yellow]")
+        console_obj.print("  [yellow]owner port not known, skipping[/yellow]")
         return
 
     import http.client
@@ -142,7 +142,7 @@ def _incremental_via_owner(
         tbl.add_column("event", width=16)
         tbl.add_column("detail", overflow="fold")
         if not entries:
-            tbl.add_row("—", "[dim]waiting[/dim]", "[dim]activity log empty[/dim]")
+            tbl.add_row("-", "[dim]waiting[/dim]", "[dim]activity log empty[/dim]")
         now = _t.time()
         for ts, event, detail in entries:
             age = now - ts
@@ -157,14 +157,14 @@ def _incremental_via_owner(
                 _t.sleep(0.5)
                 live.update(_render())
     except KeyboardInterrupt:
-        console_obj.print("\n  [yellow]stopped watching — owner may still be working in the background[/yellow]")
+        console_obj.print("\n  [yellow]stopped watching, owner may still be working in the background[/yellow]")
         return
 
     # Report result
     if result_holder["error"]:
         console_obj.print(
             f"  [yellow]owner call failed:[/yellow] {result_holder['error']}  "
-            "[dim](the owner itself may have completed — check `cgh status`)[/dim]"
+            "[dim](the owner itself may have completed, check `cgh status`)[/dim]"
         )
         return
     if result_holder["status"] != 200:
@@ -232,7 +232,7 @@ def _detect_existing_subrepos(root: Path, max_depth: int = 4) -> list[Path]:
             # Found a nested .codegraph/ → it's a candidate subrepo
             if (entry / ".codegraph").is_dir() and entry != root:
                 found.append(entry.resolve())
-                # Don't descend further — subrepos federate as a whole
+                # Don't descend further, subrepos federate as a whole
                 continue
             walk(entry, depth + 1)
 
@@ -274,7 +274,7 @@ def _detect_existing_state(root: Path) -> dict:
         except OSError:
             pass
 
-    # File count from the graph (best-effort, readonly — works even if
+    # File count from the graph (best-effort, readonly, works even if
     # the owner holds the write lock)
     try:
         from codegraph.core.db import get_readonly_connection
@@ -375,13 +375,13 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
     """If ``root/.codegraph/graph.db`` exists and no graph.duckdb is there
     yet, re-index into DuckDB transparently. cgh init is a deliberate
     user action that signals "set this repo up properly", so we don't
-    prompt — we just do it and report.
+    prompt, we just do it and report.
 
     Mismatch handling: if the verify step finds drift between the two
     backends, both files are kept and we print a warning. cgh status will
     show the "both files" state; the user can re-run ``cgh migrate-to-duckdb
     --force`` once they understand the cause. We do NOT exit cgh init
-    on mismatch — the rest of the install flow (MCP server, skills,
+    on mismatch, the rest of the install flow (MCP server, skills,
     indexing) should still proceed.
     """
     cg = root / ".codegraph"
@@ -389,13 +389,13 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
     duckdb_path = cg / "graph.duckdb"
 
     if not kuzu_path.exists() or duckdb_path.exists():
-        return  # nothing to do — fresh repo or already migrated
+        return  # nothing to do, fresh repo or already migrated
 
     from codegraph.cli.commands_migrate import do_migrate_to_duckdb
 
     console.print(
         "  [bold]Auto-migrating from Kuzu to DuckDB[/bold]  "
-        "[dim](DuckDB is the v0.5 default — ~18× faster index, ~5× smaller DB)[/dim]"
+        "[dim](DuckDB is the v0.5 default, ~18× faster index, ~5× smaller DB)[/dim]"
     )
     try:
         result = do_migrate_to_duckdb(root, delete_kuzu=True, force=False)
@@ -428,7 +428,7 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
             "graph.db deleted."
         )
         console.print(
-            f"    [dim]Note: {result.message} — DuckDB accepted as canonical.[/dim]\n"
+            f"    [dim]Note: {result.message}, DuckDB accepted as canonical.[/dim]\n"
         )
         return
     # mismatched
@@ -443,6 +443,31 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
         "    [dim]Inspect with [cyan]cgh status[/cyan], then "
         "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
     )
+
+
+def _install_git_reindex_hooks(root: Path) -> None:
+    """Install the git hooks that refresh the graph after a pull, merge,
+    branch switch, or rebase. Quiet and safe: skips a non-git repo, and skips
+    a shared core.hooksPath (with a one-line hint) so init never touches a
+    machine-global hooks directory on its own.
+    """
+    from codegraph.state.git_hooks import hooks_target_info, install_git_hooks
+
+    target, is_shared = hooks_target_info(root)
+    if target is None:
+        return  # not a git repo
+    if is_shared:
+        console.print(
+            "  [dim]git hooks skipped: core.hooksPath is shared. Run "
+            "[/dim][cyan]cgh hooks install --shared[/cyan][dim] to add them there.[/dim]"
+        )
+        return
+    written = install_git_hooks(root)
+    if written:
+        console.print(
+            f"  [green]+[/green] git hooks ({', '.join(written)}) "
+            "[dim]reindex after pull / merge / checkout / rebase[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +538,7 @@ def cmd_init(args) -> None:
         for b in bits:
             console.print(f"    • {b}")
         if not bits:
-            console.print("    [dim](initialized but empty — safe to full scan)[/dim]")
+            console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
         console.print()
 
     # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
@@ -530,6 +555,9 @@ def cmd_init(args) -> None:
         console.print("  [dim].codegraph/ already exists[/dim]")
 
     console.print()
+
+    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
+    _install_git_reindex_hooks(root)
 
     # -- Step 2: Detect AI tools --
     console.print("  [bold]Detecting AI tools...[/bold]\n")
@@ -587,7 +615,7 @@ def cmd_init(args) -> None:
     elif args.yes:
         selected_keys = [key for _, key in detected_tools]
 
-    # Show which tools will be skipped (explicit — no silent generation)
+    # Show which tools will be skipped (explicit, no silent generation)
     all_keys = [k for _, k, _ in all_tools]
     skipped = [k for k in all_keys if k not in selected_keys]
     if skipped:
@@ -613,7 +641,7 @@ def cmd_init(args) -> None:
                 style=cg_style,
             ).ask()
             if not overwrite_skills:
-                console.print("  [green]Keeping your edits[/green] — will refresh only new / unmodified skills.\n")
+                console.print("  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n")
 
     for key in selected_keys:
         _install_integration(root, key, overwrite_skills=overwrite_skills)
@@ -676,7 +704,7 @@ def cmd_init(args) -> None:
     # Look for nested directories that already have their own .codegraph/.
     # Each is a candidate to federate: the parent will skip indexing them
     # and instead query their own DBs read-only at runtime. Crucial for
-    # workspaces containing multiple git repos — without this, the parent
+    # workspaces containing multiple git repos, without this, the parent
     # would count and try to index every node_modules + child source tree.
     detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
     if detected_subrepos:
@@ -725,7 +753,7 @@ def cmd_init(args) -> None:
     parsers = get_parser_info()
     ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
 
-    # Federation skip list — if the user federated subrepos in step 3d above,
+    # Federation skip list, if the user federated subrepos in step 3d above,
     # they should NOT contribute to the file count.
     skip_paths = child_paths_to_skip(root)
 
@@ -753,7 +781,7 @@ def cmd_init(args) -> None:
         else:
             raise RuntimeError("git ls-files failed")
     except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
-        # Fallback — glob from project root. Filter out subrepo paths so
+        # Fallback, glob from project root. Filter out subrepo paths so
         # the count reflects what the indexer will actually process.
         for info in parsers:
             count = 0
@@ -786,7 +814,7 @@ def cmd_init(args) -> None:
 
     total = sum(file_counts.values())
 
-    # -- Step 5: Index now? — branches on prior state --
+    # -- Step 5: Index now?, branches on prior state --
     if total > 0:
         owner_alive = prior_state.get("owner_alive", False)
         has_data = prior_state.get("indexed_files", 0) > 0
@@ -794,13 +822,13 @@ def cmd_init(args) -> None:
         choice = None
 
         if owner_alive:
-            console.print("  [yellow]The MCP owner is running — it already watches this repo.[/yellow]")
+            console.print("  [yellow]The MCP owner is running, it already watches this repo.[/yellow]")
             if not args.yes:
                 choice = (
                     questionary.select(
                         "What do you want to do?",
                         choices=[
-                            questionary.Choice(title="Skip — owner keeps the index fresh", value="skip"),
+                            questionary.Choice(title="Skip, owner keeps the index fresh", value="skip"),
                             questionary.Choice(
                                 title="Incremental rescan through the owner (no lock fight)",
                                 value="mcp_scan",
@@ -827,7 +855,7 @@ def cmd_init(args) -> None:
                                 value="incremental",
                             ),
                             questionary.Choice(title="Full scan (re-parse everything)", value="full"),
-                            questionary.Choice(title="Skip — keep as-is", value="skip"),
+                            questionary.Choice(title="Skip, keep as-is", value="skip"),
                         ],
                         style=cg_style,
                     ).ask()
@@ -1023,7 +1051,7 @@ def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix
 
 
 # ---------------------------------------------------------------------------
-# Audit — used by `cgh doctor` to report drift between installed Claude
+# Audit, used by `cgh doctor` to report drift between installed Claude
 # integration files and what the current cgh version would write.
 # ---------------------------------------------------------------------------
 
@@ -1053,7 +1081,7 @@ def audit_claude_integration(root: Path) -> dict:
     Inspect the Claude Code integration files in `root` and report what's
     installed, missing, or stale vs the cgh version currently on PATH.
 
-    Read-only — never writes. `cgh doctor` calls this and renders the
+    Read-only, never writes. `cgh doctor` calls this and renders the
     result; `cgh setup claude` is the action side.
     """
     import json as _json
@@ -1062,7 +1090,7 @@ def audit_claude_integration(root: Path) -> dict:
 
     report: dict = {}
 
-    # .mcp.json — codegraph entry present?
+    # .mcp.json, codegraph entry present?
     mcp_path = root / ".mcp.json"
     mcp_ok = False
     if mcp_path.exists():
@@ -1076,7 +1104,7 @@ def audit_claude_integration(root: Path) -> dict:
         "path": str(mcp_path.relative_to(root)) if mcp_path.exists() else ".mcp.json",
     }
 
-    # Hooks — count present markers vs expected, per file. A hook found
+    # Hooks, count present markers vs expected, per file. A hook found
     # in the wrong file (e.g. pre-Grep stuck in settings.json after the
     # split) counts as installed but misplaced; doctor surfaces it so
     # `cgh setup claude` can move it.
@@ -1122,7 +1150,7 @@ def audit_claude_integration(root: Path) -> dict:
         "misplaced": misplaced_labels,
     }
 
-    # Skills — count bundled vs on-disk + modified
+    # Skills, count bundled vs on-disk + modified
     bundled = [name for name, _fm, _body, _d in _iter_skills()]
     skills_dir = root / ".claude" / "skills"
     missing_skills: list[str] = []
@@ -1144,7 +1172,7 @@ def audit_claude_integration(root: Path) -> dict:
         "modified": modified_skills,
     }
 
-    # CLAUDE.md usage block — present?
+    # CLAUDE.md usage block, present?
     claude_md = root / "CLAUDE.md"
     has_block = False
     if claude_md.exists():
@@ -1211,7 +1239,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server)[/dim]")
 
-        # Claude hooks — split across two settings files. Shared hooks
+        # Claude hooks, split across two settings files. Shared hooks
         # (committed, team-wide) go into settings.json; local hooks (depend
         # on cgh being on the user's PATH) go into settings.local.json so
         # they don't break teammates who haven't installed cgh.
@@ -1245,7 +1273,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
                 f"    [yellow]~[/yellow] {label} [dim](moved to the correct settings file)[/dim]"
             )
 
-        # Skills — may preserve local edits if the user said so
+        # Skills, may preserve local edits if the user said so
         _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))
 
     elif tool == "cursor":

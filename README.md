@@ -22,41 +22,61 @@ supported Python and is the default everywhere. Existing Kuzu repos are
 auto-migrated to DuckDB on the next `cgh init`. Use `CGH_DB=kuzu` (with
 the extra installed) to keep using Kuzu if you have a reason to.
 
+### One-line install
+
+The install scripts detect your environment (macOS, Linux, WSL, Git Bash, or
+native Windows), install cgh, and offer to add the `cgh` command to your PATH.
+
+macOS, Linux, WSL, Git Bash ([install.sh](./install.sh)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
+```
+
+Windows PowerShell ([install.ps1](./install.ps1)):
+
+```powershell
+irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
+```
+
+### With pip, pipx, or uv
+
 ```bash
 # From PyPI (most users)
 pip install cgh
 
+# Isolated install that also handles PATH for you
+pipx install cgh        # or: uv tool install cgh
+
 # From source (for development)
 git clone https://github.com/altikva/cgh.git
 cd cgh
-
-# pip
-pip install -e .
-
-# pipx (isolated install)
-pipx install .
-
-# uv
-uv pip install -e .
-uv tool install .
+uv pip install -e .     # or: pip install -e .
 ```
 
-Once installed, the `cgh` CLI is on your PATH:
-
 ```bash
-cgh --help
+cgh --version
 cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
 ```
 
-After install, the `cgh` CLI is on your PATH:
+### If `cgh` is not found after install
+
+`pip install` drops the `cgh` executable in a Scripts directory that is not
+always on PATH (common on Windows). Two fixes:
 
 ```bash
-cgh --version
-# codegraph 0.4.0
+# Run it as a module, no PATH change needed
+python -m cgh --version
+
+# Or add the cgh command's directory to your PATH
+python -m cgh ensurepath
 ```
 
-The Python import name is still `codegraph` (e.g. `from codegraph.parsers import ...`); only the CLI is renamed. Same pattern as `pip install pillow` then `import PIL`.
+`pipx install cgh` and `uv tool install cgh` avoid this by managing PATH
+themselves. The Python import name is still `codegraph` (e.g.
+`from codegraph.parsers import ...`); only the CLI is named `cgh`, same
+pattern as `pip install pillow` then `import PIL`.
 
 ---
 
@@ -761,9 +781,9 @@ When running as an MCP server (`cgh serve`), codegraph exposes 39 tools.
 
 | Tool | Description |
 |------|-------------|
-| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries — no Read needed |
+| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries: no Read needed |
 | `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
-| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI decorators + Nuxt server/api file routes + Express) with their handlers — works cross-repo when `extra_dirs` is configured |
+| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI decorators + Nuxt server/api file routes + Express) with their handlers: works cross-repo when `extra_dirs` is configured |
 
 ### Code Navigation
 
@@ -819,8 +839,8 @@ When running as an MCP server (`cgh serve`), codegraph exposes 39 tools.
 | Tool | Description |
 |------|-------------|
 | `scan_status()` | Is the graph in sync with `git HEAD`? Returns `fresh`, `indexed_sha`, `behind_by`, `changed_files` |
-| `incremental_reindex()` | Surgical reindex — compares per-file git blob SHAs and touches only what actually changed since the last scan |
-| `add_directory(path)` | Hot-add an external directory (sibling repo) to the graph — persists to config, scans, extends the watcher. No restart needed. |
+| `incremental_reindex()` | Surgical reindex: compares per-file git blob SHAs and touches only what actually changed since the last scan |
+| `add_directory(path)` | Hot-add an external directory (sibling repo) to the graph: persists to config, scans, extends the watcher. No restart needed. |
 
 ---
 

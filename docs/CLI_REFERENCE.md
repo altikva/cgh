@@ -30,7 +30,7 @@ cgh init [--yes | -y] [--root DIR]
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini)
-5. Prompts (multi-select) which tools to install MCP configs for — pick one or many
+5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
 6. For selected tools: writes MCP config, installs the bundled skills, and (optional) appends codegraph usage guidelines to the agent's root rules file (CLAUDE.md / AGENTS.md / GEMINI.md)
 7. Offers Claude-specific auto-accept for MCP tool calls
 8. Counts parseable files by language
@@ -66,12 +66,12 @@ Choose the file-discovery strategy:
 cgh index --method {auto,git_ls_files,os_walk,find,git_diff,incremental}
 ```
 
-- `auto` — git_ls_files, falls back to os_walk (default)
-- `git_ls_files` — force git, respects `.gitignore`
-- `os_walk` — Python walk, respects `_IGNORE_DIRS` + `.cghignore`
-- `find` — GNU `find -type f`, fast on big repos
-- `git_diff` — only files changed since the last scan
-- `incremental` — only files whose git blob SHA drifted
+- `auto`: git_ls_files, falls back to os_walk (default)
+- `git_ls_files`: force git, respects `.gitignore`
+- `os_walk`: Python walk, respects `_IGNORE_DIRS` + `.cghignore`
+- `find`: GNU `find -type f`, fast on big repos
+- `git_diff`: only files changed since the last scan
+- `incremental`: only files whose git blob SHA drifted
 
 ### `stats --live`
 
@@ -456,9 +456,9 @@ cgh migrate-to-duckdb [--yes | -y] [--keep-kuzu] [--force] [--root DIR]
 
 The verifier compares per-label node + per-type edge counts between the two backends and classifies the diff:
 
-- **matched** — exact counts; swap proceeds.
-- **stale_kuzu** — every diff is explained by a fix shipped after the Kuzu DB was written (`IMPORTS` going from `0` to N, or any metric where DuckDB ≤ Kuzu, i.e. ghost rows from deleted files). DuckDB is accepted as canonical and the swap proceeds.
-- **mismatched** — DuckDB gained rows that aren't explained by a known post-fix signature. Both files are kept and the command exits non-zero so you can inspect manually.
+- **matched**: exact counts; swap proceeds.
+- **stale_kuzu**: every diff is explained by a fix shipped after the Kuzu DB was written (`IMPORTS` going from `0` to N, or any metric where DuckDB ≤ Kuzu, i.e. ghost rows from deleted files). DuckDB is accepted as canonical and the swap proceeds.
+- **mismatched**: DuckDB gained rows that aren't explained by a known post-fix signature. Both files are kept and the command exits non-zero so you can inspect manually.
 
 `cgh init` runs this automatically when it detects only `graph.db` is present.
 

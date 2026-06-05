@@ -158,7 +158,7 @@ class CodegraphConfig:
     log_backup_count: int = 3
 
     # Federation: child sub-repos with their own .codegraph/ index. The
-    # parent acts as a passe-plat — indexes only files outside any subrepo,
+    # parent acts as a passe-plat, indexes only files outside any subrepo,
     # then federates queries (read-only) to the children's databases.
     # Paths are relative to project_root or absolute.
     subrepos: list[str] = field(default_factory=list)
@@ -305,15 +305,15 @@ reindex_on_start = true
 # Remix, Terraform, and conventional folder names (/handlers/, /services/,
 # /models/, /components/, etc).
 #
-# Use this section if your layout differs — e.g. "src/domain/handlers/":
+# Use this section if your layout differs, e.g. "src/domain/handlers/":
 #
 #   "/src/domain/handlers/"   = "handler:application"
 #   "/src/adapters/"          = "provider:infra"
 #   "/pkg/internal/services/" = "service:application"
 #
 # Syntax: "<path_fragment>" = "<role>:<layer>"
-#   role  — free-form narrow category (shown in architecture_overview)
-#   layer — one of: presentation, application, domain, infra, test, doc, other
+#   role, free-form narrow category (shown in architecture_overview)
+#   layer, one of: presentation, application, domain, infra, test, doc, other
 """
 
 

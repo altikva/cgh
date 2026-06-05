@@ -18,7 +18,7 @@ or before ignoring context you already have access to.
 | Facing a problem that might be solved before (gotchas, patterns) | `mcp__codegraph__knowledge_search(query="<keywords>")` |
 | Unsure what topics are already captured | `mcp__codegraph__knowledge_terms()` (glossary) |
 | User asks *"what do you know about this project"* | `mcp__codegraph__memory_list(kind="project")` + `knowledge_list()` |
-| Any non-trivial task | `mcp__codegraph__context_for_task` — merges memory + plan + knowledge |
+| Any non-trivial task | `mcp__codegraph__context_for_task`: merges memory + plan + knowledge |
 
 ## When to RECORD knowledge (not just read it)
 
@@ -39,7 +39,7 @@ Before a long session gets compacted/summarized, call:
   `mcp__codegraph__compact_session(session_id, title, digest, tags=...)`
 
 with a distilled summary of what was learned. It persists across
-sessions — a future `context_for_task` call with relevant keywords
+sessions: a future `context_for_task` call with relevant keywords
 will surface it automatically.
 
 ## `context_for_task` now returns memory + plans
@@ -49,7 +49,7 @@ The unified `context_for_task` tool surfaces:
 - top 3 Claude Code memory entries matching the task,
 - top 2 related plan files.
 
-Prefer this for task kickoff — one call gives the full picture.
+Prefer this for task kickoff: one call gives the full picture.
 
 ## Session dedup (optional, recommended)
 
@@ -65,15 +65,15 @@ Reset when starting a fresh sub-task:
 
 - Don't ask the user to restate a preference you could have looked up
   via `memory_search`.
-- Don't re-explain architectural choices on repeat topics — check
+- Don't re-explain architectural choices on repeat topics: check
   `memory_list(kind="project")` first.
-- Don't create a new plan when an equivalent one exists — `plan_search`
+- Don't create a new plan when an equivalent one exists: `plan_search`
   first, reuse if relevant.
-- Don't pass raw file contents to `memory_search`/`plan_search` — they
+- Don't pass raw file contents to `memory_search`/`plan_search`: they
   expect a natural-language or keyword query.
 
 ## Staleness
 
 Memory/plan indexes auto-refresh via the watcher (~1s after a file
 save). If in doubt, call `mcp__codegraph__memory_rescan` or
-`mcp__codegraph__plan_rescan` — both cheap, mtime-idempotent.
+`mcp__codegraph__plan_rescan`: both cheap, mtime-idempotent.

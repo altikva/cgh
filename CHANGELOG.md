@@ -8,6 +8,38 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-06-05
+
+This release focuses on Windows support and install ergonomics.
+
+### Fixed
+- `cgh serve` now works on Windows. Three platform breakages were fixed: the
+  owner crashed referencing `signal.SIGHUP` (POSIX-only); the liveness probes
+  used `os.kill(pid, 0)`, which terminates the target process on Windows
+  rather than checking it; and a CRLF-tainted command token like `serve\r`
+  was rejected by the argument parser.
+
+### Added
+- `python -m cgh` works as an alias for the `cgh` command, handy on Windows
+  when the Scripts directory holding `cgh.exe` is not on PATH.
+- `cgh ensurepath` adds the directory holding the `cgh` executable to your
+  shell PATH (like `pipx ensurepath`). It detects Git Bash, WSL, Linux,
+  macOS, and native Windows.
+- Git hooks (`post-merge`, `post-checkout`, `post-rewrite`) that run an
+  incremental reindex after a pull, merge, branch switch, or rebase, so the
+  graph stays fresh when content arrives through git rather than a save.
+  `cgh init` installs them, and `cgh hooks install | uninstall | status`
+  manages them. cgh will not write into a shared `core.hooksPath` without
+  `--shared`.
+- The `cgh` banner now also shows on `--version`.
+
+### Changed
+- `install.sh` detects the environment (macOS, Linux, WSL, Git Bash), installs
+  the correct PyPI package, and offers to fix PATH. A new `install.ps1` does
+  the same for native Windows PowerShell.
+- CI runs the full 3.11 through 3.14 matrix and a no-em-dashes prose check;
+  `uv.lock` is committed and verified on every run.
+
 ## [0.4.4] - 2026-06-04
 
 ### Fixed
@@ -123,7 +155,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/altikva/cgh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/altikva/cgh/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/altikva/cgh/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/altikva/cgh/compare/v0.4.1...v0.4.2

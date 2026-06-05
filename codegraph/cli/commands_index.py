@@ -275,7 +275,6 @@ def cmd_serve(args) -> None:
     # race against a still-shutting-down uvicorn (would falsely report
     # "Owner already running on port X").
     if getattr(args, "stop", False):
-        import time as _time
         from pathlib import Path
 
         from codegraph.state.ipc import (
@@ -294,15 +293,12 @@ def cmd_serve(args) -> None:
         if pf.exists():
             try:
                 pid = int(pf.read_text().strip())
-                os.kill(pid, 15)  # SIGTERM
-                # Wait up to 5s for the process to die. The owner removes
-                # its own pidfile/portfile via atexit on a clean exit.
-                deadline = _time.time() + 5.0
-                while _time.time() < deadline and is_pid_alive(pid):
-                    _time.sleep(0.1)
+                # Cross-platform stop: graceful on POSIX (so the owner runs
+                # its atexit cleanup), TerminateProcess on Windows.
+                from codegraph.state.pidfile import terminate
+
+                terminate(pid, graceful_timeout=5.0)
                 if is_pid_alive(pid):
-                    os.kill(pid, 9)  # SIGKILL, escalate
-                    _time.sleep(0.2)
                     console.print(f"[yellow]Owner (pid {pid}) force-killed after timeout.[/yellow]")
                 else:
                     console.print(f"[green]Owner (pid {pid}) stopped.[/green]")

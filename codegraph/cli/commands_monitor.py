@@ -843,7 +843,6 @@ def cmd_reset(args) -> None:
     """
     import shutil
     import subprocess
-    import time
 
     from codegraph.state.ipc import owner_pidfile
 
@@ -859,13 +858,11 @@ def cmd_reset(args) -> None:
     if owner_pid_path.exists():
         try:
             pid = int(owner_pid_path.read_text().strip())
-            os.kill(pid, 15)
+            # Cross-platform: graceful on POSIX, TerminateProcess on Windows.
+            from codegraph.state.pidfile import terminate
+
+            terminate(pid, graceful_timeout=3.0)
             killed = True
-            # Give it up to 3s to clean up
-            for _ in range(30):
-                time.sleep(0.1)
-                if not _pid_alive(pid):
-                    break
         except (ValueError, ProcessLookupError, OSError):
             pass
 

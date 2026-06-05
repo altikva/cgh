@@ -158,7 +158,7 @@ def cmd_graph(args) -> None:
         if file:
             meta += f" file={file}"
         html_content = generate_html(mermaid_code, scope, root, meta)
-        out_path.write_text(html_content)
+        out_path.write_text(html_content, encoding="utf-8")
         console.print(f"  [green]+[/green] {out_path} [dim]({len(html_content):,} bytes)[/dim]")
         return
 
@@ -264,7 +264,7 @@ def cmd_add_dir(args) -> None:
 
 def _write_extra_dirs(config_path: Path, data: dict, extra_dirs: list[str]) -> None:
     """Update extra_dirs in config.toml (preserves other settings)."""
-    content = config_path.read_text()
+    content = config_path.read_text(encoding="utf-8")
 
     # Check if extra_dirs already exists in file
     if "extra_dirs" in content:
@@ -288,7 +288,7 @@ def _write_extra_dirs(config_path: Path, data: dict, extra_dirs: list[str]) -> N
                 f"{insert_after}\n# Additional directories to include in the graph\nextra_dirs = [{dirs_str}]",
             )
 
-    config_path.write_text(content)
+    config_path.write_text(content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

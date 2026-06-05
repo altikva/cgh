@@ -28,11 +28,18 @@ def cmd_ensurepath(args) -> None:
     env = ep.detect_env()
 
     if env == "windows":
-        # Editing the Windows registry PATH from here is risky; print the
-        # one-liner instead. install.ps1 does the edit for PowerShell users.
+        # Editing the registry PATH from here is risky; print the one-liner
+        # instead (install.ps1 does the edit for PowerShell users). Do NOT use
+        # setx: it copies the full process PATH (system + user) into the user
+        # PATH and truncates at 1024 chars. The read-modify-write below touches
+        # only the user PATH and never truncates.
         console.print("[bold]Add cgh to your PATH (Windows)[/bold]")
         console.print("  Run this in PowerShell, then open a new terminal:\n")
-        console.print(f'  [cyan]setx PATH "$env:PATH;{scripts}"[/cyan]')
+        console.print(
+            "  [cyan]$p = [Environment]::GetEnvironmentVariable('Path','User'); "
+            f'if ($p -notlike "*{scripts}*") {{ [Environment]::SetEnvironmentVariable('
+            f"'Path', \"$p;{scripts}\", 'User') }}[/cyan]"
+        )
         return
 
     value = ep.path_value_for(env, scripts)

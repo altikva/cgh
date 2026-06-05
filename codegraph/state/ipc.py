@@ -108,7 +108,7 @@ def read_owner_port(repo_root: str | Path) -> int | None:
     if not p.exists():
         return None
     try:
-        return int(p.read_text().strip())
+        return int(p.read_text(encoding="utf-8").strip())
     except (ValueError, OSError):
         return None
 
@@ -118,7 +118,7 @@ def read_owner_pid(repo_root: str | Path) -> int | None:
     if not p.exists():
         return None
     try:
-        pid = int(p.read_text().strip())
+        pid = int(p.read_text(encoding="utf-8").strip())
         return pid if pid > 0 else None
     except (ValueError, OSError):
         return None
@@ -200,11 +200,13 @@ def rotate_owner_log(repo_root: str | Path) -> None:
         dst = log_path.with_suffix(f".log.{i + 1}")
         if src.exists():
             try:
-                src.rename(dst)
+                # os.replace overwrites the destination atomically; plain
+                # rename raises FileExistsError on Windows when dst exists.
+                os.replace(src, dst)
             except OSError:
                 pass
     try:
-        log_path.rename(log_path.with_suffix(".log.1"))
+        os.replace(log_path, log_path.with_suffix(".log.1"))
     except OSError:
         # If rename fails (e.g. file held open on Windows) we bail rather
         # than truncate, losing logs silently is worse than a big file.
@@ -232,18 +234,26 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     if reindex:
         cmd.append("--reindex")
 
-    # Detach: own session, stdio redirected to DEVNULL, owner logs go
-    # to .codegraph/owner.log
+    # Detach: own session/process group, stdio redirected to DEVNULL, owner
+    # logs go to .codegraph/owner.log. start_new_session (setsid) is POSIX
+    # only; on Windows it is a no-op, so the owner would stay tied to the
+    # parent console and die when it closes. Pass the Windows creationflags
+    # instead so the owner truly survives the launching shell.
     log_path = repo_root / ".codegraph" / "owner.log"
     logf = open(log_path, "ab", buffering=0)
-    subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=logf,
-        stderr=logf,
-        start_new_session=True,
-        close_fds=True,
-    )
+    popen_kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": logf,
+        "stderr": logf,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **popen_kwargs)
 
     # Wait for the owner to publish its port. When --reindex is requested the
     # owner finishes the full scan before writing the port file, which can take

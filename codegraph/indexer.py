@@ -72,7 +72,7 @@ def _load_cghignore(repo_root: Path) -> list[str]:
         return _cghignore_patterns
 
     patterns = []
-    for line in ignore_file.read_text().splitlines():
+    for line in ignore_file.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -93,10 +93,12 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
     if not patterns:
         return False
 
+    # Use forward slashes so slash-bearing patterns (e.g. "docs/*.md") match
+    # on Windows too, where relative_to would otherwise yield backslashes.
     try:
-        rel = str(file_path.relative_to(repo_root))
+        rel = file_path.relative_to(repo_root).as_posix()
     except ValueError:
-        rel = str(file_path)
+        rel = file_path.as_posix()
 
     for pattern in patterns:
         # Directory pattern (ends with /)
@@ -619,7 +621,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
             timeout=30,
         )
@@ -698,7 +700,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
         r = subprocess.run(
             ["find", str(repo_root), "-type", "f", "-not", "-path", "*/.*"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
         )
         if r.returncode != 0:
@@ -759,7 +761,7 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
         r = subprocess.run(
             ["git", "diff", "--name-status", f"{last_sha}..HEAD"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
             timeout=10,
         )

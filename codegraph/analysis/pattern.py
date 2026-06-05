@@ -119,7 +119,7 @@ def _run_rg(
         args.append(pattern)
         args.append(str(root))
         try:
-            r = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (subprocess.TimeoutExpired, OSError):
             return [], False
         if r.returncode not in (0, 1):  # 1 = no matches, still OK
@@ -173,7 +173,7 @@ def _run_git_grep(
         if glob:
             args.extend(["--", glob])
         try:
-            r = subprocess.run(args, capture_output=True, text=True, cwd=str(root), timeout=30)
+            r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(root), timeout=30)
         except (subprocess.TimeoutExpired, OSError):
             return [], False
         if r.returncode not in (0, 1):

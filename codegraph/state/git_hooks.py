@@ -34,7 +34,7 @@ def _git_dir(repo_root: Path) -> Path | None:
             ["git", "rev-parse", "--git-dir"],
             cwd=str(repo_root),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -60,7 +60,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
             ["git", "config", "--get", "core.hooksPath"],
             cwd=str(repo_root),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         ).stdout.strip()
     except FileNotFoundError:
         return None

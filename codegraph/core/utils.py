@@ -81,3 +81,16 @@ def lang_color(suffix: str) -> str:
         ".md": "cyan",
         ".mdx": "cyan",
     }.get(suffix, "white")
+
+
+def ro_sqlite_uri(db_path: "str | Path") -> str:
+    """Build a read-only SQLite ``file:`` URI that is valid on every platform.
+
+    A naive ``f"file:{path}?mode=ro"`` breaks on Windows: backslashes are
+    literal filename characters in a file URI and a bare ``C:\\...`` is not a
+    valid URI path, so the open fails. ``pathname2url`` produces the correct
+    ``/C:/...`` form and percent-encodes special characters.
+    """
+    from urllib.request import pathname2url
+
+    return "file:" + pathname2url(str(db_path)) + "?mode=ro"

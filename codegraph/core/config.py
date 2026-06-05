@@ -47,12 +47,27 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
+def _claude_project_slug_from_abs(abs_path: str) -> str:
+    """Slug Claude Code uses for ~/.claude/projects/<slug>/.
+
+    Every path separator becomes a dash. On POSIX ``/Users/joy/x`` becomes
+    ``-Users-joy-x`` (the leading slash gives the leading dash). On Windows
+    ``C:\\Users\\x`` becomes ``C--Users-x``: the drive colon and each
+    backslash both turn into a dash. Verified against real Claude Code
+    project directories on both platforms.
+    """
+    slug = abs_path
+    for sep in (":", "\\", "/"):
+        slug = slug.replace(sep, "-")
+    return slug
+
+
 def _claude_memory_dir_for(project_root: str | Path) -> Path:
     """
     Claude Code stores per-project memory at
-    ~/.claude/projects/-<abs-path-with-slashes-as-dashes>/memory/.
+    ~/.claude/projects/<slug>/memory/.
     """
-    slug = str(Path(project_root).resolve()).replace("/", "-")
+    slug = _claude_project_slug_from_abs(str(Path(project_root).resolve()))
     return CLAUDE_HOME / "projects" / slug / "memory"
 
 
@@ -347,7 +362,7 @@ def init_project(root: Path) -> dict:
 
     config_path = cg_dir / CONFIG_FILE
     if not config_path.exists():
-        config_path.write_text(generate_default_config())
+        config_path.write_text(generate_default_config(), encoding="utf-8")
         created.append(str(config_path))
 
     # Generate auth key
@@ -361,9 +376,9 @@ def init_project(root: Path) -> dict:
     # Add .codegraph to .gitignore if not already there
     gitignore = root / ".gitignore"
     if gitignore.exists():
-        content = gitignore.read_text()
+        content = gitignore.read_text(encoding="utf-8")
         if ".codegraph" not in content:
-            with open(gitignore, "a") as f:
+            with open(gitignore, "a", encoding="utf-8") as f:
                 f.write("\n# codegraph index\n.codegraph/\n")
             created.append(".gitignore (updated)")
 

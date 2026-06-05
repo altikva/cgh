@@ -194,6 +194,11 @@ def do_migrate_to_duckdb(
         )
 
     if duckdb_path.exists() and force:
+        # Close any cached connection first: Windows refuses to unlink a file
+        # that is still open (PermissionError).
+        from codegraph.core.db import reset_connection
+
+        reset_connection()
         duckdb_path.unlink()
 
     os.environ.pop("CGH_DB", None)

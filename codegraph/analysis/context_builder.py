@@ -98,7 +98,7 @@ def _check_ruflo_available() -> bool:
                 r = subprocess.run(
                     ["npx", "ruflo", "--version"],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=5,
                 )
                 _check_ruflo_available._cached = r.returncode == 0
@@ -156,7 +156,7 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=5,
                 cwd=str(__import__("pathlib").Path.cwd()),
             )

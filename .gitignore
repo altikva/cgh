@@ -29,3 +29,6 @@ Thumbs.db
 
 # codegraph runtime state (don't ship a user's index in this repo)
 .codegraph/
+
+# codegraph auth key (never commit)
+.codegraph/auth.key

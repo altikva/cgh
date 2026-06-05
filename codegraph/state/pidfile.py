@@ -71,6 +71,51 @@ def _windows_process_alive(pid: int) -> bool:
 _is_process_alive = process_alive
 
 
+def terminate(pid: int, graceful_timeout: float = 5.0) -> None:
+    """Stop a process, cross-platform.
+
+    POSIX: SIGTERM, wait up to ``graceful_timeout`` for a clean exit (so the
+    target runs its atexit cleanup), then SIGKILL if it is still alive.
+    Windows: TerminateProcess via the Win32 API. There is no graceful signal
+    on Windows (SIGTERM is already a hard kill there, and SIGKILL does not
+    exist), so the wait does not apply.
+    """
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        _windows_terminate(pid)
+        return
+    import time
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+    deadline = time.monotonic() + graceful_timeout
+    while time.monotonic() < deadline:
+        if not process_alive(pid):
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError, AttributeError):
+        pass
+
+
+def _windows_terminate(pid: int) -> None:
+    import ctypes
+
+    PROCESS_TERMINATE = 0x0001
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if not handle:
+        return
+    try:
+        kernel32.TerminateProcess(handle, 1)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def read_existing_pid(repo_root: str | Path) -> int | None:
     """Return the PID recorded in the pidfile, or None if missing/invalid."""
     path = _pidfile_path(repo_root)

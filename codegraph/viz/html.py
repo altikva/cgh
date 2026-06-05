@@ -184,6 +184,6 @@ def open_in_browser(html_content: str, filename: str = "codegraph.html") -> Path
     tmp_dir = Path(tempfile.gettempdir()) / "codegraph"
     tmp_dir.mkdir(exist_ok=True)
     out_path = tmp_dir / filename
-    out_path.write_text(html_content)
+    out_path.write_text(html_content, encoding="utf-8")
     webbrowser.open(f"file://{out_path}")
     return out_path

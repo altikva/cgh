@@ -184,7 +184,7 @@ def _cmd_down(args) -> None:
             console.print(f"[dim]• {child.name} already stopped[/dim]")
             continue
         try:
-            pid = int(pf.read_text().strip())
+            pid = int(pf.read_text(encoding="utf-8").strip())
             from codegraph.state.pidfile import terminate
 
             terminate(pid, graceful_timeout=5.0)

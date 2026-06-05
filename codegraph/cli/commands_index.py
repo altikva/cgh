@@ -292,7 +292,7 @@ def cmd_serve(args) -> None:
         pf = owner_pidfile(root_path)
         if pf.exists():
             try:
-                pid = int(pf.read_text().strip())
+                pid = int(pf.read_text(encoding="utf-8").strip())
                 # Cross-platform stop: graceful on POSIX (so the owner runs
                 # its atexit cleanup), TerminateProcess on Windows.
                 from codegraph.state.pidfile import terminate

@@ -72,7 +72,7 @@ def _load_cghignore(repo_root: Path) -> list[str]:
         return _cghignore_patterns
 
     patterns = []
-    for line in ignore_file.read_text().splitlines():
+    for line in ignore_file.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -93,10 +93,12 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
     if not patterns:
         return False
 
+    # Use forward slashes so slash-bearing patterns (e.g. "docs/*.md") match
+    # on Windows too, where relative_to would otherwise yield backslashes.
     try:
-        rel = str(file_path.relative_to(repo_root))
+        rel = file_path.relative_to(repo_root).as_posix()
     except ValueError:
-        rel = str(file_path)
+        rel = file_path.as_posix()
 
     for pattern in patterns:
         # Directory pattern (ends with /)

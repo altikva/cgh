@@ -172,6 +172,12 @@ def _print_help():
 
 
 def main() -> None:
+    # Strip trailing CR/LF from every argument. On Windows a wrapper script
+    # or config saved with CRLF line endings can pass a token like "serve\r",
+    # which argparse then rejects as an invalid choice. No real argument ends
+    # in a carriage return or newline, so this is safe.
+    sys.argv[:] = [a.rstrip("\r\n") for a in sys.argv]
+
     # Show pretty help if no args
     if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
         _print_help()

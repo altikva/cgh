@@ -125,17 +125,11 @@ def read_owner_pid(repo_root: str | Path) -> int | None:
 
 
 def is_pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
+    # Delegate to the cross-platform probe; os.kill(pid, 0) is unsafe on
+    # Windows (it would terminate the process being checked).
+    from codegraph.state.pidfile import process_alive
+
+    return process_alive(pid)
 
 
 def is_owner_alive(repo_root: str | Path) -> bool:

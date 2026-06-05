@@ -40,7 +40,7 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
 
     if settings_path.exists():
         try:
-            data = _json.loads(settings_path.read_text() or "{}")
+            data = _json.loads(settings_path.read_text(encoding="utf-8") or "{}")
         except Exception:
             data = {}
     else:
@@ -58,7 +58,7 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
             allow.append(pattern)
             added.append(pattern)
 
-    settings_path.write_text(_json.dumps(data, indent=2) + "\n")
+    settings_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return added
 
 
@@ -358,7 +358,7 @@ def _detect_existing_state(root: Path) -> dict:
         try:
             import json as _json
 
-            data = _json.loads(mcp_path.read_text())
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
             state["mcp_server_configured"] = "codegraph" in (data.get("mcpServers") or {})
         except Exception:
             pass
@@ -764,7 +764,7 @@ def cmd_init(args) -> None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(root),
             timeout=30,
         )
@@ -1095,7 +1095,7 @@ def audit_claude_integration(root: Path) -> dict:
     mcp_ok = False
     if mcp_path.exists():
         try:
-            data = _json.loads(mcp_path.read_text())
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
             mcp_ok = "codegraph" in (data.get("mcpServers") or {})
         except (OSError, _json.JSONDecodeError):
             mcp_ok = False
@@ -1112,7 +1112,7 @@ def audit_claude_integration(root: Path) -> dict:
         if not path.exists():
             return {}
         try:
-            return _json.loads(path.read_text()) or {}
+            return _json.loads(path.read_text(encoding="utf-8")) or {}
         except (OSError, _json.JSONDecodeError):
             return {}
 
@@ -1232,11 +1232,11 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
     if tool == "claude":
         mcp_path = root / ".mcp.json"
         if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text())
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server)[/dim]")
 
         # Claude hooks, split across two settings files. Shared hooks
@@ -1248,8 +1248,8 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         shared_path = settings_dir / "settings.json"
         local_path = settings_dir / "settings.local.json"
 
-        shared = _json.loads(shared_path.read_text()) if shared_path.exists() else {}
-        local = _json.loads(local_path.read_text()) if local_path.exists() else {}
+        shared = _json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
+        local = _json.loads(local_path.read_text(encoding="utf-8")) if local_path.exists() else {}
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
         cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
@@ -1257,9 +1257,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 
         if result["shared_changed"]:
-            shared_path.write_text(_json.dumps(shared, indent=2) + "\n")
+            shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
         if result["local_changed"]:
-            local_path.write_text(_json.dumps(local, indent=2) + "\n")
+            local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
 
         for label in result["added"]:
             target_file = next(
@@ -1281,29 +1281,29 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         cursor_dir.mkdir(exist_ok=True)
         mcp_path = cursor_dir / "mcp.json"
         data = {"mcpServers": {"codegraph": mcp_entry}}
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .cursor/mcp.json [dim](MCP server)[/dim]")
         _skills_line(".cursor/rules/", install_cursor(root))
 
     elif tool == "codex":
         mcp_path = root / ".mcp.json"
         if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text())
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]")
         _skills_line("AGENTS.md", install_codex(root))
 
     elif tool == "gemini":
         mcp_path = root / ".mcp.json"
         if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text())
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n")
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]")
         _skills_line("GEMINI.md", install_gemini(root))
 

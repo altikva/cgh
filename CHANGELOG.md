@@ -8,6 +8,45 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-06-06
+
+A cross-platform audit pass. Five parallel reviews of signals, paths, file
+locking, terminal I/O, and shell handling surfaced a batch of Windows bugs,
+all fixed here. `cgh serve`, `cgh reset`, `cgh federate`, and the memory and
+plan indexes now work on Windows where they previously crashed or silently
+did nothing.
+
+### Fixed
+- `cgh federate` on Windows stored subrepo paths with backslashes, which
+  produced invalid TOML, so federated subrepos silently read back as none.
+  Paths are now stored with forward slashes and the config writer escapes
+  backslashes.
+- Read-only SQLite opens used a `file:` URI built from a raw path, which is
+  invalid on Windows. The FTS fan-out, the `cgh status` fallback, and the
+  Read hook hint all silently failed there. Fixed with a portable URI helper.
+- Git subprocess output was decoded with the locale codec on Windows, so
+  non-ASCII filenames or commit messages produced mojibake or errors. All
+  text-mode subprocess and file reads now use UTF-8.
+- `cgh reset` ran `pkill`, which does not exist on Windows, and crashed.
+- Stopping a process (`cgh serve --stop`, `cgh reset`, `cgh federate down`)
+  used raw signals; on Windows that skipped cleanup. A cross-platform
+  `terminate()` now handles both worlds. The spawned owner also detaches
+  correctly on Windows so `--background` survives the launching shell.
+- The Claude memory and plan index used a path slug that was wrong on
+  Windows, so it pointed at a directory that never existed and returned no
+  results. The slug now matches Claude Code on every platform.
+- `.cghignore` patterns with a slash now match on Windows, and `owner.log`
+  rotation no longer fails there.
+
+### Changed
+- `cgh ensurepath` on Windows prints a safe user-PATH edit instead of `setx`,
+  which would duplicate and truncate PATH.
+
+### Docs
+- Refreshed the Limitations section: JS/TS imports do resolve to local files
+  now (relative, tsconfig aliases, workspace packages); the large-repo timing
+  note reflects the DuckDB default.
+
 ## [0.4.5] - 2026-06-05
 
 This release focuses on Windows support and install ergonomics.
@@ -155,7 +194,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/altikva/cgh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/altikva/cgh/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/altikva/cgh/compare/v0.4.2...v0.4.3

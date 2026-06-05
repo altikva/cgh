@@ -342,7 +342,7 @@ def cmd_status(args) -> None:
     owner_port = None
     if (Path(root) / ".codegraph").exists():
         try:
-            owner_pid = int((Path(root) / ".codegraph" / "owner.pid").read_text().strip())
+            owner_pid = int((Path(root) / ".codegraph" / "owner.pid").read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             pass
         owner_port = read_owner_port(root)
@@ -857,7 +857,7 @@ def cmd_reset(args) -> None:
     killed = False
     if owner_pid_path.exists():
         try:
-            pid = int(owner_pid_path.read_text().strip())
+            pid = int(owner_pid_path.read_text(encoding="utf-8").strip())
             # Cross-platform: graceful on POSIX, TerminateProcess on Windows.
             from codegraph.state.pidfile import terminate
 
@@ -924,7 +924,7 @@ def cmd_reset(args) -> None:
     if args.drop_extra_dirs:
         config_path = cg_dir / "config.toml"
         if config_path.exists():
-            content = config_path.read_text()
+            content = config_path.read_text(encoding="utf-8")
             new_content = re.sub(
                 r"^\s*extra_dirs\s*=\s*\[.*?\]\s*\n",
                 "",
@@ -932,7 +932,7 @@ def cmd_reset(args) -> None:
                 flags=re.MULTILINE | re.DOTALL,
             )
             if new_content != content:
-                config_path.write_text(new_content)
+                config_path.write_text(new_content, encoding="utf-8")
                 console.print("[green]Dropped extra_dirs from config.toml[/green]")
 
     # 4. Re-index (unless --no-reindex)

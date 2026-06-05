@@ -45,7 +45,7 @@ def save_auth_key(repo_root: str | Path, key: str | None = None) -> str:
 
     key_path = get_auth_key_path(repo_root)
     key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_text(key + "\n")
+    key_path.write_text(key + "\n", encoding="utf-8")
     # Restrict permissions (owner read/write only)
     key_path.chmod(0o600)
 
@@ -57,7 +57,7 @@ def load_auth_key(repo_root: str | Path) -> str | None:
     key_path = get_auth_key_path(repo_root)
     if not key_path.exists():
         return None
-    return key_path.read_text().strip()
+    return key_path.read_text(encoding="utf-8").strip()
 
 
 def ensure_auth_key(repo_root: str | Path) -> str:
@@ -77,10 +77,10 @@ def ensure_gitignore_has_auth_key(repo_root: str | Path) -> bool:
     pattern = f"{_CODEGRAPH_DIR}/{AUTH_KEY_FILE}"
 
     if gitignore.exists():
-        content = gitignore.read_text()
+        content = gitignore.read_text(encoding="utf-8")
         if pattern in content:
             return False
-        with open(gitignore, "a") as f:
+        with open(gitignore, "a", encoding="utf-8") as f:
             f.write(f"\n# codegraph auth key (never commit)\n{pattern}\n")
         return True
     return False
@@ -97,7 +97,7 @@ def inject_auth_key_into_mcp_json(repo_root: str | Path, key: str) -> bool:
     if not mcp_path.exists():
         return False
 
-    data = json.loads(mcp_path.read_text())
+    data = json.loads(mcp_path.read_text(encoding="utf-8"))
     servers = data.get("mcpServers", {})
     cg_server = servers.get("codegraph")
     if cg_server is None:
@@ -108,7 +108,7 @@ def inject_auth_key_into_mcp_json(repo_root: str | Path, key: str) -> bool:
         return False  # already set
 
     env[AUTH_KEY_ENV] = key
-    mcp_path.write_text(json.dumps(data, indent=2) + "\n")
+    mcp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return True
 
 

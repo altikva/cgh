@@ -1048,11 +1048,11 @@ The key file has `600` permissions (owner-only read/write). Never commit it to g
 
 ## Limitations
 
-- **CALLS resolution is name-based** -- if two functions share a name, both get edges. Fully qualified resolution requires type inference (out of scope).
-- **Terraform HCL** uses regex, not a proper grammar -- complex meta-arguments may be missed.
-- **No JavaScript module resolution** -- `import x from "./utils"` does not create a `File->File` IMPORTS edge yet.
-- **Markdown code refs are heuristic** -- PascalCase and snake_case patterns are matched, but may produce false positives.
-- **Large repos (10,000+ files)** -- initial index may take 5-10 min. Incremental updates stay fast (< 1s per file).
+- **CALLS resolution is name-based.** If two functions share a name, both get edges. Fully qualified resolution would need type inference, which is out of scope.
+- **Terraform HCL uses regex, not a full grammar.** Complex meta-arguments may be missed.
+- **JS/TS imports resolve to local files only.** Relative imports (`import x from "./utils"`), tsconfig `paths` aliases, and workspace packages do create a `File -> File` IMPORTS edge. Bare external packages (`import react`) are not resolved to a node, and cross-repo edges are not inferred (each federated scope is canonical for its own files).
+- **Markdown code refs are heuristic.** PascalCase and snake_case patterns are matched, so a ref can be a false positive.
+- **Large repos take minutes to index.** DuckDB (the default backend) is several times faster than the old Kuzu path, but a first scan of a very large tree is still bound by parsing every file. Incremental updates stay fast (well under a second per changed file), and a pull or merge reindexes only the changed files via the git hooks.
 
 ---
 

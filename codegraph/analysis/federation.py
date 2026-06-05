@@ -455,12 +455,16 @@ def add_subrepo(repo_root: str | Path, child_path: str | Path) -> tuple[Path, Ch
     if child == parent:
         raise ValueError("subrepo cannot be the parent itself")
 
-    # Store as relative when it's under the parent, else absolute
+    # Store as relative when it's under the parent, else absolute. Always use
+    # forward slashes: str(Path) yields backslashes on Windows, and a backslash
+    # in a TOML string is an escape (e.g. \s is invalid), which would corrupt
+    # config.toml so it no longer parses. Forward slashes are portable and
+    # Path accepts them on every platform.
     try:
         rel = child.relative_to(parent)
-        stored = "./" + str(rel)
+        stored = "./" + rel.as_posix()
     except ValueError:
-        stored = str(child)
+        stored = child.as_posix()
 
     cfg_path = parent / _DB_DIR / "config.toml"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,17 +558,24 @@ def _write_config_toml(path: Path, data: dict) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+def _toml_escape(s: str) -> str:
+    """Escape a string for a TOML basic ("...") value: backslash first, then
+    the double quote. Without this, a Windows path or any value with a
+    backslash produces invalid TOML."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _emit_toml_value(key: str, value: Any) -> str:
     if isinstance(value, bool):
         return f"{key} = {'true' if value else 'false'}"
     if isinstance(value, int):
         return f"{key} = {value}"
     if isinstance(value, str):
-        return f'{key} = "{value}"'
+        return f'{key} = "{_toml_escape(value)}"'
     if isinstance(value, list):
         items = ", ".join(_format_scalar(v) for v in value)
         return f"{key} = [{items}]"
-    return f'{key} = "{value}"'
+    return f'{key} = "{_toml_escape(str(value))}"'
 
 
 def _format_scalar(v: Any) -> str:
@@ -572,4 +583,4 @@ def _format_scalar(v: Any) -> str:
         return "true" if v else "false"
     if isinstance(v, int):
         return str(v)
-    return f'"{v}"'
+    return f'"{_toml_escape(str(v))}"'

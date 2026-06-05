@@ -619,7 +619,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
             timeout=30,
         )
@@ -698,7 +698,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
         r = subprocess.run(
             ["find", str(repo_root), "-type", "f", "-not", "-path", "*/.*"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
         )
         if r.returncode != 0:
@@ -759,7 +759,7 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
         r = subprocess.run(
             ["git", "diff", "--name-status", f"{last_sha}..HEAD"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
             timeout=10,
         )

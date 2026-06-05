@@ -764,7 +764,7 @@ def cmd_init(args) -> None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(root),
             timeout=30,
         )

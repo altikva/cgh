@@ -27,6 +27,25 @@ from codegraph.core.utils import short_path
 # Module-level globals
 # ---------------------------------------------------------------------------
 
+
+def _resolve_signals(*names: str) -> list:
+    """Return the signals from ``names`` that exist on this platform.
+
+    SIGHUP and other POSIX signals are absent on Windows. Referencing
+    ``signal.SIGHUP`` directly there raises AttributeError, which would
+    crash `cgh serve` on startup, so resolve by name and skip what is
+    missing.
+    """
+    import signal as _signal
+
+    found = []
+    for name in names:
+        sig = getattr(_signal, name, None)
+        if sig is not None:
+            found.append(sig)
+    return found
+
+
 _conn = None
 _root: Path | None = None
 _fts_conn = None
@@ -234,7 +253,7 @@ def main() -> None:
         _signal.signal(signum, _signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    for _sig in (_signal.SIGTERM, _signal.SIGHUP, _signal.SIGINT):
+    for _sig in _resolve_signals("SIGTERM", "SIGHUP", "SIGINT"):
         try:
             _signal.signal(_sig, _graceful)
         except (ValueError, OSError):
@@ -432,7 +451,7 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     def _signal_shutdown(signum, _frame):
         _shutdown(f"received {_sig.Signals(signum).name}")
 
-    for s in (_sig.SIGTERM, _sig.SIGINT):
+    for s in _resolve_signals("SIGTERM", "SIGINT"):
         try:
             _sig.signal(s, _signal_shutdown)
         except (ValueError, OSError):

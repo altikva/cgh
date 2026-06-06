@@ -47,6 +47,21 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
+def find_codegraph_root(start: "str | Path") -> "Path | None":
+    """Walk up from ``start`` to the nearest ancestor that has a .codegraph/
+    directory, the way git finds its repo root via .git. Returns that
+    directory, or None if none is found up to the filesystem root.
+
+    This lets every read command work from a subdirectory of an initialized
+    repo: a file deep in the tree still knows it belongs to the cgh root.
+    """
+    p = Path(start).resolve()
+    for d in [p, *p.parents]:
+        if (d / CODEGRAPH_DIR).is_dir():
+            return d
+    return None
+
+
 def _claude_project_slug_from_abs(abs_path: str) -> str:
     """Slug Claude Code uses for ~/.claude/projects/<slug>/.
 

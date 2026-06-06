@@ -544,10 +544,10 @@ def cmd_status(args) -> None:
         endpoints_cell = f"{endpoint_count:,}"
     elif counts_source == "fts_only":
         files_cell = f"[dim]graph locked[/dim]{fts_suffix}"
-        endpoints_cell = "[dim], [/dim]"
+        endpoints_cell = "[dim]unknown (graph locked)[/dim]"
     else:
         files_cell = "[dim]unknown[/dim]"
-        endpoints_cell = "[dim], [/dim]"
+        endpoints_cell = "[dim]unknown[/dim]"
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
     table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
@@ -624,7 +624,7 @@ def _backend_status_line(root: str) -> str:
                 f"[dim]none on disk[/dim]  "
                 f"[dim](CGH_DB={env_value!r}, next `cgh index` writes a {env_backend} DB)[/dim]"
             )
-        return "[dim]none on disk[/dim]  [dim](would create graph.db)[/dim]"
+        return "[dim]none on disk[/dim]  [dim](would create graph.duckdb)[/dim]"
 
     def _size(p: Path) -> str:
         size = p.stat().st_size

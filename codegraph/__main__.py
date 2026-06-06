@@ -13,6 +13,7 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from rich.panel import Panel
 from rich.table import Table
@@ -444,6 +445,25 @@ def main() -> None:
     if args.help or not args.cmd:
         _print_help()
         return
+
+    # Resolve the codegraph root by walking up to the nearest .codegraph/, the
+    # way git finds its repo root via .git. This lets every command work from
+    # a subdirectory of an initialized repo. init/setup create in the literal
+    # directory, and _serve_owner / _reindex_hook get an explicit root from
+    # their spawner, so those opt out. The hint goes to stderr to keep stdout
+    # clean for --json output and piping.
+    _NO_ROOT_WALK = {"init", "setup", "_serve_owner", "_reindex_hook"}
+    if args.cmd not in _NO_ROOT_WALK and getattr(args, "root", None):
+        from codegraph.core.config import find_codegraph_root
+
+        discovered = find_codegraph_root(args.root)
+        if discovered is not None and discovered != Path(args.root).resolve():
+            from rich.console import Console as _Console
+
+            _Console(stderr=True).print(
+                f"[dim]Using codegraph root: {discovered}[/dim]"
+            )
+            args.root = str(discovered)
 
     dispatch = {
         "init": cmd_init,

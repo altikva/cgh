@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 from . import register_parser
-from .base import BaseParser, FileIndex, ResourceDef, SectionDef
+from .base import BaseParser, FileIndex, ResourceDef
 
 # ---------------------------------------------------------------------------
 # Dockerfile parser, extracts FROM stages
@@ -58,87 +58,11 @@ class DockerfileParser(BaseParser):
 
 
 # ---------------------------------------------------------------------------
-# YAML / TOML, extracts top-level keys as sections
+# XML, file node only (no symbol extraction)
+#
+# YAML / TOML / JSON live in config_data.py and SQL lives in sql.py: they parse
+# structured config into sections / resources instead of bare File nodes.
 # ---------------------------------------------------------------------------
-
-
-@register_parser(".yaml", ".yml")
-class YamlParser(BaseParser):
-    """YAML config files, extracts top-level keys."""
-
-    lang = "yaml"
-    extensions = [".yaml", ".yml"]
-    extracts = ["sections"]
-
-    def parse(self, path: Path) -> FileIndex:
-        idx = FileIndex(path=str(path), lang=self.lang)
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return idx
-        for i, line in enumerate(text.splitlines(), 1):
-            m = re.match(r"^([a-zA-Z_][\w.-]*)\s*:", line)
-            if m:
-                key = m.group(1)
-                idx.sections.append(
-                    SectionDef(
-                        id=f"{path}::{key}",
-                        title=key,
-                        level=1,
-                        file_path=str(path),
-                        start_line=i,
-                        end_line=i,
-                    )
-                )
-        return idx
-
-
-@register_parser(".toml")
-class TomlParser(BaseParser):
-    """TOML config files, extracts [section] headers."""
-
-    lang = "toml"
-    extensions = [".toml"]
-    extracts = ["sections"]
-
-    def parse(self, path: Path) -> FileIndex:
-        idx = FileIndex(path=str(path), lang=self.lang)
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return idx
-        for i, line in enumerate(text.splitlines(), 1):
-            m = re.match(r"^\[([^\]]+)\]", line)
-            if m:
-                section = m.group(1)
-                idx.sections.append(
-                    SectionDef(
-                        id=f"{path}::{section}",
-                        title=section,
-                        level=1,
-                        file_path=str(path),
-                        start_line=i,
-                        end_line=i,
-                    )
-                )
-        return idx
-
-
-# ---------------------------------------------------------------------------
-# JSON / XML, file node only (no symbol extraction)
-# ---------------------------------------------------------------------------
-
-
-@register_parser(".json", ".jsonc")
-class JsonParser(BaseParser):
-    """JSON/JSONC data files, indexed as File nodes."""
-
-    lang = "json"
-    extensions = [".json", ".jsonc"]
-    extracts = []
-
-    def parse(self, path: Path) -> FileIndex:
-        return FileIndex(path=str(path), lang=self.lang)
 
 
 @register_parser(".xml", ".xsl", ".xslt", ".svg")
@@ -201,15 +125,3 @@ class ShellParser(BaseParser):
                     )
                 )
         return idx
-
-
-@register_parser(".sql")
-class SqlParser(BaseParser):
-    """SQL files, indexed as File nodes."""
-
-    lang = "sql"
-    extensions = [".sql"]
-    extracts = []
-
-    def parse(self, path: Path) -> FileIndex:
-        return FileIndex(path=str(path), lang=self.lang)

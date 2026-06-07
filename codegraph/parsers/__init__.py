@@ -128,13 +128,33 @@ def get_parser_for_path(path: str | Path) -> BaseParser | None:
 # ---------------------------------------------------------------------------
 
 
+# Parser modules whose tree-sitter grammar is an OPTIONAL extra
+# (`pip install cgh[langs]`). When the extra is not installed, importing the
+# module raises ImportError/ModuleNotFoundError because its grammar package is
+# absent. That is expected: we skip the module and the parser simply never
+# registers, so cgh keeps working exactly as before. Any OTHER import error
+# (a real bug in a hard-dep parser) still propagates.
+_OPTIONAL_GRAMMAR_MODULES = frozenset({"csharp", "ruby"})
+
+
 def _discover_parsers():
-    """Import all parser modules in this package."""
+    """Import all parser modules in this package.
+
+    Optional-grammar modules (see ``_OPTIONAL_GRAMMAR_MODULES``) are skipped
+    when their grammar package is missing, instead of crashing discovery.
+    """
     package_dir = Path(__file__).parent
     for _, module_name, _ in pkgutil.iter_modules([str(package_dir)]):
         if module_name == "base":
             continue
-        importlib.import_module(f".{module_name}", package=__package__)
+        try:
+            importlib.import_module(f".{module_name}", package=__package__)
+        except (ImportError, ModuleNotFoundError):
+            # A parser whose optional grammar package is not installed: skip it.
+            # Re-raise for non-optional modules so genuine breakage stays loud.
+            if module_name in _OPTIONAL_GRAMMAR_MODULES:
+                continue
+            raise
 
 
 _discover_parsers()
@@ -148,5 +168,7 @@ register_by_name(
     ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
     ".yaml",
 )
-register_by_name([".env.example", ".env.local", ".env.staging", ".env.production"], ".env")
+register_by_name(
+    [".env.example", ".env.local", ".env.staging", ".env.production"], ".env"
+)
 register_by_name(["Makefile", "GNUmakefile"], ".sh")

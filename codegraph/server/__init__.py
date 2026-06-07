@@ -361,6 +361,8 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     _atexit.register(_cleanup)
 
     # Build auth middleware, rejects any request without the bearer token
+    import hmac
+
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
     from starlette.types import ASGIApp
@@ -374,7 +376,9 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             # Accept any path on 127.0.0.1 with correct bearer
             header = request.headers.get("authorization", "")
             expected = f"Bearer {self._token}"
-            if header != expected:
+            # Constant-time compare so the loopback port gives no timing oracle
+            # on the token (this is the system's only auth check).
+            if not hmac.compare_digest(header, expected):
                 return JSONResponse(
                     {"error": "unauthorized"},
                     status_code=401,

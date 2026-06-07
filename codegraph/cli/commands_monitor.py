@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import argparse
-
 import json
 import os
 import re
@@ -343,6 +342,87 @@ def _stats_json(root: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _empty_status_source() -> dict:
+    """The default 'nothing resolved' status-source dict.
+
+    counts_source == "none" is the sentinel cmd_status checks to decide
+    whether to fall through to the next tier.
+    """
+    return {
+        "file_count": 0,
+        "endpoint_count": 0,
+        "counts_source": "none",
+        "fts_symbols": None,
+    }
+
+
+def _status_via_owner(root: str, owner_alive: bool, owner_port: int | None) -> dict:
+    """Tier 1: ask a live owner for counts via the live_graph_stats MCP tool.
+
+    Only attempted when the owner is alive and its port is known. Returns a
+    status-source dict, counts_source == "owner" on success, else "none".
+    The owner's live stats do not include an endpoint count, so it stays 0.
+    """
+    src = _empty_status_source()
+    if not (owner_alive and owner_port):
+        return src
+    try:
+        stats = _ask_owner_live_stats(root, owner_port)
+        if stats is not None:
+            nodes = stats.get("nodes") or {}
+            src["file_count"] = int(nodes.get("File", 0))
+            # endpoint count not in live_graph_stats, derive separately if 0
+            src["fts_symbols"] = int(stats.get("fts_symbols", 0))
+            src["counts_source"] = "owner"
+    except Exception:
+        pass
+    return src
+
+
+def _status_via_ro_open(root: str) -> dict:
+    """Tier 2: open the graph DB read-only and count File / Endpoint nodes.
+
+    Works only when no owner holds the write lock. Returns a status-source
+    dict, counts_source == "ro" on success, else "none".
+    """
+    src = _empty_status_source()
+    try:
+        from codegraph.core.db import get_readonly_connection
+
+        conn = get_readonly_connection(root)
+        if conn is not None:
+            src["file_count"] = conn.count_nodes("File")
+            src["endpoint_count"] = conn.count_nodes("Endpoint")
+            src["counts_source"] = "ro"
+    except Exception:
+        pass
+    return src
+
+
+def _status_via_fts(root: str) -> dict:
+    """Tier 3: count symbols straight from the FTS sqlite (always RO-safe).
+
+    Final fallback when both the owner and a RO graph open are unavailable.
+    Returns a status-source dict, counts_source == "fts_only" on success,
+    else "none".
+    """
+    src = _empty_status_source()
+    try:
+        import sqlite3 as _sql
+
+        fts_path = Path(root) / ".codegraph" / "fts.db"
+        if fts_path.exists():
+            from codegraph.core.utils import ro_sqlite_uri
+
+            c = _sql.connect(ro_sqlite_uri(fts_path), uri=True)
+            src["fts_symbols"] = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
+            c.close()
+            src["counts_source"] = "fts_only"
+    except Exception:
+        pass
+    return src
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     """Quick one-screen health check: owner, freshness, counts, extra_dirs."""
     import json as _json
@@ -411,49 +491,19 @@ def cmd_status(args: argparse.Namespace) -> None:
     #      (live_graph_stats), authoritative + cheap.
     #   2. Else try a local RO open (works only when no owner is up).
     #   3. As a final fallback, read the FTS sqlite (always RO-safe).
-    file_count = endpoint_count = 0
-    counts_source = "none"
-    fts_symbols: int | None = None
+    # Each tier is a helper returning a status-source dict, we take the
+    # first one that resolved (counts_source != "none").
+    src = _status_via_owner(root, owner_alive, owner_port)
+    if src["counts_source"] == "none":
+        src = _status_via_ro_open(root)
+    if src["counts_source"] == "none":
+        src = _status_via_fts(root)
+
+    file_count = src["file_count"]
+    endpoint_count = src["endpoint_count"]
+    counts_source = src["counts_source"]
+    fts_symbols = src["fts_symbols"]
     extra_dirs: list[str] = []
-
-    if owner_alive and owner_port:
-        try:
-            stats = _ask_owner_live_stats(root, owner_port)
-            if stats is not None:
-                nodes = stats.get("nodes") or {}
-                file_count = int(nodes.get("File", 0))
-                # endpoint count not in live_graph_stats, derive separately if 0
-                fts_symbols = int(stats.get("fts_symbols", 0))
-                counts_source = "owner"
-        except Exception:
-            pass
-
-    if counts_source == "none":
-        try:
-            from codegraph.core.db import get_readonly_connection
-
-            conn = get_readonly_connection(root)
-            if conn is not None:
-                file_count = conn.count_nodes("File")
-                endpoint_count = conn.count_nodes("Endpoint")
-                counts_source = "ro"
-        except Exception:
-            pass
-
-    if counts_source == "none":
-        try:
-            import sqlite3 as _sql
-
-            fts_path = Path(root) / ".codegraph" / "fts.db"
-            if fts_path.exists():
-                from codegraph.core.utils import ro_sqlite_uri
-
-                c = _sql.connect(ro_sqlite_uri(fts_path), uri=True)
-                fts_symbols = c.execute("SELECT count(*) FROM symbols").fetchone()[0]
-                c.close()
-                counts_source = "fts_only"
-        except Exception:
-            pass
 
     try:
         import tomllib

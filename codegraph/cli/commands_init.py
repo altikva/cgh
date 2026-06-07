@@ -49,7 +49,11 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
 
     # Drop redundant per-tool entries
-    allow[:] = [item for item in allow if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")]
+    allow[:] = [
+        item
+        for item in allow
+        if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")
+    ]
 
     # Add wildcards if missing
     added: list[str] = []
@@ -147,7 +151,11 @@ def _incremental_via_owner(
         for ts, event, detail in entries:
             age = now - ts
             when = f"{int(age)}s ago" if age < 60 else f"{int(age / 60)}m ago"
-            style = "green" if event.endswith("_end") else ("yellow" if "error" in event else "cyan")
+            style = (
+                "green"
+                if event.endswith("_end")
+                else ("yellow" if "error" in event else "cyan")
+            )
             tbl.add_row(when, f"[{style}]{event}[/{style}]", detail)
         return tbl
 
@@ -157,7 +165,9 @@ def _incremental_via_owner(
                 _t.sleep(0.5)
                 live.update(_render())
     except KeyboardInterrupt:
-        console_obj.print("\n  [yellow]stopped watching, owner may still be working in the background[/yellow]")
+        console_obj.print(
+            "\n  [yellow]stopped watching, owner may still be working in the background[/yellow]"
+        )
         return
 
     # Report result
@@ -168,7 +178,9 @@ def _incremental_via_owner(
         )
         return
     if result_holder["status"] != 200:
-        console_obj.print(f"  [yellow]owner returned HTTP {result_holder['status']}[/yellow]")
+        console_obj.print(
+            f"  [yellow]owner returned HTTP {result_holder['status']}[/yellow]"
+        )
         return
 
     # Try to pull the JSON stats out of the MCP response
@@ -314,7 +326,9 @@ def _detect_existing_state(root: Path) -> dict:
         cfg = cg_dir / "config.toml"
         if cfg.exists():
             with open(cfg, "rb") as f:
-                state["extra_dirs"] = tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+                state["extra_dirs"] = (
+                    tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+                )
     except Exception:
         pass
 
@@ -330,7 +344,9 @@ def _detect_existing_state(root: Path) -> dict:
         if fp.exists():
             try:
                 content = fp.read_text(encoding="utf-8", errors="replace")
-                state["agent_blocks"][tool_key] = marker in content or tool_key == "cursor"
+                state["agent_blocks"][tool_key] = (
+                    marker in content or tool_key == "cursor"
+                )
             except OSError:
                 state["agent_blocks"][tool_key] = False
 
@@ -341,7 +357,9 @@ def _detect_existing_state(root: Path) -> dict:
     if skills_dir.exists():
         try:
             state["claude_skills_installed"] = sorted(
-                d.name for d in skills_dir.iterdir() if d.is_dir() and d.name.startswith("cgh-")
+                d.name
+                for d in skills_dir.iterdir()
+                if d.is_dir() and d.name.startswith("cgh-")
             )
         except OSError:
             pass
@@ -359,7 +377,9 @@ def _detect_existing_state(root: Path) -> dict:
             import json as _json
 
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-            state["mcp_server_configured"] = "codegraph" in (data.get("mcpServers") or {})
+            state["mcp_server_configured"] = "codegraph" in (
+                data.get("mcpServers") or {}
+            )
         except Exception:
             pass
 
@@ -436,9 +456,7 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
         f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
         f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
     )
-    console.print(
-        f"    [dim]{result.message}[/dim]"
-    )
+    console.print(f"    [dim]{result.message}[/dim]")
     console.print(
         "    [dim]Inspect with [cyan]cgh status[/cyan], then "
         "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
@@ -475,7 +493,7 @@ def _install_git_reindex_hooks(root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(args) -> None:
+def cmd_init(args: argparse.Namespace) -> None:
     import glob
     import shutil
 
@@ -563,13 +581,27 @@ def cmd_init(args) -> None:
     console.print("  [bold]Detecting AI tools...[/bold]\n")
 
     all_tools = [
-        ("Claude Code", "claude", (root / ".claude").exists() or shutil.which("claude") is not None),
-        ("Cursor", "cursor", (root / ".cursor").exists() or (root / ".cursorrules").exists()),
-        ("Codex CLI", "codex", (root / "AGENTS.md").exists() or shutil.which("codex") is not None),
+        (
+            "Claude Code",
+            "claude",
+            (root / ".claude").exists() or shutil.which("claude") is not None,
+        ),
+        (
+            "Cursor",
+            "cursor",
+            (root / ".cursor").exists() or (root / ".cursorrules").exists(),
+        ),
+        (
+            "Codex CLI",
+            "codex",
+            (root / "AGENTS.md").exists() or shutil.which("codex") is not None,
+        ),
         (
             "Gemini CLI",
             "gemini",
-            (root / "GEMINI.md").exists() or (root / ".gemini").exists() or shutil.which("gemini") is not None,
+            (root / "GEMINI.md").exists()
+            or (root / ".gemini").exists()
+            or shutil.which("gemini") is not None,
         ),
     ]
 
@@ -632,16 +664,22 @@ def cmd_init(args) -> None:
 
         modified = detect_modified_skills(root)
         if modified and not args.yes:
-            console.print("  [yellow]You have locally-edited skills in .claude/skills/:[/yellow]")
+            console.print(
+                "  [yellow]You have locally-edited skills in .claude/skills/:[/yellow]"
+            )
             for m in modified:
-                console.print(f"    • [yellow]{m}[/yellow] (SKILL.md differs from bundled)")
+                console.print(
+                    f"    • [yellow]{m}[/yellow] (SKILL.md differs from bundled)"
+                )
             overwrite_skills = questionary.confirm(
                 "Overwrite with the bundled versions? (Your edits will be lost)",
                 default=False,
                 style=cg_style,
             ).ask()
             if not overwrite_skills:
-                console.print("  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n")
+                console.print(
+                    "  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n"
+                )
 
     for key in selected_keys:
         _install_integration(root, key, overwrite_skills=overwrite_skills)
@@ -667,7 +705,9 @@ def cmd_init(args) -> None:
                     f"[dim](permissions.allow += {', '.join(added)})[/dim]"
                 )
             else:
-                console.print("    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]")
+                console.print(
+                    "    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]"
+                )
             console.print()
 
     # -- Step 3c: offer to inject codegraph usage guidelines into agent rules --
@@ -680,7 +720,9 @@ def cmd_init(args) -> None:
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
         }
-        inject_targets = [(k, target_files[k]) for k in selected_keys if k in target_files]
+        inject_targets = [
+            (k, target_files[k]) for k in selected_keys if k in target_files
+        ]
         if inject_targets:
             targets_str = ", ".join(f for _, f in inject_targets)
             inject = (
@@ -697,7 +739,9 @@ def cmd_init(args) -> None:
                     written = install_usage_guidelines(root, tool_key)
                     if written:
                         rel = written.replace(str(root) + "/", "")
-                        console.print(f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]")
+                        console.print(
+                            f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]"
+                        )
                 console.print()
 
     # -- Step 3d: Detect already-initialized subrepos --
@@ -742,7 +786,9 @@ def cmd_init(args) -> None:
                     console.print(f"    [yellow]⚠[/yellow] {s.name}: {exc}")
             console.print()
         else:
-            console.print("  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n")
+            console.print(
+                "  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n"
+            )
 
     # -- Step 4: Detect parseable files --
     # Use git ls-files to match what the real indexer will process
@@ -764,7 +810,9 @@ def cmd_init(args) -> None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(root),
             timeout=30,
         )
@@ -786,7 +834,9 @@ def cmd_init(args) -> None:
         for info in parsers:
             count = 0
             for ext in info["extensions"]:
-                for match in glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True):
+                for match in glob.glob(
+                    f"**/*{ext}", root_dir=str(root), recursive=True
+                ):
                     full = root / match
                     if skip_paths and is_under_any(full, skip_paths):
                         continue
@@ -822,13 +872,17 @@ def cmd_init(args) -> None:
         choice = None
 
         if owner_alive:
-            console.print("  [yellow]The MCP owner is running, it already watches this repo.[/yellow]")
+            console.print(
+                "  [yellow]The MCP owner is running, it already watches this repo.[/yellow]"
+            )
             if not args.yes:
                 choice = (
                     questionary.select(
                         "What do you want to do?",
                         choices=[
-                            questionary.Choice(title="Skip, owner keeps the index fresh", value="skip"),
+                            questionary.Choice(
+                                title="Skip, owner keeps the index fresh", value="skip"
+                            ),
                             questionary.Choice(
                                 title="Incremental rescan through the owner (no lock fight)",
                                 value="mcp_scan",
@@ -854,7 +908,9 @@ def cmd_init(args) -> None:
                                 title="Incremental (only files changed since last scan)",
                                 value="incremental",
                             ),
-                            questionary.Choice(title="Full scan (re-parse everything)", value="full"),
+                            questionary.Choice(
+                                title="Full scan (re-parse everything)", value="full"
+                            ),
                             questionary.Choice(title="Skip, keep as-is", value="skip"),
                         ],
                         style=cg_style,
@@ -878,11 +934,15 @@ def cmd_init(args) -> None:
         if choice == "full":
             from codegraph.cli.commands_index import cmd_index
 
-            cmd_index(argparse.Namespace(root=str(root), verbose=False, method=default_method))
+            cmd_index(
+                argparse.Namespace(root=str(root), verbose=False, method=default_method)
+            )
         elif choice == "incremental":
             from codegraph.cli.commands_index import cmd_index
 
-            cmd_index(argparse.Namespace(root=str(root), verbose=False, method="incremental"))
+            cmd_index(
+                argparse.Namespace(root=str(root), verbose=False, method="incremental")
+            )
         elif choice == "mcp_scan":
             _incremental_via_owner(
                 root=root,
@@ -892,11 +952,17 @@ def cmd_init(args) -> None:
         elif choice == "reset":
             from codegraph.cli.commands_monitor import cmd_reset
 
-            cmd_reset(argparse.Namespace(root=str(root), yes=True, drop_extra_dirs=False, no_reindex=False))
+            cmd_reset(
+                argparse.Namespace(
+                    root=str(root), yes=True, drop_extra_dirs=False, no_reindex=False
+                )
+            )
         else:
             console.print("  [dim]Run 'cgh index' when ready.[/dim]")
     else:
-        console.print("  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]")
+        console.print(
+            "  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]"
+        )
 
     # -- Done --
     console.print()
@@ -1003,7 +1069,9 @@ def _append_hook(settings: dict, spec: dict) -> None:
     bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
 
 
-def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix: str) -> dict:
+def _ensure_claude_hooks(
+    settings_shared: dict, settings_local: dict, cli_prefix: str
+) -> dict:
     """
     Idempotently route each cgh hook to the right settings file.
 
@@ -1061,7 +1129,13 @@ def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix
 #   "shared" → .claude/settings.json
 #   "local"  → .claude/settings.local.json
 _CLAUDE_HOOK_MARKERS = [
-    ("cgh-reindex-on-commit", "PostToolUse", "Bash(git commit*)", "post-commit reindex", "shared"),
+    (
+        "cgh-reindex-on-commit",
+        "PostToolUse",
+        "Bash(git commit*)",
+        "post-commit reindex",
+        "shared",
+    ),
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
 ]
@@ -1086,7 +1160,10 @@ def audit_claude_integration(root: Path) -> dict:
     """
     import json as _json
 
-    from codegraph.integrations.skill_installer import _iter_skills, detect_modified_skills
+    from codegraph.integrations.skill_installer import (
+        _iter_skills,
+        detect_modified_skills,
+    )
 
     report: dict = {}
 
@@ -1188,7 +1265,15 @@ def audit_claude_integration(root: Path) -> dict:
 
     report["overall"] = (
         "ok"
-        if all(s["status"] == "ok" for s in (report["mcp_json"], report["hooks"], report["skills"], report["usage_block"]))
+        if all(
+            s["status"] == "ok"
+            for s in (
+                report["mcp_json"],
+                report["hooks"],
+                report["skills"],
+                report["usage_block"],
+            )
+        )
         else "drift"
     )
     return report
@@ -1227,7 +1312,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         if names:
             plural = "s" if len(names) != 1 else ""
             joined = ", ".join(names)
-            console.print(f"    [green]+[/green] {tool_label} [dim]({len(names)} skill{plural}: {joined})[/dim]")
+            console.print(
+                f"    [green]+[/green] {tool_label} [dim]({len(names)} skill{plural}: {joined})[/dim]"
+            )
 
     if tool == "claude":
         mcp_path = root / ".mcp.json"
@@ -1248,8 +1335,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         shared_path = settings_dir / "settings.json"
         local_path = settings_dir / "settings.local.json"
 
-        shared = _json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
-        local = _json.loads(local_path.read_text(encoding="utf-8")) if local_path.exists() else {}
+        shared = (
+            _json.loads(shared_path.read_text(encoding="utf-8"))
+            if shared_path.exists()
+            else {}
+        )
+        local = (
+            _json.loads(local_path.read_text(encoding="utf-8"))
+            if local_path.exists()
+            else {}
+        )
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
         cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
@@ -1257,24 +1352,36 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 
         if result["shared_changed"]:
-            shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
+            shared_path.write_text(
+                _json.dumps(shared, indent=2) + "\n", encoding="utf-8"
+            )
         if result["local_changed"]:
             local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
 
         for label in result["added"]:
             target_file = next(
-                (s["target"] for s in _claude_hook_specs(cli_prefix) if s["label"] == label),
+                (
+                    s["target"]
+                    for s in _claude_hook_specs(cli_prefix)
+                    if s["label"] == label
+                ),
                 "shared",
             )
-            target_name = "settings.json" if target_file == "shared" else "settings.local.json"
-            console.print(f"    [green]+[/green] .claude/{target_name} [dim]({label})[/dim]")
+            target_name = (
+                "settings.json" if target_file == "shared" else "settings.local.json"
+            )
+            console.print(
+                f"    [green]+[/green] .claude/{target_name} [dim]({label})[/dim]"
+            )
         for label in result["moved"]:
             console.print(
                 f"    [yellow]~[/yellow] {label} [dim](moved to the correct settings file)[/dim]"
             )
 
         # Skills, may preserve local edits if the user said so
-        _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))
+        _skills_line(
+            ".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills)
+        )
 
     elif tool == "cursor":
         cursor_dir = root / ".cursor"
@@ -1293,7 +1400,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        console.print("    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]")
+        console.print(
+            "    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]"
+        )
         _skills_line("AGENTS.md", install_codex(root))
 
     elif tool == "gemini":
@@ -1304,7 +1413,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        console.print("    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]")
+        console.print(
+            "    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]"
+        )
         _skills_line("GEMINI.md", install_gemini(root))
 
 
@@ -1313,7 +1424,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 # ---------------------------------------------------------------------------
 
 
-def cmd_parsers(args) -> None:
+def cmd_parsers(args: argparse.Namespace) -> None:
     from codegraph.parsers import get_parser_info, get_supported_extensions
 
     console.print(LOGO)
@@ -1351,8 +1462,12 @@ def cmd_parsers(args) -> None:
         )
 
     console.print(table)
-    console.print(f"\n[dim]Total: {len(get_supported_extensions())} file extensions supported[/dim]")
-    console.print("\n[dim]To add a new parser: create a file in codegraph/parsers/[/dim]")
+    console.print(
+        f"\n[dim]Total: {len(get_supported_extensions())} file extensions supported[/dim]"
+    )
+    console.print(
+        "\n[dim]To add a new parser: create a file in codegraph/parsers/[/dim]"
+    )
     console.print("[dim]with @register_parser('.ext') and subclass BaseParser.[/dim]")
 
 
@@ -1361,7 +1476,7 @@ def cmd_parsers(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_setup(args) -> None:
+def cmd_setup(args: argparse.Namespace) -> None:
     """
     Generate integration files for AI tools.
 

@@ -24,6 +24,7 @@ from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
 from codegraph.cli.commands_githooks import cmd_githooks
+from codegraph.cli.commands_impact import cmd_impact
 from codegraph.cli.commands_index import (
     cmd_force_index,
     cmd_index,
@@ -112,6 +113,7 @@ def _print_help():
                 ("logs", "View MCP tool call history"),
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
+                ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
                 ("parsers", "List registered language parsers"),
             ],
         ),
@@ -470,6 +472,28 @@ def main() -> None:
         "--since", default="HEAD", help="Git ref to diff against (default: HEAD)"
     )
 
+    # --- impact (CI mode: blast radius + tests for a PR diff) ---
+    p = sub.add_parser(
+        "impact",
+        help="CI: blast radius + tests for files changed since a git ref",
+    )
+    _add_root(p)
+    p.add_argument(
+        "--since",
+        default="HEAD~1",
+        help="Git ref to diff the working tree against (default: HEAD~1)",
+    )
+    p.add_argument(
+        "--json", action="store_true", help="Emit JSON (shorthand for --format json)"
+    )
+    p.add_argument(
+        "--format",
+        choices=["md", "json"],
+        default="md",
+        help="Output format: md (PR comment) or json (default: md). "
+        "The graph index should be fresh: run `cgh index` first in CI.",
+    )
+
     # --- history ---
     p = sub.add_parser("history", help="Show recent indexing activity by day")
     _add_root(p)
@@ -590,6 +614,7 @@ def main() -> None:
         "outline": cmd_outline,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
+        "impact": cmd_impact,
         "history": cmd_history,
         "compact": cmd_compact,
         "graph": cmd_graph,

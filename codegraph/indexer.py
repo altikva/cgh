@@ -268,7 +268,43 @@ def _resolve_inherits(conn, classes: list) -> None:
                 conn.ensure_edge("INHERITS", cls.id, parent_id)
 
 
-def _ingest_code(conn, idx: FileIndex) -> None:
+def _precise_calls_enabled(cfg, lang: str) -> bool:
+    """True only when the user opted in AND jedi is importable AND this is a
+    Python file. Any of these missing keeps the name-matched resolver, so the
+    default install behaves exactly as before.
+    """
+    if cfg is None or not getattr(cfg, "precise_calls", False):
+        return False
+    if lang != "python":
+        return False
+    from codegraph.analysis.precise_calls import jedi_available
+
+    return jedi_available()
+
+
+def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
+    """Create CALLS edges for one Python file using the jedi-backed resolver.
+
+    Returns True when it ran (even with zero edges), False when it could not
+    run and the caller should fall back to the name-matched resolver. Never
+    raises: any error returns False so resolution degrades to the old path.
+    """
+    try:
+        from codegraph.analysis.precise_calls import resolve_calls_for_file
+
+        edges = resolve_calls_for_file(idx.path, repo_root)
+    except Exception:
+        return False
+
+    for caller_id, _target_file, callee_id in edges:
+        try:
+            conn.ensure_edge("CALLS", caller_id, callee_id)
+        except Exception:
+            continue
+    return True
+
+
+def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) -> None:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
     for fn in idx.functions:
         conn.upsert_node(
@@ -305,7 +341,14 @@ def _ingest_code(conn, idx: FileIndex) -> None:
             class_id = f"{fn.file_path}::{fn.class_name}"
             conn.ensure_edge("HAS_METHOD", class_id, fn.id)
 
-    _resolve_calls(conn, idx.functions, idx.lang)
+    # Precise CALLS (opt-in, Python only, jedi installed). When it runs we
+    # skip the name-matched resolver for this file so edges aren't doubled.
+    # Any failure or the flag being off falls straight back to the old path.
+    used_precise = False
+    if repo_root is not None and _precise_calls_enabled(cfg, idx.lang):
+        used_precise = _resolve_calls_precise(conn, idx, repo_root)
+    if not used_precise:
+        _resolve_calls(conn, idx.functions, idx.lang)
     _resolve_inherits(conn, idx.classes)
 
 
@@ -631,9 +674,20 @@ def index_file(
         module_doc=module_doc,
     )
 
+    # Resolve the effective config once for ingest. index_repo threads its
+    # pre-loaded cfg in; standalone / force callers get a fresh load. Only
+    # consulted for the opt-in precise_calls flag below, so the cost is paid
+    # only when something actually reads it.
+    if cfg is not None:
+        eff_cfg = cfg
+    else:
+        from codegraph.core.config import load_config as _load_config_for_ingest
+
+        eff_cfg = _load_config_for_ingest(root)
+
     # Ingest into graph
     if idx.functions or idx.classes:
-        _ingest_code(conn, idx)
+        _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
     if idx.resources:
         _ingest_terraform(conn, idx)
     if idx.sections:

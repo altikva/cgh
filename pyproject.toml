@@ -56,6 +56,16 @@ dependencies = [
 # you can skip the extra entirely and use the default DuckDB backend.
 kuzu = ["kuzu>=0.7"]
 
+# Install with `pip install cgh[langs]` to add the optional tree-sitter
+# language parsers (C# and Ruby). They are kept out of the core dependency
+# list so the base install stays lean and Python-3.14-safe: if a grammar
+# lacks a 3.14 wheel it cannot block a core install. When the extra is not
+# present these parsers simply never register (see _discover_parsers).
+langs = [
+    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter-ruby>=0.23",
+]
+
 [project.urls]
 Homepage = "https://github.com/altikva/cgh"
 Repository = "https://github.com/altikva/cgh"

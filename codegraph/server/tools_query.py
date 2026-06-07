@@ -96,8 +96,10 @@ def register(mcp) -> None:
         for h in hits:
             all_hits.append({"scope": "parent", "file": h.file, "line": h.line, "text": h.text})
 
-        # Each federated subrepo
-        for child in resolve_children(_srv._root) if _srv._root else []:
+        # Each federated subrepo. Resolve children once and reuse for the cap
+        # below (this used to read + parse config.toml twice per query).
+        children = resolve_children(_srv._root) if _srv._root else []
+        for child in children:
             try:
                 child_hits, _ = _search(
                     child,
@@ -113,7 +115,7 @@ def register(mcp) -> None:
                 all_hits.append({"scope": child.name, "file": h.file, "line": h.line, "text": h.text})
 
         # Apply max_results across the whole federation as a soft cap
-        all_hits = all_hits[: max_results * (1 + len(resolve_children(_srv._root)) if _srv._root else 1)]
+        all_hits = all_hits[: max_results * (1 + len(children))]
 
         return json.dumps(
             {

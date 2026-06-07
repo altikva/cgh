@@ -174,7 +174,12 @@ class DuckDBGraphDB:
                             f"DELETE FROM {edge.table} WHERE {column} IN ({placeholders})",
                             ids,
                         )
-                if edge.dst_label == spec.label and edge.src_label != spec.label:
+                # Also purge the inbound side. For self-referential edges
+                # (CALLS/INHERITS Function->Function) src and dst share a label
+                # but use different columns (from_id/to_id), so this removes
+                # stale callers pointing INTO this file's symbols, matching
+                # Kuzu's DETACH DELETE. Without it, find_callers keeps ghosts.
+                if edge.dst_label == spec.label:
                     column = edge.dst_column
                     if column.endswith("_path"):
                         self._conn.execute(

@@ -66,6 +66,14 @@ langs = [
     "tree-sitter-ruby>=0.23",
 ]
 
+# Install with `pip install cgh[lsp]` to enable opt-in precise CALLS
+# resolution for Python. jedi is the static-analysis engine python-lsp-server
+# wraps; we use it directly to do goto-definition on call sites instead of
+# spawning a full LSP subprocess. Kept out of core deps: the resolver imports
+# jedi lazily and the `precise_calls` config flag is off by default, so a base
+# install never depends on it. See codegraph/analysis/precise_calls.py.
+lsp = ["jedi>=0.19"]
+
 [project.urls]
 Homepage = "https://github.com/altikva/cgh"
 Repository = "https://github.com/altikva/cgh"

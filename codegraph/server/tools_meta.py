@@ -34,7 +34,9 @@ def register(mcp) -> None:
                 "kind": r.kind,
                 "name": r.name,
                 "file": r.file_path,
-                "lines": f"{r.start_line}-{r.end_line}" if r.end_line else str(r.start_line),
+                "lines": f"{r.start_line}-{r.end_line}"
+                if r.end_line
+                else str(r.start_line),
                 "doc": r.docstring,
                 "score": round(r.score, 4),
             }
@@ -52,18 +54,24 @@ def register(mcp) -> None:
             )
             all_results.extend(_result_to_dict(r, "parent") for r in parent_results)
         except Exception as exc:
-            warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+            warnings.append(
+                {"scope": "parent", "error": f"{type(exc).__name__}: {exc}"}
+            )
 
         # Children, fresh RO conns
         if _srv._root is not None:
             for scoped in for_each_child_fts(
                 _srv._root,
-                lambda c, _r: _fts(c, query, limit=limit, kind_filter=kind if kind else None),
+                lambda c, _r: _fts(
+                    c, query, limit=limit, kind_filter=kind if kind else None
+                ),
             ):
                 if scoped.error:
                     warnings.append({"scope": scoped.scope, "error": scoped.error})
                     continue
-                all_results.extend(_result_to_dict(r, scoped.scope) for r in scoped.payload or [])
+                all_results.extend(
+                    _result_to_dict(r, scoped.scope) for r in scoped.payload or []
+                )
 
         # Sort across federation by score (BM25 returns negative, higher abs is better)
         all_results.sort(key=lambda x: -x["score"])
@@ -91,7 +99,7 @@ def register(mcp) -> None:
         Treat the results as a per-scope candidate list, not a hard verdict.
         """
         from codegraph.analysis.dead_code import find_dead_code as _find_dead
-        from codegraph.analysis.federation import for_each_child_kuzu
+        from codegraph.analysis.federation import for_each_child_graphdb
 
         all_dead: list[dict] = []
         warnings: list[dict] = []
@@ -114,10 +122,12 @@ def register(mcp) -> None:
                     }
                 )
         except Exception as exc:
-            warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+            warnings.append(
+                {"scope": "parent", "error": f"{type(exc).__name__}: {exc}"}
+            )
 
         if _srv._root is not None:
-            for scoped in for_each_child_kuzu(
+            for scoped in for_each_child_graphdb(
                 _srv._root,
                 lambda c, _r: _find_dead(
                     c,
@@ -196,7 +206,9 @@ def register(mcp) -> None:
         if session_id and not include_shown:
             from codegraph.state.activity import log as _activity_log
 
-            served_nodes = [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
+            served_nodes = [
+                ("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes
+            ]
             served_mem = [("memory", m.path) for m in ctx.memory_docs]
             served_plans = [("plan", p.path) for p in ctx.plan_docs]
             served_know = [("knowledge", str(k.id)) for k in ctx.knowledge_docs]
@@ -205,15 +217,32 @@ def register(mcp) -> None:
             unseen = set(filter_unseen(session_id, all_entities, repo_root=_srv._root))
             before = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs)
 
-            ctx.nodes = [n for n in ctx.nodes if ("symbol", f"{n.file_path}:{n.start_line}") in unseen]
-            ctx.memory_docs = [m for m in ctx.memory_docs if ("memory", m.path) in unseen]
+            ctx.nodes = [
+                n
+                for n in ctx.nodes
+                if ("symbol", f"{n.file_path}:{n.start_line}") in unseen
+            ]
+            ctx.memory_docs = [
+                m for m in ctx.memory_docs if ("memory", m.path) in unseen
+            ]
             ctx.plan_docs = [p for p in ctx.plan_docs if ("plan", p.path) in unseen]
-            ctx.knowledge_docs = [k for k in ctx.knowledge_docs if ("knowledge", str(k.id)) in unseen]
+            ctx.knowledge_docs = [
+                k for k in ctx.knowledge_docs if ("knowledge", str(k.id)) in unseen
+            ]
 
-            after = len(ctx.nodes) + len(ctx.memory_docs) + len(ctx.plan_docs) + len(ctx.knowledge_docs)
+            after = (
+                len(ctx.nodes)
+                + len(ctx.memory_docs)
+                + len(ctx.plan_docs)
+                + len(ctx.knowledge_docs)
+            )
             if before != after:
                 try:
-                    _activity_log(_srv._root, "session_dedup", f"{session_id} hid {before - after}")
+                    _activity_log(
+                        _srv._root,
+                        "session_dedup",
+                        f"{session_id} hid {before - after}",
+                    )
                 except Exception:
                     pass
 
@@ -229,7 +258,13 @@ def register(mcp) -> None:
 
             # Recompute derived fields after filtering
             ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
-            ctx.token_estimate = sum(len(n.name) + len(n.docstring) + len(n.file_path) + 50 for n in ctx.nodes) // 4
+            ctx.token_estimate = (
+                sum(
+                    len(n.name) + len(n.docstring) + len(n.file_path) + 50
+                    for n in ctx.nodes
+                )
+                // 4
+            )
 
         md = render_context_markdown(ctx)
         return json.dumps(

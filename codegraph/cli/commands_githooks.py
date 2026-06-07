@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import os
 from pathlib import Path
 
@@ -24,7 +26,7 @@ from codegraph.state.git_hooks import (
 )
 
 
-def cmd_githooks(args) -> None:
+def cmd_githooks(args: argparse.Namespace) -> None:
     """Dispatcher for `cgh hooks <verb>`."""
     action = getattr(args, "action", None) or "status"
     root = Path(os.path.abspath(args.root))

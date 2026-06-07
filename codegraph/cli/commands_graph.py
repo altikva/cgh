@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import os
 from pathlib import Path
 
@@ -23,7 +25,9 @@ SCOPES = ["imports", "calls", "classes", "docs", "overview"]
 # ---------------------------------------------------------------------------
 
 
-def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_nodes: int) -> str | None:
+def _fetch_mermaid_via_owner(
+    root: str, scope: str, symbol: str, file: str, max_nodes: int
+) -> str | None:
     """
     Ask the running MCP owner to build the Mermaid diagram for us.
     Works while the owner holds the Kuzu write lock (which blocks our
@@ -99,7 +103,7 @@ def _fetch_mermaid_via_owner(root: str, scope: str, symbol: str, file: str, max_
     return None
 
 
-def cmd_graph(args) -> None:
+def cmd_graph(args: argparse.Namespace) -> None:
     """Generate and display a graph visualization."""
     from codegraph.core.db import get_readonly_connection
     from codegraph.viz import (
@@ -121,7 +125,9 @@ def cmd_graph(args) -> None:
 
     # Try the owner's HTTP endpoint first, it works even when the
     # Kuzu lock is held (which blocks readonly connections from CLI).
-    mermaid_code: str | None = _fetch_mermaid_via_owner(root, scope, symbol, file, max_nodes)
+    mermaid_code: str | None = _fetch_mermaid_via_owner(
+        root, scope, symbol, file, max_nodes
+    )
 
     if mermaid_code is None:
         # Owner not running, open Kuzu directly.
@@ -159,7 +165,9 @@ def cmd_graph(args) -> None:
             meta += f" file={file}"
         html_content = generate_html(mermaid_code, scope, root, meta)
         out_path.write_text(html_content, encoding="utf-8")
-        console.print(f"  [green]+[/green] {out_path} [dim]({len(html_content):,} bytes)[/dim]")
+        console.print(
+            f"  [green]+[/green] {out_path} [dim]({len(html_content):,} bytes)[/dim]"
+        )
         return
 
     # Default: generate HTML and open in browser
@@ -187,7 +195,7 @@ def cmd_graph(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_add_dir(args) -> None:
+def cmd_add_dir(args: argparse.Namespace) -> None:
     """Add or manage extra directories in the graph."""
     from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
 
@@ -259,7 +267,9 @@ def cmd_add_dir(args) -> None:
                 console.print(f"  [red]-[/red] {d}")
         return
 
-    console.print("[dim]Usage: cgh add-dir add <path> | cgh add-dir remove <path> | cgh add-dir list[/dim]")
+    console.print(
+        "[dim]Usage: cgh add-dir add <path> | cgh add-dir remove <path> | cgh add-dir list[/dim]"
+    )
 
 
 def _write_extra_dirs(config_path: Path, data: dict, extra_dirs: list[str]) -> None:
@@ -301,16 +311,33 @@ def register_graph_parser(sub) -> None:
 
     # --- graph ---
     p = sub.add_parser("graph", help="Visualize the code graph (opens in browser)")
-    p.add_argument("scope", nargs="?", default="overview", choices=SCOPES, help="What to visualize (default: overview)")
+    p.add_argument(
+        "scope",
+        nargs="?",
+        default="overview",
+        choices=SCOPES,
+        help="What to visualize (default: overview)",
+    )
     p.add_argument("--symbol", "-s", help="Filter to a symbol (for calls/classes)")
     p.add_argument("--file", "-f", help="Filter to a file (for imports/docs)")
-    p.add_argument("--max-nodes", "-n", type=int, default=40, help="Max nodes (default: 40)")
-    p.add_argument("--mermaid", action="store_true", help="Output raw Mermaid to stdout")
-    p.add_argument("--html", metavar="FILE", help="Write HTML to file instead of opening browser")
+    p.add_argument(
+        "--max-nodes", "-n", type=int, default=40, help="Max nodes (default: 40)"
+    )
+    p.add_argument(
+        "--mermaid", action="store_true", help="Output raw Mermaid to stdout"
+    )
+    p.add_argument(
+        "--html", metavar="FILE", help="Write HTML to file instead of opening browser"
+    )
     p.add_argument("--root", default=os.getcwd())
 
     # --- add-dir ---
     p = sub.add_parser("add-dir", help="Manage extra directories in the graph")
-    p.add_argument("action", nargs="?", choices=["add", "remove", "list"], help="Action (default: list)")
+    p.add_argument(
+        "action",
+        nargs="?",
+        choices=["add", "remove", "list"],
+        help="Action (default: list)",
+    )
     p.add_argument("paths", nargs="*", help="Directory paths")
     p.add_argument("--root", default=os.getcwd())

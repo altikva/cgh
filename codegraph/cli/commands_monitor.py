@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import json
 import os
 import re
@@ -37,7 +39,7 @@ def _build_stats_group(root: str) -> Group:
     return _stats_content(root)
 
 
-def cmd_stats(args) -> None:
+def cmd_stats(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
 
     if getattr(args, "json", False):
@@ -142,7 +144,9 @@ def _stats_content(root: str) -> Group:
                 curr_branch = ss.get("current_branch") or "?"
                 drift_bits = []
                 if behind:
-                    drift_bits.append(f"{behind} commit{'s' if behind != 1 else ''} behind")
+                    drift_bits.append(
+                        f"{behind} commit{'s' if behind != 1 else ''} behind"
+                    )
                 if dirty:
                     drift_bits.append("working tree dirty")
                 if branch != curr_branch:
@@ -208,7 +212,9 @@ def _stats_content(root: str) -> Group:
             for edge, count in sorted(edges.items(), key=lambda x: -x[1]):
                 edge_table.add_row(edge, f"{count:,}")
             edge_table.add_section()
-            edge_table.add_row("[bold]Total[/bold]", f"[bold]{sum(edges.values()):,}[/bold]")
+            edge_table.add_row(
+                "[bold]Total[/bold]", f"[bold]{sum(edges.values()):,}[/bold]"
+            )
             renderables.append(edge_table)
 
     info_table = Table(box=box.SIMPLE_HEAD, title="Index Info", title_style="bold cyan")
@@ -223,20 +229,31 @@ def _stats_content(root: str) -> Group:
     if total_size > 0:
         info_table.add_section()
         if total_size > 1024 * 1024:
-            info_table.add_row("[bold]Total storage[/bold]", f"[bold]{total_size / 1024 / 1024:.1f} MB[/bold]")
+            info_table.add_row(
+                "[bold]Total storage[/bold]",
+                f"[bold]{total_size / 1024 / 1024:.1f} MB[/bold]",
+            )
         else:
-            info_table.add_row("[bold]Total storage[/bold]", f"[bold]{total_size / 1024:.0f} KB[/bold]")
+            info_table.add_row(
+                "[bold]Total storage[/bold]", f"[bold]{total_size / 1024:.0f} KB[/bold]"
+            )
     renderables.append(info_table)
 
     if call_stats["total_calls"] > 0:
-        call_table = Table(title="MCP Tool Calls", box=box.SIMPLE_HEAD, title_style="bold cyan")
+        call_table = Table(
+            title="MCP Tool Calls", box=box.SIMPLE_HEAD, title_style="bold cyan"
+        )
         call_table.add_column("Tool", style="bold")
         call_table.add_column("Calls", justify="right")
         call_table.add_column("Avg ms", justify="right")
         call_table.add_column("Max ms", justify="right")
         call_table.add_column("Errors", justify="right")
-        for tool, ts in sorted(call_stats.get("tools", {}).items(), key=lambda x: -x[1]["calls"]):
-            err_str = f"[red]{ts['errors']}[/red]" if ts["errors"] > 0 else "[dim]0[/dim]"
+        for tool, ts in sorted(
+            call_stats.get("tools", {}).items(), key=lambda x: -x[1]["calls"]
+        ):
+            err_str = (
+                f"[red]{ts['errors']}[/red]" if ts["errors"] > 0 else "[dim]0[/dim]"
+            )
             call_table.add_row(
                 tool,
                 str(ts["calls"]),
@@ -254,7 +271,9 @@ def _stats_content(root: str) -> Group:
         )
         renderables.append(call_table)
     else:
-        renderables.append(Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]"))
+        renderables.append(
+            Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
+        )
 
     return Group(*renderables)
 
@@ -324,7 +343,7 @@ def _stats_json(root: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def cmd_status(args) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     """Quick one-screen health check: owner, freshness, counts, extra_dirs."""
     import json as _json
 
@@ -342,7 +361,11 @@ def cmd_status(args) -> None:
     owner_port = None
     if (Path(root) / ".codegraph").exists():
         try:
-            owner_pid = int((Path(root) / ".codegraph" / "owner.pid").read_text(encoding="utf-8").strip())
+            owner_pid = int(
+                (Path(root) / ".codegraph" / "owner.pid")
+                .read_text(encoding="utf-8")
+                .strip()
+            )
         except (OSError, ValueError):
             pass
         owner_port = read_owner_port(root)
@@ -366,13 +389,17 @@ def cmd_status(args) -> None:
             )
             stats = _ask_owner_incremental_reindex(root, owner_port)
             if stats is None:
-                console.print("[yellow]Refresh call failed (timeout or error).[/yellow]\n")
+                console.print(
+                    "[yellow]Refresh call failed (timeout or error).[/yellow]\n"
+                )
             else:
                 rx = stats.get("reindexed_count", stats.get("indexed", 0))
                 un = stats.get("unchanged_count", stats.get("skipped", 0))
                 de = stats.get("deleted_count", 0)
                 el = stats.get("elapsed_s", "?")
-                console.print(f"[green]✓[/green] reindexed={rx}, unchanged={un}, deleted={de}, elapsed={el}s\n")
+                console.print(
+                    f"[green]✓[/green] reindexed={rx}, unchanged={un}, deleted={de}, elapsed={el}s\n"
+                )
 
     # Scan freshness (re-read after possible refresh)
     ss = _scan_status(root)
@@ -442,7 +469,11 @@ def cmd_status(args) -> None:
     # which children this owner fans queries out to and whether they're up.
     subrepos: list[dict] = []
     try:
-        from codegraph.analysis.federation import child_owner_status, resolve_children, verify_child
+        from codegraph.analysis.federation import (
+            child_owner_status,
+            resolve_children,
+            verify_child,
+        )
 
         for child in resolve_children(root):
             st = verify_child(child)
@@ -518,17 +549,22 @@ def cmd_status(args) -> None:
     elif payload["scan"]["indexed_sha"]:
         drift = []
         if ss.get("behind_by"):
-            drift.append(f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind")
+            drift.append(
+                f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind"
+            )
         if ss.get("dirty"):
             drift.append("working tree dirty")
         scan_line = (
             f"[yellow]stale[/yellow]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] → "
-            f"HEAD [bold]{payload['scan']['current_sha']}[/bold]" + (f"  ({', '.join(drift)})" if drift else "")
+            f"HEAD [bold]{payload['scan']['current_sha']}[/bold]"
+            + (f"  ({', '.join(drift)})" if drift else "")
         )
     else:
         scan_line = "[dim]no scan recorded, run cgh index[/dim]"
 
-    table = Table(box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan")
+    table = Table(
+        box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan"
+    )
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
     table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
@@ -550,7 +586,9 @@ def cmd_status(args) -> None:
         endpoints_cell = "[dim]unknown[/dim]"
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
-    table.add_row("Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]")
+    table.add_row(
+        "Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]"
+    )
     table.add_row("Subrepos", _format_subrepos_cell(subrepos))
     console.print(table)
 
@@ -637,7 +675,10 @@ def _backend_status_line(root: str) -> str:
         colour = "green" if kind == "duckdb" else "magenta"
         label = f"[{colour}]{kind}[/{colour}] ([dim]{path.name}, {_size(path)}[/dim])"
         if env_was_set and env_backend != kind:
-            return label + f"  [yellow]CGH_DB={env_value!r} mismatch, next index would create a {env_backend} DB[/yellow]"
+            return (
+                label
+                + f"  [yellow]CGH_DB={env_value!r} mismatch, next index would create a {env_backend} DB[/yellow]"
+            )
         if kind == "kuzu":
             # Gentle nudge toward DuckDB, about 18x faster + 5x smaller
             # on the wb-backend stress test. Opt-in, not automatic.
@@ -783,9 +824,17 @@ def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
     # One ps call, many PIDs → fewer subprocess invocations
     try:
         r = subprocess.run(
-            ["ps", "-o", "pid=,tty=,lstart=,command=", "-p", ",".join(str(p) for p in pids)],
+            [
+                "ps",
+                "-o",
+                "pid=,tty=,lstart=,command=",
+                "-p",
+                ",".join(str(p) for p in pids),
+            ],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=3,
         )
         lines = [ln.rstrip() for ln in r.stdout.splitlines() if ln.strip()]
@@ -835,7 +884,7 @@ def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_reset(args) -> None:
+def cmd_reset(args: argparse.Namespace) -> None:
     """
     Nuke the graph + FTS DBs, kill the owner, then optionally re-index
     and re-publish. Use after a schema migration or when the graph gets
@@ -887,7 +936,9 @@ def cmd_reset(args) -> None:
             targets.append(p)
     # Kuzu also writes .wal / .tmp / shm files
     for p in cg_dir.iterdir():
-        if p.is_file() and (p.name.startswith("graph.db") or p.name.startswith("fts.db")):
+        if p.is_file() and (
+            p.name.startswith("graph.db") or p.name.startswith("fts.db")
+        ):
             if p not in targets:
                 targets.append(p)
     # Workers dir + port + pid files (leftovers)
@@ -960,7 +1011,7 @@ def _pid_alive(pid: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def cmd_tail(args) -> None:
+def cmd_tail(args: argparse.Namespace) -> None:
     """Live view of scan/watcher activity. Works while MCP server is running."""
     import datetime as _dt
     import time as _t
@@ -1010,7 +1061,9 @@ def cmd_tail(args) -> None:
 
     console.print("[dim]Tailing codegraph activity (Ctrl-C to stop)[/dim]\n")
     try:
-        with Live(_build(), console=console, refresh_per_second=2, screen=False) as live:
+        with Live(
+            _build(), console=console, refresh_per_second=2, screen=False
+        ) as live:
             while True:
                 _t.sleep(0.5)
                 live.update(_build())
@@ -1023,7 +1076,7 @@ def cmd_tail(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_logs(args) -> None:
+def cmd_logs(args: argparse.Namespace) -> None:
     from codegraph.state.call_log import clear_logs, get_logs
 
     root = os.path.abspath(args.root)
@@ -1063,14 +1116,24 @@ def cmd_logs(args) -> None:
     table.add_column("Args", max_width=40, overflow="ellipsis")
 
     for entry in logs:
-        status = Text("OK", style="green") if entry["success"] else Text("ERR", style="bold red")
+        status = (
+            Text("OK", style="green")
+            if entry["success"]
+            else Text("ERR", style="bold red")
+        )
         try:
             parsed = json.loads(entry["args"])
             args_str = " ".join(f"{k}={v}" for k, v in parsed.items())[:40]
         except (json.JSONDecodeError, TypeError):
             args_str = entry["args"][:40]
 
-        latency_style = "red" if entry["latency_ms"] > 100 else "yellow" if entry["latency_ms"] > 20 else "green"
+        latency_style = (
+            "red"
+            if entry["latency_ms"] > 100
+            else "yellow"
+            if entry["latency_ms"] > 20
+            else "green"
+        )
 
         table.add_row(
             entry["timestamp"],
@@ -1089,7 +1152,7 @@ def cmd_logs(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_history(args) -> None:
+def cmd_history(args: argparse.Namespace) -> None:
     """Show recent indexing activity grouped by day."""
     from datetime import datetime, timedelta
 
@@ -1101,7 +1164,9 @@ def cmd_history(args) -> None:
     console.print(LOGO)
 
     if not log_path.exists():
-        console.print("[dim]No call log found. MCP tools have not been called yet.[/dim]")
+        console.print(
+            "[dim]No call log found. MCP tools have not been called yet.[/dim]"
+        )
         return
 
     try:
@@ -1163,7 +1228,9 @@ def cmd_history(args) -> None:
     # Grand total
     grand_total = sum(r[1] for r in rows)
     grand_errors = sum(r[2] for r in rows)
-    console.print(f"\n[dim]Total: {grand_total} calls, {grand_errors} errors across {len(rows)} day(s)[/dim]")
+    console.print(
+        f"\n[dim]Total: {grand_total} calls, {grand_errors} errors across {len(rows)} day(s)[/dim]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1171,7 +1238,7 @@ def cmd_history(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_diff(args) -> None:
+def cmd_diff(args: argparse.Namespace) -> None:
     """Show files changed since last index."""
     import subprocess
 
@@ -1191,7 +1258,9 @@ def cmd_diff(args) -> None:
         result = subprocess.run(
             ["git", "diff", "--name-only", since],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=root,
         )
         changed_files = [f for f in result.stdout.strip().splitlines() if f]
@@ -1204,7 +1273,9 @@ def cmd_diff(args) -> None:
         result_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=root,
         )
         untracked_files = [f for f in result_untracked.stdout.strip().splitlines() if f]
@@ -1222,7 +1293,9 @@ def cmd_diff(args) -> None:
             other_changed.append(f)
 
     # Categorize untracked files
-    parseable_untracked = [f for f in untracked_files if Path(f).suffix.lower() in supported]
+    parseable_untracked = [
+        f for f in untracked_files if Path(f).suffix.lower() in supported
+    ]
 
     if not changed_files and not parseable_untracked:
         console.print(f"[dim]No changes since {since}.[/dim]")
@@ -1246,7 +1319,9 @@ def cmd_diff(args) -> None:
 
     # Show non-parseable changed files
     if other_changed:
-        console.print(f"\n[dim]  + {len(other_changed)} non-parseable changed file(s)[/dim]")
+        console.print(
+            f"\n[dim]  + {len(other_changed)} non-parseable changed file(s)[/dim]"
+        )
 
     # Show untracked parseable
     if parseable_untracked:
@@ -1282,7 +1357,7 @@ def cmd_diff(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_doctor(args) -> None:
+def cmd_doctor(args: argparse.Namespace) -> None:
     """Health check, verify all codegraph components are working."""
     import shutil
 
@@ -1296,7 +1371,13 @@ def cmd_doctor(args) -> None:
 
     # 1. .codegraph/ exists
     cg_exists = codegraph_dir.exists() and codegraph_dir.is_dir()
-    checks.append((".codegraph/ directory", cg_exists, "initialized" if cg_exists else "run 'cgh init' first"))
+    checks.append(
+        (
+            ".codegraph/ directory",
+            cg_exists,
+            "initialized" if cg_exists else "run 'cgh init' first",
+        )
+    )
 
     # 2. graph.db accessible
     graph_ok = False
@@ -1386,7 +1467,13 @@ def cmd_doctor(args) -> None:
     # 8. .cghignore exists
     cghignore_path = root / ".cghignore"
     cghignore_ok = cghignore_path.exists()
-    checks.append((".cghignore", cghignore_ok, "found" if cghignore_ok else "not found (optional)"))
+    checks.append(
+        (
+            ".cghignore",
+            cghignore_ok,
+            "found" if cghignore_ok else "not found (optional)",
+        )
+    )
 
     # 9. MCP server (fastmcp import)
     mcp_ok = False
@@ -1496,7 +1583,11 @@ def _print_claude_audit(audit: dict) -> None:
         if h.get("misplaced"):
             bits.append(f"wrong file: {', '.join(h['misplaced'])}")
         detail = f"[yellow]{h['installed']}/{h['expected']} installed[/yellow]  [dim]({'; '.join(bits)})[/dim]"
-    tbl.add_row(".claude hooks (settings + local)", icon.get(h["status"], "[dim]?[/dim]"), detail)
+    tbl.add_row(
+        ".claude hooks (settings + local)",
+        icon.get(h["status"], "[dim]?[/dim]"),
+        detail,
+    )
 
     s = audit["skills"]
     bits = [f"{s['installed']}/{s['bundled']} installed"]
@@ -1504,7 +1595,11 @@ def _print_claude_audit(audit: dict) -> None:
         bits.append(f"missing: {', '.join(s['missing'])}")
     if s["modified"]:
         bits.append(f"modified: {', '.join(s['modified'])}")
-    detail = ("[green]" if s["status"] == "ok" else "[yellow]") + ", ".join(bits) + ("[/green]" if s["status"] == "ok" else "[/yellow]")
+    detail = (
+        ("[green]" if s["status"] == "ok" else "[yellow]")
+        + ", ".join(bits)
+        + ("[/green]" if s["status"] == "ok" else "[/yellow]")
+    )
     tbl.add_row(".claude/skills/", icon.get(s["status"], "[dim]?[/dim]"), detail)
 
     u = audit["usage_block"]
@@ -1532,7 +1627,7 @@ def _print_claude_audit(audit: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_compact(args) -> None:
+def cmd_compact(args: argparse.Namespace) -> None:
     """Vacuum SQLite DBs and show before/after sizes."""
     root = os.path.abspath(args.root)
     codegraph_dir = Path(root) / ".codegraph"
@@ -1593,7 +1688,9 @@ def cmd_compact(args) -> None:
     for db_name, before, after in results:
         saved = before - after
         total_saved += saved
-        saved_str = f"[green]-{_fmt_size(saved)}[/green]" if saved > 0 else "[dim]0[/dim]"
+        saved_str = (
+            f"[green]-{_fmt_size(saved)}[/green]" if saved > 0 else "[dim]0[/dim]"
+        )
         table.add_row(db_name, _fmt_size(before), _fmt_size(after), saved_str)
 
     if graph_size > 0:

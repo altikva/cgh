@@ -12,6 +12,7 @@ from codegraph.viz.mermaid import (
     mermaid_classes,
     mermaid_docs,
     mermaid_imports,
+    mermaid_layers,
     mermaid_overview,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "mermaid_classes",
     "mermaid_docs",
     "mermaid_imports",
+    "mermaid_layers",
     "mermaid_overview",
     "generate_html",
     "open_in_browser",

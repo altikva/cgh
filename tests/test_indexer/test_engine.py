@@ -28,7 +28,9 @@ class TestIndexFile:
         index_file(sample_python, tmp_path)
         conn = get_connection(tmp_path)
 
-        fn_names = [f["name"] for f in conn.find_nodes("Function", return_fields=["name"])]
+        fn_names = [
+            f["name"] for f in conn.find_nodes("Function", return_fields=["name"])
+        ]
         assert "validate" in fn_names
         assert "main" in fn_names
 
@@ -36,7 +38,9 @@ class TestIndexFile:
         index_file(sample_python, tmp_path)
         conn = get_connection(tmp_path)
 
-        cls_names = [c["name"] for c in conn.find_nodes("Class", return_fields=["name"])]
+        cls_names = [
+            c["name"] for c in conn.find_nodes("Class", return_fields=["name"])
+        ]
         assert "BaseHandler" in cls_names
         assert "DonationHandler" in cls_names
 
@@ -60,10 +64,53 @@ class TestIndexFile:
 
         conn = get_connection(tmp_path)
         titles = [
-            s["title"]
-            for s in conn.find_nodes("MdSection", return_fields=["title"])
+            s["title"] for s in conn.find_nodes("MdSection", return_fields=["title"])
         ]
         assert "Architecture" in titles
+
+    def test_index_sql_ddl(self, tmp_path):
+        f = tmp_path / "schema.sql"
+        f.write_text(
+            "CREATE TABLE users (\n  id INT PRIMARY KEY,\n  email TEXT\n);\n",
+            encoding="utf-8",
+        )
+        ok = index_file(f, tmp_path)
+        assert ok is True
+
+        conn = get_connection(tmp_path)
+        titles = [
+            s["title"] for s in conn.find_nodes("MdSection", return_fields=["title"])
+        ]
+        assert "table:users" in titles
+
+    def test_index_package_json(self, tmp_path):
+        f = tmp_path / "package.json"
+        f.write_text(
+            '{"name": "demo", "scripts": {"build": "tsc"}}\n',
+            encoding="utf-8",
+        )
+        ok = index_file(f, tmp_path)
+        assert ok is True
+
+        conn = get_connection(tmp_path)
+        titles = [
+            s["title"] for s in conn.find_nodes("MdSection", return_fields=["title"])
+        ]
+        assert "scripts" in titles
+        assert "scripts.build" in titles
+
+    def test_index_go_endpoints(self, tmp_path):
+        f = tmp_path / "router.go"
+        f.write_text(
+            'package main\nfunc main() {\n    r.GET("/users", listUsers)\n}\n',
+            encoding="utf-8",
+        )
+        ok = index_file(f, tmp_path)
+        assert ok is True
+
+        conn = get_connection(tmp_path)
+        eps = conn.find_nodes("Endpoint", return_fields=["method", "path", "framework"])
+        assert any(e["path"] == "/users" and e["framework"] == "gin" for e in eps)
 
     def test_index_skips_unchanged(self, sample_python, tmp_path):
         # First index

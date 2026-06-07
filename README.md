@@ -54,6 +54,14 @@ cd cgh
 uv pip install -e .     # or: pip install -e .
 ```
 
+Optional extras (none are required; the core install is lean and works on Python 3.11 through 3.14):
+
+```bash
+pip install cgh[langs]   # C# and Ruby parsers (tree-sitter grammars)
+pip install cgh[lsp]     # precise cross-file Python call resolution (jedi)
+pip install cgh[kuzu]    # the legacy Kuzu graph backend (DuckDB is the default)
+```
+
 ```bash
 cgh --version
 cgh init           # initialize in any project
@@ -443,7 +451,7 @@ cgh graph imports --html out.html  # save to file instead of opening browser
 cgh graph overview --max-nodes 20  # limit nodes
 ```
 
-Scopes: `overview`, `imports`, `calls`, `classes`, `docs`
+Scopes: `overview`, `imports`, `calls`, `classes`, `docs`, `layers` (layer-to-layer dependency diagram)
 
 ```text
 +--------------------------------------------+
@@ -570,6 +578,16 @@ cgh diff --since main
 +----------------------------------------------+
 | 3 parseable changed  |  0 new unindexed  |  2 other |
 +----------------------------------------------+
+```
+
+#### `impact`
+
+Report the blast radius of changes since a git ref, for CI and PR bots. Diffs the changed files, then reports the symbols they define, what transitively imports them (grouped by role/layer), the endpoints touched, and the tests to run. Reads the graph read-only, so no MCP server needs to be running; keep the index fresh with `cgh index` in CI.
+
+```bash
+cgh impact --since HEAD~1            # human-readable summary
+cgh impact --since main --format md  # markdown for a PR comment
+cgh impact --since main --json       # machine-parseable on clean stdout
 ```
 
 #### `parsers`
@@ -775,7 +793,7 @@ Owners are independent: the parent reads child DBs directly as files, it does NO
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 39 tools.
+When running as an MCP server (`cgh serve`), codegraph exposes 47 tools.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -783,19 +801,32 @@ When running as an MCP server (`cgh serve`), codegraph exposes 39 tools.
 |------|-------------|
 | `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries: no Read needed |
 | `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
-| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI decorators + Nuxt server/api file routes + Express) with their handlers: works cross-repo when `extra_dirs` is configured |
+| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers: works cross-repo when `extra_dirs` is configured |
 
 ### Code Navigation
 
 | Tool | Description |
 |------|-------------|
-| `symbol_lookup(name)` | Find where a function, class, TF resource, or doc section is defined |
+| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined; optional `role` / `layer` filters |
 | `find_callers(fn_name)` | Find all functions that call `fn_name` |
 | `find_callees(fn_name)` | Find all functions that `fn_name` calls |
 | `imports_of(file_path)` | List modules imported by a file |
-| `search_symbols(query, limit?)` | Fuzzy search across all symbol types |
+| `search_symbols(query, limit?, role?, layer?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters |
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
 | `graph_stats()` | Node and edge counts per type |
+
+### Code Intelligence
+
+| Tool | Description |
+|------|-------------|
+| `file_summary(file_path)` | One-shot orientation for a file: role/layer/lang, its functions and classes with line ranges, what it imports, and who imports it |
+| `impact_of(symbol_or_file, max_depth?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints |
+| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS` |
+| `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
+| `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
+| `untested(role?, layer?)` | Source files that no test file imports |
+| `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
+| `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |
 
 ### Documentation
 
@@ -861,6 +892,12 @@ codegraph supports any language through a plugin system. Adding a new language r
 | Java | tree-sitter | `.java` | classes, interfaces, methods, constructors, imports, calls |
 | Terraform | regex + brace tracker | `.tf` | resources, variables, outputs, depends_on |
 | Markdown | regex | `.md` `.mdx` | headings, internal links, code symbol references |
+| Config data | stdlib + PyYAML | `.json` `.yaml` `.yml` `.toml` | top-level keys as sections (CI jobs, k8s kinds, compose services, package.json scripts, pyproject tables) |
+| SQL | regex | `.sql` | `CREATE TABLE` / `ALTER TABLE` as table sections with columns |
+| C# (optional) | tree-sitter | `.cs` | classes, interfaces, structs, enums, records, methods, usings, calls |
+| Ruby (optional) | tree-sitter | `.rb` | classes, modules, methods, requires, calls |
+
+C# and Ruby ship in the optional `langs` extra (`pip install cgh[langs]`) so the core install stays lean and Python-3.14-safe. When the extra is absent, those file types are simply skipped.
 
 ### Adding a New Language
 
@@ -912,6 +949,7 @@ ignore_dirs = [".git", "node_modules", "__pycache__", ".venv"]
 ignore_patterns = ["*.min.js", "*.bundle.js"]
 max_file_size_kb = 500
 extra_dirs = ["../frontend"]
+# precise_calls = true   # resolve Python calls cross-file via jedi (needs cgh[lsp])
 
 [parsers]
 # enabled = ["python", "typescript", "markdown"]
@@ -928,7 +966,8 @@ reindex_on_start = true
 |----------|-------------|
 | `CODEGRAPH_ROOT` | Override project root |
 | `CODEGRAPH_DIR` | Override `.codegraph/` location |
-| `CODEGRAPH_AUTH_KEY` | MCP server auth key (auto-generated by `cgh init`, injected into `.mcp.json`) |
+| `CGH_DB` | Graph backend: `duckdb` (default) or `kuzu` |
+| `CGH_PRECISE_CALLS` | `1` to resolve Python calls cross-file via jedi (needs `cgh[lsp]`) |
 
 ### `.cghignore`
 
@@ -1032,23 +1071,20 @@ MdSection --MD_REFS_CLASS-----> Class        (code references in docs)
 
 ### MCP Auth Key
 
-`cgh init` generates a cryptographic auth key at `.codegraph/auth.key` (auto-added to `.gitignore`). The key is injected into `.mcp.json` as the `CODEGRAPH_AUTH_KEY` environment variable.
-
-This is defense-in-depth for when codegraph moves to HTTP transport. Over stdio, the key provides process-level authentication.
+`cgh init` generates a cryptographic auth key at `.codegraph/auth.key` (auto-added to `.gitignore`). The owner process and every worker / CLI caller read that file and send it as a `Bearer` token to the owner's loopback HTTP bridge, which compares it in constant time. The file contents are the shared secret: there is no environment-variable hand-off.
 
 ```bash
 # Key is auto-managed -- no manual steps needed
-cgh init          # generates key + injects into .mcp.json
-cgh setup claude  # injects key into .mcp.json for Claude Code
+cgh init          # generates the key and the .codegraph/ index dir
 ```
 
-The key file has `600` permissions (owner-only read/write). Never commit it to git.
+The key file has `600` permissions and the `.codegraph/` directory is `700` (owner-only). Never commit either to git.
 
 ---
 
 ## Limitations
 
-- **CALLS resolution is name-based.** If two functions share a name, both get edges. Fully qualified resolution would need type inference, which is out of scope.
+- **CALLS resolution is name-based by default.** A call is linked to a same-file function of that name, falling back to all repo functions with that name only when there is no same-file match, so cross-file call edges are best-effort. For Python you can opt into precise cross-file resolution with `pip install cgh[lsp]` and `precise_calls = true` (jedi-backed); other languages stay name-based.
 - **Terraform HCL uses regex, not a full grammar.** Complex meta-arguments may be missed.
 - **JS/TS imports resolve to local files only.** Relative imports (`import x from "./utils"`), tsconfig `paths` aliases, and workspace packages do create a `File -> File` IMPORTS edge. Bare external packages (`import react`) are not resolved to a node, and cross-repo edges are not inferred (each federated scope is canonical for its own files).
 - **Markdown code refs are heuristic.** PascalCase and snake_case patterns are matched, so a ref can be a false positive.

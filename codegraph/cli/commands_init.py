@@ -489,95 +489,57 @@ def _install_git_reindex_hooks(root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# cmd_init
+# cmd_init helpers
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    import glob
-    import shutil
-
-    import questionary
-    from questionary import Style
-
-    from codegraph.core.config import init_project
-
-    root = Path(os.path.abspath(args.root))
-    console.print(LOGO)
-    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
-
-    cg_style = Style(
-        [
-            ("qmark", "fg:cyan bold"),
-            ("question", "fg:white bold"),
-            ("answer", "fg:green bold"),
-            ("pointer", "fg:cyan bold"),
-            ("highlighted", "fg:cyan bold"),
-            ("selected", "fg:green"),
-            ("separator", "fg:cyan"),
-            ("instruction", "fg:white dim"),
-            ("text", "fg:white"),
-        ]
-    )
-
-    # -- Step 0: Probe existing state (before anything mutates disk) --
-    prior_state = _detect_existing_state(root)
-    if prior_state["initialized"]:
-        console.print("  [bold]Existing codegraph state detected:[/bold]\n")
-        bits: list[str] = []
-        if prior_state["indexed_files"] > 0:
-            bits.append(f"{prior_state['indexed_files']:,} files indexed")
-        if prior_state["graph_db_bytes"] > 0:
-            bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
-        if prior_state["owner_alive"]:
-            bits.append(
-                f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
-            )
-        elif prior_state["owner_pid"]:
-            bits.append(f"[yellow]stale owner.pid {prior_state['owner_pid']}[/yellow]")
-        if prior_state["scan_meta"] and prior_state["scan_meta"].get("git_head"):
-            sha = prior_state["scan_meta"]["git_head"][:8]
-            branch = prior_state["scan_meta"].get("git_branch") or "?"
-            bits.append(f"last scan at {sha} on {branch}")
-        if prior_state["extra_dirs"]:
-            bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
-        if prior_state["mcp_server_configured"]:
-            bits.append(".mcp.json already has codegraph")
-        if prior_state.get("claude_skills_installed"):
-            n = len(prior_state["claude_skills_installed"])
-            mod = len(prior_state.get("claude_skills_modified") or [])
-            label = f"{n} claude skill{'s' if n != 1 else ''}"
-            if mod:
-                label += f" ([yellow]{mod} modified locally[/yellow])"
-            bits.append(label)
-        blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
-        if blocks_present:
-            bits.append("agent blocks: " + ", ".join(blocks_present))
-        for b in bits:
-            console.print(f"    • {b}")
-        if not bits:
-            console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
-        console.print()
-
-    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
-    _auto_migrate_kuzu_to_duckdb(root)
-
-    # -- Step 1: Create .codegraph/ --
-    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
-        result = init_project(root)
-
-    if result["created"]:
-        for f in result["created"]:
-            console.print(f"  [green]+[/green] {f}")
-    else:
-        console.print("  [dim].codegraph/ already exists[/dim]")
-
+def _print_prior_state(prior_state: dict) -> None:
+    """Render the 'existing codegraph state detected' summary for an
+    already-initialized repo. No-op when the repo is fresh."""
+    if not prior_state["initialized"]:
+        return
+    console.print("  [bold]Existing codegraph state detected:[/bold]\n")
+    bits: list[str] = []
+    if prior_state["indexed_files"] > 0:
+        bits.append(f"{prior_state['indexed_files']:,} files indexed")
+    if prior_state["graph_db_bytes"] > 0:
+        bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
+    if prior_state["owner_alive"]:
+        bits.append(
+            f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
+        )
+    elif prior_state["owner_pid"]:
+        bits.append(f"[yellow]stale owner.pid {prior_state['owner_pid']}[/yellow]")
+    if prior_state["scan_meta"] and prior_state["scan_meta"].get("git_head"):
+        sha = prior_state["scan_meta"]["git_head"][:8]
+        branch = prior_state["scan_meta"].get("git_branch") or "?"
+        bits.append(f"last scan at {sha} on {branch}")
+    if prior_state["extra_dirs"]:
+        bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
+    if prior_state["mcp_server_configured"]:
+        bits.append(".mcp.json already has codegraph")
+    if prior_state.get("claude_skills_installed"):
+        n = len(prior_state["claude_skills_installed"])
+        mod = len(prior_state.get("claude_skills_modified") or [])
+        label = f"{n} claude skill{'s' if n != 1 else ''}"
+        if mod:
+            label += f" ([yellow]{mod} modified locally[/yellow])"
+        bits.append(label)
+    blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
+    if blocks_present:
+        bits.append("agent blocks: " + ", ".join(blocks_present))
+    for b in bits:
+        console.print(f"    • {b}")
+    if not bits:
+        console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
     console.print()
 
-    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
-    _install_git_reindex_hooks(root)
 
-    # -- Step 2: Detect AI tools --
+def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
+    """Probe for installed AI tools, print the detection table, and return
+    the full (name, key, detected) list."""
+    import shutil
+
     console.print("  [bold]Detecting AI tools...[/bold]\n")
 
     all_tools = [
@@ -611,9 +573,20 @@ def cmd_init(args: argparse.Namespace) -> None:
         console.print(f"    {icon} {name:15s} {status}")
 
     console.print()
-    detected_tools = [(name, key) for name, key, detected in all_tools if detected]
+    return all_tools
 
-    # -- Step 3: Select which tools to configure --
+
+def _select_tools(
+    all_tools: list[tuple[str, str, bool]],
+    detected_tools: list[tuple[str, str]],
+    args: argparse.Namespace,
+    cg_style,
+) -> list[str]:
+    """Run the interactive multi-select (or auto-pick under --yes) for which
+    tools to configure, then print the skipped list. Returns the selected
+    tool keys."""
+    import questionary
+
     selected_keys = []
     if detected_tools and not args.yes:
         choices = [
@@ -656,6 +629,164 @@ def cmd_init(args: argparse.Namespace) -> None:
             + ", ".join(f"[dim]{k}[/dim]" for k in skipped)
             + "  [dim](no config, no agent block, no skills)[/dim]\n"
         )
+    return selected_keys
+
+
+def _count_parseable_files(root: Path) -> dict[str, int]:
+    """Count files the indexer will actually process, by language. Uses
+    git ls-files (respects .gitignore) and falls back to glob for a
+    non-git repo. Subrepo paths federated above are skipped."""
+    import glob
+
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+    from codegraph.parsers import get_parser_info
+
+    parsers = get_parser_info()
+    ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
+
+    # Federation skip list, if the user federated subrepos in step 3d above,
+    # they should NOT contribute to the file count.
+    skip_paths = child_paths_to_skip(root)
+
+    file_counts: dict[str, int] = {}
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(root),
+            timeout=30,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if not line:
+                    continue
+                if skip_paths and is_under_any(root / line, skip_paths):
+                    continue
+                suffix = Path(line).suffix.lower()
+                lang = ext_to_lang.get(suffix)
+                if lang:
+                    file_counts[lang] = file_counts.get(lang, 0) + 1
+        else:
+            raise RuntimeError("git ls-files failed")
+    except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
+        # Fallback, glob from project root. Filter out subrepo paths so
+        # the count reflects what the indexer will actually process.
+        for info in parsers:
+            count = 0
+            for ext in info["extensions"]:
+                for match in glob.glob(
+                    f"**/*{ext}", root_dir=str(root), recursive=True
+                ):
+                    full = root / match
+                    if skip_paths and is_under_any(full, skip_paths):
+                        continue
+                    count += 1
+            if count > 0:
+                file_counts[info["lang"]] = count
+
+    return file_counts
+
+
+def _print_file_counts(file_counts: dict[str, int]) -> None:
+    """Render the per-language 'Files to index' bar chart."""
+    if not file_counts:
+        return
+    console.print("  [bold]Files to index:[/bold]\n")
+    lang_colors = {
+        "python": "green",
+        "typescript": "blue",
+        "javascript": "yellow",
+        "terraform": "magenta",
+        "markdown": "cyan",
+        "vue": "green",
+        "nuxt_config": "green",
+    }
+    for lang, count in sorted(file_counts.items(), key=lambda x: -x[1]):
+        color = lang_colors.get(lang, "white")
+        bar_len = min(count // 5, 30) or 1
+        bar = f"[{color}]{'>' * bar_len}[/{color}]"
+        console.print(f"    [{color}]{lang:12s}[/{color}] {count:>5d} files  {bar}")
+    console.print()
+
+
+def _print_init_summary() -> None:
+    """Render the closing 'codegraph is ready!' panel."""
+    console.print()
+    console.print(
+        Panel(
+            "[bold]codegraph is ready![/bold]\n\n"
+            "  [cyan]cgh stats[/cyan]         View graph statistics\n"
+            "  [cyan]cgh search X[/cyan]      Find symbols\n"
+            "  [cyan]cgh serve[/cyan]         Start MCP server\n"
+            "  [cyan]cgh parsers[/cyan]       List supported languages\n"
+            "  [cyan]cgh --help[/cyan]        All commands",
+            border_style="green",
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# cmd_init
+# ---------------------------------------------------------------------------
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    import questionary
+    from questionary import Style
+
+    from codegraph.core.config import init_project
+
+    root = Path(os.path.abspath(args.root))
+    console.print(LOGO)
+    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
+
+    cg_style = Style(
+        [
+            ("qmark", "fg:cyan bold"),
+            ("question", "fg:white bold"),
+            ("answer", "fg:green bold"),
+            ("pointer", "fg:cyan bold"),
+            ("highlighted", "fg:cyan bold"),
+            ("selected", "fg:green"),
+            ("separator", "fg:cyan"),
+            ("instruction", "fg:white dim"),
+            ("text", "fg:white"),
+        ]
+    )
+
+    # -- Step 0: Probe existing state (before anything mutates disk) --
+    prior_state = _detect_existing_state(root)
+    _print_prior_state(prior_state)
+
+    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
+    _auto_migrate_kuzu_to_duckdb(root)
+
+    # -- Step 1: Create .codegraph/ --
+    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
+        result = init_project(root)
+
+    if result["created"]:
+        for f in result["created"]:
+            console.print(f"  [green]+[/green] {f}")
+    else:
+        console.print("  [dim].codegraph/ already exists[/dim]")
+
+    console.print()
+
+    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
+    _install_git_reindex_hooks(root)
+
+    # -- Step 2: Detect AI tools --
+    all_tools = _detect_ai_tools(root)
+    detected_tools = [(name, key) for name, key, detected in all_tools if detected]
+
+    # -- Step 3: Select which tools to configure --
+    selected_keys = _select_tools(all_tools, detected_tools, args, cg_style)
 
     # Check for locally-edited skills before overwriting
     overwrite_skills = True
@@ -791,76 +922,8 @@ def cmd_init(args: argparse.Namespace) -> None:
             )
 
     # -- Step 4: Detect parseable files --
-    # Use git ls-files to match what the real indexer will process
-    # (respects .gitignore). Fall back to glob if not a git repo.
-    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
-    from codegraph.parsers import get_parser_info
-
-    parsers = get_parser_info()
-    ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
-
-    # Federation skip list, if the user federated subrepos in step 3d above,
-    # they should NOT contribute to the file count.
-    skip_paths = child_paths_to_skip(root)
-
-    file_counts: dict[str, int] = {}
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            cwd=str(root),
-            timeout=30,
-        )
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                if not line:
-                    continue
-                if skip_paths and is_under_any(root / line, skip_paths):
-                    continue
-                suffix = Path(line).suffix.lower()
-                lang = ext_to_lang.get(suffix)
-                if lang:
-                    file_counts[lang] = file_counts.get(lang, 0) + 1
-        else:
-            raise RuntimeError("git ls-files failed")
-    except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
-        # Fallback, glob from project root. Filter out subrepo paths so
-        # the count reflects what the indexer will actually process.
-        for info in parsers:
-            count = 0
-            for ext in info["extensions"]:
-                for match in glob.glob(
-                    f"**/*{ext}", root_dir=str(root), recursive=True
-                ):
-                    full = root / match
-                    if skip_paths and is_under_any(full, skip_paths):
-                        continue
-                    count += 1
-            if count > 0:
-                file_counts[info["lang"]] = count
-
-    if file_counts:
-        console.print("  [bold]Files to index:[/bold]\n")
-        lang_colors = {
-            "python": "green",
-            "typescript": "blue",
-            "javascript": "yellow",
-            "terraform": "magenta",
-            "markdown": "cyan",
-            "vue": "green",
-            "nuxt_config": "green",
-        }
-        for lang, count in sorted(file_counts.items(), key=lambda x: -x[1]):
-            color = lang_colors.get(lang, "white")
-            bar_len = min(count // 5, 30) or 1
-            bar = f"[{color}]{'>' * bar_len}[/{color}]"
-            console.print(f"    [{color}]{lang:12s}[/{color}] {count:>5d} files  {bar}")
-        console.print()
+    file_counts = _count_parseable_files(root)
+    _print_file_counts(file_counts)
 
     total = sum(file_counts.values())
 
@@ -965,18 +1028,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         )
 
     # -- Done --
-    console.print()
-    console.print(
-        Panel(
-            "[bold]codegraph is ready![/bold]\n\n"
-            "  [cyan]cgh stats[/cyan]         View graph statistics\n"
-            "  [cyan]cgh search X[/cyan]      Find symbols\n"
-            "  [cyan]cgh serve[/cyan]         Start MCP server\n"
-            "  [cyan]cgh parsers[/cyan]       List supported languages\n"
-            "  [cyan]cgh --help[/cyan]        All commands",
-            border_style="green",
-        )
-    )
+    _print_init_summary()
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:
@@ -1424,7 +1476,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 # ---------------------------------------------------------------------------
 
 
-def cmd_parsers(args: argparse.Namespace) -> None:
+def cmd_parsers(args) -> None:
     from codegraph.parsers import get_parser_info, get_supported_extensions
 
     console.print(LOGO)
@@ -1476,7 +1528,7 @@ def cmd_parsers(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_setup(args: argparse.Namespace) -> None:
+def cmd_setup(args) -> None:
     """
     Generate integration files for AI tools.
 

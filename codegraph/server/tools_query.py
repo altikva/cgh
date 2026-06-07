@@ -115,12 +115,15 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def symbol_lookup(name: str) -> str:
+    def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
         """
         Find where a symbol (function, class, TF resource) is defined.
         Returns file path, line range, type, and docstring snippet, plus
         a `scope` tag (parent / <subrepo-name>) when federation is on.
         Use this instead of grepping files.
+
+        Optional `role` / `layer` filters keep only definitions whose File
+        node carries that exact role / layer (empty = no filter).
         """
 
         def query(conn):
@@ -184,6 +187,22 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            if role or layer:
+                cache: dict[str, tuple[str, str]] = {}
+                kept = []
+                for hit in out:
+                    fp = hit.get("file")
+                    if not fp:
+                        continue
+                    if fp not in cache:
+                        cache[fp] = _file_role_layer(conn, fp)
+                    r, lyr = cache[fp]
+                    if role and r != role:
+                        continue
+                    if layer and lyr != layer:
+                        continue
+                    kept.append(hit)
+                return kept
             return out
 
         results, warnings = _federate(query)
@@ -286,13 +305,31 @@ def register(mcp) -> None:
             out["warnings"] = warnings
         return json.dumps(out, indent=2)
 
+    def _file_role_layer(conn, file_path: str) -> tuple[str, str]:
+        """Return (role, layer) for a File node, ('', '') when unknown."""
+        nodes = conn.find_nodes(
+            "File",
+            where={"path": file_path},
+            return_fields=["role", "layer"],
+            limit=1,
+        )
+        if not nodes:
+            return "", ""
+        return (nodes[0].get("role") or "", nodes[0].get("layer") or "")
+
     @mcp.tool()
     @_logged_tool
-    def search_symbols(query: str, limit: int = 20) -> str:
+    def search_symbols(
+        query: str, limit: int = 20, role: str = "", layer: str = ""
+    ) -> str:
         """
         Fuzzy search for symbols (functions, classes, TF resources) by name.
         Uses substring match. Federated, `limit` is per scope, results are
         concatenated; sort/trim downstream if needed.
+
+        Optional `role` / `layer` filters keep only symbols whose File node
+        carries that exact role / layer (empty = no filter). Useful to scope
+        a search to e.g. role="router" or layer="domain".
         """
 
         def run(conn):
@@ -343,10 +380,33 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            if role or layer:
+                # Filter each hit by its File node's role / layer. Cache
+                # per-file lookups so repeated hits in the same file cost one
+                # query. Markdown / TF hits without a File node drop out.
+                cache: dict[str, tuple[str, str]] = {}
+                kept = []
+                for hit in out:
+                    fp = hit.get("file")
+                    if not fp:
+                        continue
+                    if fp not in cache:
+                        cache[fp] = _file_role_layer(conn, fp)
+                    r, lyr = cache[fp]
+                    if role and r != role:
+                        continue
+                    if layer and lyr != layer:
+                        continue
+                    kept.append(hit)
+                return kept
             return out
 
         results, warnings = _federate(run)
         payload = {"query": query, "results": results}
+        if role:
+            payload["role"] = role
+        if layer:
+            payload["layer"] = layer
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings

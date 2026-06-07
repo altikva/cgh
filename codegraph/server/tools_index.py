@@ -13,6 +13,16 @@ import os
 from pathlib import Path
 
 
+def _within_repo(target: Path, root: Path) -> bool:
+    """True if ``target`` resolves inside ``root``. Used to keep force_index
+    from reading arbitrary absolute paths the repo never declared."""
+    try:
+        target.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _load_config_toml(root: Path) -> tuple[Path, dict]:
     """Load .codegraph/config.toml. Returns (config_path, data)."""
     import tomllib
@@ -76,8 +86,12 @@ def register(mcp) -> None:
 
         # Step 1: Preview, collect files that would be indexed
         preview_files = []
+        refused: list[str] = []
         for p in paths:
             target = Path(p) if os.path.isabs(p) else (root / p) if root else Path(p)
+            if root is not None and not _within_repo(target, root):
+                refused.append(str(target))
+                continue
             if target.is_file():
                 if is_supported(target):
                     preview_files.append(str(target.relative_to(root) if root else target))
@@ -100,6 +114,7 @@ def register(mcp) -> None:
                     ),
                     "files_to_index": preview_files,
                     "file_count": len(preview_files),
+                    "refused_outside_repo": refused,
                 },
                 indent=2,
             )
@@ -111,6 +126,10 @@ def register(mcp) -> None:
 
         for p in paths:
             target = Path(p) if os.path.isabs(p) else (root / p) if root else Path(p)
+
+            if root is not None and not _within_repo(target, root):
+                refused.append(str(target))
+                continue
 
             if target.is_file():
                 try:
@@ -146,6 +165,7 @@ def register(mcp) -> None:
                 "indexed": indexed,
                 "skipped": skipped,
                 "errors": errors,
+                "refused_outside_repo": refused,
                 "indexed_count": len(indexed),
             },
             indent=2,
@@ -342,7 +362,12 @@ def register(mcp) -> None:
         if since == "staged":
             cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
         else:
-            cmd = ["git", "diff", "--name-only", "--diff-filter=ACMR", since]
+            # Reject a leading dash so a value like "--output=/path" can't be
+            # parsed as a git flag (argument injection via the MCP arg). The
+            # trailing "--" keeps the ref from being read as a pathspec.
+            if since.startswith("-"):
+                return json.dumps({"error": f"invalid git ref: {since!r}"})
+            cmd = ["git", "diff", "--name-only", "--diff-filter=ACMR", since, "--"]
 
         try:
             result = subprocess.run(

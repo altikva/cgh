@@ -116,8 +116,9 @@ def _run_rg(
             args.append("--fixed-strings")
         if glob:
             args.extend(["--glob", glob])
-        args.append(pattern)
-        args.append(str(root))
+        # "--" stops the pattern from being parsed as a flag: without it a
+        # pattern like "--pre=sh" reaches ripgrep's preprocessor (code exec).
+        args.extend(["--", pattern, str(root)])
         try:
             r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (subprocess.TimeoutExpired, OSError):
@@ -169,7 +170,8 @@ def _run_git_grep(
             args.append("-F")
         else:
             args.append("-E")
-        args.append(pattern)
+        # "-e <pattern>" so a pattern starting with "-" is never read as a flag.
+        args.extend(["-e", pattern])
         if glob:
             args.extend(["--", glob])
         try:

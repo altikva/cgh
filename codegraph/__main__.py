@@ -61,7 +61,7 @@ from codegraph.cli.commands_query import (
 )
 
 
-def _cmd_serve_owner(args) -> None:
+def _cmd_serve_owner(args: argparse.Namespace) -> None:
     """Internal: run the HTTP-backed owner process (spawned by cgh serve)."""
     from codegraph.server import owner_main
 
@@ -76,7 +76,9 @@ def _cmd_serve_owner(args) -> None:
 def _print_help():
     """Print a beautiful help screen when no command is given."""
     console.print(LOGO)
-    console.print(f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  Local code graph index for AI coding assistants\n")
+    console.print(
+        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  Local code graph index for AI coding assistants\n"
+    )
 
     sections = [
         (
@@ -96,7 +98,10 @@ def _print_help():
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
-                ("graph", "Visualize the graph in browser (imports/calls/classes/docs)"),
+                (
+                    "graph",
+                    "Visualize the graph in browser (imports/calls/classes/docs)",
+                ),
             ],
         ),
         (
@@ -113,11 +118,14 @@ def _print_help():
         (
             "Maintenance",
             [
-                ("doctor", "Health check --- verify all components are working"),
+                ("doctor", "Health check: verify all components are working"),
                 ("compact", "Vacuum SQLite DBs and reclaim space"),
                 ("hooks", "Install git hooks that reindex after pull/merge/checkout"),
                 ("ensurepath", "Add the cgh command to your PATH"),
-                ("migrate-to-duckdb", "Re-index Kuzu repos onto DuckDB (faster + smaller)"),
+                (
+                    "migrate-to-duckdb",
+                    "Re-index Kuzu repos onto DuckDB (faster + smaller)",
+                ),
             ],
         ),
         (
@@ -125,8 +133,14 @@ def _print_help():
             [
                 ("watch", "Index + live-watch for file changes"),
                 ("add-dir", "Manage extra directories in the graph"),
-                ("federate", "Federate sub-repos (parent queries their indexes read-only)"),
-                ("force-index", "Index files bypassing .gitignore (requires confirmation)"),
+                (
+                    "federate",
+                    "Federate sub-repos (parent queries their indexes read-only)",
+                ),
+                (
+                    "force-index",
+                    "Index files bypassing .gitignore (requires confirmation)",
+                ),
             ],
         ),
     ]
@@ -147,7 +161,9 @@ def _print_help():
         console.print(table)
         console.print()
 
-    console.print("  [bold]Usage:[/bold]  cgh [cyan]<command>[/cyan] [dim][options][/dim]")
+    console.print(
+        "  [bold]Usage:[/bold]  cgh [cyan]<command>[/cyan] [dim][options][/dim]"
+    )
     console.print("  [bold]Help:[/bold]   cgh [cyan]<command>[/cyan] --help")
     console.print()
 
@@ -196,32 +212,47 @@ def main() -> None:
         def error(self, message: str) -> None:  # type: ignore[override]
             console.print(LOGO)
             console.print(f"[red]error:[/red] {message}\n")
-            console.print("[dim]Run[/dim] [cyan]cgh --help[/cyan] [dim]for the full list of commands.[/dim]")
+            console.print(
+                "[dim]Run[/dim] [cyan]cgh --help[/cyan] [dim]for the full list of commands.[/dim]"
+            )
             sys.exit(2)
 
+    def _add_root(p) -> None:
+        """Attach the standard --root flag (default: cwd). Every subcommand
+        takes one; main() then resolves it up to the nearest .codegraph/."""
+        p.add_argument("--root", default=os.getcwd())
+
     ap = _LogoArgumentParser(prog="codegraph", add_help=False)
-    ap.add_argument("--root", default=os.getcwd())
+    _add_root(ap)
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     sub = ap.add_subparsers(dest="cmd", parser_class=_LogoArgumentParser)
 
     # --- init ---
-    p = sub.add_parser("init", help="Initialize codegraph in current directory (interactive wizard)")
-    p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--yes", "-y", action="store_true", help="Accept all defaults (non-interactive)")
+    p = sub.add_parser(
+        "init", help="Initialize codegraph in current directory (interactive wizard)"
+    )
+    _add_root(p)
+    p.add_argument(
+        "--yes", "-y", action="store_true", help="Accept all defaults (non-interactive)"
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")
 
     # --- setup ---
     p = sub.add_parser("setup", help="Generate integration files for AI tools")
-    p.add_argument("target", choices=["claude", "cursor", "codex", "gemini", "all"], help="Which AI tool to configure")
-    p.add_argument("--root", default=os.getcwd())
+    p.add_argument(
+        "target",
+        choices=["claude", "cursor", "codex", "gemini", "all"],
+        help="Which AI tool to configure",
+    )
+    _add_root(p)
 
     # --- index ---
     p = sub.add_parser("index", help="Full index / re-index the repository")
     p.add_argument("--verbose", "-v", action="store_true")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument(
         "--method",
         "-m",
@@ -246,11 +277,13 @@ def main() -> None:
     # --- watch ---
     p = sub.add_parser("watch", help="Index then watch for file changes")
     p.add_argument("--verbose", "-v", action="store_true")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- serve ---
-    p = sub.add_parser("serve", help="Start MCP server (stdio proxy to shared HTTP owner)")
-    p.add_argument("--root", default=os.getcwd())
+    p = sub.add_parser(
+        "serve", help="Start MCP server (stdio proxy to shared HTTP owner)"
+    )
+    _add_root(p)
     p.add_argument("--watch", action="store_true", help="Enable live file watcher")
     p.add_argument("--reindex", action="store_true", help="Re-index before serving")
     p.add_argument(
@@ -263,7 +296,7 @@ def main() -> None:
 
     # --- _serve_owner (hidden internal subcommand) ---
     p = sub.add_parser("_serve_owner", help=argparse.SUPPRESS)
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument("--watch", action="store_true")
     p.add_argument("--reindex", action="store_true")
 
@@ -274,44 +307,75 @@ def main() -> None:
 
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument("--json", action="store_true", help="Output as JSON")
-    p.add_argument("--live", action="store_true", help="Refresh stats every 500ms (Ctrl-C to stop)")
+    p.add_argument(
+        "--live", action="store_true", help="Refresh stats every 500ms (Ctrl-C to stop)"
+    )
 
     p = sub.add_parser("tail", help="Live view of scan/watcher activity")
-    p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--limit", "-n", type=int, default=30, help="Number of recent entries (default: 30)")
-    p.add_argument("--follow", "-f", action="store_true", help="Follow new activity (Ctrl-C to stop)")
+    _add_root(p)
+    p.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=30,
+        help="Number of recent entries (default: 30)",
+    )
+    p.add_argument(
+        "--follow",
+        "-f",
+        action="store_true",
+        help="Follow new activity (Ctrl-C to stop)",
+    )
 
-    p = sub.add_parser("reset", help="Nuke graph + FTS DBs, kill owner, re-index from scratch")
-    p.add_argument("--root", default=os.getcwd())
+    p = sub.add_parser(
+        "reset", help="Nuke graph + FTS DBs, kill owner, re-index from scratch"
+    )
+    _add_root(p)
     p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
-    p.add_argument("--drop-extra-dirs", action="store_true", help="Also remove extra_dirs from config.toml")
-    p.add_argument("--no-reindex", action="store_true", help="Don't re-index after cleaning")
+    p.add_argument(
+        "--drop-extra-dirs",
+        action="store_true",
+        help="Also remove extra_dirs from config.toml",
+    )
+    p.add_argument(
+        "--no-reindex", action="store_true", help="Don't re-index after cleaning"
+    )
 
     # --- migrate-to-duckdb ---
     p = sub.add_parser(
         "migrate-to-duckdb",
         help="Re-index a Kuzu-backed repo into DuckDB, verify counts match, optionally delete graph.db",
     )
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument(
-        "--yes", "-y", action="store_true",
+        "--yes",
+        "-y",
+        action="store_true",
         help="Skip the 'delete graph.db?' confirmation",
     )
     p.add_argument(
-        "--keep-kuzu", action="store_true",
+        "--keep-kuzu",
+        action="store_true",
         help="Always keep graph.db even after a clean migration",
     )
     p.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Overwrite an existing graph.duckdb (default: abort if present)",
     )
 
-    p = sub.add_parser("status", help="Owner state, scan freshness, counts, extra_dirs in one glance")
-    p.add_argument("--root", default=os.getcwd())
+    p = sub.add_parser(
+        "status", help="Owner state, scan freshness, counts, extra_dirs in one glance"
+    )
+    _add_root(p)
     p.add_argument("--json", action="store_true", help="Output as JSON")
-    p.add_argument("--workers", action="store_true", help="Also list every worker pid + tty + start time")
+    p.add_argument(
+        "--workers",
+        action="store_true",
+        help="Also list every worker pid + tty + start time",
+    )
     p.add_argument(
         "--refresh",
         action="store_true",
@@ -322,83 +386,109 @@ def main() -> None:
         ),
     )
 
-    p = sub.add_parser("memory-index", help="Scan the Claude Code memory directory into the FTS index")
-    p.add_argument("--root", default=os.getcwd())
+    p = sub.add_parser(
+        "memory-index", help="Scan the Claude Code memory directory into the FTS index"
+    )
+    _add_root(p)
     p.add_argument("--verbose", "-v", action="store_true")
 
     p = sub.add_parser("plan-index", help="Scan ~/.claude/plans/ into the FTS index")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument("--verbose", "-v", action="store_true")
 
     # --- logs ---
     p = sub.add_parser("logs", help="View MCP tool call logs")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument("--tool", "-t", help="Filter by tool name")
     p.add_argument("--errors", "-e", action="store_true", help="Show only errors")
-    p.add_argument("--limit", "-n", type=int, default=50, help="Max entries (default: 50)")
+    p.add_argument(
+        "--limit", "-n", type=int, default=50, help="Max entries (default: 50)"
+    )
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p.add_argument("--clear", action="store_true", help="Clear all logs")
 
     # --- search ---
-    p = sub.add_parser("grep", help="Regex/substring search across indexed files (ripgrep under the hood)")
+    p = sub.add_parser(
+        "grep",
+        help="Regex/substring search across indexed files (ripgrep under the hood)",
+    )
     p.add_argument("pattern", help="regex (default) or literal (with --fixed)")
     p.add_argument("--glob", "-g", default="", help="shell glob filter, e.g. '*.py'")
     p.add_argument("--limit", "-n", type=int, default=50)
-    p.add_argument("--fixed", "-F", action="store_true", help="literal substring, not regex")
+    p.add_argument(
+        "--fixed", "-F", action="store_true", help="literal substring, not regex"
+    )
     p.add_argument("--case", "-s", action="store_true", help="case-sensitive match")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     p = sub.add_parser("search", help="Search symbols by name (fuzzy)")
     p.add_argument("query", help="Search query")
-    p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--limit", "-n", type=int, default=100, help="Page size (default: 100)")
-    p.add_argument("--offset", "-o", type=int, default=0, help="Skip first N results (for pagination)")
+    _add_root(p)
+    p.add_argument(
+        "--limit", "-n", type=int, default=100, help="Page size (default: 100)"
+    )
+    p.add_argument(
+        "--offset",
+        "-o",
+        type=int,
+        default=0,
+        help="Skip first N results (for pagination)",
+    )
     p.add_argument("--json", action="store_true")
 
     # --- lookup ---
     p = sub.add_parser("lookup", help="Find where a symbol is defined")
     p.add_argument("name", help="Symbol name")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- callers ---
     p = sub.add_parser("callers", help="Find all callers of a function (tree view)")
     p.add_argument("fn_name", help="Function name")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- callees ---
-    p = sub.add_parser("callees", help="Find all functions called by a function (tree view)")
+    p = sub.add_parser(
+        "callees", help="Find all functions called by a function (tree view)"
+    )
     p.add_argument("fn_name", help="Function name")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- outline ---
     p = sub.add_parser("outline", help="Show heading outline of a Markdown file (tree)")
     p.add_argument("file", help="Markdown file path")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- doctor ---
-    p = sub.add_parser("doctor", help="Health check --- verify all codegraph components")
-    p.add_argument("--root", default=os.getcwd())
+    p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
+    _add_root(p)
 
     # --- diff ---
     p = sub.add_parser("diff", help="Show files changed since last index")
-    p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--since", default="HEAD", help="Git ref to diff against (default: HEAD)")
+    _add_root(p)
+    p.add_argument(
+        "--since", default="HEAD", help="Git ref to diff against (default: HEAD)"
+    )
 
     # --- history ---
     p = sub.add_parser("history", help="Show recent indexing activity by day")
-    p.add_argument("--root", default=os.getcwd())
-    p.add_argument("--days", "-d", type=int, default=7, help="Number of days to show (default: 7)")
+    _add_root(p)
+    p.add_argument(
+        "--days", "-d", type=int, default=7, help="Number of days to show (default: 7)"
+    )
 
     # --- compact ---
     p = sub.add_parser("compact", help="Vacuum SQLite DBs and show before/after sizes")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- graph + add-dir ---
     register_graph_parser(sub)
 
     # --- federate ---
-    p = sub.add_parser("federate", help="Manage federated subrepos (parent queries their indexes read-only)")
+    p = sub.add_parser(
+        "federate",
+        help="Manage federated subrepos (parent queries their indexes read-only)",
+    )
     p.add_argument(
         "action",
         nargs="?",
@@ -407,17 +497,22 @@ def main() -> None:
         help="Action (default: list)",
     )
     p.add_argument("paths", nargs="*", help="Subrepo paths (for add / remove)")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- force-index ---
-    p = sub.add_parser("force-index", help="Force-index files/dirs (bypasses .gitignore)")
+    p = sub.add_parser(
+        "force-index", help="Force-index files/dirs (bypasses .gitignore)"
+    )
     p.add_argument("paths", nargs="+", help="Files or directories")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     # --- hooks ---
-    p = sub.add_parser("hooks", help="Manage git hooks that refresh the graph after pull/merge/checkout/rebase")
+    p = sub.add_parser(
+        "hooks",
+        help="Manage git hooks that refresh the graph after pull/merge/checkout/rebase",
+    )
     p.add_argument(
         "action",
         nargs="?",
@@ -430,15 +525,19 @@ def main() -> None:
         action="store_true",
         help="Allow install into a shared core.hooksPath (affects every repo)",
     )
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     # --- ensurepath ---
-    p = sub.add_parser("ensurepath", help="Add the cgh command's directory to your PATH")
-    p.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+    p = sub.add_parser(
+        "ensurepath", help="Add the cgh command's directory to your PATH"
+    )
+    p.add_argument(
+        "--yes", "-y", action="store_true", help="Skip the confirmation prompt"
+    )
 
     # --- _reindex_hook (internal: invoked by the git hooks) ---
     p = sub.add_parser("_reindex_hook")
-    p.add_argument("--root", default=os.getcwd())
+    _add_root(p)
 
     args = ap.parse_args()
 

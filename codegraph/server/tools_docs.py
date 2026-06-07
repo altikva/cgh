@@ -11,24 +11,17 @@ from __future__ import annotations
 import json
 import os
 
+
 def register(mcp) -> None:
     """Register documentation tools on the given FastMCP instance."""
     import codegraph.server as _srv
-    from codegraph.analysis.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import federate_scoped
     from codegraph.server import _get_conn, _logged_tool
 
-    def _query_each_kuzu(query_fn):
-        out: list[tuple[str, list]] = []
-        try:
-            out.append(("parent", query_fn(_get_conn()) or []))
-        except Exception:
-            out.append(("parent", []))
-        if _srv._root is not None:
-            for scoped in for_each_child_kuzu(_srv._root, lambda c, _r: query_fn(c)):
-                if scoped.error:
-                    continue
-                out.append((scoped.scope, scoped.payload or []))
-        return out
+    def _query_each(query_fn):
+        """Parent + children fan-out, [(scope, payload), …]. See federate_scoped."""
+        scoped, _warnings = federate_scoped(_get_conn, _srv._root, query_fn)
+        return scoped
 
     @mcp.tool()
     @_logged_tool
@@ -43,8 +36,13 @@ def register(mcp) -> None:
         q_str = query  # capture before shadowing
 
         section_fields = [
-            "title", "level", "file_path", "start_line", "end_line",
-            "body_preview", "anchor",
+            "title",
+            "level",
+            "file_path",
+            "start_line",
+            "end_line",
+            "body_preview",
+            "anchor",
         ]
 
         def _format(row):
@@ -86,11 +84,13 @@ def register(mcp) -> None:
             return out
 
         results: list[dict] = []
-        for scope, rows in _query_each_kuzu(run):
+        for scope, rows in _query_each(run):
             for row in rows:
                 row["scope"] = scope
                 results.append(row)
-        return json.dumps({"query": q_str, "results": results, "count": len(results)}, indent=2)
+        return json.dumps(
+            {"query": q_str, "results": results, "count": len(results)}, indent=2
+        )
 
     @mcp.tool()
     @_logged_tool
@@ -111,7 +111,7 @@ def register(mcp) -> None:
             )
 
         outline: list[dict] = []
-        for scope, rows in _query_each_kuzu(query):
+        for scope, rows in _query_each(query):
             for row in rows:
                 indent = "  " * (row["level"] - 1)
                 outline.append(
@@ -126,7 +126,9 @@ def register(mcp) -> None:
                     }
                 )
         if not outline:
-            return json.dumps({"file": file_path, "outline": [], "note": "No sections found"})
+            return json.dumps(
+                {"file": file_path, "outline": [], "note": "No sections found"}
+            )
         return json.dumps({"file": file_path, "outline": outline}, indent=2)
 
     @mcp.tool()
@@ -194,7 +196,7 @@ def register(mcp) -> None:
             return out
 
         results: list[dict] = []
-        for scope, rows in _query_each_kuzu(query):
+        for scope, rows in _query_each(query):
             for r in rows:
                 r["scope"] = scope
                 results.append(r)

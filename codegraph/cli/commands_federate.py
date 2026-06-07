@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import os
 from pathlib import Path
 
@@ -29,7 +31,7 @@ from codegraph.analysis.federation import (
 console = Console()
 
 
-def cmd_federate(args) -> None:
+def cmd_federate(args: argparse.Namespace) -> None:
     """Dispatcher for `cgh federate <verb>`."""
     action = getattr(args, "action", None) or "list"
     if action == "add":
@@ -45,10 +47,12 @@ def cmd_federate(args) -> None:
     if action == "down":
         return _cmd_down(args)
     console.print(f"[red]Unknown action: {action}[/red]")
-    console.print("[dim]Usage: cgh federate add <path> | remove <path> | list | verify | up | down[/dim]")
+    console.print(
+        "[dim]Usage: cgh federate add <path> | remove <path> | list | verify | up | down[/dim]"
+    )
 
 
-def _cmd_add(args) -> None:
+def _cmd_add(args: argparse.Namespace) -> None:
     paths = getattr(args, "paths", None) or []
     if not paths:
         console.print("[red]Usage: cgh federate add <path> [<path> …][/red]")
@@ -76,7 +80,7 @@ def _cmd_add(args) -> None:
             console.print(f"[green]✓ {child}[/green] federated.")
 
 
-def _cmd_remove(args) -> None:
+def _cmd_remove(args: argparse.Namespace) -> None:
     paths = getattr(args, "paths", None) or []
     if not paths:
         console.print("[red]Usage: cgh federate remove <path>[/red]")
@@ -89,7 +93,7 @@ def _cmd_remove(args) -> None:
             console.print(f"[dim]not federated: {raw}[/dim]")
 
 
-def _cmd_list(args) -> None:
+def _cmd_list(args: argparse.Namespace) -> None:
     root = Path(os.path.abspath(args.root))
     children = resolve_children(root)
     if not children:
@@ -99,7 +103,7 @@ def _cmd_list(args) -> None:
     _render_status_table(root, children)
 
 
-def _cmd_verify(args) -> None:
+def _cmd_verify(args: argparse.Namespace) -> None:
     """Same as list, plus exits non-zero if any child is broken."""
     root = Path(os.path.abspath(args.root))
     children = resolve_children(root)
@@ -114,7 +118,7 @@ def _cmd_verify(args) -> None:
         raise SystemExit(1)
 
 
-def _cmd_up(args) -> None:
+def _cmd_up(args: argparse.Namespace) -> None:
     """Ensure each federated child has its own owner running with --watch.
 
     For children whose owner is already alive: no-op. For children that are
@@ -141,12 +145,16 @@ def _cmd_up(args) -> None:
             continue
         if is_owner_alive(child):
             owner = child_owner_status(child)
-            console.print(f"[dim]• {child.name} already running (pid {owner.pid}, port {owner.port})[/dim]")
+            console.print(
+                f"[dim]• {child.name} already running (pid {owner.pid}, port {owner.port})[/dim]"
+            )
             continue
         register_keepalive(child)
         port = spawn_owner(child, watch=True, reindex=False)
         if port is None:
-            console.print(f"[red]✗ {child.name}[/red] failed to start (see {child}/.codegraph/owner.log)")
+            console.print(
+                f"[red]✗ {child.name}[/red] failed to start (see {child}/.codegraph/owner.log)"
+            )
         else:
             console.print(f"[green]✓ {child.name}[/green] started on port {port}")
 
@@ -156,7 +164,7 @@ def _cmd_up(args) -> None:
     )
 
 
-def _cmd_down(args) -> None:
+def _cmd_down(args: argparse.Namespace) -> None:
     """Stop the owner of each federated child (if running) and remove its
     keepalive marker. Doesn't touch children whose owners were started by
     something other than `cgh federate up`, they'll just lose their

@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import sys
 from pathlib import Path
 
@@ -18,11 +20,13 @@ from codegraph.cli import console
 from codegraph.state import ensurepath as ep
 
 
-def cmd_ensurepath(args) -> None:
+def cmd_ensurepath(args: argparse.Namespace) -> None:
     scripts = ep.scripts_dir()
 
     if ep.is_on_path(scripts):
-        console.print(f"[green]cgh is already on your PATH[/green] [dim]({scripts})[/dim]")
+        console.print(
+            f"[green]cgh is already on your PATH[/green] [dim]({scripts})[/dim]"
+        )
         return
 
     env = ep.detect_env()
@@ -47,9 +51,13 @@ def cmd_ensurepath(args) -> None:
 
     if not getattr(args, "yes", False) and sys.stdin.isatty():
         try:
-            answer = console.input(
-                f"Add cgh to PATH by appending to [cyan]{profile}[/cyan]? [Y/n] "
-            ).strip().lower()
+            answer = (
+                console.input(
+                    f"Add cgh to PATH by appending to [cyan]{profile}[/cyan]? [Y/n] "
+                )
+                .strip()
+                .lower()
+            )
         except EOFError:
             answer = "n"
         if answer in ("n", "no"):

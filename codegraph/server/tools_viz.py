@@ -42,7 +42,10 @@ def register(mcp) -> None:
                 return_src=["path"],
                 return_dst=["path"],
             )
-            rows = [{"src": r["src_path"], "tgt": r["dst_path"]} for r in outgoing + incoming]
+            rows = [
+                {"src": r["src_path"], "tgt": r["dst_path"]}
+                for r in outgoing + incoming
+            ]
         else:
             rows = [
                 {"src": r["src_path"], "tgt": r["dst_path"]}
@@ -106,7 +109,9 @@ def register(mcp) -> None:
             edges = edges_a + edges_b
         else:
             edges = conn.find_neighbors(
-                "CALLS", **return_args, limit=max_nodes * 2,
+                "CALLS",
+                **return_args,
+                limit=max_nodes * 2,
             )
 
         rows = [
@@ -165,7 +170,9 @@ def register(mcp) -> None:
             edges = edges_a + edges_b
         else:
             edges = conn.find_neighbors(
-                "INHERITS", **return_args, limit=max_nodes,
+                "INHERITS",
+                **return_args,
+                limit=max_nodes,
             )
 
         rows = [
@@ -234,7 +241,9 @@ def register(mcp) -> None:
             lines = ["graph TD", f'  {file_id}["{short}"]:::file']
             for cls in classes:
                 cls_id = _safe_id(f"cls_{cls['name']}")
-                lines.append(f'  {cls_id}["{cls["name"]} (L{cls["start_line"]})"]:::class')
+                lines.append(
+                    f'  {cls_id}["{cls["name"]} (L{cls["start_line"]})"]:::class'
+                )
                 lines.append(f"  {file_id} --> {cls_id}")
             for fn in fns:
                 fn_id = _safe_id(f"fn_{fn['name']}_{fn['start_line']}")
@@ -243,7 +252,9 @@ def register(mcp) -> None:
             for sec in sections:
                 sec_id = _safe_id(f"sec_{sec['title']}_{sec['start_line']}")
                 prefix = "#" * sec["level"]
-                lines.append(f'  {sec_id}["{prefix} {sec["title"]} L{sec["start_line"]}"]:::doc')
+                lines.append(
+                    f'  {sec_id}["{prefix} {sec["title"]} L{sec["start_line"]}"]:::doc'
+                )
                 lines.append(f"  {file_id} --> {sec_id}")
             lines.append("  classDef file fill:#e1f5fe,stroke:#0288d1")
             lines.append("  classDef class fill:#fff3e0,stroke:#f57c00")
@@ -251,9 +262,15 @@ def register(mcp) -> None:
             lines.append("  classDef doc fill:#fce4ec,stroke:#c62828")
             return "\n".join(lines)
         else:
-            lines = ["digraph file_symbols {", "  rankdir=TD;", f'  "{short}" [shape=folder];']
+            lines = [
+                "digraph file_symbols {",
+                "  rankdir=TD;",
+                f'  "{short}" [shape=folder];',
+            ]
             for cls in classes:
-                lines.append(f'  "{cls["name"]}" [shape=box,style=filled,fillcolor=lightyellow];')
+                lines.append(
+                    f'  "{cls["name"]}" [shape=box,style=filled,fillcolor=lightyellow];'
+                )
                 lines.append(f'  "{short}" -> "{cls["name"]}";')
             for fn in fns:
                 lines.append(f'  "{fn["name"]}" [shape=ellipse];')
@@ -298,7 +315,9 @@ def register(mcp) -> None:
                 for sec in secs:
                     sec_id = _safe_id(f"s_{sec['start_line']}_{fp}")
                     prefix = "#" * sec["level"]
-                    lines.append(f'  {sec_id}["{prefix} {sec["title"]}"]:::h{min(sec["level"], 3)}')
+                    lines.append(
+                        f'  {sec_id}["{prefix} {sec["title"]}"]:::h{min(sec["level"], 3)}'
+                    )
                     parent_id = None
                     for lvl in range(sec["level"] - 1, 0, -1):
                         if lvl in prev_by_level:
@@ -343,9 +362,7 @@ def register(mcp) -> None:
 
         # Top files by symbol density: count DEFINES_FN edges per file.
         # find_neighbors gives us (file_path, function_id) pairs; tally.
-        defines = conn.find_neighbors(
-            "DEFINES_FN", return_src=["path", "lang"]
-        )
+        defines = conn.find_neighbors("DEFINES_FN", return_src=["path", "lang"])
         fn_per_file: dict[tuple[str, str | None], int] = {}
         for r in defines:
             key = (r["src_path"], r.get("src_lang"))
@@ -360,14 +377,20 @@ def register(mcp) -> None:
 
         if fmt == "mermaid":
             lines = ["graph TD"]
-            lines.append(f'  REPO["{_srv._root.name if _srv._root else "repo"}"]:::repo')
+            lines.append(
+                f'  REPO["{_srv._root.name if _srv._root else "repo"}"]:::repo'
+            )
 
             for ls in lang_stats:
                 lang_id = _safe_id(ls["lang"] or "unknown")
-                lines.append(f'  {lang_id}["{ls["lang"] or "other"}: {ls["cnt"]} files"]:::lang')
+                lines.append(
+                    f'  {lang_id}["{ls["lang"] or "other"}: {ls["cnt"]} files"]:::lang'
+                )
                 lines.append(f"  REPO --> {lang_id}")
 
-            lines.append(f'  STATS["Functions: {fn_count} | Classes: {cls_count} | Doc sections: {md_count}"]:::stats')
+            lines.append(
+                f'  STATS["Functions: {fn_count} | Classes: {cls_count} | Doc sections: {md_count}"]:::stats'
+            )
             lines.append("  REPO --> STATS")
 
             for tf in top_files[:10]:
@@ -377,7 +400,9 @@ def register(mcp) -> None:
                 lines.append(f'  {tf_id}["{short} ({tf["fn_count"]} fns)"]:::hotfile')
                 lines.append(f"  {lang_id} --> {tf_id}")
 
-            lines.append("  classDef repo fill:#1a237e,stroke:#fff,color:#fff,stroke-width:2px")
+            lines.append(
+                "  classDef repo fill:#1a237e,stroke:#fff,color:#fff,stroke-width:2px"
+            )
             lines.append("  classDef lang fill:#e8eaf6,stroke:#3f51b5")
             lines.append("  classDef stats fill:#f3e5f5,stroke:#7b1fa2")
             lines.append("  classDef hotfile fill:#fff3e0,stroke:#e65100")
@@ -389,10 +414,34 @@ def register(mcp) -> None:
                 f'  repo [label="{_srv._root.name if _srv._root else "repo"}",shape=box3d];',
             ]
             for ls in lang_stats:
-                lines.append(f'  "{ls["lang"]}" [label="{ls["lang"]}: {ls["cnt"]} files"];')
+                lines.append(
+                    f'  "{ls["lang"]}" [label="{ls["lang"]}: {ls["cnt"]} files"];'
+                )
                 lines.append(f'  repo -> "{ls["lang"]}";')
             lines.append("}")
             return "\n".join(lines)
+
+    def _viz_layers(conn, fmt: str) -> str:
+        """Layer-dependency diagram. Reuses the backend-neutral builder in
+        viz.mermaid so the CLI `cgh graph layers` and this MCP scope render
+        the same thing. For dot we emit the same layer->layer edges."""
+        from codegraph.viz.mermaid import _layer_edge_counts, _layer_sort_key
+
+        if fmt == "mermaid":
+            from codegraph.viz.mermaid import mermaid_layers
+
+            return mermaid_layers(conn)
+
+        counts = _layer_edge_counts(conn)
+        if not counts:
+            return 'digraph layers {\n  NO_LAYERS [label="No layer edges"];\n}'
+        lines = ["digraph layers {", "  rankdir=TD;"]
+        for sl, dl in sorted(
+            counts, key=lambda e: (_layer_sort_key(e[0]), _layer_sort_key(e[1]))
+        ):
+            lines.append(f'  "{sl}" -> "{dl}" [label="{counts[(sl, dl)]}"];')
+        lines.append("}")
+        return "\n".join(lines)
 
     # -------------------------------------------------------------------
     # MCP tool registrations
@@ -419,6 +468,7 @@ def register(mcp) -> None:
                 - "file_symbols": all symbols defined in a file
                 - "doc_structure": markdown documentation structure
                 - "full_overview": high-level overview of the codebase
+                - "layers": architectural layer-to-layer dependency graph
             file_path: filter to a specific file (optional, for file_imports/file_symbols)
             symbol_name: filter to a specific symbol (optional, for call_graph/class_hierarchy)
             max_nodes: max nodes to include (default 30)
@@ -441,6 +491,8 @@ def register(mcp) -> None:
             diagram = _viz_doc_structure(conn, file_path, max_nodes, format)
         elif scope == "full_overview":
             diagram = _viz_full_overview(conn, max_nodes, format)
+        elif scope == "layers":
+            diagram = _viz_layers(conn, format)
         else:
             return json.dumps({"error": f"Unknown scope: {scope}"})
 
@@ -468,7 +520,14 @@ def register(mcp) -> None:
         conn = _get_conn()
         stats = {
             label: conn.count_nodes(label)
-            for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection")
+            for label in (
+                "File",
+                "Function",
+                "Class",
+                "TFResource",
+                "TFVar",
+                "MdSection",
+            )
         }
         return json.dumps(stats, indent=2)
 

@@ -375,6 +375,13 @@ def init_project(root: Path) -> dict:
         cg_dir.mkdir(parents=True)
         created.append(str(cg_dir))
 
+    # Restrict the index dir to the owner: auth.key lives here and is the
+    # whole loopback-auth boundary. No-op on filesystems without POSIX modes.
+    try:
+        cg_dir.chmod(0o700)
+    except OSError:
+        pass
+
     config_path = cg_dir / CONFIG_FILE
     if not config_path.exists():
         config_path.write_text(generate_default_config(), encoding="utf-8")

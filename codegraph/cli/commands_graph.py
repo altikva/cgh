@@ -17,7 +17,7 @@ from rich.panel import Panel
 
 from codegraph.cli import console
 
-SCOPES = ["imports", "calls", "classes", "docs", "overview"]
+SCOPES = ["imports", "calls", "classes", "docs", "overview", "layers"]
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,7 @@ def _fetch_mermaid_via_owner(
         "classes": "class_hierarchy",
         "docs": "doc_structure",
         "overview": "full_overview",
+        "layers": "layers",
     }
     args_payload = {
         "scope": scope_map.get(scope, scope),
@@ -112,6 +113,7 @@ def cmd_graph(args: argparse.Namespace) -> None:
         mermaid_classes,
         mermaid_docs,
         mermaid_imports,
+        mermaid_layers,
         mermaid_overview,
         open_in_browser,
     )
@@ -146,6 +148,7 @@ def cmd_graph(args: argparse.Namespace) -> None:
             "classes": lambda: mermaid_classes(conn, root, symbol, max_nodes),
             "docs": lambda: mermaid_docs(conn, root, file, max_nodes),
             "overview": lambda: mermaid_overview(conn, root, max_nodes),
+            "layers": lambda: mermaid_layers(conn, root, max_nodes),
         }
         mermaid_code = generators[scope]()
 

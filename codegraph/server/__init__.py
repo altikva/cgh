@@ -194,11 +194,13 @@ from codegraph.server.tools_memory import register as _register_memory  # noqa: 
 from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
 from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
 from codegraph.server.tools_query import register as _register_query  # noqa: E402
+from codegraph.server.tools_tests import register as _register_tests  # noqa: E402
 from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
 
 _register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)
 _register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
+_register_tests(mcp)  # tests_for, untested
 _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)

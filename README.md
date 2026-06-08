@@ -469,6 +469,20 @@ Scopes: `overview`, `imports`, `calls`, `classes`, `docs`, `layers` (layer-to-la
 +--------------------------------------------+
 ```
 
+`cgh graph layers --mermaid` prints the layer-dependency diagram, which renders inline on GitHub:
+
+```mermaid
+graph TD
+  presentation["presentation"]:::layer
+  application["application"]:::layer
+  test["test"]:::layer
+  other["other"]:::layer
+  presentation -->|2| other
+  application -->|1| other
+  test -->|2| other
+  classDef layer fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
+```
+
 ### Monitor
 
 #### `stats`
@@ -593,6 +607,27 @@ Report the blast radius of changes since a git ref, for CI and PR bots. Diffs th
 cgh impact --since HEAD~1            # human-readable summary
 cgh impact --since main --format md  # markdown for a PR comment
 cgh impact --since main --json       # machine-parseable on clean stdout
+```
+
+```text
+## cgh impact (since `HEAD~1`)
+
+**Changed files (1)**
+- `api/models/donation.py`
+
+**Impacted files (3)**
+- application (1)
+  - `api/handlers/receipt_handler.py` `handler`
+- presentation (1)
+  - `api/routers/donations.py` `router`
+- test (1)
+  - `tests/test_receipt.py` `test`
+
+**Endpoints touched (1)**
+- `POST /donations` (api/routers/donations.py)
+
+**Tests to run (1)**
+- `tests/test_receipt.py`
 ```
 
 #### `parsers`

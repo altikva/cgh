@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -108,16 +109,33 @@ def child_paths_to_skip(repo_root: str | Path) -> list[Path]:
 
 
 def is_under_any(path: str | Path, roots: list[Path]) -> bool:
-    """Return True if `path` lives under any of `roots` (inclusive)."""
+    """Return True if `path` lives under any of `roots` (inclusive).
+
+    Both sides are resolved and case-normalized before comparison. This matters
+    on Windows: the filesystem is case-insensitive and `resolve()` may change
+    casing or 8.3 short-names, while a candidate built as `root / "a/b.tf"` from
+    a git ls-files path mixes separators. The previous version only resolved the
+    roots (via resolve_children) and left an already-absolute candidate
+    untouched, so on Windows the case/short-name mismatch made every federated
+    subrepo fail to match, and none of their files were skipped from the parent
+    scan. pathlib's relative_to is case-sensitive, so we compare normcase'd
+    strings on a path-separator boundary instead.
+    """
     if not roots:
         return False
-    p = Path(path).resolve() if not Path(path).is_absolute() else Path(path)
-    for root in roots:
+
+    def _norm(pp: Path) -> str:
         try:
-            p.relative_to(root)
+            pp = pp.resolve()
+        except OSError:
+            pp = pp.absolute()
+        return os.path.normcase(str(pp))
+
+    p_norm = _norm(Path(path))
+    for root in roots:
+        r_norm = _norm(Path(root))
+        if p_norm == r_norm or p_norm.startswith(r_norm + os.sep):
             return True
-        except ValueError:
-            continue
     return False
 
 

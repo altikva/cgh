@@ -8,6 +8,86 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-08
+
+A large feature release built on a full code audit (security, correctness,
+readability, and roadmap). The MCP server now exposes 47 tools, there is a
+new CI-oriented CLI command, broader language and framework coverage, and two
+optional extras. Everything is additive and backwards compatible; the new
+extras are opt-in and defaults are unchanged.
+
+### Added
+- **Code-intelligence MCP tools**: `file_summary` (one-shot file orientation),
+  `impact_of` (reverse blast radius), `path_between` (shortest call/import
+  path), `import_cycles` (SCC cycle detection), `tests_for` / `untested`
+  (test-to-code mapping inferred from imports/calls + roles), `hotspots`
+  (git churn x import centrality), and `who_knows` (file ownership from git).
+- **`role` / `layer` filters** on `search_symbols` and `symbol_lookup`.
+- **`cgh impact --since <ref>`**: a non-MCP CLI command for CI and PR bots that
+  reports changed symbols, blast radius grouped by role/layer, endpoints
+  touched, and tests to run, as a markdown summary or JSON. Reads the graph
+  read-only, so no server needs to be running.
+- **`cgh graph layers`**: a layer-to-layer dependency diagram (Mermaid/Graphviz).
+- **Config-as-data parsers** for JSON / JSONC, YAML, and TOML (top-level keys
+  become navigable sections: CI jobs, k8s kinds, compose services,
+  package.json scripts, pyproject tables), and a **SQL DDL parser** that turns
+  `CREATE TABLE` / `ALTER TABLE` into table sections with columns.
+- **More endpoint frameworks**: Django urls, NestJS, Spring, and Gin/Echo, on
+  top of the existing FastAPI / Flask / Nuxt / Express.
+- **Optional `langs` extra** (`pip install "cgh[langs]"`): C# and Ruby
+  tree-sitter parsers, kept optional so the core install stays lean and
+  Python-3.14-safe.
+- **Optional `lsp` extra** (`pip install "cgh[lsp]"`): opt-in precise
+  cross-file CALLS resolution for Python via jedi, behind a `precise_calls`
+  config flag (or `CGH_PRECISE_CALLS`).
+- **Walk-up root discovery**: `cgh` now resolves the nearest ancestor
+  `.codegraph/` from any subdirectory, the way git finds its repo root, so the
+  commands work from anywhere inside an initialized project.
+
+### Fixed
+- **DuckDB / Kuzu parity**: `purge_file_data` now also removes the inbound side
+  of self-referential edges (CALLS, INHERITS) on DuckDB, so `find_callers` no
+  longer returns ghost callers after a symbol changes.
+- **CALLS resolution** prefers a same-file definition before falling back to
+  repo-wide name matching, cutting spurious cross-file edges, and memoizes
+  lookups per file.
+- The indexer now **honors `max_file_size_kb` and `ignore_patterns`** (they
+  were defined and documented but never enforced).
+- **Federated subrepos are skipped on Windows.** `is_under_any` left an
+  absolute candidate path unresolved and compared case-sensitively, so on the
+  case-insensitive Windows filesystem every federated subrepo missed the skip
+  list and the parent scanned the whole tree. Paths are now resolved and
+  case-normalized on both sides.
+- Module-level FTS and `.cghignore` caches are keyed by repo root, so a
+  multi-repo process no longer crosses streams.
+- `cgh status` shows `would create graph.duckdb` (not the Kuzu file) and
+  `Endpoints: unknown` instead of a bare comma when the graph is unreadable.
+- Markdown links resolve relative to the file that contains them.
+- Barrel re-exports cap their per-import symbol edges; the git-diff discovery
+  timeout matches `git ls-files`; `find` prunes ignore dirs at the walk level;
+  and several silently-swallowed failures (connection close, query iteration,
+  scan deletions) are now surfaced.
+
+### Changed
+- The parent + children federation fan-out is now a single shared helper
+  (`federate_scoped` / `federate_flat`); the server modules use the canonical
+  `_graphdb` names instead of the deprecated `_kuzu` aliases.
+- `cmd_init` and `cmd_status` were decomposed into named phase helpers, the
+  repeated `--root` argparse boilerplate was factored out, and CLI handlers
+  are typed; `cmd_status`'s owner/RO/FTS fallback ladder gained tests.
+
+### Security
+- The owner's bearer-token check is now constant-time (`hmac.compare_digest`).
+- Removed the dead `.mcp.json` auth env-injection path: the `0600`
+  `.codegraph/auth.key` file is the shared secret, and `.codegraph/` is created
+  `0700`. Corrected the auth documentation to match.
+- `index_changed_files` rejects a `since` ref beginning with `-`, and
+  `pattern_search` passes the user pattern after `--` (ripgrep) / via `-e`
+  (git-grep), closing argument-injection vectors that could reach ripgrep's
+  preprocessor.
+- `force_index` refuses absolute paths that resolve outside the repo.
+- The generated HTML diagram pins the Mermaid CDN script with an SRI hash.
+
 ## [0.4.6] - 2026-06-06
 
 A cross-platform audit pass. Five parallel reviews of signals, paths, file
@@ -194,7 +274,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/altikva/cgh/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/altikva/cgh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/altikva/cgh/compare/v0.4.3...v0.4.4

@@ -92,6 +92,26 @@ class TestIsUnderAny:
     def test_empty_roots(self, tmp_path):
         assert not is_under_any(tmp_path / "x", [])
 
+    def test_nested_subrepo_match(self, tmp_path):
+        # Mirrors the landing-zone layout: subrepos nested under a plain dir.
+        # A git-ls-files style candidate (root / "edf-sa/services-backup/main.tf")
+        # must match the resolved subrepo root, the case the parent scan skips.
+        root = tmp_path / "edf-sa" / "services-backup"
+        root.mkdir(parents=True)
+        candidate = tmp_path / "edf-sa/services-backup/main.tf"
+        assert is_under_any(candidate, [root])
+
+    def test_sibling_prefix_is_not_under(self, tmp_path):
+        # Boundary safety: /foo/services-bar must not count as under /foo/services
+        roots = [tmp_path / "services"]
+        roots[0].mkdir()
+        assert not is_under_any(tmp_path / "services-bar" / "f.tf", roots)
+
+    def test_root_itself_is_under(self, tmp_path):
+        root = tmp_path / "sub"
+        root.mkdir()
+        assert is_under_any(root, [root])
+
 
 class TestVerifyChild:
     def test_missing_path(self, tmp_path):

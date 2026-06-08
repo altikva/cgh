@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.4.6"
+version = "0.5.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 30+ MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -55,6 +55,24 @@ dependencies = [
 # 3.14 you'll either need a source build (CMake + a C++17 compiler) or
 # you can skip the extra entirely and use the default DuckDB backend.
 kuzu = ["kuzu>=0.7"]
+
+# Install with `pip install cgh[langs]` to add the optional tree-sitter
+# language parsers (C# and Ruby). They are kept out of the core dependency
+# list so the base install stays lean and Python-3.14-safe: if a grammar
+# lacks a 3.14 wheel it cannot block a core install. When the extra is not
+# present these parsers simply never register (see _discover_parsers).
+langs = [
+    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter-ruby>=0.23",
+]
+
+# Install with `pip install cgh[lsp]` to enable opt-in precise CALLS
+# resolution for Python. jedi is the static-analysis engine python-lsp-server
+# wraps; we use it directly to do goto-definition on call sites instead of
+# spawning a full LSP subprocess. Kept out of core deps: the resolver imports
+# jedi lazily and the `precise_calls` config flag is off by default, so a base
+# install never depends on it. See codegraph/analysis/precise_calls.py.
+lsp = ["jedi>=0.19"]
 
 [project.urls]
 Homepage = "https://github.com/altikva/cgh"

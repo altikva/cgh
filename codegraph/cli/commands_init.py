@@ -49,7 +49,11 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
 
     # Drop redundant per-tool entries
-    allow[:] = [item for item in allow if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")]
+    allow[:] = [
+        item
+        for item in allow
+        if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")
+    ]
 
     # Add wildcards if missing
     added: list[str] = []
@@ -147,7 +151,11 @@ def _incremental_via_owner(
         for ts, event, detail in entries:
             age = now - ts
             when = f"{int(age)}s ago" if age < 60 else f"{int(age / 60)}m ago"
-            style = "green" if event.endswith("_end") else ("yellow" if "error" in event else "cyan")
+            style = (
+                "green"
+                if event.endswith("_end")
+                else ("yellow" if "error" in event else "cyan")
+            )
             tbl.add_row(when, f"[{style}]{event}[/{style}]", detail)
         return tbl
 
@@ -157,7 +165,9 @@ def _incremental_via_owner(
                 _t.sleep(0.5)
                 live.update(_render())
     except KeyboardInterrupt:
-        console_obj.print("\n  [yellow]stopped watching, owner may still be working in the background[/yellow]")
+        console_obj.print(
+            "\n  [yellow]stopped watching, owner may still be working in the background[/yellow]"
+        )
         return
 
     # Report result
@@ -168,7 +178,9 @@ def _incremental_via_owner(
         )
         return
     if result_holder["status"] != 200:
-        console_obj.print(f"  [yellow]owner returned HTTP {result_holder['status']}[/yellow]")
+        console_obj.print(
+            f"  [yellow]owner returned HTTP {result_holder['status']}[/yellow]"
+        )
         return
 
     # Try to pull the JSON stats out of the MCP response
@@ -314,7 +326,9 @@ def _detect_existing_state(root: Path) -> dict:
         cfg = cg_dir / "config.toml"
         if cfg.exists():
             with open(cfg, "rb") as f:
-                state["extra_dirs"] = tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+                state["extra_dirs"] = (
+                    tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+                )
     except Exception:
         pass
 
@@ -330,7 +344,9 @@ def _detect_existing_state(root: Path) -> dict:
         if fp.exists():
             try:
                 content = fp.read_text(encoding="utf-8", errors="replace")
-                state["agent_blocks"][tool_key] = marker in content or tool_key == "cursor"
+                state["agent_blocks"][tool_key] = (
+                    marker in content or tool_key == "cursor"
+                )
             except OSError:
                 state["agent_blocks"][tool_key] = False
 
@@ -341,7 +357,9 @@ def _detect_existing_state(root: Path) -> dict:
     if skills_dir.exists():
         try:
             state["claude_skills_installed"] = sorted(
-                d.name for d in skills_dir.iterdir() if d.is_dir() and d.name.startswith("cgh-")
+                d.name
+                for d in skills_dir.iterdir()
+                if d.is_dir() and d.name.startswith("cgh-")
             )
         except OSError:
             pass
@@ -359,7 +377,9 @@ def _detect_existing_state(root: Path) -> dict:
             import json as _json
 
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-            state["mcp_server_configured"] = "codegraph" in (data.get("mcpServers") or {})
+            state["mcp_server_configured"] = "codegraph" in (
+                data.get("mcpServers") or {}
+            )
         except Exception:
             pass
 
@@ -436,9 +456,7 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
         f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
         f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
     )
-    console.print(
-        f"    [dim]{result.message}[/dim]"
-    )
+    console.print(f"    [dim]{result.message}[/dim]")
     console.print(
         "    [dim]Inspect with [cyan]cgh status[/cyan], then "
         "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
@@ -471,105 +489,81 @@ def _install_git_reindex_hooks(root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# cmd_init
+# cmd_init helpers
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(args) -> None:
-    import glob
-    import shutil
-
-    import questionary
-    from questionary import Style
-
-    from codegraph.core.config import init_project
-
-    root = Path(os.path.abspath(args.root))
-    console.print(LOGO)
-    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
-
-    cg_style = Style(
-        [
-            ("qmark", "fg:cyan bold"),
-            ("question", "fg:white bold"),
-            ("answer", "fg:green bold"),
-            ("pointer", "fg:cyan bold"),
-            ("highlighted", "fg:cyan bold"),
-            ("selected", "fg:green"),
-            ("separator", "fg:cyan"),
-            ("instruction", "fg:white dim"),
-            ("text", "fg:white"),
-        ]
-    )
-
-    # -- Step 0: Probe existing state (before anything mutates disk) --
-    prior_state = _detect_existing_state(root)
-    if prior_state["initialized"]:
-        console.print("  [bold]Existing codegraph state detected:[/bold]\n")
-        bits: list[str] = []
-        if prior_state["indexed_files"] > 0:
-            bits.append(f"{prior_state['indexed_files']:,} files indexed")
-        if prior_state["graph_db_bytes"] > 0:
-            bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
-        if prior_state["owner_alive"]:
-            bits.append(
-                f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
-            )
-        elif prior_state["owner_pid"]:
-            bits.append(f"[yellow]stale owner.pid {prior_state['owner_pid']}[/yellow]")
-        if prior_state["scan_meta"] and prior_state["scan_meta"].get("git_head"):
-            sha = prior_state["scan_meta"]["git_head"][:8]
-            branch = prior_state["scan_meta"].get("git_branch") or "?"
-            bits.append(f"last scan at {sha} on {branch}")
-        if prior_state["extra_dirs"]:
-            bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
-        if prior_state["mcp_server_configured"]:
-            bits.append(".mcp.json already has codegraph")
-        if prior_state.get("claude_skills_installed"):
-            n = len(prior_state["claude_skills_installed"])
-            mod = len(prior_state.get("claude_skills_modified") or [])
-            label = f"{n} claude skill{'s' if n != 1 else ''}"
-            if mod:
-                label += f" ([yellow]{mod} modified locally[/yellow])"
-            bits.append(label)
-        blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
-        if blocks_present:
-            bits.append("agent blocks: " + ", ".join(blocks_present))
-        for b in bits:
-            console.print(f"    • {b}")
-        if not bits:
-            console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
-        console.print()
-
-    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
-    _auto_migrate_kuzu_to_duckdb(root)
-
-    # -- Step 1: Create .codegraph/ --
-    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
-        result = init_project(root)
-
-    if result["created"]:
-        for f in result["created"]:
-            console.print(f"  [green]+[/green] {f}")
-    else:
-        console.print("  [dim].codegraph/ already exists[/dim]")
-
+def _print_prior_state(prior_state: dict) -> None:
+    """Render the 'existing codegraph state detected' summary for an
+    already-initialized repo. No-op when the repo is fresh."""
+    if not prior_state["initialized"]:
+        return
+    console.print("  [bold]Existing codegraph state detected:[/bold]\n")
+    bits: list[str] = []
+    if prior_state["indexed_files"] > 0:
+        bits.append(f"{prior_state['indexed_files']:,} files indexed")
+    if prior_state["graph_db_bytes"] > 0:
+        bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
+    if prior_state["owner_alive"]:
+        bits.append(
+            f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
+        )
+    elif prior_state["owner_pid"]:
+        bits.append(f"[yellow]stale owner.pid {prior_state['owner_pid']}[/yellow]")
+    if prior_state["scan_meta"] and prior_state["scan_meta"].get("git_head"):
+        sha = prior_state["scan_meta"]["git_head"][:8]
+        branch = prior_state["scan_meta"].get("git_branch") or "?"
+        bits.append(f"last scan at {sha} on {branch}")
+    if prior_state["extra_dirs"]:
+        bits.append(f"{len(prior_state['extra_dirs'])} extra_dirs")
+    if prior_state["mcp_server_configured"]:
+        bits.append(".mcp.json already has codegraph")
+    if prior_state.get("claude_skills_installed"):
+        n = len(prior_state["claude_skills_installed"])
+        mod = len(prior_state.get("claude_skills_modified") or [])
+        label = f"{n} claude skill{'s' if n != 1 else ''}"
+        if mod:
+            label += f" ([yellow]{mod} modified locally[/yellow])"
+        bits.append(label)
+    blocks_present = [k for k, v in prior_state["agent_blocks"].items() if v]
+    if blocks_present:
+        bits.append("agent blocks: " + ", ".join(blocks_present))
+    for b in bits:
+        console.print(f"    • {b}")
+    if not bits:
+        console.print("    [dim](initialized but empty, safe to full scan)[/dim]")
     console.print()
 
-    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
-    _install_git_reindex_hooks(root)
 
-    # -- Step 2: Detect AI tools --
+def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
+    """Probe for installed AI tools, print the detection table, and return
+    the full (name, key, detected) list."""
+    import shutil
+
     console.print("  [bold]Detecting AI tools...[/bold]\n")
 
     all_tools = [
-        ("Claude Code", "claude", (root / ".claude").exists() or shutil.which("claude") is not None),
-        ("Cursor", "cursor", (root / ".cursor").exists() or (root / ".cursorrules").exists()),
-        ("Codex CLI", "codex", (root / "AGENTS.md").exists() or shutil.which("codex") is not None),
+        (
+            "Claude Code",
+            "claude",
+            (root / ".claude").exists() or shutil.which("claude") is not None,
+        ),
+        (
+            "Cursor",
+            "cursor",
+            (root / ".cursor").exists() or (root / ".cursorrules").exists(),
+        ),
+        (
+            "Codex CLI",
+            "codex",
+            (root / "AGENTS.md").exists() or shutil.which("codex") is not None,
+        ),
         (
             "Gemini CLI",
             "gemini",
-            (root / "GEMINI.md").exists() or (root / ".gemini").exists() or shutil.which("gemini") is not None,
+            (root / "GEMINI.md").exists()
+            or (root / ".gemini").exists()
+            or shutil.which("gemini") is not None,
         ),
     ]
 
@@ -579,9 +573,20 @@ def cmd_init(args) -> None:
         console.print(f"    {icon} {name:15s} {status}")
 
     console.print()
-    detected_tools = [(name, key) for name, key, detected in all_tools if detected]
+    return all_tools
 
-    # -- Step 3: Select which tools to configure --
+
+def _select_tools(
+    all_tools: list[tuple[str, str, bool]],
+    detected_tools: list[tuple[str, str]],
+    args: argparse.Namespace,
+    cg_style,
+) -> list[str]:
+    """Run the interactive multi-select (or auto-pick under --yes) for which
+    tools to configure, then print the skipped list. Returns the selected
+    tool keys."""
+    import questionary
+
     selected_keys = []
     if detected_tools and not args.yes:
         choices = [
@@ -624,6 +629,164 @@ def cmd_init(args) -> None:
             + ", ".join(f"[dim]{k}[/dim]" for k in skipped)
             + "  [dim](no config, no agent block, no skills)[/dim]\n"
         )
+    return selected_keys
+
+
+def _count_parseable_files(root: Path) -> dict[str, int]:
+    """Count files the indexer will actually process, by language. Uses
+    git ls-files (respects .gitignore) and falls back to glob for a
+    non-git repo. Subrepo paths federated above are skipped."""
+    import glob
+
+    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+    from codegraph.parsers import get_parser_info
+
+    parsers = get_parser_info()
+    ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
+
+    # Federation skip list, if the user federated subrepos in step 3d above,
+    # they should NOT contribute to the file count.
+    skip_paths = child_paths_to_skip(root)
+
+    file_counts: dict[str, int] = {}
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(root),
+            timeout=30,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if not line:
+                    continue
+                if skip_paths and is_under_any(root / line, skip_paths):
+                    continue
+                suffix = Path(line).suffix.lower()
+                lang = ext_to_lang.get(suffix)
+                if lang:
+                    file_counts[lang] = file_counts.get(lang, 0) + 1
+        else:
+            raise RuntimeError("git ls-files failed")
+    except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
+        # Fallback, glob from project root. Filter out subrepo paths so
+        # the count reflects what the indexer will actually process.
+        for info in parsers:
+            count = 0
+            for ext in info["extensions"]:
+                for match in glob.glob(
+                    f"**/*{ext}", root_dir=str(root), recursive=True
+                ):
+                    full = root / match
+                    if skip_paths and is_under_any(full, skip_paths):
+                        continue
+                    count += 1
+            if count > 0:
+                file_counts[info["lang"]] = count
+
+    return file_counts
+
+
+def _print_file_counts(file_counts: dict[str, int]) -> None:
+    """Render the per-language 'Files to index' bar chart."""
+    if not file_counts:
+        return
+    console.print("  [bold]Files to index:[/bold]\n")
+    lang_colors = {
+        "python": "green",
+        "typescript": "blue",
+        "javascript": "yellow",
+        "terraform": "magenta",
+        "markdown": "cyan",
+        "vue": "green",
+        "nuxt_config": "green",
+    }
+    for lang, count in sorted(file_counts.items(), key=lambda x: -x[1]):
+        color = lang_colors.get(lang, "white")
+        bar_len = min(count // 5, 30) or 1
+        bar = f"[{color}]{'>' * bar_len}[/{color}]"
+        console.print(f"    [{color}]{lang:12s}[/{color}] {count:>5d} files  {bar}")
+    console.print()
+
+
+def _print_init_summary() -> None:
+    """Render the closing 'codegraph is ready!' panel."""
+    console.print()
+    console.print(
+        Panel(
+            "[bold]codegraph is ready![/bold]\n\n"
+            "  [cyan]cgh stats[/cyan]         View graph statistics\n"
+            "  [cyan]cgh search X[/cyan]      Find symbols\n"
+            "  [cyan]cgh serve[/cyan]         Start MCP server\n"
+            "  [cyan]cgh parsers[/cyan]       List supported languages\n"
+            "  [cyan]cgh --help[/cyan]        All commands",
+            border_style="green",
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# cmd_init
+# ---------------------------------------------------------------------------
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    import questionary
+    from questionary import Style
+
+    from codegraph.core.config import init_project
+
+    root = Path(os.path.abspath(args.root))
+    console.print(LOGO)
+    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
+
+    cg_style = Style(
+        [
+            ("qmark", "fg:cyan bold"),
+            ("question", "fg:white bold"),
+            ("answer", "fg:green bold"),
+            ("pointer", "fg:cyan bold"),
+            ("highlighted", "fg:cyan bold"),
+            ("selected", "fg:green"),
+            ("separator", "fg:cyan"),
+            ("instruction", "fg:white dim"),
+            ("text", "fg:white"),
+        ]
+    )
+
+    # -- Step 0: Probe existing state (before anything mutates disk) --
+    prior_state = _detect_existing_state(root)
+    _print_prior_state(prior_state)
+
+    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
+    _auto_migrate_kuzu_to_duckdb(root)
+
+    # -- Step 1: Create .codegraph/ --
+    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
+        result = init_project(root)
+
+    if result["created"]:
+        for f in result["created"]:
+            console.print(f"  [green]+[/green] {f}")
+    else:
+        console.print("  [dim].codegraph/ already exists[/dim]")
+
+    console.print()
+
+    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
+    _install_git_reindex_hooks(root)
+
+    # -- Step 2: Detect AI tools --
+    all_tools = _detect_ai_tools(root)
+    detected_tools = [(name, key) for name, key, detected in all_tools if detected]
+
+    # -- Step 3: Select which tools to configure --
+    selected_keys = _select_tools(all_tools, detected_tools, args, cg_style)
 
     # Check for locally-edited skills before overwriting
     overwrite_skills = True
@@ -632,16 +795,22 @@ def cmd_init(args) -> None:
 
         modified = detect_modified_skills(root)
         if modified and not args.yes:
-            console.print("  [yellow]You have locally-edited skills in .claude/skills/:[/yellow]")
+            console.print(
+                "  [yellow]You have locally-edited skills in .claude/skills/:[/yellow]"
+            )
             for m in modified:
-                console.print(f"    • [yellow]{m}[/yellow] (SKILL.md differs from bundled)")
+                console.print(
+                    f"    • [yellow]{m}[/yellow] (SKILL.md differs from bundled)"
+                )
             overwrite_skills = questionary.confirm(
                 "Overwrite with the bundled versions? (Your edits will be lost)",
                 default=False,
                 style=cg_style,
             ).ask()
             if not overwrite_skills:
-                console.print("  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n")
+                console.print(
+                    "  [green]Keeping your edits[/green], will refresh only new / unmodified skills.\n"
+                )
 
     for key in selected_keys:
         _install_integration(root, key, overwrite_skills=overwrite_skills)
@@ -667,7 +836,9 @@ def cmd_init(args) -> None:
                     f"[dim](permissions.allow += {', '.join(added)})[/dim]"
                 )
             else:
-                console.print("    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]")
+                console.print(
+                    "    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]"
+                )
             console.print()
 
     # -- Step 3c: offer to inject codegraph usage guidelines into agent rules --
@@ -680,7 +851,9 @@ def cmd_init(args) -> None:
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
         }
-        inject_targets = [(k, target_files[k]) for k in selected_keys if k in target_files]
+        inject_targets = [
+            (k, target_files[k]) for k in selected_keys if k in target_files
+        ]
         if inject_targets:
             targets_str = ", ".join(f for _, f in inject_targets)
             inject = (
@@ -697,7 +870,9 @@ def cmd_init(args) -> None:
                     written = install_usage_guidelines(root, tool_key)
                     if written:
                         rel = written.replace(str(root) + "/", "")
-                        console.print(f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]")
+                        console.print(
+                            f"    [green]+[/green] {rel} [dim](codegraph usage block)[/dim]"
+                        )
                 console.print()
 
     # -- Step 3d: Detect already-initialized subrepos --
@@ -742,75 +917,13 @@ def cmd_init(args) -> None:
                     console.print(f"    [yellow]⚠[/yellow] {s.name}: {exc}")
             console.print()
         else:
-            console.print("  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n")
+            console.print(
+                "  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n"
+            )
 
     # -- Step 4: Detect parseable files --
-    # Use git ls-files to match what the real indexer will process
-    # (respects .gitignore). Fall back to glob if not a git repo.
-    from codegraph.analysis.federation import child_paths_to_skip, is_under_any
-    from codegraph.parsers import get_parser_info
-
-    parsers = get_parser_info()
-    ext_to_lang = {ext: info["lang"] for info in parsers for ext in info["extensions"]}
-
-    # Federation skip list, if the user federated subrepos in step 3d above,
-    # they should NOT contribute to the file count.
-    skip_paths = child_paths_to_skip(root)
-
-    file_counts: dict[str, int] = {}
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
-            cwd=str(root),
-            timeout=30,
-        )
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                if not line:
-                    continue
-                if skip_paths and is_under_any(root / line, skip_paths):
-                    continue
-                suffix = Path(line).suffix.lower()
-                lang = ext_to_lang.get(suffix)
-                if lang:
-                    file_counts[lang] = file_counts.get(lang, 0) + 1
-        else:
-            raise RuntimeError("git ls-files failed")
-    except (subprocess.TimeoutExpired, FileNotFoundError, RuntimeError, OSError):
-        # Fallback, glob from project root. Filter out subrepo paths so
-        # the count reflects what the indexer will actually process.
-        for info in parsers:
-            count = 0
-            for ext in info["extensions"]:
-                for match in glob.glob(f"**/*{ext}", root_dir=str(root), recursive=True):
-                    full = root / match
-                    if skip_paths and is_under_any(full, skip_paths):
-                        continue
-                    count += 1
-            if count > 0:
-                file_counts[info["lang"]] = count
-
-    if file_counts:
-        console.print("  [bold]Files to index:[/bold]\n")
-        lang_colors = {
-            "python": "green",
-            "typescript": "blue",
-            "javascript": "yellow",
-            "terraform": "magenta",
-            "markdown": "cyan",
-            "vue": "green",
-            "nuxt_config": "green",
-        }
-        for lang, count in sorted(file_counts.items(), key=lambda x: -x[1]):
-            color = lang_colors.get(lang, "white")
-            bar_len = min(count // 5, 30) or 1
-            bar = f"[{color}]{'>' * bar_len}[/{color}]"
-            console.print(f"    [{color}]{lang:12s}[/{color}] {count:>5d} files  {bar}")
-        console.print()
+    file_counts = _count_parseable_files(root)
+    _print_file_counts(file_counts)
 
     total = sum(file_counts.values())
 
@@ -822,13 +935,17 @@ def cmd_init(args) -> None:
         choice = None
 
         if owner_alive:
-            console.print("  [yellow]The MCP owner is running, it already watches this repo.[/yellow]")
+            console.print(
+                "  [yellow]The MCP owner is running, it already watches this repo.[/yellow]"
+            )
             if not args.yes:
                 choice = (
                     questionary.select(
                         "What do you want to do?",
                         choices=[
-                            questionary.Choice(title="Skip, owner keeps the index fresh", value="skip"),
+                            questionary.Choice(
+                                title="Skip, owner keeps the index fresh", value="skip"
+                            ),
                             questionary.Choice(
                                 title="Incremental rescan through the owner (no lock fight)",
                                 value="mcp_scan",
@@ -854,7 +971,9 @@ def cmd_init(args) -> None:
                                 title="Incremental (only files changed since last scan)",
                                 value="incremental",
                             ),
-                            questionary.Choice(title="Full scan (re-parse everything)", value="full"),
+                            questionary.Choice(
+                                title="Full scan (re-parse everything)", value="full"
+                            ),
                             questionary.Choice(title="Skip, keep as-is", value="skip"),
                         ],
                         style=cg_style,
@@ -878,11 +997,15 @@ def cmd_init(args) -> None:
         if choice == "full":
             from codegraph.cli.commands_index import cmd_index
 
-            cmd_index(argparse.Namespace(root=str(root), verbose=False, method=default_method))
+            cmd_index(
+                argparse.Namespace(root=str(root), verbose=False, method=default_method)
+            )
         elif choice == "incremental":
             from codegraph.cli.commands_index import cmd_index
 
-            cmd_index(argparse.Namespace(root=str(root), verbose=False, method="incremental"))
+            cmd_index(
+                argparse.Namespace(root=str(root), verbose=False, method="incremental")
+            )
         elif choice == "mcp_scan":
             _incremental_via_owner(
                 root=root,
@@ -892,25 +1015,20 @@ def cmd_init(args) -> None:
         elif choice == "reset":
             from codegraph.cli.commands_monitor import cmd_reset
 
-            cmd_reset(argparse.Namespace(root=str(root), yes=True, drop_extra_dirs=False, no_reindex=False))
+            cmd_reset(
+                argparse.Namespace(
+                    root=str(root), yes=True, drop_extra_dirs=False, no_reindex=False
+                )
+            )
         else:
             console.print("  [dim]Run 'cgh index' when ready.[/dim]")
     else:
-        console.print("  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]")
+        console.print(
+            "  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]"
+        )
 
     # -- Done --
-    console.print()
-    console.print(
-        Panel(
-            "[bold]codegraph is ready![/bold]\n\n"
-            "  [cyan]cgh stats[/cyan]         View graph statistics\n"
-            "  [cyan]cgh search X[/cyan]      Find symbols\n"
-            "  [cyan]cgh serve[/cyan]         Start MCP server\n"
-            "  [cyan]cgh parsers[/cyan]       List supported languages\n"
-            "  [cyan]cgh --help[/cyan]        All commands",
-            border_style="green",
-        )
-    )
+    _print_init_summary()
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:
@@ -1003,7 +1121,9 @@ def _append_hook(settings: dict, spec: dict) -> None:
     bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
 
 
-def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix: str) -> dict:
+def _ensure_claude_hooks(
+    settings_shared: dict, settings_local: dict, cli_prefix: str
+) -> dict:
     """
     Idempotently route each cgh hook to the right settings file.
 
@@ -1061,7 +1181,13 @@ def _ensure_claude_hooks(settings_shared: dict, settings_local: dict, cli_prefix
 #   "shared" → .claude/settings.json
 #   "local"  → .claude/settings.local.json
 _CLAUDE_HOOK_MARKERS = [
-    ("cgh-reindex-on-commit", "PostToolUse", "Bash(git commit*)", "post-commit reindex", "shared"),
+    (
+        "cgh-reindex-on-commit",
+        "PostToolUse",
+        "Bash(git commit*)",
+        "post-commit reindex",
+        "shared",
+    ),
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
 ]
@@ -1086,7 +1212,10 @@ def audit_claude_integration(root: Path) -> dict:
     """
     import json as _json
 
-    from codegraph.integrations.skill_installer import _iter_skills, detect_modified_skills
+    from codegraph.integrations.skill_installer import (
+        _iter_skills,
+        detect_modified_skills,
+    )
 
     report: dict = {}
 
@@ -1188,7 +1317,15 @@ def audit_claude_integration(root: Path) -> dict:
 
     report["overall"] = (
         "ok"
-        if all(s["status"] == "ok" for s in (report["mcp_json"], report["hooks"], report["skills"], report["usage_block"]))
+        if all(
+            s["status"] == "ok"
+            for s in (
+                report["mcp_json"],
+                report["hooks"],
+                report["skills"],
+                report["usage_block"],
+            )
+        )
         else "drift"
     )
     return report
@@ -1227,7 +1364,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         if names:
             plural = "s" if len(names) != 1 else ""
             joined = ", ".join(names)
-            console.print(f"    [green]+[/green] {tool_label} [dim]({len(names)} skill{plural}: {joined})[/dim]")
+            console.print(
+                f"    [green]+[/green] {tool_label} [dim]({len(names)} skill{plural}: {joined})[/dim]"
+            )
 
     if tool == "claude":
         mcp_path = root / ".mcp.json"
@@ -1248,8 +1387,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         shared_path = settings_dir / "settings.json"
         local_path = settings_dir / "settings.local.json"
 
-        shared = _json.loads(shared_path.read_text(encoding="utf-8")) if shared_path.exists() else {}
-        local = _json.loads(local_path.read_text(encoding="utf-8")) if local_path.exists() else {}
+        shared = (
+            _json.loads(shared_path.read_text(encoding="utf-8"))
+            if shared_path.exists()
+            else {}
+        )
+        local = (
+            _json.loads(local_path.read_text(encoding="utf-8"))
+            if local_path.exists()
+            else {}
+        )
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
         cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
@@ -1257,24 +1404,36 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 
         if result["shared_changed"]:
-            shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
+            shared_path.write_text(
+                _json.dumps(shared, indent=2) + "\n", encoding="utf-8"
+            )
         if result["local_changed"]:
             local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
 
         for label in result["added"]:
             target_file = next(
-                (s["target"] for s in _claude_hook_specs(cli_prefix) if s["label"] == label),
+                (
+                    s["target"]
+                    for s in _claude_hook_specs(cli_prefix)
+                    if s["label"] == label
+                ),
                 "shared",
             )
-            target_name = "settings.json" if target_file == "shared" else "settings.local.json"
-            console.print(f"    [green]+[/green] .claude/{target_name} [dim]({label})[/dim]")
+            target_name = (
+                "settings.json" if target_file == "shared" else "settings.local.json"
+            )
+            console.print(
+                f"    [green]+[/green] .claude/{target_name} [dim]({label})[/dim]"
+            )
         for label in result["moved"]:
             console.print(
                 f"    [yellow]~[/yellow] {label} [dim](moved to the correct settings file)[/dim]"
             )
 
         # Skills, may preserve local edits if the user said so
-        _skills_line(".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills))
+        _skills_line(
+            ".claude/skills/", install_claude(root, overwrite_modified=overwrite_skills)
+        )
 
     elif tool == "cursor":
         cursor_dir = root / ".cursor"
@@ -1293,7 +1452,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        console.print("    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]")
+        console.print(
+            "    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]"
+        )
         _skills_line("AGENTS.md", install_codex(root))
 
     elif tool == "gemini":
@@ -1304,7 +1465,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        console.print("    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]")
+        console.print(
+            "    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]"
+        )
         _skills_line("GEMINI.md", install_gemini(root))
 
 
@@ -1351,8 +1514,12 @@ def cmd_parsers(args) -> None:
         )
 
     console.print(table)
-    console.print(f"\n[dim]Total: {len(get_supported_extensions())} file extensions supported[/dim]")
-    console.print("\n[dim]To add a new parser: create a file in codegraph/parsers/[/dim]")
+    console.print(
+        f"\n[dim]Total: {len(get_supported_extensions())} file extensions supported[/dim]"
+    )
+    console.print(
+        "\n[dim]To add a new parser: create a file in codegraph/parsers/[/dim]"
+    )
     console.print("[dim]with @register_parser('.ext') and subclass BaseParser.[/dim]")
 
 

@@ -264,8 +264,13 @@ def reset_connection() -> None:
             continue
         try:
             obj.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            # A close that fails on the owner's shutdown path can leave the
+            # file lock lingering; surface it instead of swallowing silently.
+            print(
+                f"[codegraph] warning: failed to close {type(obj).__name__}: {exc}",
+                file=sys.stderr,
+            )
     _conn = None
     _db = None
     _ro_conn = None

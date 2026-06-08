@@ -8,20 +8,26 @@
 
 from __future__ import annotations
 
+import sys
 import unicodedata
 from pathlib import Path
 
 
 def rows(result) -> list[dict]:
-    """Convert a Kuzu query result to a list of dicts."""
+    """Convert a Kuzu query result to a list of dicts.
+
+    Stays resilient (returns whatever rows were read) but no longer fails
+    silently: an unexpected error here used to masquerade as an empty result
+    and hide query bugs, so it is logged to stderr.
+    """
     out: list[dict] = []
     try:
         col_names = result.get_column_names()
         while result.has_next():
             row = result.get_next()
             out.append(dict(zip(col_names, row)))
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[codegraph] warning: rows() failed: {exc}", file=sys.stderr)
     return out
 
 

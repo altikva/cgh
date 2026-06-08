@@ -33,14 +33,18 @@ _RECURSION_LIMIT = 10_000
 if sys.getrecursionlimit() < _RECURSION_LIMIT:
     sys.setrecursionlimit(_RECURSION_LIMIT)
 
-_fts_conn = None
+# Keyed by resolved repo root: one owner process can touch several repos
+# (federation, tests), and a single global conn would return the wrong DB.
+_fts_conns: dict[str, object] = {}
 
 
 def _get_fts(repo_root):
-    global _fts_conn
-    if _fts_conn is None:
-        _fts_conn = get_fts_conn(repo_root)
-    return _fts_conn
+    key = str(Path(repo_root).resolve())
+    conn = _fts_conns.get(key)
+    if conn is None:
+        conn = get_fts_conn(repo_root)
+        _fts_conns[key] = conn
+    return conn
 
 
 _IGNORE_DIRS = {
@@ -56,20 +60,29 @@ _IGNORE_DIRS = {
     ".next",
 }
 
+# Per-import symbol-edge cap: above this a barrel re-export collapses to a
+# single whole-module IMPORTS edge instead of one edge per named symbol.
+_MAX_IMPORT_SYMBOLS = 50
+
 _CGHIGNORE_FILE = ".cghignore"
-_cghignore_patterns: list[str] | None = None
+# Keyed by resolved repo root for the same reason as _fts_conns: a global
+# cache would leak one repo's patterns into another in a multi-repo process.
+# Patterns are read once per repo per process; editing .cghignore needs a
+# restart to take effect.
+_cghignore_cache: dict[str, list[str]] = {}
 
 
 def _load_cghignore(repo_root: Path) -> list[str]:
-    """Load .cghignore patterns (gitignore syntax). Cached after first load."""
-    global _cghignore_patterns
-    if _cghignore_patterns is not None:
-        return _cghignore_patterns
+    """Load .cghignore patterns (gitignore syntax). Cached per repo root."""
+    key = str(Path(repo_root).resolve())
+    cached = _cghignore_cache.get(key)
+    if cached is not None:
+        return cached
 
     ignore_file = repo_root / _CGHIGNORE_FILE
     if not ignore_file.exists():
-        _cghignore_patterns = []
-        return _cghignore_patterns
+        _cghignore_cache[key] = []
+        return _cghignore_cache[key]
 
     patterns = []
     for line in ignore_file.read_text(encoding="utf-8").splitlines():
@@ -81,8 +94,8 @@ def _load_cghignore(repo_root: Path) -> list[str]:
             continue
         patterns.append(line)
 
-    _cghignore_patterns = patterns
-    return _cghignore_patterns
+    _cghignore_cache[key] = patterns
+    return patterns
 
 
 def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
@@ -189,7 +202,7 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
             docstring=cls.docstring,
         )
     for res in idx.resources:
-        kind = f"tf_{res.kind}" if res.kind in ("variable", "output") else f"tf_{res.kind}"
+        kind = f"tf_{res.kind}"
         upsert_symbol(
             fts_conn,
             sym_id=res.id,
@@ -226,11 +239,24 @@ def _resolve_calls(conn, functions: list, lang: str = "") -> None:
     """
     from codegraph.parsers.builtins import is_builtin
 
+    # Memoize name -> candidate ids for this file's resolution pass: many
+    # functions in a file call the same names, and the Function node set is
+    # stable while we only add edges.
+    name_cache: dict[str, list[str]] = {}
     for fn in functions:
+        same_file_prefix = f"{fn.file_path}::"
         for called_name in fn.calls:
             if lang and is_builtin(lang, called_name):
                 continue
-            for callee_id in conn.find_node_keys("Function", "name", called_name):
+            candidates = name_cache.get(called_name)
+            if candidates is None:
+                candidates = list(conn.find_node_keys("Function", "name", called_name))
+                name_cache[called_name] = candidates
+            # Prefer a definition in the same file. A local call like run()
+            # almost never means "every function named run in the repo"; only
+            # fan out across files when there is no same-file match.
+            same_file = [c for c in candidates if c.startswith(same_file_prefix)]
+            for callee_id in same_file or candidates:
                 conn.ensure_edge("CALLS", fn.id, callee_id)
 
 
@@ -242,7 +268,43 @@ def _resolve_inherits(conn, classes: list) -> None:
                 conn.ensure_edge("INHERITS", cls.id, parent_id)
 
 
-def _ingest_code(conn, idx: FileIndex) -> None:
+def _precise_calls_enabled(cfg, lang: str) -> bool:
+    """True only when the user opted in AND jedi is importable AND this is a
+    Python file. Any of these missing keeps the name-matched resolver, so the
+    default install behaves exactly as before.
+    """
+    if cfg is None or not getattr(cfg, "precise_calls", False):
+        return False
+    if lang != "python":
+        return False
+    from codegraph.analysis.precise_calls import jedi_available
+
+    return jedi_available()
+
+
+def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
+    """Create CALLS edges for one Python file using the jedi-backed resolver.
+
+    Returns True when it ran (even with zero edges), False when it could not
+    run and the caller should fall back to the name-matched resolver. Never
+    raises: any error returns False so resolution degrades to the old path.
+    """
+    try:
+        from codegraph.analysis.precise_calls import resolve_calls_for_file
+
+        edges = resolve_calls_for_file(idx.path, repo_root)
+    except Exception:
+        return False
+
+    for caller_id, _target_file, callee_id in edges:
+        try:
+            conn.ensure_edge("CALLS", caller_id, callee_id)
+        except Exception:
+            continue
+    return True
+
+
+def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) -> None:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
     for fn in idx.functions:
         conn.upsert_node(
@@ -279,7 +341,14 @@ def _ingest_code(conn, idx: FileIndex) -> None:
             class_id = f"{fn.file_path}::{fn.class_name}"
             conn.ensure_edge("HAS_METHOD", class_id, fn.id)
 
-    _resolve_calls(conn, idx.functions, idx.lang)
+    # Precise CALLS (opt-in, Python only, jedi installed). When it runs we
+    # skip the name-matched resolver for this file so edges aren't doubled.
+    # Any failure or the flag being off falls straight back to the old path.
+    used_precise = False
+    if repo_root is not None and _precise_calls_enabled(cfg, idx.lang):
+        used_precise = _resolve_calls_precise(conn, idx, repo_root)
+    if not used_precise:
+        _resolve_calls(conn, idx.functions, idx.lang)
     _resolve_inherits(conn, idx.classes)
 
 
@@ -316,8 +385,12 @@ def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
         # Symbol annotation on the edge. If the import named multiple
         # symbols, write one edge per symbol so MCP tools can answer
         # "who imports name X". Single edge with empty symbol when the
-        # import is a whole-module pull.
+        # import is a whole-module pull. A barrel re-export can name
+        # hundreds of symbols, so collapse past a cap to one whole-module
+        # edge rather than flooding the graph with per-symbol edges.
         symbols = imp.symbols if imp.symbols else [""]
+        if len(symbols) > _MAX_IMPORT_SYMBOLS:
+            symbols = [""]
         for sym in symbols:
             edge_key = f"{target_str}::{sym}"
             if edge_key in seen_targets:
@@ -430,10 +503,11 @@ def _ingest_markdown(conn, idx: FileIndex) -> None:
                 conn.ensure_edge("CONTAINS_SECTION", parent.id, child.id)
 
     # Internal links: link markdown sections to files they reference.
-    # The original Cypher used `WHERE f.path ENDS WITH $tp` which has no
-    # direct find_node_keys equivalent; for now resolve via find_node_keys
-    # over all files and filter in Python, small N (file count) makes
-    # this cheap.
+    # Markdown links are written relative to the file that contains them, so
+    # resolve each target against this file's directory before matching the
+    # (absolute) File node path. This makes ./foo.md and ../api.md resolve,
+    # where the old raw exact-match on "./foo.md" never did.
+    md_dir = os.path.dirname(idx.path)
     for link in idx.links:
         target = link.target
         if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -441,12 +515,11 @@ def _ingest_markdown(conn, idx: FileIndex) -> None:
         target_path = target.split("#")[0]
         if not target_path:
             continue
+        resolved_target = os.path.normpath(os.path.join(md_dir, target_path))
         section = _find_section_for_line(idx.sections, link.line)
         if not section:
             continue
-        for file_key in conn.find_node_keys("File", "path", target_path):
-            # Exact match path. We can extend with ENDS WITH later when a
-            # backend-neutral suffix-match helper exists.
+        for file_key in conn.find_node_keys("File", "path", resolved_target):
             conn.ensure_edge(
                 "MD_LINKS_TO", section.id, file_key, {"label": link.label}
             )
@@ -486,6 +559,7 @@ def index_file(
     repo_root: str | Path | None = None,
     force: bool = False,
     git_blob_sha: str | None = None,
+    cfg=None,
 ) -> bool:
     """
     Parse and ingest a single file into the graph.
@@ -496,6 +570,9 @@ def index_file(
         repo_root: Repository root (default: CWD).
         force: If True, index even if the file is in .gitignore or .git/info/exclude.
                Skips mtime cache check too, always re-parses.
+        cfg: Pre-loaded CodegraphConfig. index_repo passes one so the size /
+             ignore-pattern gate doesn't re-read config.toml per file. When
+             None (standalone callers) it is loaded once for this call.
     """
     path = Path(path)
     suffix = path.suffix.lower()
@@ -511,6 +588,23 @@ def index_file(
     root = Path(repo_root) if repo_root else Path.cwd()
     if not force and _is_cghignored(path, root):
         return False
+
+    # Respect the configured size cap + ignore_patterns (skip if force). These
+    # were defined and documented but never enforced, so a huge minified or
+    # generated file would still be fully read and tree-sitter parsed.
+    if not force:
+        import fnmatch as _fnmatch
+
+        from codegraph.core.config import load_config
+
+        _cfg = cfg if cfg is not None else load_config(root)
+        if any(_fnmatch.fnmatch(path.name, pat) for pat in _cfg.ignore_patterns):
+            return False
+        try:
+            if path.stat().st_size > _cfg.max_file_size_kb * 1024:
+                return False
+        except OSError:
+            pass
 
     conn = get_connection(repo_root)
     mtime = path.stat().st_mtime
@@ -580,9 +674,20 @@ def index_file(
         module_doc=module_doc,
     )
 
+    # Resolve the effective config once for ingest. index_repo threads its
+    # pre-loaded cfg in; standalone / force callers get a fresh load. Only
+    # consulted for the opt-in precise_calls flag below, so the cost is paid
+    # only when something actually reads it.
+    if cfg is not None:
+        eff_cfg = cfg
+    else:
+        from codegraph.core.config import load_config as _load_config_for_ingest
+
+        eff_cfg = _load_config_for_ingest(root)
+
     # Ingest into graph
     if idx.functions or idx.classes:
-        _ingest_code(conn, idx)
+        _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
     if idx.resources:
         _ingest_terraform(conn, idx)
     if idx.sections:
@@ -696,9 +801,22 @@ def _discover_find(repo_root: Path) -> list[Path]:
     """Use GNU `find -type f` for file discovery (fast on large repos)."""
     import subprocess
 
+    # Prune the heavy ignore dirs at the walk level so find doesn't descend
+    # into node_modules/.venv/etc.; the post-hoc _IGNORE_DIRS check below stays
+    # as a backstop for anything the prune misses.
+    prune: list[str] = []
+    for d in sorted(_IGNORE_DIRS):
+        prune += ["-name", d, "-o"]
+    prune = prune[:-1]  # drop the trailing -o
+    cmd = [
+        "find", str(repo_root),
+        "(", "-type", "d", "(", *prune, ")", "-prune", ")",
+        "-o", "(", "-type", "f", "-not", "-path", "*/.*", "-print", ")",
+    ]
+
     try:
         r = subprocess.run(
-            ["find", str(repo_root), "-type", "f", "-not", "-path", "*/.*"],
+            cmd,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             timeout=60,
@@ -763,7 +881,9 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
-            timeout=10,
+            # Match git ls-files (30s): a large rebase diff was timing out at
+            # 10s and silently falling back to a full scan.
+            timeout=30,
         )
         changed: list[Path] = []
         deleted: list[Path] = []
@@ -880,6 +1000,15 @@ def index_repo(
             if git_files is None:
                 actual_method = "os_walk"
 
+    # Load config once for the whole scan (size cap + ignore patterns), then
+    # thread it into every index_file call so config.toml is read a single
+    # time per scan instead of once per file.
+    from codegraph.core.config import load_config as _load_config
+
+    scan_cfg = _load_config(repo_root)
+    _size_cap = scan_cfg.max_file_size_kb * 1024
+    import fnmatch as _fnmatch
+
     # Filter to parseable, existing files
     parseable: list[Path] = []
     for p in candidates:
@@ -892,6 +1021,15 @@ def index_repo(
         if not p.exists():
             stats["skipped"] += 1
             continue
+        if any(_fnmatch.fnmatch(p.name, pat) for pat in scan_cfg.ignore_patterns):
+            stats["skipped"] += 1
+            continue
+        try:
+            if p.stat().st_size > _size_cap:
+                stats["skipped"] += 1
+                continue
+        except OSError:
+            pass
         parseable.append(p)
 
     if on_discovery:
@@ -908,8 +1046,10 @@ def index_repo(
                 conn.delete_file_completely(str(gone))
                 if fts_conn is not None:
                     delete_file_symbols(fts_conn, str(gone))
-            except Exception:
-                pass
+            except Exception as exc:
+                # A failed delete leaves a ghost file in the graph; record it
+                # rather than silently reporting a clean scan.
+                _activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
 
     # ------------------------------------------------------------------
     # Index loop (shared across all methods)
@@ -922,7 +1062,7 @@ def index_repo(
         sha = blob_shas.get(rel)
         if sha is None:
             sha = _git_hash(repo_root, full_path)
-        ok = index_file(full_path, repo_root, git_blob_sha=sha)
+        ok = index_file(full_path, repo_root, git_blob_sha=sha, cfg=scan_cfg)
         status = "indexed" if ok else "error"
         if ok:
             stats["indexed"] += 1

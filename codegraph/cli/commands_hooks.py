@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import json
 import os
 import re
@@ -26,7 +28,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,}$")
 _MIN_SYMBOLS_FOR_OUTLINE_HINT = 5
 
 
-def cmd_hook_precheck_grep(args) -> None:
+def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Grep. Reads the hook payload from stdin, and when
     the pattern looks like a bare identifier prints a suggestion to stderr
@@ -56,7 +58,7 @@ def cmd_hook_precheck_grep(args) -> None:
     sys.exit(0)
 
 
-def cmd_hook_precheck_read(args) -> None:
+def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
     Read is a full read (no offset/limit), suggest file_outline / symbols_in_file

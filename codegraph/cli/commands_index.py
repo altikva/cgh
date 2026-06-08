@@ -8,13 +8,22 @@
 
 from __future__ import annotations
 
+import argparse
+
 import os
 import sys
 from pathlib import Path
 
 from rich import box
 from rich.panel import Panel
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from codegraph.cli import LOGO, _lang_color, _short_path, console
@@ -24,7 +33,7 @@ from codegraph.cli import LOGO, _lang_color, _short_path, console
 # ---------------------------------------------------------------------------
 
 
-def cmd_index(args) -> None:
+def cmd_index(args: argparse.Namespace) -> None:
     from codegraph.indexer import index_repo
     from codegraph.state.ipc import is_owner_alive, read_owner_port
 
@@ -139,7 +148,10 @@ def _print_index_summary(stats: dict) -> None:
     table.add_column("Value", justify="right")
     indexed = stats.get("indexed", stats.get("reindexed_count", 0))
     skipped = stats.get("skipped", stats.get("unchanged_count", 0))
-    deleted = stats.get("deleted_count", len(stats.get("deleted", [])) if isinstance(stats.get("deleted"), list) else 0)
+    deleted = stats.get(
+        "deleted_count",
+        len(stats.get("deleted", [])) if isinstance(stats.get("deleted"), list) else 0,
+    )
     method = stats.get("method", stats.get("mode", "?"))
     table.add_row("Files indexed", f"[green]{indexed}[/green]")
     table.add_row("Files skipped", f"[dim]{skipped}[/dim]")
@@ -158,7 +170,7 @@ def _print_index_summary(stats: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_memory_index(args) -> None:
+def cmd_memory_index(args: argparse.Namespace) -> None:
     """Scan the Claude Code memory directory into the FTS index."""
     from codegraph.claude_state.memory import scan_memory_dir
 
@@ -183,7 +195,7 @@ def cmd_memory_index(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_plan_index(args) -> None:
+def cmd_plan_index(args: argparse.Namespace) -> None:
     """Scan ~/.claude/plans/ into the FTS index."""
     from codegraph.claude_state.plans import scan_plan_dir
 
@@ -208,7 +220,7 @@ def cmd_plan_index(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_watch(args) -> None:
+def cmd_watch(args: argparse.Namespace) -> None:
     from codegraph.indexer import index_repo
     from codegraph.state.watcher import watch_forever
 
@@ -220,7 +232,9 @@ def cmd_watch(args) -> None:
     with console.status("[bold blue]Initial index...", spinner="dots"):
         stats = index_repo(root, verbose=False)
 
-    console.print(f"[green]Initial index done[/green] -- {stats['indexed']} files in {stats['elapsed_s']}s")
+    console.print(
+        f"[green]Initial index done[/green] -- {stats['indexed']} files in {stats['elapsed_s']}s"
+    )
     console.print("[dim]Watching for changes... (Ctrl-C to stop)[/dim]\n")
     watch_forever(root)
 
@@ -230,7 +244,7 @@ def cmd_watch(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_serve(args) -> None:
+def cmd_serve(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
 
     # --background: spawn/reuse the owner, drop a persistent keepalive
@@ -258,7 +272,9 @@ def cmd_serve(args) -> None:
                 reindex=getattr(args, "reindex", False),
             )
             if port is None:
-                console.print("[red]Failed to start owner (see .codegraph/owner.log)[/red]")
+                console.print(
+                    "[red]Failed to start owner (see .codegraph/owner.log)[/red]"
+                )
                 return
             console.print(f"[green]Owner started on port {port}[/green]")
 
@@ -299,7 +315,9 @@ def cmd_serve(args) -> None:
 
                 terminate(pid, graceful_timeout=5.0)
                 if is_pid_alive(pid):
-                    console.print(f"[yellow]Owner (pid {pid}) force-killed after timeout.[/yellow]")
+                    console.print(
+                        f"[yellow]Owner (pid {pid}) force-killed after timeout.[/yellow]"
+                    )
                 else:
                     console.print(f"[green]Owner (pid {pid}) stopped.[/green]")
                 # Belt-and-braces: drop stale ipc files if the owner crashed
@@ -333,7 +351,7 @@ def cmd_serve(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_force_index(args) -> None:
+def cmd_force_index(args: argparse.Namespace) -> None:
     from codegraph.indexer import _PARSERS, index_file
 
     root = Path(os.path.abspath(args.root))
@@ -348,7 +366,10 @@ def cmd_force_index(args) -> None:
                 border_style="yellow",
             )
         )
-        if console.input("[yellow]Continue? [y/N][/yellow] ").strip().lower() not in ("y", "yes"):
+        if console.input("[yellow]Continue? [y/N][/yellow] ").strip().lower() not in (
+            "y",
+            "yes",
+        ):
             console.print("[dim]Aborted.[/dim]")
             return
 
@@ -360,7 +381,9 @@ def cmd_force_index(args) -> None:
                 ok = index_file(target, root, force=True)
                 if ok:
                     indexed += 1
-                    status.update(f"[bold yellow]Indexed:[/bold yellow] {target.relative_to(root)}")
+                    status.update(
+                        f"[bold yellow]Indexed:[/bold yellow] {target.relative_to(root)}"
+                    )
             elif target.is_dir():
                 for dirpath, _, filenames in os.walk(target):
                     for filename in filenames:
@@ -369,14 +392,16 @@ def cmd_force_index(args) -> None:
                             ok = index_file(full, root, force=True)
                             if ok:
                                 indexed += 1
-                                status.update(f"[bold yellow]Indexed:[/bold yellow] {full.relative_to(root)}")
+                                status.update(
+                                    f"[bold yellow]Indexed:[/bold yellow] {full.relative_to(root)}"
+                                )
             else:
                 console.print(f"  [red]x[/red] {p} (not found)")
 
     console.print(f"[green]Force-indexed {indexed} file(s)[/green]")
 
 
-def cmd_reindex_hook(args) -> None:
+def cmd_reindex_hook(args: argparse.Namespace) -> None:
     """Hidden command invoked by the cgh git hooks (post-merge, post-checkout,
     post-rewrite). Quietly runs an incremental reindex so the graph tracks the
     content brought in by a pull, merge, branch switch, or rebase.
@@ -395,7 +420,9 @@ def cmd_reindex_hook(args) -> None:
         if is_owner_alive(root):
             port = read_owner_port(root)
             if port:
-                from codegraph.cli.commands_monitor import _ask_owner_incremental_reindex
+                from codegraph.cli.commands_monitor import (
+                    _ask_owner_incremental_reindex,
+                )
 
                 _ask_owner_incremental_reindex(root, port)
                 return

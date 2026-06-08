@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -108,16 +109,33 @@ def child_paths_to_skip(repo_root: str | Path) -> list[Path]:
 
 
 def is_under_any(path: str | Path, roots: list[Path]) -> bool:
-    """Return True if `path` lives under any of `roots` (inclusive)."""
+    """Return True if `path` lives under any of `roots` (inclusive).
+
+    Both sides are resolved and case-normalized before comparison. This matters
+    on Windows: the filesystem is case-insensitive and `resolve()` may change
+    casing or 8.3 short-names, while a candidate built as `root / "a/b.tf"` from
+    a git ls-files path mixes separators. The previous version only resolved the
+    roots (via resolve_children) and left an already-absolute candidate
+    untouched, so on Windows the case/short-name mismatch made every federated
+    subrepo fail to match, and none of their files were skipped from the parent
+    scan. pathlib's relative_to is case-sensitive, so we compare normcase'd
+    strings on a path-separator boundary instead.
+    """
     if not roots:
         return False
-    p = Path(path).resolve() if not Path(path).is_absolute() else Path(path)
-    for root in roots:
+
+    def _norm(pp: Path) -> str:
         try:
-            p.relative_to(root)
+            pp = pp.resolve()
+        except OSError:
+            pp = pp.absolute()
+        return os.path.normcase(str(pp))
+
+    p_norm = _norm(Path(path))
+    for root in roots:
+        r_norm = _norm(Path(root))
+        if p_norm == r_norm or p_norm.startswith(r_norm + os.sep):
             return True
-        except ValueError:
-            continue
     return False
 
 
@@ -252,7 +270,9 @@ def open_fts_ro(repo_root: Path) -> Iterator[sqlite3.Connection | None]:
         # written to by their own owners while we read.
         from codegraph.core.utils import ro_sqlite_uri
 
-        conn = sqlite3.connect(ro_sqlite_uri(db_path), uri=True, check_same_thread=False)
+        conn = sqlite3.connect(
+            ro_sqlite_uri(db_path), uri=True, check_same_thread=False
+        )
         yield conn
     except sqlite3.Error:
         yield None
@@ -355,6 +375,52 @@ def _run_one_graphdb(
             )
 
 
+def federate_scoped(
+    get_parent_conn: Callable[[], GraphDB],
+    repo_root: str | Path | None,
+    query_fn: Callable[[GraphDB], Any],
+) -> tuple[list[tuple[str, list]], list[dict]]:
+    """Run ``query_fn(conn)`` against the parent's in-process write conn and
+    each federated child's RO graph DB.
+
+    Returns ``(scoped, warnings)`` where ``scoped`` is ``[(scope, payload), …]``
+    (scope "parent" first, then each child by name) and ``warnings`` is
+    ``[{scope, error}, …]`` for any scope whose query failed.
+
+    This is the one place the parent+children fan-out lives; MCP tool modules
+    call it instead of each re-implementing the loop.
+    """
+    scoped: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    try:
+        scoped.append(("parent", query_fn(get_parent_conn()) or []))
+    except Exception as exc:
+        warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+    if repo_root is not None:
+        for s in for_each_child_graphdb(repo_root, lambda c, _r: query_fn(c)):
+            if s.error:
+                warnings.append({"scope": s.scope, "error": s.error})
+                continue
+            scoped.append((s.scope, s.payload or []))
+    return scoped, warnings
+
+
+def federate_flat(
+    get_parent_conn: Callable[[], GraphDB],
+    repo_root: str | Path | None,
+    query_fn: Callable[[GraphDB], Any],
+) -> tuple[list[dict], list[dict]]:
+    """Flattened view of :func:`federate_scoped`: every payload row gets a
+    ``"scope"`` key and all rows land in one list. Returns ``(rows, warnings)``."""
+    scoped, warnings = federate_scoped(get_parent_conn, repo_root, query_fn)
+    rows: list[dict] = []
+    for scope, payload in scoped:
+        for item in payload:
+            item["scope"] = scope
+            rows.append(item)
+    return rows, warnings
+
+
 # Backward-compat aliases for callers that import the old names. New
 # code should prefer the _graphdb variants, these will be removed in
 # the 0.6 release that also deletes the Kuzu-specific code paths.
@@ -367,7 +433,7 @@ def for_each_fts(
     repo_root: str | Path,
     fn: Callable[[sqlite3.Connection, Path], Any],
 ) -> list[ScopedResult]:
-    """Same as for_each_kuzu but for the FTS sqlite databases."""
+    """Same as for_each_graphdb but for the FTS sqlite databases."""
     parent = Path(repo_root).resolve()
     return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)]
 
@@ -438,7 +504,9 @@ def child_owner_status(child_path: str | Path) -> OwnerStatus:
 # ---------------------------------------------------------------------------
 
 
-def add_subrepo(repo_root: str | Path, child_path: str | Path) -> tuple[Path, ChildStatus]:
+def add_subrepo(
+    repo_root: str | Path, child_path: str | Path
+) -> tuple[Path, ChildStatus]:
     """
     Append `child_path` to the parent's config.toml and return its status.
     Idempotent, if already present, just returns the current status.

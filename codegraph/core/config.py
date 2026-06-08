@@ -47,6 +47,21 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
+def find_codegraph_root(start: "str | Path") -> "Path | None":
+    """Walk up from ``start`` to the nearest ancestor that has a .codegraph/
+    directory, the way git finds its repo root via .git. Returns that
+    directory, or None if none is found up to the filesystem root.
+
+    This lets every read command work from a subdirectory of an initialized
+    repo: a file deep in the tree still knows it belongs to the cgh root.
+    """
+    p = Path(start).resolve()
+    for d in [p, *p.parents]:
+        if (d / CODEGRAPH_DIR).is_dir():
+            return d
+    return None
+
+
 def _claude_project_slug_from_abs(abs_path: str) -> str:
     """Slug Claude Code uses for ~/.claude/projects/<slug>/.
 
@@ -159,6 +174,12 @@ class CodegraphConfig:
     max_file_size_kb: int = 500
     # Dirs to force-index even if gitignored (relative to project_root or absolute).
     include_dirs: list[str] = field(default_factory=list)
+    # Opt-in precise CALLS resolution for Python via jedi (proof of concept,
+    # see codegraph/analysis/precise_calls.py). Off by default: when False, or
+    # when the optional `jedi` extra is not installed, the indexer keeps using
+    # the name-matched resolver and behavior is unchanged. Enable with this
+    # flag in config.toml or the CGH_PRECISE_CALLS env var.
+    precise_calls: bool = False
 
     # Parsers
     enabled_parsers: list[str] | None = None  # None = all available
@@ -231,6 +252,9 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
     if os.environ.get("CODEGRAPH_RUFLO_ENABLED"):
         config.ruflo_enabled = os.environ["CODEGRAPH_RUFLO_ENABLED"].lower() in ("1", "true", "yes")
 
+    if os.environ.get("CGH_PRECISE_CALLS"):
+        config.precise_calls = os.environ["CGH_PRECISE_CALLS"].lower() in ("1", "true", "yes")
+
     return config
 
 
@@ -245,6 +269,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.max_file_size_kb = cg["max_file_size_kb"]
     if "include_dirs" in cg:
         config.include_dirs = list(cg["include_dirs"])
+    if "precise_calls" in cg:
+        config.precise_calls = bool(cg["precise_calls"])
     if "log_max_mb" in cg:
         config.log_max_mb = int(cg["log_max_mb"])
     if "log_backup_count" in cg:
@@ -289,6 +315,10 @@ max_file_size_kb = 500
 # Paths are relative to the project root. Use absolute paths for dirs that
 # live outside the repo (sibling repos prefer add_directory / extra_dirs).
 # include_dirs = ["docs", "internal/specs"]
+# Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
+# Off by default; uses jedi for goto-definition so cross-file call edges are
+# exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1
+# precise_calls = false
 
 [parsers]
 # Uncomment to restrict which parsers are active:
@@ -359,6 +389,13 @@ def init_project(root: Path) -> dict:
     if not cg_dir.exists():
         cg_dir.mkdir(parents=True)
         created.append(str(cg_dir))
+
+    # Restrict the index dir to the owner: auth.key lives here and is the
+    # whole loopback-auth boundary. No-op on filesystems without POSIX modes.
+    try:
+        cg_dir.chmod(0o700)
+    except OSError:
+        pass
 
     config_path = cg_dir / CONFIG_FILE
     if not config_path.exists():

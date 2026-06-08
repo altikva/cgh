@@ -186,16 +186,21 @@ mcp = FastMCP(
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
+from codegraph.server.tools_history import register as _register_history  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
+from codegraph.server.tools_insight import register as _register_insight  # noqa: E402
 from codegraph.server.tools_knowledge import register as _register_knowledge  # noqa: E402
 from codegraph.server.tools_memory import register as _register_memory  # noqa: E402
 from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
 from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
 from codegraph.server.tools_query import register as _register_query  # noqa: E402
+from codegraph.server.tools_tests import register as _register_tests  # noqa: E402
 from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
 
 _register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)
+_register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
+_register_tests(mcp)  # tests_for, untested
 _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)
@@ -203,6 +208,7 @@ _register_meta(mcp)
 _register_memory(mcp)
 _register_plans(mcp)
 _register_knowledge(mcp)
+_register_history(mcp)  # hotspots, who_knows
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +229,12 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(description="codegraph MCP server (proxy mode)")
     ap.add_argument("--root", default=os.getcwd(), help="Repo root (default: CWD)")
-    ap.add_argument("--watch", action="store_true", help="Request file watcher in the owner")
-    ap.add_argument("--reindex", action="store_true", help="Request a full re-index in the owner")
+    ap.add_argument(
+        "--watch", action="store_true", help="Request file watcher in the owner"
+    )
+    ap.add_argument(
+        "--reindex", action="store_true", help="Request a full re-index in the owner"
+    )
     args = ap.parse_args()
 
     _root = Path(args.root).resolve()
@@ -262,7 +272,9 @@ def main() -> None:
     # Start (or reuse) the shared owner
     if is_owner_alive(_root):
         port = read_owner_port(_root)
-        print(f"[codegraph] attaching to existing owner on port {port}", file=sys.stderr)
+        print(
+            f"[codegraph] attaching to existing owner on port {port}", file=sys.stderr
+        )
     else:
         print("[codegraph] no owner running, launching one", file=sys.stderr)
         port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
@@ -280,7 +292,9 @@ def main() -> None:
     sys.exit(exit_code)
 
 
-def owner_main(root: str | None = None, watch: bool = False, reindex: bool = False) -> None:
+def owner_main(
+    root: str | None = None, watch: bool = False, reindex: bool = False
+) -> None:
     """
     Backend entrypoint, runs FastMCP over HTTP on a loopback port.
     Spawned by the proxy via `python -m codegraph _serve_owner`. Claude
@@ -315,7 +329,9 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             stats = index_repo(_root, verbose=False)
             print(f"[codegraph owner] done: {stats}", file=sys.stderr, flush=True)
         except RuntimeError as exc:
-            print(f"[codegraph owner] reindex skipped: {exc}", file=sys.stderr, flush=True)
+            print(
+                f"[codegraph owner] reindex skipped: {exc}", file=sys.stderr, flush=True
+            )
 
     if watch:
         from codegraph.state.watcher import start_watcher
@@ -323,7 +339,11 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
         try:
             start_watcher(_root)
         except Exception as exc:
-            print(f"[codegraph owner] watcher disabled: {exc}", file=sys.stderr, flush=True)
+            print(
+                f"[codegraph owner] watcher disabled: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     # Pick a free port + publish port file + owner pid
     from codegraph.state.ipc import free_port, owner_pidfile, port_file
@@ -361,6 +381,8 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
     _atexit.register(_cleanup)
 
     # Build auth middleware, rejects any request without the bearer token
+    import hmac
+
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
     from starlette.types import ASGIApp
@@ -374,7 +396,9 @@ def owner_main(root: str | None = None, watch: bool = False, reindex: bool = Fal
             # Accept any path on 127.0.0.1 with correct bearer
             header = request.headers.get("authorization", "")
             expected = f"Bearer {self._token}"
-            if header != expected:
+            # Constant-time compare so the loopback port gives no timing oracle
+            # on the token (this is the system's only auth check).
+            if not hmac.compare_digest(header, expected):
                 return JSONResponse(
                     {"error": "unauthorized"},
                     status_code=401,

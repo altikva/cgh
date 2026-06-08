@@ -19,22 +19,14 @@ from codegraph.core.utils import short_path as _short_path
 
 def register(mcp) -> None:
     import codegraph.server as _srv
-    from codegraph.analysis.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import federate_scoped
     from codegraph.server import _get_conn, _logged_tool
 
-    def _query_each_kuzu(query_fn):
-        """Run query_fn(conn) on parent + each child; return [(scope, payload), …]."""
-        results: list[tuple[str, list]] = []
-        try:
-            results.append(("parent", query_fn(_get_conn()) or []))
-        except Exception:
-            results.append(("parent", []))
-        if _srv._root is not None:
-            for scoped in for_each_child_kuzu(_srv._root, lambda c, _r: query_fn(c)):
-                if scoped.error:
-                    continue
-                results.append((scoped.scope, scoped.payload or []))
-        return results
+    def _query_each(query_fn):
+        """Run query_fn(conn) on parent + each child; return [(scope, payload), …].
+        See federation.federate_scoped (warnings dropped here, callers don't use them)."""
+        scoped, _warnings = federate_scoped(_get_conn, _srv._root, query_fn)
+        return scoped
 
     @mcp.tool()
     @_logged_tool
@@ -71,13 +63,15 @@ def register(mcp) -> None:
             except RuntimeError:
                 return []
 
-        per_scope = _query_each_kuzu(query)
+        per_scope = _query_each(query)
         scopes_out: dict[str, dict] = {}
 
         from codegraph.analysis.roles import LAYER_ORDER
 
         for scope, rows in per_scope:
-            by_layer: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+            by_layer: dict[str, dict[str, list[dict]]] = defaultdict(
+                lambda: defaultdict(list)
+            )
             for row in rows:
                 layer = row.get("layer") or "other"
                 role = row.get("role") or "other"
@@ -95,7 +89,9 @@ def register(mcp) -> None:
                         layer_dict[role_name] = files[:max_files_per_role] + [
                             {"path": f"... {len(files) - max_files_per_role} more"}
                         ]
-            ordered = {lyr: dict(by_layer[lyr]) for lyr in LAYER_ORDER if lyr in by_layer}
+            ordered = {
+                lyr: dict(by_layer[lyr]) for lyr in LAYER_ORDER if lyr in by_layer
+            }
             for lyr, val in by_layer.items():
                 if lyr not in ordered:
                     ordered[lyr] = dict(val)
@@ -147,7 +143,7 @@ def register(mcp) -> None:
                     )
             return out
 
-        per_scope = _query_each_kuzu(query)
+        per_scope = _query_each(query)
         hits_by_role: dict[str, list[dict]] = defaultdict(list)
         for scope, rows in per_scope:
             for row in rows:
@@ -156,9 +152,15 @@ def register(mcp) -> None:
         for role_name, files in hits_by_role.items():
             files.sort(key=lambda e: e["path"])
             if len(files) > limit_per_role:
-                hits_by_role[role_name] = files[:limit_per_role] + [{"path": f"... {len(files) - limit_per_role} more"}]
+                hits_by_role[role_name] = files[:limit_per_role] + [
+                    {"path": f"... {len(files) - limit_per_role} more"}
+                ]
 
-        total = sum(len(v) for v in hits_by_role.values() if not any("more" in str(e.get("path", "")) for e in v))
+        total = sum(
+            len(v)
+            for v in hits_by_role.values()
+            if not any("more" in str(e.get("path", "")) for e in v)
+        )
         return json.dumps(
             {
                 "keyword": keyword,
@@ -189,7 +191,14 @@ def register(mcp) -> None:
             try:
                 eps = conn.find_nodes(
                     "Endpoint",
-                    return_fields=["id", "method", "path", "framework", "file_path", "start_line"],
+                    return_fields=[
+                        "id",
+                        "method",
+                        "path",
+                        "framework",
+                        "file_path",
+                        "start_line",
+                    ],
                     order_by=["path", "method"],
                 )
             except RuntimeError:
@@ -207,7 +216,7 @@ def register(mcp) -> None:
                 out.append(ep)
             return out
 
-        per_scope = _query_each_kuzu(query)
+        per_scope = _query_each(query)
         grouped: dict[str, list[dict]] = defaultdict(list)
         for scope, rows in per_scope:
             for row in rows:

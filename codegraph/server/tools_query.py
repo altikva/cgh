@@ -12,41 +12,17 @@ from __future__ import annotations
 import json
 import os
 
+
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
-    from codegraph.analysis.federation import for_each_child_kuzu
+    from codegraph.analysis.federation import federate_flat
     from codegraph.server import _get_conn, _logged_tool
 
-    def _federate_kuzu(query_fn):
-        """
-        Run query_fn(conn) against the parent's write conn (in-process)
-        and each federated subrepo's RO Kuzu DB. Returns:
-          (results_with_scope, partial_warnings)
-        Each item in results_with_scope is whatever query_fn returned, with
-        a "scope" key injected. partial_warnings is a list of dicts
-        {scope, error} for child DBs that couldn't be queried.
-        """
-        all_results: list[dict] = []
-        warnings: list[dict] = []
-        # Parent, direct hit on the in-process write connection
-        try:
-            for item in query_fn(_get_conn()) or []:
-                item["scope"] = "parent"
-                all_results.append(item)
-        except Exception as exc:
-            warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
-
-        # Children, fresh RO conns, errors per child
-        if _srv._root is not None:
-            for scoped in for_each_child_kuzu(_srv._root, lambda c, _r: query_fn(c)):
-                if scoped.error:
-                    warnings.append({"scope": scoped.scope, "error": scoped.error})
-                    continue
-                for item in scoped.payload or []:
-                    item["scope"] = scoped.scope
-                    all_results.append(item)
-        return all_results, warnings
+    def _federate(query_fn):
+        """Parent + federated children fan-out, flattened. Returns
+        (results_with_scope, warnings). See federation.federate_flat."""
+        return federate_flat(_get_conn, _srv._root, query_fn)
 
     @mcp.tool()
     @_logged_tool
@@ -94,10 +70,14 @@ def register(mcp) -> None:
             case_sensitive=case_sensitive,
         )
         for h in hits:
-            all_hits.append({"scope": "parent", "file": h.file, "line": h.line, "text": h.text})
+            all_hits.append(
+                {"scope": "parent", "file": h.file, "line": h.line, "text": h.text}
+            )
 
-        # Each federated subrepo
-        for child in resolve_children(_srv._root) if _srv._root else []:
+        # Each federated subrepo. Resolve children once and reuse for the cap
+        # below (this used to read + parse config.toml twice per query).
+        children = resolve_children(_srv._root) if _srv._root else []
+        for child in children:
             try:
                 child_hits, _ = _search(
                     child,
@@ -110,10 +90,17 @@ def register(mcp) -> None:
             except Exception:
                 continue
             for h in child_hits:
-                all_hits.append({"scope": child.name, "file": h.file, "line": h.line, "text": h.text})
+                all_hits.append(
+                    {
+                        "scope": child.name,
+                        "file": h.file,
+                        "line": h.line,
+                        "text": h.text,
+                    }
+                )
 
         # Apply max_results across the whole federation as a soft cap
-        all_hits = all_hits[: max_results * (1 + len(resolve_children(_srv._root)) if _srv._root else 1)]
+        all_hits = all_hits[: max_results * (1 + len(children))]
 
         return json.dumps(
             {
@@ -128,12 +115,15 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def symbol_lookup(name: str) -> str:
+    def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
         """
         Find where a symbol (function, class, TF resource) is defined.
         Returns file path, line range, type, and docstring snippet, plus
         a `scope` tag (parent / <subrepo-name>) when federation is on.
         Use this instead of grepping files.
+
+        Optional `role` / `layer` filters keep only definitions whose File
+        node carries that exact role / layer (empty = no filter).
         """
 
         def query(conn):
@@ -181,7 +171,11 @@ def register(mcp) -> None:
                 "MdSection",
                 contains={"title": name},
                 return_fields=[
-                    "file_path", "start_line", "end_line", "body_preview", "anchor",
+                    "file_path",
+                    "start_line",
+                    "end_line",
+                    "body_preview",
+                    "anchor",
                 ],
             ):
                 out.append(
@@ -193,9 +187,25 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            if role or layer:
+                cache: dict[str, tuple[str, str]] = {}
+                kept = []
+                for hit in out:
+                    fp = hit.get("file")
+                    if not fp:
+                        continue
+                    if fp not in cache:
+                        cache[fp] = _file_role_layer(conn, fp)
+                    r, lyr = cache[fp]
+                    if role and r != role:
+                        continue
+                    if layer and lyr != layer:
+                        continue
+                    kept.append(hit)
+                return kept
             return out
 
-        results, warnings = _federate_kuzu(query)
+        results, warnings = _federate(query)
         if not results:
             payload = {"found": False, "name": name}
             if warnings:
@@ -231,7 +241,7 @@ def register(mcp) -> None:
                 )
             ]
 
-        callers, warnings = _federate_kuzu(query)
+        callers, warnings = _federate(query)
         out = {"fn": fn_name, "callers": callers}
         if warnings:
             out["partial"] = True
@@ -259,7 +269,7 @@ def register(mcp) -> None:
                 )
             ]
 
-        callees, warnings = _federate_kuzu(query)
+        callees, warnings = _federate(query)
         out = {"fn": fn_name, "callees": callees}
         if warnings:
             out["partial"] = True
@@ -288,20 +298,38 @@ def register(mcp) -> None:
                 )
             ]
 
-        imports, warnings = _federate_kuzu(query)
+        imports, warnings = _federate(query)
         out = {"file": file_path, "imports": imports}
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
         return json.dumps(out, indent=2)
 
+    def _file_role_layer(conn, file_path: str) -> tuple[str, str]:
+        """Return (role, layer) for a File node, ('', '') when unknown."""
+        nodes = conn.find_nodes(
+            "File",
+            where={"path": file_path},
+            return_fields=["role", "layer"],
+            limit=1,
+        )
+        if not nodes:
+            return "", ""
+        return (nodes[0].get("role") or "", nodes[0].get("layer") or "")
+
     @mcp.tool()
     @_logged_tool
-    def search_symbols(query: str, limit: int = 20) -> str:
+    def search_symbols(
+        query: str, limit: int = 20, role: str = "", layer: str = ""
+    ) -> str:
         """
         Fuzzy search for symbols (functions, classes, TF resources) by name.
         Uses substring match. Federated, `limit` is per scope, results are
         concatenated; sort/trim downstream if needed.
+
+        Optional `role` / `layer` filters keep only symbols whose File node
+        carries that exact role / layer (empty = no filter). Useful to scope
+        a search to e.g. role="router" or layer="domain".
         """
 
         def run(conn):
@@ -352,10 +380,33 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            if role or layer:
+                # Filter each hit by its File node's role / layer. Cache
+                # per-file lookups so repeated hits in the same file cost one
+                # query. Markdown / TF hits without a File node drop out.
+                cache: dict[str, tuple[str, str]] = {}
+                kept = []
+                for hit in out:
+                    fp = hit.get("file")
+                    if not fp:
+                        continue
+                    if fp not in cache:
+                        cache[fp] = _file_role_layer(conn, fp)
+                    r, lyr = cache[fp]
+                    if role and r != role:
+                        continue
+                    if layer and lyr != layer:
+                        continue
+                    kept.append(hit)
+                return kept
             return out
 
-        results, warnings = _federate_kuzu(run)
+        results, warnings = _federate(run)
         payload = {"query": query, "results": results}
+        if role:
+            payload["role"] = role
+        if layer:
+            payload["layer"] = layer
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
@@ -377,7 +428,11 @@ def register(mcp) -> None:
 
             def run_deps(conn):
                 return [
-                    {"kind": "depends_on", "file": row["dst_path"], "lang": row["dst_lang"]}
+                    {
+                        "kind": "depends_on",
+                        "file": row["dst_path"],
+                        "lang": row["dst_lang"],
+                    }
                     for row in conn.find_neighbors(
                         "IMPORTS", src_key=file_path, return_dst=["path", "lang"]
                     )
@@ -385,16 +440,22 @@ def register(mcp) -> None:
 
             def run_rdeps(conn):
                 return [
-                    {"kind": "depended_by", "file": row["src_path"], "lang": row["src_lang"]}
+                    {
+                        "kind": "depended_by",
+                        "file": row["src_path"],
+                        "lang": row["src_lang"],
+                    }
                     for row in conn.find_neighbors(
                         "IMPORTS", dst_key=file_path, return_src=["path", "lang"]
                     )
                 ]
 
-            deps_all, w1 = _federate_kuzu(run_deps)
-            rdeps_all, w2 = _federate_kuzu(run_rdeps)
+            deps_all, w1 = _federate(run_deps)
+            rdeps_all, w2 = _federate(run_rdeps)
             depends_on = [{k: v for k, v in d.items() if k != "kind"} for d in deps_all]
-            depended_by = [{k: v for k, v in d.items() if k != "kind"} for d in rdeps_all]
+            depended_by = [
+                {k: v for k, v in d.items() if k != "kind"} for d in rdeps_all
+            ]
             payload = {
                 "file": file_path,
                 "depth": depth,
@@ -412,11 +473,14 @@ def register(mcp) -> None:
             return [
                 {"file": row["path"], "lang": row["lang"]}
                 for row in conn.reach_via_edge(
-                    "IMPORTS", file_path, max_depth=int(depth), return_fields=["path", "lang"]
+                    "IMPORTS",
+                    file_path,
+                    max_depth=int(depth),
+                    return_fields=["path", "lang"],
                 )
             ]
 
-        deps, warnings = _federate_kuzu(run_reach)
+        deps, warnings = _federate(run_reach)
         payload = {"file": file_path, "depth": depth, "reachable": deps}
         if warnings:
             payload["partial"] = True

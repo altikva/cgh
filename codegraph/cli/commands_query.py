@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import json
 import os
 from pathlib import Path
@@ -23,7 +25,7 @@ from codegraph.cli import _get_conn, _rows, _short_path, console
 # ---------------------------------------------------------------------------
 
 
-def cmd_grep(args) -> None:
+def cmd_grep(args: argparse.Namespace) -> None:
     """Regex/substring pattern search across the indexed repo."""
     import json as _json
 
@@ -47,7 +49,9 @@ def cmd_grep(args) -> None:
                     "glob": args.glob or None,
                     "backend": backend,
                     "total": len(hits),
-                    "hits": [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
+                    "hits": [
+                        {"file": h.file, "line": h.line, "text": h.text} for h in hits
+                    ],
                 },
                 indent=2,
             )
@@ -64,7 +68,7 @@ def cmd_grep(args) -> None:
         console.print(f"  [cyan]{short}[/cyan]:[yellow]{h.line}[/yellow]  {h.text}")
 
 
-def cmd_search(args) -> None:
+def cmd_search(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     query = args.query
     limit = args.limit
@@ -84,10 +88,16 @@ def cmd_search(args) -> None:
             for hit in fts_search(fts_conn, query, limit=fetch):
                 results.append((hit.kind, hit.name, hit.file_path, hit.start_line))
         except Exception as exc:
-            console.print(f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]")
+            console.print(
+                f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+            )
             return
     else:
-        for label, kind in [("Function", "function"), ("Class", "class"), ("MdSection", "md_section")]:
+        for label, kind in [
+            ("Function", "function"),
+            ("Class", "class"),
+            ("MdSection", "md_section"),
+        ]:
             # Kuzu Cypher requires literal labels, safe: fixed allowlist
             if label == "MdSection":
                 q = (
@@ -122,16 +132,22 @@ def cmd_search(args) -> None:
             "returned": len(page),
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
-            "results": [{"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in page],
+            "results": [
+                {"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in page
+            ],
         }
         print(json.dumps(out, indent=2))
         return
 
     if not page:
         if offset > 0:
-            console.print(f"[dim]No more results for '[/dim][bold]{query}[/bold][dim]' at offset {offset}[/dim]")
+            console.print(
+                f"[dim]No more results for '[/dim][bold]{query}[/bold][dim]' at offset {offset}[/dim]"
+            )
         else:
-            console.print(f"[dim]No symbols matching '[/dim][bold]{query}[/bold][dim]'[/dim]")
+            console.print(
+                f"[dim]No symbols matching '[/dim][bold]{query}[/bold][dim]'[/dim]"
+            )
         return
 
     table = Table(box=box.SIMPLE_HEAD, title=f"Search: {query}", title_style="bold")
@@ -139,7 +155,11 @@ def cmd_search(args) -> None:
     table.add_column("Symbol", style="bold")
     table.add_column("Location", style="dim")
 
-    icons = {"function": "[green]fn[/green]", "class": "[yellow]cls[/yellow]", "md_section": "[cyan]doc[/cyan]"}
+    icons = {
+        "function": "[green]fn[/green]",
+        "class": "[yellow]cls[/yellow]",
+        "md_section": "[cyan]doc[/cyan]",
+    }
     for kind, name, fp, line in page:
         short = _short_path(fp, root)
         table.add_row(icons.get(kind, kind), name, f"{short}:{line}")
@@ -161,7 +181,7 @@ def cmd_search(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_lookup(args) -> None:
+def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
     found = False
@@ -189,7 +209,9 @@ def cmd_lookup(args) -> None:
                         f"  {icon}  [bold]{hit.name}[/bold]  [dim]{short}:{hit.start_line}-{hit.end_line}[/dim]"
                     )
         except Exception as exc:
-            console.print(f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]")
+            console.print(
+                f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+            )
             return
     else:
         for label, kind in [
@@ -204,7 +226,11 @@ def cmd_lookup(args) -> None:
                     "RETURN n.title AS name, n.file_path, n.start_line, n.end_line"
                 )
             else:
-                q = "MATCH (n:" + label + ") WHERE n.name = $q RETURN n.name, n.file_path, n.start_line, n.end_line"
+                q = (
+                    "MATCH (n:"
+                    + label
+                    + ") WHERE n.name = $q RETURN n.name, n.file_path, n.start_line, n.end_line"
+                )
             r = conn.execute(q, {"q": name})
             for row in _rows(r):
                 found = True
@@ -214,10 +240,14 @@ def cmd_lookup(args) -> None:
                 el = row.get("n.end_line", row.get("end_line", "?"))
                 icon = icons.get(kind, kind)
                 short = _short_path(fp, root)
-                console.print(f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]")
+                console.print(
+                    f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]"
+                )
 
     if not found:
-        console.print(f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]")
+        console.print(
+            f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -225,11 +255,13 @@ def cmd_lookup(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_callers(args) -> None:
+def cmd_callers(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     conn = _get_conn(root, readonly=True)
     if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
+        console.print(
+            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+        )
         return
     r = conn.execute(
         "MATCH (caller:Function)-[:CALLS]->(callee:Function) "
@@ -239,13 +271,17 @@ def cmd_callers(args) -> None:
     )
     rows = _rows(r)
     if not rows:
-        console.print(f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]")
+        console.print(
+            f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]"
+        )
         return
 
     tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
     for row in rows:
         short = _short_path(row["caller.file_path"], root)
-        tree.add(f"[green]{row['caller.name']}[/green]  [dim]{short}:{row['caller.start_line']}[/dim]")
+        tree.add(
+            f"[green]{row['caller.name']}[/green]  [dim]{short}:{row['caller.start_line']}[/dim]"
+        )
     console.print(tree)
 
 
@@ -254,11 +290,13 @@ def cmd_callers(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_callees(args) -> None:
+def cmd_callees(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     conn = _get_conn(root, readonly=True)
     if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
+        console.print(
+            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+        )
         return
     r = conn.execute(
         "MATCH (caller:Function)-[:CALLS]->(callee:Function) "
@@ -274,7 +312,9 @@ def cmd_callees(args) -> None:
     tree = Tree(f"[bold green]{args.fn_name}[/bold green] [dim]calls:[/dim]")
     for row in rows:
         short = _short_path(row["callee.file_path"], root)
-        tree.add(f"[yellow]{row['callee.name']}[/yellow]  [dim]{short}:{row['callee.start_line']}[/dim]")
+        tree.add(
+            f"[yellow]{row['callee.name']}[/yellow]  [dim]{short}:{row['callee.start_line']}[/dim]"
+        )
     console.print(tree)
 
 
@@ -283,11 +323,13 @@ def cmd_callees(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_outline(args) -> None:
+def cmd_outline(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     conn = _get_conn(root, readonly=True)
     if conn is None:
-        console.print("[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]")
+        console.print(
+            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+        )
         return
     file_path = args.file
     if not os.path.isabs(file_path):
@@ -327,7 +369,14 @@ def cmd_outline(args) -> None:
             node_stack.pop()
 
         parent = node_stack[-1][1]
-        level_colors = {1: "bold cyan", 2: "green", 3: "yellow", 4: "dim", 5: "dim", 6: "dim"}
+        level_colors = {
+            1: "bold cyan",
+            2: "green",
+            3: "yellow",
+            4: "dim",
+            5: "dim",
+            6: "dim",
+        }
         style = level_colors.get(level, "dim")
 
         child = parent.add(f"[{style}]{title}[/{style}] [dim]L{line}[/dim]")

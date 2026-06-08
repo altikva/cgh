@@ -6,22 +6,22 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP auth key management: generation, storage, validation.
 #
-# The auth key protects the MCP server from unauthorized access.
-# Defense-in-depth for when codegraph moves to HTTP transport.
+# The auth key protects the owner's loopback HTTP bridge from other local
+# processes. It is the shared secret behind the Bearer-token check.
 #
 # Key lifecycle:
-#   1. `cgh init` generates the key → .codegraph/auth.key
-#   2. `cgh setup` injects it into .mcp.json as CODEGRAPH_AUTH_KEY env var
-#   3. Server reads CODEGRAPH_AUTH_KEY on startup and validates requests
+#   1. `cgh init` (or the first owner) generates the key -> .codegraph/auth.key,
+#      mode 0600, gitignored.
+#   2. Both the owner and every worker/CLI caller read that file via
+#      ensure_auth_key() and send `Authorization: Bearer <key>`.
+# The file contents are the secret; there is no env-var hand-off.
 
 from __future__ import annotations
 
-import os
 import secrets
 from pathlib import Path
 
 AUTH_KEY_FILE = "auth.key"
-AUTH_KEY_ENV = "CODEGRAPH_AUTH_KEY"
 _CODEGRAPH_DIR = ".codegraph"
 
 
@@ -84,37 +84,3 @@ def ensure_gitignore_has_auth_key(repo_root: str | Path) -> bool:
             f.write(f"\n# codegraph auth key (never commit)\n{pattern}\n")
         return True
     return False
-
-
-def inject_auth_key_into_mcp_json(repo_root: str | Path, key: str) -> bool:
-    """
-    Add CODEGRAPH_AUTH_KEY to the codegraph server env in .mcp.json.
-    Returns True if the file was modified.
-    """
-    import json
-
-    mcp_path = Path(repo_root) / ".mcp.json"
-    if not mcp_path.exists():
-        return False
-
-    data = json.loads(mcp_path.read_text(encoding="utf-8"))
-    servers = data.get("mcpServers", {})
-    cg_server = servers.get("codegraph")
-    if cg_server is None:
-        return False
-
-    env = cg_server.setdefault("env", {})
-    if env.get(AUTH_KEY_ENV) == key:
-        return False  # already set
-
-    env[AUTH_KEY_ENV] = key
-    mcp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    return True
-
-
-def validate_server_auth_key() -> str | None:
-    """
-    Read the auth key from environment on server startup.
-    Returns the key if set, None if auth is disabled (no key configured).
-    """
-    return os.environ.get(AUTH_KEY_ENV)

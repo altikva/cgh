@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,7 +99,9 @@ def _diff_stats(kuzu: dict, duckdb: dict) -> list[tuple[str, int, int]]:
     differs between the two snapshots."""
     diffs: list[tuple[str, int, int]] = []
     for kind in ("nodes", "edges"):
-        all_keys = sorted(set(kuzu.get(kind, {}).keys()) | set(duckdb.get(kind, {}).keys()))
+        all_keys = sorted(
+            set(kuzu.get(kind, {}).keys()) | set(duckdb.get(kind, {}).keys())
+        )
         for key in all_keys:
             k = kuzu.get(kind, {}).get(key, 0)
             d = duckdb.get(kind, {}).get(key, 0)
@@ -111,9 +115,11 @@ def _diff_stats(kuzu: dict, duckdb: dict) -> list[tuple[str, int, int]]:
 # we see is one of these, the diff is almost certainly stale-Kuzu and
 # not a real divergence. Order matches the graphify-inspired PRs that
 # introduced or fixed each edge type.
-_POST_FIX_GAIN_METRICS = frozenset({
-    "edges.IMPORTS",  # IMPORTS edges latent bug, pre-fix Kuzu has 0
-})
+_POST_FIX_GAIN_METRICS = frozenset(
+    {
+        "edges.IMPORTS",  # IMPORTS edges latent bug, pre-fix Kuzu has 0
+    }
+)
 
 
 def _classify_diff(
@@ -265,7 +271,7 @@ def do_migrate_to_duckdb(
     )
 
 
-def cmd_migrate_to_duckdb(args) -> None:
+def cmd_migrate_to_duckdb(args: argparse.Namespace) -> None:
     """CLI wrapper, Rich rendering on top of ``do_migrate_to_duckdb``.
 
     Handles the interactive "delete graph.db?" prompt that's specific to
@@ -311,7 +317,9 @@ def cmd_migrate_to_duckdb(args) -> None:
 
     console.print("[bold]Step 1[/bold] · Reading current Kuzu graph counts...")
     console.print("[bold]Step 2[/bold] · Re-indexing into DuckDB...")
-    console.print("[bold]Step 3[/bold] · Verifying DuckDB graph against Kuzu baseline...\n")
+    console.print(
+        "[bold]Step 3[/bold] · Verifying DuckDB graph against Kuzu baseline...\n"
+    )
 
     result = do_migrate_to_duckdb(
         args.root, delete_kuzu=delete_via_function, force=args.force
@@ -327,7 +335,9 @@ def cmd_migrate_to_duckdb(args) -> None:
     )
 
     if result.status == "mismatched":
-        diff_table = Table(box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold yellow")
+        diff_table = Table(
+            box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold yellow"
+        )
         diff_table.add_column("metric", style="bold")
         diff_table.add_column("kuzu", justify="right")
         diff_table.add_column("duckdb", justify="right")
@@ -347,7 +357,9 @@ def cmd_migrate_to_duckdb(args) -> None:
         raise SystemExit(1)
 
     if result.status == "stale_kuzu":
-        diff_table = Table(box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold cyan")
+        diff_table = Table(
+            box=box.SIMPLE_HEAD, title="Differing rows", title_style="bold cyan"
+        )
         diff_table.add_column("metric", style="bold")
         diff_table.add_column("kuzu", justify="right")
         diff_table.add_column("duckdb", justify="right")
@@ -368,10 +380,14 @@ def cmd_migrate_to_duckdb(args) -> None:
     else:
         console.print("  [green]+[/green] node + edge counts match exactly.\n")
 
-    kuzu_size = _size_str(kuzu_path.stat().st_size) if kuzu_path.exists() else "(deleted)"
+    kuzu_size = (
+        _size_str(kuzu_path.stat().st_size) if kuzu_path.exists() else "(deleted)"
+    )
     duckdb_size = _size_str(duckdb_path.stat().st_size)
 
-    summary = Table(box=box.SIMPLE_HEAD, title="Migration summary", title_style="bold cyan")
+    summary = Table(
+        box=box.SIMPLE_HEAD, title="Migration summary", title_style="bold cyan"
+    )
     summary.add_column("backend", style="bold")
     summary.add_column("file", overflow="fold")
     summary.add_column("size", justify="right")
@@ -389,9 +405,13 @@ def cmd_migrate_to_duckdb(args) -> None:
 
     if kuzu_path.exists() and not args.yes:
         try:
-            answer = console.input(
-                f"Delete the old [bold]graph.db[/bold] ({kuzu_size})? [Y/n] "
-            ).strip().lower()
+            answer = (
+                console.input(
+                    f"Delete the old [bold]graph.db[/bold] ({kuzu_size})? [Y/n] "
+                )
+                .strip()
+                .lower()
+            )
         except EOFError:
             answer = "n"
         if answer in ("n", "no"):

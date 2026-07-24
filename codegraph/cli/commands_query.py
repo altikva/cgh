@@ -5,6 +5,9 @@
 # __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI commands: search, lookup, callers, callees, outline.
+#              Queries go through the backend-neutral GraphDB protocol
+#              (find_nodes / find_neighbors), so they work on DuckDB and
+#              Kuzu alike, and federate across subrepos with a scope tag.
 
 from __future__ import annotations
 
@@ -18,10 +21,11 @@ from rich import box
 from rich.table import Table
 from rich.tree import Tree
 
-from codegraph.cli import _get_conn, _rows, _short_path, console
+from codegraph.analysis.federation import for_each_child_graphdb, has_subrepos
+from codegraph.cli import _get_conn, _short_path, console
 
 # ---------------------------------------------------------------------------
-# cmd_search
+# cmd_grep
 # ---------------------------------------------------------------------------
 
 
@@ -68,6 +72,63 @@ def cmd_grep(args: argparse.Namespace) -> None:
         console.print(f"  [cyan]{short}[/cyan]:[yellow]{h.line}[/yellow]  {h.text}")
 
 
+# ---------------------------------------------------------------------------
+# Federation helper: run a per-connection query on each subrepo, tag results
+# with the child's scope name. Children whose DB is missing or locked are
+# reported as warnings, never as a crash.
+# ---------------------------------------------------------------------------
+
+
+def _query_children(root: str, fn) -> tuple[list[tuple], list[str]]:
+    """Run ``fn(conn)`` on each subrepo's RO graph DB.
+
+    Returns ``(rows, warnings)`` where each row is ``(scope, *fn_row)``
+    and warnings are per-scope error strings.
+    """
+    rows: list[tuple] = []
+    warnings: list[str] = []
+    if not has_subrepos(root):
+        return rows, warnings
+    for scoped in for_each_child_graphdb(root, lambda conn, _r: fn(conn)):
+        if scoped.error:
+            warnings.append(f"{scoped.scope}: {scoped.error}")
+            continue
+        for item in scoped.payload or []:
+            rows.append((scoped.scope, *item))
+    return rows, warnings
+
+
+def _print_scope_warnings(warnings: list[str]) -> None:
+    for w in warnings:
+        console.print(f"[yellow]⚠ subrepo {w}[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_search
+# ---------------------------------------------------------------------------
+
+
+def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
+    """(kind, name, file_path, start_line) rows for one graph DB."""
+    out: list[tuple] = []
+    for label, kind in [("Function", "function"), ("Class", "class")]:
+        for row in conn.find_nodes(
+            label,
+            contains={"name": query},
+            return_fields=["name", "file_path", "start_line"],
+            limit=fetch,
+        ):
+            out.append((kind, row["name"], row["file_path"], row["start_line"]))
+    for row in conn.find_nodes(
+        "MdSection",
+        contains={"title": query},
+        return_fields=["title", "file_path", "start_line"],
+        limit=fetch,
+    ):
+        out.append(("md_section", row["title"], row["file_path"], row["start_line"]))
+    return out
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     query = args.query
@@ -75,7 +136,9 @@ def cmd_search(args: argparse.Namespace) -> None:
     offset = getattr(args, "offset", 0) or 0
     # Fetch offset+limit+1 so we can detect whether more results exist.
     fetch = offset + limit + 1
-    results: list = []
+    # Rows are (scope, kind, name, file_path, start_line).
+    results: list[tuple] = []
+    warnings: list[str] = []
 
     conn = _get_conn(root, readonly=True)
     if conn is None:
@@ -86,39 +149,23 @@ def cmd_search(args: argparse.Namespace) -> None:
 
             fts_conn = get_fts_conn(root)
             for hit in fts_search(fts_conn, query, limit=fetch):
-                results.append((hit.kind, hit.name, hit.file_path, hit.start_line))
+                results.append(
+                    ("parent", hit.kind, hit.name, hit.file_path, hit.start_line)
+                )
         except Exception as exc:
             console.print(
                 f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
             )
             return
     else:
-        for label, kind in [
-            ("Function", "function"),
-            ("Class", "class"),
-            ("MdSection", "md_section"),
-        ]:
-            # Kuzu Cypher requires literal labels, safe: fixed allowlist
-            if label == "MdSection":
-                q = (
-                    "MATCH (n:" + label + ") WHERE n.title CONTAINS $q "
-                    "RETURN n.title AS name, n.file_path, n.start_line LIMIT $lim"
-                )
-            else:
-                q = (
-                    "MATCH (n:" + label + ") WHERE n.name CONTAINS $q "
-                    "RETURN n.name, n.file_path, n.start_line LIMIT $lim"
-                )
-            r = conn.execute(q, {"q": query, "lim": fetch})
-            for row in _rows(r):
-                results.append(
-                    (
-                        kind,
-                        row.get("name", row.get("n.name", "?")),
-                        row.get("n.file_path", row.get("file_path", "?")),
-                        row.get("n.start_line", row.get("start_line", "?")),
-                    )
-                )
+        for row in _search_symbols_conn(conn, query, fetch):
+            results.append(("parent", *row))
+
+    child_rows, warnings = _query_children(
+        root, lambda c: _search_symbols_conn(c, query, fetch)
+    )
+    results.extend(child_rows)
+    federated = has_subrepos(root)
 
     total_fetched = len(results)
     has_more = total_fetched > offset + limit
@@ -133,12 +180,16 @@ def cmd_search(args: argparse.Namespace) -> None:
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
             "results": [
-                {"kind": k, "name": n, "file": fp, "line": ln} for k, n, fp, ln in page
+                {"scope": s, "kind": k, "name": n, "file": fp, "line": ln}
+                for s, k, n, fp, ln in page
             ],
         }
+        if warnings:
+            out["warnings"] = warnings
         print(json.dumps(out, indent=2))
         return
 
+    _print_scope_warnings(warnings)
     if not page:
         if offset > 0:
             console.print(
@@ -154,15 +205,20 @@ def cmd_search(args: argparse.Namespace) -> None:
     table.add_column("Type", width=5)
     table.add_column("Symbol", style="bold")
     table.add_column("Location", style="dim")
+    if federated:
+        table.add_column("Scope", style="dim")
 
     icons = {
         "function": "[green]fn[/green]",
         "class": "[yellow]cls[/yellow]",
         "md_section": "[cyan]doc[/cyan]",
     }
-    for kind, name, fp, line in page:
+    for scope, kind, name, fp, line in page:
         short = _short_path(fp, root)
-        table.add_row(icons.get(kind, kind), name, f"{short}:{line}")
+        cells = [icons.get(kind, kind), name, f"{short}:{line}"]
+        if federated:
+            cells.append(scope)
+        table.add_row(*cells)
 
     console.print(table)
     start = offset + 1
@@ -181,6 +237,45 @@ def cmd_search(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _lookup_conn(conn, name: str) -> list[tuple]:
+    """(kind, name, file_path, start_line, end_line) rows for one graph DB."""
+    out: list[tuple] = []
+    for label, kind in [
+        ("Function", "function"),
+        ("Class", "class"),
+        ("TFResource", "tf_resource"),
+    ]:
+        for row in conn.find_nodes(
+            label,
+            where={"name": name},
+            return_fields=["name", "file_path", "start_line", "end_line"],
+        ):
+            out.append(
+                (
+                    kind,
+                    row["name"],
+                    row["file_path"],
+                    row["start_line"],
+                    row["end_line"],
+                )
+            )
+    for row in conn.find_nodes(
+        "MdSection",
+        contains={"title": name},
+        return_fields=["title", "file_path", "start_line", "end_line"],
+    ):
+        out.append(
+            (
+                "md_section",
+                row["title"],
+                row["file_path"],
+                row["start_line"],
+                row["end_line"],
+            )
+        )
+    return out
+
+
 def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
@@ -192,10 +287,19 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         "tf_resource": "[magenta]tf[/magenta]",
         "md_section": "[cyan]doc[/cyan]",
     }
+    federated = has_subrepos(root)
+
+    def _print_hit(scope: str, kind: str, n: str, fp: str, sl, el) -> None:
+        icon = icons.get(kind, kind)
+        short = _short_path(fp, root)
+        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+        console.print(
+            f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]{scope_tag}"
+        )
 
     conn = _get_conn(root, readonly=True)
     if conn is None:
-        # Fallback to FTS when Kuzu graph DB is locked by MCP server
+        # Fallback to FTS when the graph DB is locked by the MCP server
         try:
             from codegraph.core.fts import fts_search, get_fts_conn
 
@@ -203,10 +307,13 @@ def cmd_lookup(args: argparse.Namespace) -> None:
             for hit in fts_search(fts_conn, name, limit=20):
                 if hit.name == name or (hit.kind == "md_section" and name in hit.name):
                     found = True
-                    icon = icons.get(hit.kind, hit.kind)
-                    short = _short_path(hit.file_path, root)
-                    console.print(
-                        f"  {icon}  [bold]{hit.name}[/bold]  [dim]{short}:{hit.start_line}-{hit.end_line}[/dim]"
+                    _print_hit(
+                        "parent",
+                        hit.kind,
+                        hit.name,
+                        hit.file_path,
+                        hit.start_line,
+                        hit.end_line,
                     )
         except Exception as exc:
             console.print(
@@ -214,35 +321,15 @@ def cmd_lookup(args: argparse.Namespace) -> None:
             )
             return
     else:
-        for label, kind in [
-            ("Function", "function"),
-            ("Class", "class"),
-            ("TFResource", "tf_resource"),
-            ("MdSection", "md_section"),
-        ]:
-            if label == "MdSection":
-                q = (
-                    "MATCH (n:" + label + ") WHERE n.title CONTAINS $q "
-                    "RETURN n.title AS name, n.file_path, n.start_line, n.end_line"
-                )
-            else:
-                q = (
-                    "MATCH (n:"
-                    + label
-                    + ") WHERE n.name = $q RETURN n.name, n.file_path, n.start_line, n.end_line"
-                )
-            r = conn.execute(q, {"q": name})
-            for row in _rows(r):
-                found = True
-                n = row.get("name", row.get("n.name", "?"))
-                fp = row.get("n.file_path", row.get("file_path", "?"))
-                sl = row.get("n.start_line", row.get("start_line", "?"))
-                el = row.get("n.end_line", row.get("end_line", "?"))
-                icon = icons.get(kind, kind)
-                short = _short_path(fp, root)
-                console.print(
-                    f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]"
-                )
+        for kind, n, fp, sl, el in _lookup_conn(conn, name):
+            found = True
+            _print_hit("parent", kind, n, fp, sl, el)
+
+    child_rows, warnings = _query_children(root, lambda c: _lookup_conn(c, name))
+    for scope, kind, n, fp, sl, el in child_rows:
+        found = True
+        _print_hit(scope, kind, n, fp, sl, el)
+    _print_scope_warnings(warnings)
 
     if not found:
         console.print(
@@ -255,21 +342,38 @@ def cmd_lookup(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _callers_conn(conn, fn_name: str) -> list[tuple]:
+    return [
+        (row["src_name"], row["src_file_path"], row["src_start_line"])
+        for row in conn.find_neighbors(
+            "CALLS",
+            dst_where={"name": fn_name},
+            return_src=["name", "file_path", "start_line"],
+        )
+    ]
+
+
 def cmd_callers(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    federated = has_subrepos(root)
+    rows: list[tuple] = []
+
     conn = _get_conn(root, readonly=True)
     if conn is None:
         console.print(
-            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+            if federated
+            else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
         )
-        return
-    r = conn.execute(
-        "MATCH (caller:Function)-[:CALLS]->(callee:Function) "
-        "WHERE callee.name = $n "
-        "RETURN caller.name, caller.file_path, caller.start_line",
-        {"n": args.fn_name},
+    else:
+        rows = [("parent", *r) for r in _callers_conn(conn, args.fn_name)]
+
+    child_rows, warnings = _query_children(
+        root, lambda c: _callers_conn(c, args.fn_name)
     )
-    rows = _rows(r)
+    rows.extend(child_rows)
+    _print_scope_warnings(warnings)
+
     if not rows:
         console.print(
             f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]"
@@ -277,11 +381,10 @@ def cmd_callers(args: argparse.Namespace) -> None:
         return
 
     tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
-    for row in rows:
-        short = _short_path(row["caller.file_path"], root)
-        tree.add(
-            f"[green]{row['caller.name']}[/green]  [dim]{short}:{row['caller.start_line']}[/dim]"
-        )
+    for scope, name, fp, line in rows:
+        short = _short_path(fp, root)
+        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+        tree.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{scope_tag}")
     console.print(tree)
 
 
@@ -290,31 +393,47 @@ def cmd_callers(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _callees_conn(conn, fn_name: str) -> list[tuple]:
+    return [
+        (row["dst_name"], row["dst_file_path"], row["dst_start_line"])
+        for row in conn.find_neighbors(
+            "CALLS",
+            src_where={"name": fn_name},
+            return_dst=["name", "file_path", "start_line"],
+        )
+    ]
+
+
 def cmd_callees(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    federated = has_subrepos(root)
+    rows: list[tuple] = []
+
     conn = _get_conn(root, readonly=True)
     if conn is None:
         console.print(
-            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+            if federated
+            else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
         )
-        return
-    r = conn.execute(
-        "MATCH (caller:Function)-[:CALLS]->(callee:Function) "
-        "WHERE caller.name = $n "
-        "RETURN callee.name, callee.file_path, callee.start_line",
-        {"n": args.fn_name},
+    else:
+        rows = [("parent", *r) for r in _callees_conn(conn, args.fn_name)]
+
+    child_rows, warnings = _query_children(
+        root, lambda c: _callees_conn(c, args.fn_name)
     )
-    rows = _rows(r)
+    rows.extend(child_rows)
+    _print_scope_warnings(warnings)
+
     if not rows:
         console.print(f"[dim]'{args.fn_name}' calls no indexed functions[/dim]")
         return
 
     tree = Tree(f"[bold green]{args.fn_name}[/bold green] [dim]calls:[/dim]")
-    for row in rows:
-        short = _short_path(row["callee.file_path"], root)
-        tree.add(
-            f"[yellow]{row['callee.name']}[/yellow]  [dim]{short}:{row['callee.start_line']}[/dim]"
-        )
+    for scope, name, fp, line in rows:
+        short = _short_path(fp, root)
+        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+        tree.add(f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]{scope_tag}")
     console.print(tree)
 
 
@@ -323,46 +442,85 @@ def cmd_callees(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _outline_conn(conn, abs_path: str, rel_arg: str) -> list[dict]:
+    """MdSection rows for one file, exact path first, then suffix match."""
+    rows = conn.find_nodes(
+        "MdSection",
+        where={"file_path": abs_path},
+        return_fields=["title", "level", "start_line", "end_line"],
+        order_by=["start_line"],
+    )
+    if rows:
+        return rows
+    # Suffix fallback: the indexed path may differ in prefix (extra_dirs,
+    # symlinks). Substring-match on the argument, then keep true suffixes.
+    candidates = conn.find_nodes(
+        "MdSection",
+        contains={"file_path": rel_arg},
+        return_fields=["file_path", "title", "level", "start_line", "end_line"],
+        order_by=["start_line"],
+    )
+    norm = rel_arg.lower().replace("\\", "/")
+    return [
+        r
+        for r in candidates
+        if (r.get("file_path") or "").lower().replace("\\", "/").endswith(norm)
+    ]
+
+
 def cmd_outline(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     conn = _get_conn(root, readonly=True)
-    if conn is None:
-        console.print(
-            "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
-        )
-        return
+
     file_path = args.file
     if not os.path.isabs(file_path):
         file_path = str(Path(root) / file_path)
 
-    r = conn.execute(
-        "MATCH (s:MdSection) WHERE s.file_path = $p "
-        "OR s.file_path ENDS WITH $suffix "
-        "OR lower(s.file_path) = lower($p) "
-        "OR lower(s.file_path) ENDS WITH lower($suffix) "
-        "RETURN s.title, s.level, s.start_line, s.end_line "
-        "ORDER BY s.start_line",
-        {"p": file_path, "suffix": args.file},
-    )
-    rows = _rows(r)
+    rows: list[dict] = []
+    scope = "parent"
+    if conn is None:
+        console.print(
+            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+        )
+    else:
+        rows = _outline_conn(conn, file_path, args.file)
+
+    if not rows and has_subrepos(root):
+        # The file may belong to a federated subrepo, first scope wins.
+        def _child_outline(c, child_root):
+            child_abs = args.file
+            if not os.path.isabs(child_abs):
+                child_abs = str(Path(child_root) / child_abs)
+            return _outline_conn(c, child_abs, args.file)
+
+        for scoped in for_each_child_graphdb(root, _child_outline):
+            if scoped.error or not scoped.payload:
+                continue
+            rows = scoped.payload
+            scope = scoped.scope
+            break
+
     if not rows:
         console.print(f"[dim]No sections found in '{args.file}' (is it indexed?)[/dim]")
         return
 
     # Build tree
-    tree = Tree(f"[bold cyan]{args.file}[/bold cyan]")
+    title = f"[bold cyan]{args.file}[/bold cyan]"
+    if scope != "parent":
+        title += f"  [dim]({scope})[/dim]"
+    tree = Tree(title)
     seen = set()
     node_stack: list[tuple[int, Tree]] = [(0, tree)]  # (level, tree_node)
 
     for row in rows:
-        key = (row["s.start_line"], row["s.title"])
+        key = (row["start_line"], row["title"])
         if key in seen:
             continue
         seen.add(key)
 
-        level = row["s.level"]
-        title = row["s.title"]
-        line = row["s.start_line"]
+        level = row["level"]
+        section_title = row["title"]
+        line = row["start_line"]
 
         # Pop stack to find parent
         while len(node_stack) > 1 and node_stack[-1][0] >= level:
@@ -379,7 +537,7 @@ def cmd_outline(args: argparse.Namespace) -> None:
         }
         style = level_colors.get(level, "dim")
 
-        child = parent.add(f"[{style}]{title}[/{style}] [dim]L{line}[/dim]")
+        child = parent.add(f"[{style}]{section_title}[/{style}] [dim]L{line}[/dim]")
         node_stack.append((level, child))
 
     console.print(tree)

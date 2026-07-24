@@ -59,6 +59,12 @@ log_backup_count = 3
 # them. Add via: cgh federate add ../child-repo
 # subrepos = ["./apps/api", "./apps/web", "../shared-lib"]
 
+# When this repo's owner starts, also start the owner of every initialized
+# subrepo whose owner is down (watcher included, so child indexes stay
+# fresh). Children started this way stop on their own shortly after the
+# parent owner exits. Set to false to opt out.
+# federate_auto_up = true
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.
@@ -89,6 +95,7 @@ reindex_on_start = true
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 | `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
+| `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is down. Those children live exactly as long as the parent owner. |
 
 **Default `ignore_dirs`:**
 
@@ -173,20 +180,29 @@ cgh federate list                  # status table per child (status, owner, git,
 cgh index                          # parent indexes only its own files
 cgh serve --background --watch     # parent owner federates queries to children
 
-# Optional: keep each child's own owner alive too (so its index stays
-# fresh as files in the child's tree are edited). Without this, the parent
-# can still read each child's DB read-only, but the child's data may go
-# stale if no-one runs the child's watcher.
+# Starting the parent owner also starts each child's owner (with its
+# watcher) if it is down, so child indexes stay fresh. Those children
+# stop on their own once the parent owner exits. Opt out with
+# federate_auto_up = false in the parent's config.toml.
+#
+# To start children that OUTLIVE the parent (keepalive marker):
 cgh federate up                    # spawns `cgh _serve_owner --watch` per child
 cgh federate down                  # stops them all
 ```
 
 **Owner lifecycle**: the parent reads each child's `.codegraph/` files
-directly (read-only). It does NOT auto-spawn child owners: children's
-owners exist only to keep their own index fresh. `cgh federate up` is the
-explicit way to ensure every child has its own watcher running. If a
-child's owner is mid-write when the parent queries it, that scope returns
-`partial: true / warnings: [...]`; results from other scopes still flow.
+directly (read-only), children's owners exist only to keep their own index
+fresh. When the parent owner starts it also starts the owner (with watcher)
+of every initialized child whose owner is down, unless `federate_auto_up =
+false`. Children started this way carry the parent owner's pid as a worker
+marker, so they stop on their own a few seconds after the parent owner
+exits. Children that were already up are left alone: they keep whatever
+lifecycle started them, and two repos federating each other can't keep each
+other alive forever. `cgh federate up` remains the explicit way to start
+children that outlive the parent (keepalive marker), `cgh federate down`
+stops them. If a child's owner is mid-write when the parent queries it,
+that scope returns `partial: true / warnings: [...]`; results from other
+scopes still flow.
 
 **What's federated** (read-only, scope-tagged):
 

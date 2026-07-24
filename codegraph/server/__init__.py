@@ -357,6 +357,14 @@ def owner_main(
 
     def _cleanup():
         try:
+            # Let go of the federated children first: children whose only
+            # worker was this owner exit on their own grace period.
+            from codegraph.analysis.federation import release_children
+
+            release_children(_root)
+        except Exception:
+            pass
+        try:
             port_file(_root).unlink(missing_ok=True)
             owner_pidfile(_root).unlink(missing_ok=True)
             # Release the single-writer pidfile the owner acquired.
@@ -470,6 +478,38 @@ def owner_main(
                 return
 
     _th.Thread(target=_watch_workers, daemon=True).start()
+
+    # Federated children: bring up the owner of every initialized subrepo
+    # whose owner is down, so their watchers keep the child indexes fresh
+    # while this parent is alive. Runs in a thread, spawn_owner blocks a
+    # few seconds per child. Disable with federate_auto_up = false.
+    from codegraph.analysis.federation import has_subrepos
+    from codegraph.core.config import load_config as _load_config
+
+    if has_subrepos(_root) and _load_config(_root).federate_auto_up:
+
+        def _children_up() -> None:
+            from codegraph.analysis.federation import autostart_children
+
+            try:
+                for res in autostart_children(_root):
+                    detail = res.get("reason") or (
+                        f"port {res['port']}" if "port" in res else ""
+                    )
+                    print(
+                        f"[codegraph owner] child {res['name']}: {res['status']}"
+                        + (f" ({detail})" if detail else ""),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(
+                    f"[codegraph owner] child autostart error: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+        _th.Thread(target=_children_up, daemon=True).start()
 
     # SIGTERM / SIGINT from outside (kill, Ctrl-C) also do a clean shutdown.
     def _signal_shutdown(signum, _frame):

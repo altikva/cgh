@@ -62,10 +62,13 @@ jobs:
         run: uv python install "$PYTHON_VERSION"
 
       - name: Lint with ruff
-        # ruff is not a project dependency, so run it via uvx. The format
-        # check is not enabled yet (69 files would reformat); do that in a
-        # dedicated chore/ruff-format PR, then add `uvx ruff format --check .`.
-        run: uvx ruff check .
+        # ruff is not a project dependency, so run it via uvx, pinned so a
+        # new ruff release can't break CI out of nowhere (0.16.0 widened the
+        # default rule set and flagged 375 pre-existing findings; adopting it
+        # deserves its own chore PR). The format check is not enabled yet
+        # (69 files would reformat); same story, dedicated chore/ruff-format
+        # PR, then add `uvx ruff@0.15.9 format --check .`.
+        run: uvx ruff@0.15.9 check .
 
       - name: Run pytest
         run: |

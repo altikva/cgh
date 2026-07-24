@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Kuzu migration on installs without the kuzu package**: on a kuzu-less
+  install (the default on Python 3.14), the old `graph.db` reads as 0 rows,
+  so the migration verifier flagged the fresh DuckDB index as "unexplained
+  gains" and refused the swap forever, even with `--force`. The migration
+  now detects that the kuzu package is missing, skips the meaningless count
+  comparison, and completes the swap with an explicit `kuzu_unreadable`
+  status: DuckDB is canonical by construction since it was just rebuilt from
+  a full index of the working tree.
+
 ## [0.6.0] - 2026-07-24
 
 ### Added

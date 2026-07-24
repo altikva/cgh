@@ -41,7 +41,7 @@ class MigrationResult:
     paths). DuckDB is treated as canonical and the swap proceeds.
     """
 
-    status: str  # "skipped" | "aborted" | "matched" | "stale_kuzu" | "mismatched"
+    status: str  # "skipped" | "aborted" | "matched" | "stale_kuzu" | "kuzu_unreadable" | "mismatched"
     message: str
     kuzu_nodes: int = 0
     kuzu_edges: int = 0
@@ -55,6 +55,19 @@ def _size_str(size_bytes: int) -> str:
     if size_bytes > 1024 * 1024:
         return f"{size_bytes / 1024 / 1024:.1f} MB"
     return f"{size_bytes / 1024:.0f} KB"
+
+
+def _kuzu_package_available() -> bool:
+    """True when the optional kuzu package can be imported.
+
+    Kuzu became an optional extra in 0.4.2 (no cp3.14 wheels). Without it
+    the old graph.db cannot be opened at all, so every count in the Kuzu
+    snapshot reads 0 and the migration verifier would flag the fresh
+    DuckDB index as "unexplained gains" forever.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("kuzu") is not None
 
 
 def _stats_snapshot(repo_root: Path) -> dict:
@@ -208,7 +221,10 @@ def do_migrate_to_duckdb(
         duckdb_path.unlink()
 
     os.environ.pop("CGH_DB", None)
-    kuzu_stats = _stats_snapshot(root_p)
+    kuzu_readable = _kuzu_package_available()
+    kuzu_stats = (
+        _stats_snapshot(root_p) if kuzu_readable else {"nodes": {}, "edges": {}}
+    )
     kuzu_nodes = sum(kuzu_stats["nodes"].values())
     kuzu_edges = sum(kuzu_stats["edges"].values())
 
@@ -226,6 +242,26 @@ def do_migrate_to_duckdb(
     diffs = _diff_stats(kuzu_stats, duckdb_stats)
     duckdb_nodes = sum(duckdb_stats["nodes"].values())
     duckdb_edges = sum(duckdb_stats["edges"].values())
+
+    if not kuzu_readable:
+        # Nothing to verify against: the old DB is unreadable on this
+        # install. DuckDB was just rebuilt from a full index of the working
+        # tree, so it is canonical by construction.
+        kuzu_deleted = False
+        if delete_kuzu and kuzu_path.exists():
+            kuzu_path.unlink()
+            kuzu_deleted = True
+        return MigrationResult(
+            status="kuzu_unreadable",
+            message=(
+                "kuzu package not installed, the old graph.db could not be "
+                "read for count verification. DuckDB was rebuilt from a "
+                "fresh full index and is canonical."
+            ),
+            duckdb_nodes=duckdb_nodes,
+            duckdb_edges=duckdb_edges,
+            kuzu_deleted=kuzu_deleted,
+        )
 
     if diffs:
         is_stale_kuzu, reason = _classify_diff(diffs)
@@ -374,6 +410,17 @@ def cmd_migrate_to_duckdb(args: argparse.Namespace) -> None:
                 "explained by a fix that shipped after Kuzu was last written "
                 "(or by ghost rows from deleted files).",
                 title="[cyan]Stale Kuzu: DuckDB accepted as canonical[/cyan]",
+                border_style="cyan",
+            )
+        )
+    elif result.status == "kuzu_unreadable":
+        console.print(
+            Panel(
+                f"[cyan]{result.message}[/cyan]\n"
+                "For a count-verified migration instead, install the extra "
+                'first: [cyan]uv tool install "cgh[kuzu]"[/cyan] (needs a '
+                "Python version with kuzu wheels).",
+                title="[cyan]Unverified swap: DuckDB accepted as canonical[/cyan]",
                 border_style="cyan",
             )
         )

@@ -661,6 +661,8 @@ cgh federate remove ./apps/api            # un-federate
 
 `cgh init` auto-detects nested `.codegraph/` directories and offers to federate them on the spot.
 
+Since 0.6.0 the parent owner starts each initialized child's owner (with watcher) automatically when it comes up; those children stop on their own once the parent owner exits. `cgh federate up` remains the way to start children that outlive the parent. Opt out with `federate_auto_up = false` under `[codegraph]` in the parent's config.
+
 #### `force-index`
 
 Index files that are in `.gitignore`, bypassing all ignore rules. Requires confirmation.
@@ -708,7 +710,8 @@ cgh federate add ./apps/api ./apps/web     # (or declare manually)
 cgh federate list                          # status + owner state per child
 cgh index                                  # parent indexes only its own files
 cgh serve --background --watch             # parent owner federates queries to children
-cgh federate up                            # optional: spawn each child's own watcher so their indexes stay live
+                                           # and auto-starts each child's owner + watcher
+cgh federate up                            # optional: children that OUTLIVE the parent owner
 ```
 
 ### What's federated
@@ -894,7 +897,9 @@ ignore_dirs = [".git", "node_modules", "__pycache__", ".venv"]
 ignore_patterns = ["*.min.js", "*.bundle.js"]
 max_file_size_kb = 500
 extra_dirs = ["../frontend"]
-# precise_calls = true   # resolve Python calls cross-file via jedi (needs cgh[lsp])
+# precise_calls = true       # resolve Python calls cross-file via jedi (needs cgh[lsp])
+# subrepos = ["./apps/api"]  # federated children (see cgh federate)
+# federate_auto_up = true    # parent owner auto-starts each child's owner
 
 [parsers]
 # enabled = ["python", "typescript", "markdown"]

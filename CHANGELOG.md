@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-24
+
 ### Added
 - **Federated children auto-start**: when a parent owner starts, it now also
   starts the owner (with watcher) of every initialized subrepo whose owner is
@@ -296,7 +298,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/altikva/cgh/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/altikva/cgh/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/altikva/cgh/compare/v0.4.4...v0.4.5

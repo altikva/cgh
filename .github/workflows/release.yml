@@ -54,7 +54,8 @@ jobs:
           echo "Releasing cgh $PYPROJECT_VERSION"
 
       - name: Lint with ruff
-        run: uvx ruff check .
+        # Pinned to match ci.yml, a new ruff release must not block a tag.
+        run: uvx ruff@0.15.9 check .
 
       - name: Run pytest
         # Validate on the default Python with the kuzu extra so both backends

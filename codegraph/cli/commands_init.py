@@ -441,14 +441,15 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
             "graph.db deleted.\n"
         )
         return
-    if result.status == "stale_kuzu":
+    if result.status in ("stale_kuzu", "kuzu_unreadable"):
         console.print(
             f"    [green]+[/green] re-indexed into graph.duckdb "
             f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            "graph.db deleted."
+            + ("graph.db deleted." if result.kuzu_deleted else "graph.db kept.")
         )
         console.print(
-            f"    [dim]Note: {result.message}, DuckDB accepted as canonical.[/dim]\n"
+            f"    [dim]Note: {result.message.rstrip('.')}. "
+            "DuckDB accepted as canonical.[/dim]\n"
         )
         return
     # mismatched

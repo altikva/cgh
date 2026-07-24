@@ -170,7 +170,9 @@ class CodegraphConfig:
     # Core
     project_root: Path = field(default_factory=Path.cwd)
     ignore_dirs: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_DIRS))
-    ignore_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_PATTERNS))
+    ignore_patterns: list[str] = field(
+        default_factory=lambda: list(DEFAULT_IGNORE_PATTERNS)
+    )
     max_file_size_kb: int = 500
     # Dirs to force-index even if gitignored (relative to project_root or absolute).
     include_dirs: list[str] = field(default_factory=list)
@@ -198,6 +200,10 @@ class CodegraphConfig:
     # then federates queries (read-only) to the children's databases.
     # Paths are relative to project_root or absolute.
     subrepos: list[str] = field(default_factory=list)
+    # When the parent owner starts, also start the owner of every
+    # initialized subrepo whose owner is down. Children started this way
+    # live exactly as long as the parent owner.
+    federate_auto_up: bool = True
 
     # Ruflo
     ruflo_enabled: bool | None = None  # None = auto-detect
@@ -244,16 +250,26 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
     # Env overrides
     if os.environ.get("CODEGRAPH_DIR"):
         override_dir = Path(os.environ["CODEGRAPH_DIR"]).resolve()
-        config.project_root = override_dir.parent if override_dir.name == CODEGRAPH_DIR else override_dir
+        config.project_root = (
+            override_dir.parent if override_dir.name == CODEGRAPH_DIR else override_dir
+        )
 
     if os.environ.get("CODEGRAPH_ROOT"):
         config.project_root = Path(os.environ["CODEGRAPH_ROOT"]).resolve()
 
     if os.environ.get("CODEGRAPH_RUFLO_ENABLED"):
-        config.ruflo_enabled = os.environ["CODEGRAPH_RUFLO_ENABLED"].lower() in ("1", "true", "yes")
+        config.ruflo_enabled = os.environ["CODEGRAPH_RUFLO_ENABLED"].lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     if os.environ.get("CGH_PRECISE_CALLS"):
-        config.precise_calls = os.environ["CGH_PRECISE_CALLS"].lower() in ("1", "true", "yes")
+        config.precise_calls = os.environ["CGH_PRECISE_CALLS"].lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     return config
 
@@ -277,6 +293,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.log_backup_count = int(cg["log_backup_count"])
     if "subrepos" in cg:
         config.subrepos = list(cg["subrepos"])
+    if "federate_auto_up" in cg:
+        config.federate_auto_up = bool(cg["federate_auto_up"])
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:
@@ -319,6 +337,12 @@ max_file_size_kb = 500
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1
 # precise_calls = false
+# Federated subrepos (see `cgh federate add`). When the owner of this repo
+# starts, it also starts the owner of every initialized subrepo listed here,
+# unless federate_auto_up is set to false. Children started this way stop
+# on their own shortly after the parent owner exits.
+# subrepos = ["./child-repo"]
+# federate_auto_up = true
 
 [parsers]
 # Uncomment to restrict which parsers are active:
@@ -403,7 +427,11 @@ def init_project(root: Path) -> dict:
         created.append(str(config_path))
 
     # Generate auth key
-    from codegraph.state.auth import ensure_auth_key, ensure_gitignore_has_auth_key, get_auth_key_path
+    from codegraph.state.auth import (
+        ensure_auth_key,
+        ensure_gitignore_has_auth_key,
+        get_auth_key_path,
+    )
 
     key_path = get_auth_key_path(root)
     if not key_path.exists():

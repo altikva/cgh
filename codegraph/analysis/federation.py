@@ -499,6 +499,83 @@ def child_owner_status(child_path: str | Path) -> OwnerStatus:
     )
 
 
+def autostart_children(repo_root: str | Path) -> list[dict]:
+    """Start an owner (with watcher) for every initialized subrepo whose
+    owner is down. Called by the parent owner right after it comes up.
+
+    Children started here get the calling process's pid registered as a
+    worker in their ``.codegraph/workers/``, so they live exactly as long
+    as the parent owner and exit on their own grace period once it dies.
+    Children already up are left untouched, in particular they do NOT get
+    the pid marker: two repos federating each other would otherwise keep
+    each other alive forever.
+
+    Returns one status dict per declared child:
+    ``{"child", "name", "status": started|already-up|skipped|failed, ...}``.
+    """
+    from codegraph.state.ipc import (
+        is_owner_alive,
+        register_worker,
+        spawn_owner,
+        unregister_worker,
+    )
+
+    results: list[dict] = []
+    for child in resolve_children(repo_root):
+        st = verify_child(child)
+        if not st.ok:
+            reason = "not initialized" if not st.initialized else "no graph DB"
+            if not st.exists:
+                reason = "path does not exist"
+            results.append(
+                {
+                    "child": str(child),
+                    "name": child.name,
+                    "status": "skipped",
+                    "reason": reason,
+                }
+            )
+            continue
+        if is_owner_alive(child):
+            results.append(
+                {"child": str(child), "name": child.name, "status": "already-up"}
+            )
+            continue
+        # Register before spawning so the child's grace window for the
+        # first worker always sees this parent as a live worker.
+        register_worker(child)
+        port = spawn_owner(child, watch=True, reindex=False)
+        if port is None:
+            unregister_worker(child)
+            results.append(
+                {"child": str(child), "name": child.name, "status": "failed"}
+            )
+        else:
+            results.append(
+                {
+                    "child": str(child),
+                    "name": child.name,
+                    "status": "started",
+                    "port": port,
+                }
+            )
+    return results
+
+
+def release_children(repo_root: str | Path) -> None:
+    """Drop this process's worker marker from every declared subrepo.
+
+    Called on parent-owner shutdown. Children whose only worker was the
+    parent then exit after their idle grace; children with other workers
+    (or a keepalive from `cgh federate up`) keep running. Removing a
+    marker that was never written is a no-op.
+    """
+    from codegraph.state.ipc import unregister_worker
+
+    for child in resolve_children(repo_root):
+        unregister_worker(child)
+
+
 # ---------------------------------------------------------------------------
 # Config mutation helpers (used by the CLI)
 # ---------------------------------------------------------------------------

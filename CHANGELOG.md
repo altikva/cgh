@@ -8,6 +8,30 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-24
+
+### Added
+- **Federated children auto-start**: when a parent owner starts, it now also
+  starts the owner (with watcher) of every initialized subrepo whose owner is
+  down, so child indexes stay fresh without running `cgh federate up` by hand.
+  Children started this way carry the parent owner's pid as a worker marker
+  and stop on their own a few seconds after the parent owner exits. Children
+  already up are left untouched, which also keeps two repos federating each
+  other from pinning each other alive. Opt out per repo with
+  `federate_auto_up = false` under `[codegraph]`.
+
+### Fixed
+- **CLI queries crashed on DuckDB repos**: `cgh search`, `cgh lookup`,
+  `cgh callers`, `cgh callees`, and `cgh outline` still sent raw Cypher to the
+  graph connection, which the DuckDB backend rejects with a ParserException.
+  They now go through the backend-neutral GraphDB protocol, so they work on
+  DuckDB and Kuzu alike. The crash only showed when no owner was running
+  (with an owner up, the CLI silently fell back to FTS), which made federated
+  setups look broken whenever the repos' owners were off.
+- **CLI queries are now federated**: `cgh search` / `lookup` / `callers` /
+  `callees` / `outline` fan out to subrepos like the MCP tools do, tagging
+  results with a scope column instead of silently searching the parent only.
+
 ## [0.5.0] - 2026-06-08
 
 A large feature release built on a full code audit (security, correctness,
@@ -274,7 +298,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/altikva/cgh/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/altikva/cgh/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/altikva/cgh/compare/v0.4.4...v0.4.5

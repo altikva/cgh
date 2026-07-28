@@ -204,12 +204,14 @@ must be stated plainly in the README.
 
 ## Licensing
 
-cgh is MIT AND CC BY-NC-SA, conjunctive. A plugin importing `codegraph` is
-plausibly a derivative work, which drags NC/SA onto third-party plugins. If
-an external ecosystem is a goal, we should either accept that constraint
-consciously or carve out a linking exception for plugins. Decision to make
-before announcing the plugin API publicly; nothing in the design depends on
-the outcome.
+Decided (2026-07): the LICENSE carries a plugin exception. A plugin that
+interacts with cgh solely through the documented plugin interfaces (the
+`cgh` entry-point group and the public plugin API) is not treated as an
+adaptation or derivative work and may be licensed under any terms its
+author chooses, commercial included. The exception covers plugin licensing
+only: copying or modifying cgh source, distributing cgh, and using cgh
+itself all stay under the MIT + CC BY-NC-SA dual license. See the
+"Additional permission: plugin exception" section of LICENSE.
 
 ## First-party plugins (the actual roadmap)
 
@@ -256,4 +258,8 @@ a separate repo/package validating the whole chain end to end.
 3. Does `federate_auto_up`-style config belong per-plugin in children, and
    do children's findings federate? Leaning yes for reads (scope-tagged,
    like everything else) and no for writes (each repo scans itself).
-4. Linking exception in the license for third-party plugins: yes or no?
+
+Resolved:
+
+4. Linking exception in the license for third-party plugins: **yes**,
+   decided 2026-07, see the Licensing section above.

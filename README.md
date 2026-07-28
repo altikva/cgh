@@ -1045,3 +1045,5 @@ The key file has `600` permissions and the `.codegraph/` directory is `700` (own
 ## License
 
 Dual-licensed under MIT **and** CC BY-NC-SA 4.0: both licenses apply together and you must comply with both. In practice that means non-commercial use, share-alike derivatives, attribution, and no warranty. Copyright (c) 2026 ALTIKVA. See [LICENSE](./LICENSE) or the canonical notice at https://www.altikva.com/licenses/LICENSE-1.0.
+
+**Plugin exception**: a plugin that talks to cgh only through the documented plugin interfaces (the `cgh` entry-point group and the public plugin API) is not treated as a derivative work and may be licensed under any terms its author chooses, including commercial ones. Using cgh itself stays under the dual license whatever plugins are installed. Full wording in [LICENSE](./LICENSE).

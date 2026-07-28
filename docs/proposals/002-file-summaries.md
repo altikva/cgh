@@ -1,7 +1,8 @@
 # Proposal 002: file summaries with an egress gate
 
-Status: draft, for discussion. Depends on proposal 001 (plugin loader,
-scanner surface, Finding store) and pairs with cgh-classify.
+Status: decisions recorded 2026-07-29, awaiting sign-off on the corpus
+insights section. Depends on proposal 001 (plugin loader, scanner
+surface, Finding store) and pairs with cgh-classify.
 
 ## Idea
 
@@ -39,14 +40,28 @@ cgh lists the detected CLIs and asks. Consent is per repo, stored in
 
 ## The egress gate
 
-Before any cloud backend sees a file, the gate checks the Finding store:
+Two user profiles must both stay first-class: the user who runs cgh to
+cut token spend and wants summaries with minimum ceremony, and the user
+whose priority is controlling what leaves the machine. One knob covers
+both, `egress` in `[plugin.summarize]`:
 
-1. A `confidential` finding on the file: blocked, always.
-2. Any finding with severity `block` (e.g. `secret.aws_key`): blocked.
-3. `pii.*` findings: blocked by default, `allow_pii = true` to override.
-4. No classification at all: allowed by default; `require_label = true`
-   switches to allowlist mode where only files explicitly labeled
-   non-confidential go out (posture for sensitive orgs).
+- `egress = "open"` (default): the gate blocks on what the Finding store
+  actually knows. A `confidential` finding: blocked, always. Any
+  block-severity finding (e.g. `secret.aws_key`): blocked. `pii.*`
+  findings: blocked by default, `allow_pii = true` to override. A file
+  with no findings at all goes through.
+- `egress = "strict"`: allowlist mode. Only files explicitly labeled
+  non-confidential (by cgh-classify or by hand) ever reach a cloud
+  backend. Without labels, nothing goes out.
+
+## Size threshold
+
+Short files are not worth a model call, and their structural summary is
+already the whole story. Summarization triggers above a configurable
+threshold, `min_kb = 4` by default (roughly a page of text). Below it,
+the `structural` backend still answers for free. The threshold applies
+per file after parsing, so a 200-page PDF whose text extraction is tiny
+still gets skipped honestly.
 
 The `local` and `structural` backends bypass the gate: nothing leaves the
 machine, so they may summarize anything, including confidential files
@@ -84,12 +99,39 @@ Per file type:
   `cgh summarize status` showing queue depth and how many files were
   sent where.
 
-## Open questions
+## Corpus insights (the second product of summaries)
 
-1. Default when no classifier is installed: gate on PII/secrets only
-   (proposed above), or refuse cloud backends entirely until
-   cgh-classify is set up?
-2. Re-summarize policy: on every content change (blob SHA), or only when
-   the old summary's SHA drifts by more than a threshold of lines?
-3. Should summaries federate to the parent like other findings (read
-   only, scope-tagged)? Leaning yes, consistent with 001 decision 3.
+Per-file summaries are the substrate; the payoff is what a capable model
+sees when it reads them all at once. `cgh insights` (CLI) and a
+`corpus_insights` MCP tool batch the gate-cleared summaries, together
+with signals cgh already computes for free (graph stats, layer diagram,
+hotspots, import cycles), into one prompt to the configured CLI backend
+and ask for what no single-file view shows: hidden patterns, duplicated
+concepts across modules, architectural drift, coupling that contradicts
+the declared layering.
+
+Rules:
+
+- The gate applies at corpus level too: only summaries of files that
+  cleared the egress gate are included, and summaries carrying an
+  inherited `confidential` finding are excluded from cloud-bound
+  batches.
+- This is also the token-saving story at its best: one call over a few
+  hundred short summaries costs a fraction of reading the corpus, which
+  is exactly the tradeoff cgh exists for.
+- Results are written to the knowledge store (`knowledge_record`,
+  kind `pattern` or `note`, tagged `insights`), so agents recall them in
+  later sessions instead of re-deriving them.
+
+## Decisions (2026-07-29)
+
+1. **Both egress postures stay supported** via the `egress` knob above:
+   `open` serves the token-saving profile, `strict` the security
+   profile. Summarization triggers only above the `min_kb` threshold
+   (default 4 KB, configurable).
+2. **Re-summarize policy**: whichever comes first of a content-drift
+   threshold (default 30% of lines changed since the last summarized
+   blob) or a change count (default 5 re-indexes of the file). Both
+   configurable.
+3. **Summaries federate**: read-only and scope-tagged like every other
+   finding, per decision 3 of proposal 001.

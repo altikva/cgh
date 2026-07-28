@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **License: plugin exception added.** Plugins that interact with cgh only
+  through the documented plugin interfaces (the `cgh` entry-point group and
+  the public plugin API) are not treated as derivative works and may be
+  licensed under any terms, including commercial ones. Using cgh itself
+  remains governed by the MIT + CC BY-NC-SA dual license. Groundwork for
+  the plugin architecture proposal (docs/proposals/001).
+
 ### Fixed
 - **Kuzu migration on installs without the kuzu package**: on a kuzu-less
   install (the default on Python 3.14), the old `graph.db` reads as 0 rows,

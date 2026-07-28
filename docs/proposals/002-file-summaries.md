@@ -1,8 +1,7 @@
 # Proposal 002: file summaries with an egress gate
 
-Status: decisions recorded 2026-07-29, awaiting sign-off on the corpus
-insights section. Depends on proposal 001 (plugin loader, scanner
-surface, Finding store) and pairs with cgh-classify.
+Status: accepted 2026-07-29. Depends on proposal 001 (plugin loader,
+scanner surface, Finding store) and pairs with cgh-classify.
 
 ## Idea
 
@@ -37,6 +36,31 @@ Backend detection reuses the AI-tool detection `cgh init` already does.
 Nothing is enabled silently: during `cgh init` (or `cgh summarize enable`)
 cgh lists the detected CLIs and asks. Consent is per repo, stored in
 `[plugin.summarize]` in the machine-local config.
+
+### Backends are an extension point
+
+Supporting a new model (IBM Granite, Qwen, whatever ships next quarter)
+must never require touching cgh core or even cgh-summarize. A backend is
+a small object: a name, a self-declared egress class (`cloud` or
+`local`, which is what the gate reads), an availability probe, and a
+`summarize(scaffold, excerpt, config)` method. Third-party plugins
+publish backends through a generic namespaced registry on the plugin
+API, `api.register_extension("summarize.backend", backend)`, and
+cgh-summarize consumes the registry. Core never learns what
+summarization is; the "a plugin can extend a plugin" pattern is
+documented and reusable (classification backends will want it too).
+
+Trust note: the egress gate trusts the backend's self-declared class. A
+backend claiming `local` while shipping data out is a malicious plugin,
+covered by the same trust model as every plugin (you install what you
+accept to run).
+
+Two generic backends cover most of the ecosystem without one plugin per
+model: an `ollama` backend exposes everything the local Ollama daemon
+serves (Qwen, Granite, Llama, Mistral: the model is a config line, the
+egress class is `local`), and an `openai-compatible` backend (base_url +
+key) covers vLLM, LM Studio, watsonx and most hosted APIs (`cloud`).
+Dedicated plugins remain for models needing special handling.
 
 ## The egress gate
 

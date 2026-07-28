@@ -1,6 +1,7 @@
 # Proposal 001: plugin architecture for cgh
 
-Status: draft, for discussion. Nothing here is implemented yet.
+Status: accepted 2026-07-29 (all open questions resolved). Implementation
+has not started yet.
 
 ## Why
 
@@ -249,17 +250,37 @@ Estimated as three PRs: (1) loader + parser/CLI surfaces + `cgh plugins`,
 (2) scanner surface + Finding store + MCP/CLI query tools, (3) cgh-docs as
 a separate repo/package validating the whole chain end to end.
 
-## Open questions
+## Decisions (all questions resolved 2026-07-29)
 
-1. Package naming for first-party plugins: `cgh-docs` / `cgh-pii` on PyPI,
-   import names `cgh_docs` / `cgh_pii`?
-2. Should findings feed the FTS too (searching "IBAN" finds flagged files)?
-   Leaning yes, cheap and useful.
-3. Does `federate_auto_up`-style config belong per-plugin in children, and
-   do children's findings federate? Leaning yes for reads (scope-tagged,
-   like everything else) and no for writes (each repo scans itself).
+1. **Naming**: first-party plugins are `cgh-docs` / `cgh-pii` /
+   `cgh-classify` on PyPI, import names `cgh_docs` / `cgh_pii` /
+   `cgh_classify`. The `cgh-` PyPI prefix is reserved for ALTIKVA
+   first-party plugins; third parties are free to publish but encouraged
+   toward `<name>-cgh` or their own naming.
+2. **Findings feed the FTS**: yes. A full-text search for "IBAN" or
+   "confidential" surfaces flagged files through the search tools agents
+   already use, not only through the dedicated `findings` tool.
+3. **Federation**: reads federate (children's findings come back
+   scope-tagged through the usual fan-out); writes stay local (each repo
+   scans itself with its own `[plugin.*]` config, the parent never writes
+   into a child).
+4. **License**: plugin linking exception added, see the Licensing section
+   above.
 
-Resolved:
+## Future surfaces (v2 candidates, out of scope for v1)
 
-4. Linking exception in the license for third-party plugins: **yes**,
-   decided 2026-07, see the Licensing section above.
+- **Lifecycle hooks**, in the Claude Code sense: user-configured commands
+  on events (`pre_index`, `post_index`, `pre_tool_response`), declared in
+  `.codegraph/config.toml` (machine-local, never committed). Complementary
+  to plugins: a hook is a per-repo shell one-liner, a plugin is packaged
+  and distributable. The highest-value one is `pre_tool_response`
+  filtering/redaction driven by findings (block or redact content flagged
+  `confidential` or `pii.*` before it reaches the agent), which needs the
+  Finding store to exist first. cgh already ships git reindex hooks, so
+  the concept has precedent in the codebase.
+- **Local-model plugins**: `cgh-embed` (static embedding model, ~30 MB
+  CPU-only, powers semantic search and gives the classifier real
+  features) and `cgh-summarize` (small quantized LLM via llama.cpp as a
+  deferred scanner writing `summary` findings for scanned documents).
+  Deliberately plugins, never core: model weights, RAM, and licenses must
+  stay opt-in.

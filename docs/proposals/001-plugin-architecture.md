@@ -250,6 +250,50 @@ Estimated as three PRs: (1) loader + parser/CLI surfaces + `cgh plugins`,
 (2) scanner surface + Finding store + MCP/CLI query tools, (3) cgh-docs as
 a separate repo/package validating the whole chain end to end.
 
+## Amendment 2026-07-29: generic registry and agent integrations
+
+Two additions from the proposal 002 discussion, both part of API v1.
+
+**Namespaced extension registry.** `PluginAPI` gains one generic method:
+
+```python
+def register_extension(self, namespace: str, obj: object) -> None: ...
+```
+
+plus a read side (`get_extensions(namespace)`) available to core and to
+other plugins. This is how a plugin extends another plugin (proposal 002
+uses `summarize.backend` for summarizer models) without core learning
+any domain vocabulary. Namespaces are plain dotted strings, first come
+first served, documented by whoever consumes them.
+
+**Agent integrations as a pluggable surface.** Today the knowledge of
+each AI tool (detect it, write its MCP server registration, inject the
+cgh instructions into its markdown, install skills or hooks) is
+hardcoded in `codegraph/integrations/` for Claude Code, Cursor, Codex,
+and Gemini. A new agent CLI shipping tomorrow must be addable by plugin,
+not by core release. An integration is a descriptor registered under the
+`integration` namespace:
+
+```python
+class AgentIntegration(Protocol):
+    name: str                      # "bob", shown by cgh init / cgh setup
+    def detect(self) -> bool: ...  # binary on PATH, config dir present
+    def mcp_config(self, repo_root: Path) -> ConfigSpec: ...
+        # where and in which format to register the cgh MCP server
+    def instructions(self, repo_root: Path) -> InstructionSpec: ...
+        # target markdown (BOB.md, AGENTS.md, rules dir) + marker block
+        # to inject and update idempotently
+    # optional: skills_dir(), hooks() for tools that support them
+```
+
+`cgh init` detection and `cgh setup <name>` iterate builtins plus the
+registry; `cgh setup` accepts plugin-provided names. The four built-in
+integrations get refactored onto this same protocol, which keeps the
+contract honest: core is just the first consumer of its own surface.
+Since many recent tools converge on an AGENTS.md file plus a standard
+MCP JSON block, a plugin for such a tool is close to pure data (paths
+and formats), a few dozen lines.
+
 ## Decisions (all questions resolved 2026-07-29)
 
 1. **Naming**: first-party plugins are `cgh-docs` / `cgh-pii` /

@@ -23,6 +23,34 @@ https://www.altikva.com/licenses/LICENSE-1.0
 
 
 ----------------------------------------------------------------------
+Additional permission: plugin exception
+----------------------------------------------------------------------
+
+As an additional permission granted by the copyright holder, a "cgh
+plugin" is not considered an adaptation, a derivative work, or a work
+based on this software for the purposes of either license above.
+
+A cgh plugin is a separate work that interacts with this software
+solely through its documented plugin interfaces: the "cgh" entry-point
+group, the public plugin API module, and the public data types those
+interfaces exchange, as documented by the project. Importing those
+interfaces does not, by itself, subject the plugin to the terms above.
+
+Authors of cgh plugins may therefore license and distribute their
+plugins under any terms of their choosing, including proprietary or
+commercial terms.
+
+This exception does NOT apply to:
+
+  - copies of, or modifications to, this software itself, in whole or
+    in part, beyond the interface imports described above;
+  - distributing this software, alone or bundled with a plugin;
+  - the use of this software itself, which remains governed by the
+    licenses above (including the NonCommercial term) regardless of
+    which plugins are installed alongside it.
+
+
+----------------------------------------------------------------------
 MIT License
 ----------------------------------------------------------------------
 

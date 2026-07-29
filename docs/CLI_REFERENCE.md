@@ -575,3 +575,17 @@ cgh guard [status|sync] [--root DIR]
 Fail posture follows the mode: `assist` fails open with a logged
 warning, `secure` fails closed, a broken guard reads as blocked. Every
 denial is logged to `.codegraph/activity.log`.
+
+### `memory`
+
+Shared memory hygiene. cgh's knowledge store is the canonical
+cross-agent memory (standing instructions, session digests, learnings);
+this command keeps it dense instead of noisy.
+
+```
+cgh memory review [--days N] [--root DIR]
+```
+
+Lists entries older than the window (default 90 days) so a human, or an
+agent asked to tidy, can prune with the `knowledge_forget` MCP tool or
+supersede them with fresh entries.

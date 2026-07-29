@@ -9,6 +9,23 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Session continuity: checkpoint and resume.** Clearing an agent's
+  context stops costing anything. The `checkpoint` MCP tool persists a
+  session digest that supersedes the previous one for the same session;
+  `resume` returns ONE ranked, budget-capped bundle: standing
+  instructions first (never truncated), then recent digests,
+  task-relevant knowledge, open plans, and recent file summaries.
+  Claude Code lifecycle hooks make it automatic: PreCompact and
+  SessionEnd record a checkpoint marker even when the model forgot,
+  and SessionStart prints a two-line header announcing the bundle, the
+  full bundle loading on demand so it only costs tokens when used.
+- **Knowledge store upgrades**: a `standing_instruction` kind for
+  durable user rules (they lead every resume bundle), supersede links
+  (a new entry can replace an older one, which drops out of searches
+  and bundles), read-only federation on request (`scope="all"` on
+  `knowledge_search` and `resume` pulls subrepo knowledge,
+  scope-tagged, never by default), and `cgh memory review` listing
+  stale entries for pruning.
 - **Confidentiality guard**: detection is now enforced by default at the
   agent's own tools, not just at cgh's MCP responses. `cgh init` /
   `cgh setup claude` install a Claude Code pre-tool-use hook that

@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import json
 import subprocess
 from datetime import UTC, datetime
@@ -28,9 +30,12 @@ def _git(repo_root: str | Path, *args: str) -> str | None:
         r = subprocess.run(
             ["git", *args],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(repo_root),
             timeout=5,
+            **quiet_subprocess_kwargs(),
         )
         if r.returncode == 0:
             return r.stdout.strip()
@@ -82,7 +87,10 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
         "stats": {
-            k: v for k, v in stats.items() if k in ("indexed", "skipped", "errors", "elapsed_s", "method", "extra_dirs")
+            k: v
+            for k, v in stats.items()
+            if k
+            in ("indexed", "skipped", "errors", "elapsed_s", "method", "extra_dirs")
         },
     }
     try:
@@ -165,7 +173,11 @@ def scan_status(repo_root: str | Path) -> dict:
     # NOT stale, the watcher keeps the index in sync on each file save.
     # If the watcher is down, a separate check would be needed, but the
     # git-vs-index sha comparison alone is the right coarse signal.
-    fresh = indexed_sha is not None and current_sha is not None and indexed_sha == current_sha
+    fresh = (
+        indexed_sha is not None
+        and current_sha is not None
+        and indexed_sha == current_sha
+    )
 
     return {
         "indexed_sha": indexed_sha,

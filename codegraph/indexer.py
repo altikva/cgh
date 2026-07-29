@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import os
 import sys
 import time
@@ -799,6 +801,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
             errors="replace",
             cwd=str(repo_root),
             timeout=30,
+            **quiet_subprocess_kwargs(),
         )
         if result.returncode != 0:
             return None
@@ -910,6 +913,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
             encoding="utf-8",
             errors="replace",
             timeout=60,
+            **quiet_subprocess_kwargs(),
         )
         if r.returncode != 0:
             return []
@@ -980,6 +984,7 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
             # Match git ls-files (30s): a large rebase diff was timing out at
             # 10s and silently falling back to a full scan.
             timeout=30,
+            **quiet_subprocess_kwargs(),
         )
         changed: list[Path] = []
         deleted: list[Path] = []

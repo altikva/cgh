@@ -9,6 +9,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Confidentiality guard**: detection is now enforced by default at the
+  agent's own tools, not just at cgh's MCP responses. `cgh init` /
+  `cgh setup claude` install a Claude Code pre-tool-use hook that
+  consults the finding store before every Read, Grep, Glob or Bash call
+  and denies access (exit 2 with a named reason) to files flagged
+  confidential or carrying block-severity findings, in single-digit
+  milliseconds via direct SQLite reads. Bash matching follows the mode:
+  `assist` guards known read commands, `secure` denies any command
+  whose arguments hit a flagged path. Fail posture follows the mode
+  too: assist fails open with a logged warning, secure fails closed. In
+  secure mode a second static layer mirrors flagged paths into
+  `Read()` deny rules in `.claude/settings.local.json` (synced after
+  `cgh classify train` or via `cgh guard sync`, user-authored rules
+  never touched). `cgh guard status` reports the honest per-agent map:
+  enforce, advisory, or unprotected, where the only barrier is the
+  MCP-side gate. Every denial lands in activity.log.
 - **cgh-classify plugin** (in `plugins/cgh-classify`, published
   separately): human-trainable confidentiality classification, pure
   standard library. `cgh classify label <file> [--not]` maintains the

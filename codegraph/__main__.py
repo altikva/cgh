@@ -41,6 +41,7 @@ from codegraph.cli.commands_index import (
 from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_findings import cmd_findings
+from codegraph.cli.commands_guard import cmd_guard, cmd_hook_guard
 from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
@@ -147,6 +148,7 @@ def _print_help():
                     "Index files bypassing .gitignore (requires confirmation)",
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
+                ("guard", "Confidentiality guard: agent-side enforcement"),
             ],
         ),
     ]
@@ -572,6 +574,14 @@ def main() -> None:
     _add_root(p)
     p.add_argument("--json", action="store_true")
 
+    # --- guard ---
+    p = sub.add_parser("guard", help="Confidentiality guard: agent-side enforcement")
+    p.add_argument("action", nargs="?", default="status", choices=["status", "sync"])
+    _add_root(p)
+
+    # --- _hook_guard (internal: invoked by agent pre-tool-use hooks) ---
+    sub.add_parser("_hook_guard", help=argparse.SUPPRESS)
+
     # --- findings ---
     p = sub.add_parser("findings", help="Query scanner findings (pii, secrets, ...)")
     _add_root(p)
@@ -664,6 +674,8 @@ def main() -> None:
         "_reindex_hook": cmd_reindex_hook,
         "plugins": cmd_plugins,
         "findings": cmd_findings,
+        "guard": cmd_guard,
+        "_hook_guard": cmd_hook_guard,
     }
 
     # Plugin-registered verbs dispatch through argparse's set_defaults(func=…)

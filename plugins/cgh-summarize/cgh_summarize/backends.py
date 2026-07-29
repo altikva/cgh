@@ -42,7 +42,14 @@ class StructuralBackend:
 
 
 class CliBackend:
-    """An agent CLI in headless mode. Uses the CLI's own auth and billing."""
+    """An agent CLI in headless mode. Uses the CLI's own auth and billing.
+
+    Windows note: npm-installed CLIs are `.cmd` shims. `shutil.which`
+    finds them (so the backend reports available), but CreateProcess
+    cannot launch a `.cmd` directly, subprocess raises WinError 2 as if
+    a file were missing. The resolved path is therefore used verbatim
+    and `.cmd`/`.bat` shims run through `cmd /c`.
+    """
 
     egress = "cloud"
 
@@ -50,22 +57,29 @@ class CliBackend:
         self.tool = tool
         self.name = f"cli:{tool}"
 
+    def _resolved(self) -> str | None:
+        return shutil.which(self.tool)
+
     def _command(self, prompt: str, config: dict) -> list[str]:
+        exe = self._resolved() or self.tool
         if self.tool == "claude":
             model = config.get("claude_model", "haiku")
-            return ["claude", "-p", prompt, "--model", str(model)]
-        if self.tool == "gemini":
+            argv = [exe, "-p", prompt, "--model", str(model)]
+        elif self.tool == "gemini":
             model = config.get("gemini_model", "gemini-2.5-flash")
-            return ["gemini", "-m", str(model), "-p", prompt]
-        # codex
-        return ["codex", "exec", prompt]
+            argv = [exe, "-m", str(model), "-p", prompt]
+        else:  # codex
+            argv = [exe, "exec", prompt]
+        if exe.lower().endswith((".cmd", ".bat")):
+            argv = ["cmd", "/c", *argv]
+        return argv
 
     def available(self, config: dict) -> bool:
-        return shutil.which(self.tool) is not None
+        return self._resolved() is not None
 
     def summarize(self, prompt: str, config: dict) -> str:
         proc = subprocess.run(
-            self._command(prompt, config),
+            self._command(prompt.replace("\x00", ""), config),
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,

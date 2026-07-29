@@ -74,6 +74,19 @@ def live_workers(repo_root: str | Path) -> list[int]:
         if entry.name == "keepalive":
             alive.append(0)
             continue
+        if entry.name.startswith("parent-"):
+            # A federated parent owner keeping this child alive. Counts
+            # as a worker (the child lives as long as the parent), prunes
+            # itself when the parent dies.
+            try:
+                parent_pid = int(entry.name.split("-", 1)[1])
+            except ValueError:
+                continue
+            if is_pid_alive(parent_pid):
+                alive.append(parent_pid)
+            else:
+                entry.unlink(missing_ok=True)
+            continue
         try:
             pid = int(entry.name)
         except ValueError:
@@ -83,6 +96,50 @@ def live_workers(repo_root: str | Path) -> list[int]:
         else:
             # Stale, drop it
             entry.unlink(missing_ok=True)
+    return alive
+
+
+def register_parent_marker(repo_root: str | Path) -> Path:
+    """Drop a `parent-<pid>` marker: a federated parent owner keeping this
+    child alive. Counts as a live worker for the owner's shutdown logic
+    (the child lives as long as the parent), but NOT as an MCP worker:
+    a child whose only company is its parent may release its write lock
+    between watcher bursts so the parent's read-only fan-out keeps
+    working."""
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    marker = wd / f"parent-{os.getpid()}"
+    marker.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    return marker
+
+
+def unregister_parent_marker(repo_root: str | Path) -> None:
+    """Remove this process's parent marker (and any legacy plain-pid
+    marker written by older versions). No-op if absent."""
+    try:
+        (workers_dir(repo_root) / f"parent-{os.getpid()}").unlink(missing_ok=True)
+        (workers_dir(repo_root) / f"{os.getpid()}").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def mcp_workers(repo_root: str | Path) -> list[int]:
+    """PIDs of live MCP proxies only: plain-pid markers, excluding the
+    keepalive and parent-<pid> markers. This is the population that can
+    have tool calls in flight."""
+    wd = workers_dir(repo_root)
+    if not wd.exists():
+        return []
+    alive: list[int] = []
+    for entry in wd.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if is_pid_alive(pid):
+            alive.append(pid)
     return alive
 
 
@@ -282,7 +339,11 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
 
     from codegraph.state.auth import ensure_auth_key
 
-    auth_token = ensure_auth_key(repo_root) if repo_root else os.environ.get("CODEGRAPH_AUTH_KEY", "")
+    auth_token = (
+        ensure_auth_key(repo_root)
+        if repo_root
+        else os.environ.get("CODEGRAPH_AUTH_KEY", "")
+    )
 
     url_path = "/mcp"
 
@@ -316,7 +377,9 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
                 conn.request("POST", url_path, body=body, headers=headers)
                 resp = conn.getresponse()
                 # Capture session header if present
-                new_sid = resp.getheader("Mcp-Session-Id") or resp.getheader("mcp-session-id")
+                new_sid = resp.getheader("Mcp-Session-Id") or resp.getheader(
+                    "mcp-session-id"
+                )
                 if new_sid:
                     session_id = new_sid
                 response_body = resp.read()
@@ -343,7 +406,11 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
                 continue
             # Strip SSE framing if present ("data: {...}\n\n")
             if text.startswith("data:"):
-                lines = [ln[len("data:") :].strip() for ln in text.splitlines() if ln.startswith("data:")]
+                lines = [
+                    ln[len("data:") :].strip()
+                    for ln in text.splitlines()
+                    if ln.startswith("data:")
+                ]
                 text = "\n".join(ln for ln in lines if ln)
             sys.stdout.write(text + "\n")
             sys.stdout.flush()

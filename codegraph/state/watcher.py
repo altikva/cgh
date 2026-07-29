@@ -138,6 +138,25 @@ class _CodeGraphHandler(FileSystemEventHandler):
         for path in batch:
             if not gitignored.get(path, False):
                 self._reindex(path)
+        self._maybe_release_lock()
+
+    def _maybe_release_lock(self) -> None:
+        """Idle release: with no MCP proxy attached, nothing can have a
+        tool call in flight, so drop the cached write connection and give
+        the graph file lock back, a federated parent's read-only fan-out
+        needs it. Reopened lazily on the next index or tool call. The
+        parent-<pid> markers that keep an auto-started child alive do not
+        count: they never issue tool calls."""
+        try:
+            from codegraph.state.ipc import mcp_workers
+
+            if mcp_workers(self._root):
+                return
+            from codegraph.core.db import reset_connection
+
+            reset_connection()
+        except Exception:
+            pass
 
     def _reindex(self, path: str) -> None:
         from codegraph.state.activity import log as _activity_log

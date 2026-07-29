@@ -266,7 +266,7 @@ def main() -> None:
     p = sub.add_parser("setup", help="Generate integration files for AI tools")
     p.add_argument(
         "target",
-        choices=["claude", "cursor", "codex", "gemini", "all"],
+        choices=["claude", "cursor", "codex", "gemini", "bob", "all"],
         help="Which AI tool to configure",
     )
     _add_root(p)

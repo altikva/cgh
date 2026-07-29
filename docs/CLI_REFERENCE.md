@@ -108,13 +108,14 @@ cgh setup <target> [--root DIR]
 
 | Argument | Values |
 |----------|--------|
-| `target` | `claude`, `cursor`, `codex`, `gemini`, `all` |
+| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all` |
 
 **Example:**
 
 ```bash
 cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
+cgh setup bob        # writes .bob/mcp.json + .bob/rules/
 cgh setup all        # writes configs for all tools
 ```
 

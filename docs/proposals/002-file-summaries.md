@@ -67,7 +67,10 @@ Dedicated plugins remain for models needing special handling.
 Two user profiles must both stay first-class: the user who runs cgh to
 cut token spend and wants summaries with minimum ceremony, and the user
 whose priority is controlling what leaves the machine. One knob covers
-both, `egress` in `[plugin.summarize]`:
+both, `egress` in `[plugin.summarize]`. Its default follows the global
+`mode` switch introduced in proposal 003 (`assist` maps to `open`,
+`secure` maps to `strict`; secure = assist + security, nothing is
+turned off, gates are added):
 
 - `egress = "open"` (default): the gate blocks on what the Finding store
   actually knows. A `confidential` finding: blocked, always. Any

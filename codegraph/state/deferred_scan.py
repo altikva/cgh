@@ -76,7 +76,12 @@ def _process(repo_root: str, path: str, blob_sha: str) -> None:
             continue
         if text is None:
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
+                # Binary files (docx, xlsx, images) decode with embedded
+                # nulls; strip them so scanners and their backends never
+                # receive text no OS API will accept.
+                text = p.read_text(encoding="utf-8", errors="replace").replace(
+                    "\x00", ""
+                )
             except OSError:
                 return
         found = scanner.scan(p, text, None) or []

@@ -34,6 +34,7 @@ def build_prompt(path: Path, text: str, language: str) -> str:
     capped excerpt. The outline anchors the model on structure; the
     excerpt gives it prose to work with."""
     outline_lines: list[str] = []
+    section_previews: list[str] = []
     try:
         from codegraph.parsers import get_parser_for_path
 
@@ -47,16 +48,25 @@ def build_prompt(path: Path, text: str, language: str) -> str:
                 outline_lines.append(f"class {cls.name}")
             for sec in idx.sections[:40]:
                 outline_lines.append(f"{'#' * max(sec.level, 1)} {sec.title}")
+                section_previews.append(sec.body_preview or "")
             for res in idx.resources[:20]:
                 outline_lines.append(f"resource {res.type} {res.name}")
     except Exception:
         pass
 
+    # Binary documents (docx, xlsx, pdf) decode to replacement-character
+    # soup; their parser sections carry the real text, so the excerpt
+    # comes from the section previews instead of raw bytes.
+    excerpt = text[:_EXCERPT_CHARS]
+    if excerpt.count("�") > 50:
+        previews = [s for s in section_previews if s]
+        excerpt = "\n".join(previews)[:_EXCERPT_CHARS] if previews else ""
+
     return (
         f"Summarize the file {path.name} for a software engineer, in "
         f"{language}, 5 sentences at most, plain prose, no preamble.\n"
         "OUTLINE:\n" + "\n".join(outline_lines) + "\n"
-        "EXCERPT:\n" + text[:_EXCERPT_CHARS]
+        "EXCERPT:\n" + excerpt
     )
 
 
@@ -92,7 +102,14 @@ class SummarizeScanner:
             self._audit(f"egress denied ({reason}), using {backend.name}: {path}")
 
         prompt = build_prompt(path, text, str(self.config.get("language", "en")))
-        summary = (backend.summarize(prompt, self.config) or "").strip()
+        try:
+            summary = (backend.summarize(prompt, self.config) or "").strip()
+        except Exception as exc:
+            # Name the failing backend: the deferred worker prefixes the
+            # scanned file's path, which otherwise reads as if the file
+            # itself were the problem. Re-raise so nothing is recorded
+            # and the file retries on its next change.
+            raise RuntimeError(f"summarize backend {backend.name}: {exc}") from exc
         if not summary:
             return []
         if getattr(backend, "egress", "cloud") == "cloud":

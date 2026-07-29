@@ -89,12 +89,13 @@ def _logged_tool(fn):
 
 
 def _get_conn():
-    global _conn
-    if _conn is None:
-        from codegraph.core.db import get_connection
+    # Deliberately no local cache: codegraph.core.db is the single
+    # connection authority, so the watcher's idle release (dropping the
+    # write lock between bursts when no MCP worker is attached) takes
+    # effect here immediately, and the next tool call reopens lazily.
+    from codegraph.core.db import get_connection
 
-        _conn = get_connection(_root)
-    return _conn
+    return get_connection(_root)
 
 
 def _get_fts():

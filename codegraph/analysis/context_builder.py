@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -98,8 +100,11 @@ def _check_ruflo_available() -> bool:
                 r = subprocess.run(
                     ["npx", "ruflo", "--version"],
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=5,
+                    **quiet_subprocess_kwargs(),
                 )
                 _check_ruflo_available._cached = r.returncode == 0
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -156,9 +161,12 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 cwd=str(__import__("pathlib").Path.cwd()),
+                **quiet_subprocess_kwargs(),
             )
             if result.returncode == 0 and result.stdout.strip():
                 data = _json.loads(result.stdout)
@@ -179,7 +187,12 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
                             similarity=sim,
                         )
                     )
-        except (subprocess.TimeoutExpired, FileNotFoundError, _json.JSONDecodeError, OSError):
+        except (
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+            _json.JSONDecodeError,
+            OSError,
+        ):
             pass
 
     hits.sort(key=lambda h: h.similarity, reverse=True)
@@ -331,7 +344,9 @@ def context_for_task(
     files = sorted(set(n.file_path for n in nodes))
 
     # Estimate tokens (rough: ~4 chars per token)
-    total_chars = sum(len(n.name) + len(n.docstring) + len(n.file_path) + 50 for n in nodes)
+    total_chars = sum(
+        len(n.name) + len(n.docstring) + len(n.file_path) + 50 for n in nodes
+    )
     token_estimate = total_chars // 4
 
     return TaskContext(
@@ -370,7 +385,9 @@ def _local_knowledge_hits(task: str, limit: int = 3) -> list[KnowledgeHit]:
         return []
 
 
-def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) -> list[MemoryDocHit]:
+def _local_memory_hits(
+    fts_conn: sqlite3.Connection, task: str, limit: int = 3
+) -> list[MemoryDocHit]:
     """Wrap fts.memory_search with graceful fallback + keyword expansion."""
     try:
         from codegraph.core.fts import memory_search as _search
@@ -393,7 +410,9 @@ def _local_memory_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 3) 
         return []
 
 
-def _local_plan_hits(fts_conn: sqlite3.Connection, task: str, limit: int = 2) -> list[PlanDocHit]:
+def _local_plan_hits(
+    fts_conn: sqlite3.Connection, task: str, limit: int = 2
+) -> list[PlanDocHit]:
     """Wrap fts.plan_search with graceful fallback."""
     try:
         from codegraph.core.fts import plan_search as _search
@@ -422,10 +441,15 @@ def render_context_markdown(ctx: TaskContext) -> str:
     lines = [f"## Context for: {ctx.task}", ""]
 
     for node in ctx.nodes:
-        kind_icon = {"function": "fn", "class": "cls", "md_section": "doc", "tf_resource": "tf"}.get(
-            node.kind, node.kind
+        kind_icon = {
+            "function": "fn",
+            "class": "cls",
+            "md_section": "doc",
+            "tf_resource": "tf",
+        }.get(node.kind, node.kind)
+        lines.append(
+            f"### [{kind_icon}] `{node.name}`, {node.file_path}:{node.start_line}"
         )
-        lines.append(f"### [{kind_icon}] `{node.name}`, {node.file_path}:{node.start_line}")
         if node.docstring:
             lines.append(f"> {node.docstring[:150]}")
         if node.relationships:
@@ -471,7 +495,9 @@ def render_context_markdown(ctx: TaskContext) -> str:
         lines.append("")
         for hit in ctx.memory_hits:
             source_label = "memory" if hit.source == "ruflo_memory" else "pattern"
-            lines.append(f"- **[{source_label}]** `{hit.key}` (sim: {hit.similarity:.2f})")
+            lines.append(
+                f"- **[{source_label}]** `{hit.key}` (sim: {hit.similarity:.2f})"
+            )
             lines.append(f"  {hit.content[:200]}")
             lines.append("")
 

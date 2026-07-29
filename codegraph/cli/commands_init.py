@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import argparse
 import os
 import sys
@@ -441,14 +443,15 @@ def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
             "graph.db deleted.\n"
         )
         return
-    if result.status == "stale_kuzu":
+    if result.status in ("stale_kuzu", "kuzu_unreadable"):
         console.print(
             f"    [green]+[/green] re-indexed into graph.duckdb "
             f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            "graph.db deleted."
+            + ("graph.db deleted." if result.kuzu_deleted else "graph.db kept.")
         )
         console.print(
-            f"    [dim]Note: {result.message}, DuckDB accepted as canonical.[/dim]\n"
+            f"    [dim]Note: {result.message.rstrip('.')}. "
+            "DuckDB accepted as canonical.[/dim]\n"
         )
         return
     # mismatched
@@ -660,6 +663,7 @@ def _count_parseable_files(root: Path) -> dict[str, int]:
             errors="replace",
             cwd=str(root),
             timeout=30,
+            **quiet_subprocess_kwargs(),
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
@@ -1027,8 +1031,99 @@ def cmd_init(args: argparse.Namespace) -> None:
             "  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]"
         )
 
+    # -- Federated children: propagate the init --
+    if not getattr(args, "no_children", False):
+        _init_children(root, assume_yes=bool(getattr(args, "yes", False)))
+
     # -- Done --
     _print_init_summary()
+
+
+def _init_children(root: Path, assume_yes: bool) -> None:
+    """Bring every declared subrepo to the current cgh version.
+
+    A parent that upgrades cgh, or re-runs init, propagates to its
+    children: uninitialized ones get a full init + index, initialized
+    ones get the idempotent refresh (Kuzu auto-migration, hooks, missing
+    config, auth key). Each child runs in its own subprocess with
+    --no-children, so propagation stays single-level and a federation
+    cycle cannot loop. Failures are per-child and never abort the
+    parent's init.
+    """
+    import subprocess
+    import sys as _sys
+
+    from codegraph.analysis.federation import resolve_children, verify_child
+    from codegraph.core.utils import quiet_subprocess_kwargs
+
+    children = resolve_children(root)
+    if not children:
+        return
+
+    fresh = [c for c in children if not verify_child(c).ok]
+    console.print(
+        f"\n[bold]Federated children[/bold] [dim]({len(children)} declared, "
+        f"{len(fresh)} need a first init)[/dim]"
+    )
+
+    if not assume_yes:
+        try:
+            answer = (
+                console.input(
+                    f"  Initialize / refresh the {len(children)} federated "
+                    "subrepo(s) now? [Y/n] "
+                )
+                .strip()
+                .lower()
+            )
+        except EOFError:
+            answer = "n"
+        if answer in ("n", "no"):
+            console.print(
+                "  [dim]Skipped. Run[/dim] [cyan]cgh init --yes[/cyan] "
+                "[dim]inside each subrepo when ready.[/dim]"
+            )
+            return
+
+    for child in children:
+        was_ok = verify_child(child).ok
+        try:
+            proc = subprocess.run(
+                [
+                    _sys.executable,
+                    "-m",
+                    "codegraph",
+                    "init",
+                    "--root",
+                    str(child),
+                    "--yes",
+                    "--no-children",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                **quiet_subprocess_kwargs(),
+            )
+            if proc.returncode != 0:
+                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                console.print(
+                    f"  [red]x[/red] {child.name}: init failed"
+                    + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
+                )
+                continue
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            console.print(f"  [red]x[/red] {child.name}: {exc}")
+            continue
+
+        status = verify_child(child)
+        if status.ok:
+            label = "refreshed" if was_ok else "initialized + indexed"
+            console.print(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
+        else:
+            console.print(
+                f"  [yellow]~[/yellow] {child.name} "
+                "[dim]initialized but still no graph DB, run cgh index there[/dim]"
+            )
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:
@@ -1075,16 +1170,87 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "command": f"{cli_prefix} _hook_precheck_read  # cgh-precheck-read",
             "async": False,
         },
+        {
+            "event": "PreToolUse",
+            "matcher": "Read|Grep|Glob|Bash",
+            "marker": "cgh-guard",
+            "label": "confidentiality guard",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_guard  # cgh-guard",
+            "async": False,
+        },
+        # Lifecycle hooks (no matcher): session continuity. PreCompact and
+        # SessionEnd record an automatic checkpoint marker; SessionStart
+        # prints the tiny resume header, the full bundle loads on demand.
+        {
+            "event": "PreCompact",
+            "matcher": "",
+            "marker": "cgh-auto-checkpoint",
+            "label": "auto checkpoint before compaction",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_checkpoint  # cgh-auto-checkpoint",
+            "async": False,
+        },
+        {
+            "event": "SessionEnd",
+            "matcher": "",
+            "marker": "cgh-auto-checkpoint-end",
+            "label": "auto checkpoint at session end",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_checkpoint  # cgh-auto-checkpoint-end",
+            "async": False,
+        },
+        {
+            "event": "SessionStart",
+            "matcher": "",
+            "marker": "cgh-resume-header",
+            "label": "resume bundle header",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_resume_header  # cgh-resume-header",
+            "async": False,
+        },
     ]
 
 
+def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[str]:
+    """Standalone entry point for the Claude hook install: load both
+    settings files, route every cgh hook spec to the right one, write
+    back what changed. Returns the labels of hooks added. Used by the
+    AgentIntegration surface; cgh init drives the same machinery with
+    its own console output."""
+    import json as _json
+
+    settings_dir = Path(root) / ".claude"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    shared_path = settings_dir / "settings.json"
+    local_path = settings_dir / "settings.local.json"
+
+    def _load(path: Path) -> dict:
+        try:
+            return (
+                _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            )
+        except (ValueError, OSError):
+            return {}
+
+    shared = _load(shared_path)
+    local = _load(local_path)
+    result = _ensure_claude_hooks(shared, local, cli_prefix)
+    if result["shared_changed"]:
+        shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
+    if result["local_changed"]:
+        local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+    return list(result["added"])
+
+
 def _find_hook(settings: dict, spec: dict) -> bool:
-    """True iff `settings` contains a hook entry tagged with spec['marker']."""
+    """True iff `settings` contains a hook entry tagged with spec['marker'].
+    Lifecycle hooks carry no matcher; treat missing and empty as equal."""
     bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
     return any(
         spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
         for h in bucket
-        if h.get("matcher") == spec["matcher"]
+        if (h.get("matcher") or "") == (spec["matcher"] or "")
     )
 
 
@@ -1096,7 +1262,7 @@ def _drop_hook(settings: dict, spec: dict) -> bool:
         h
         for h in bucket
         if not (
-            h.get("matcher") == spec["matcher"]
+            (h.get("matcher") or "") == (spec["matcher"] or "")
             and spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
         )
     ]
@@ -1118,7 +1284,10 @@ def _append_hook(settings: dict, spec: dict) -> None:
         entry["async"] = True
     if spec.get("statusMessage"):
         entry["statusMessage"] = spec["statusMessage"]
-    bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
+    wrapper: dict = {"hooks": [entry]}
+    if spec.get("matcher"):
+        wrapper["matcher"] = spec["matcher"]
+    bucket.append(wrapper)
 
 
 def _ensure_claude_hooks(
@@ -1557,6 +1726,20 @@ def cmd_setup(args) -> None:
     for tool_key in targets:
         console.print(f"\n[bold]{tool_key}[/bold]")
         _install_integration(root, tool_key, overwrite_skills=True)
+
+        # Guard hooks, through the integration surface. Claude's ride the
+        # shared hook specs above; Gemini and Codex get their own files.
+        from codegraph.integrations.base import get_integration
+
+        integration = get_integration(tool_key)
+        if integration is not None and integration.guard_spec().level != "none":
+            if integration.install_guard(root):
+                console.print(
+                    f"    [green]+[/green] guard hook installed "
+                    f"[dim]({integration.guard_spec().level})[/dim]"
+                )
+            elif integration.guard_installed(root):
+                console.print("    [dim]• guard hook already present[/dim]")
 
         if tool_key == "claude":
             added = _configure_claude_auto_accept(root)

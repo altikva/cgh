@@ -60,6 +60,59 @@ def cmd_hook_guard(args: argparse.Namespace) -> None:
             audit(root, f"guard error, failing open (assist): {exc}")
 
 
+def cmd_hook_guard_codex(args: argparse.Namespace) -> None:
+    """Codex variant of the guard: same decision, different protocol.
+    Codex fires PreToolUse for shell commands only and reads a stdout
+    JSON decision (exit 0 either way). Vendor docs disagree on the
+    field spelling, so the deny carries both accepted forms."""
+    from codegraph.state.guard import audit, check_tool_call, guard_mode
+
+    mode = "assist"
+    root = None
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+        cwd = payload.get("cwd") or os.getcwd()
+        from codegraph.core.config import find_codegraph_root
+
+        root = find_codegraph_root(cwd)
+        if root is None:
+            return
+        mode = guard_mode(root)
+        reason = check_tool_call(
+            root,
+            str(payload.get("tool_name", "") or payload.get("tool", "")),
+            payload.get("tool_input") or payload.get("arguments") or {},
+            mode,
+        )
+        if reason:
+            audit(root, f"deny (codex): {reason}")
+            print(
+                json.dumps(
+                    {
+                        "decision": "block",
+                        "reason": reason,
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                )
+            )
+    except Exception as exc:
+        if mode == "secure":
+            print(
+                json.dumps(
+                    {
+                        "decision": "block",
+                        "reason": f"cgh guard failed closed (secure mode): {exc}",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "cgh guard failed closed",
+                    }
+                )
+            )
+            return
+        if root is not None:
+            audit(root, f"guard error, failing open (assist, codex): {exc}")
+
+
 def cmd_guard(args: argparse.Namespace) -> None:
     from rich.console import Console
 
@@ -96,37 +149,35 @@ def cmd_guard(args: argparse.Namespace) -> None:
     )
     console.print(f"[bold]flagged files:[/bold] {len(barred)}")
 
-    hook_installed = _claude_guard_hook_installed(root)
-    agents = [
-        ("Claude Code", "enforce" if hook_installed else "unprotected"),
-        ("Gemini CLI", "unprotected"),
-        ("Codex CLI", "unprotected"),
-    ]
+    from codegraph.integrations.base import all_integrations
+
     console.print("[bold]agents:[/bold]")
     badges = {
         "enforce": "[green]enforce[/green]",
+        "partial": "[yellow]partial[/yellow]",
         "advisory": "[yellow]advisory[/yellow]",
-        "unprotected": "[red]unprotected[/red]",
+        "none": "[red]unprotected[/red]",
     }
-    for name, level in agents:
-        console.print(f"  {name:<12} {badges[level]}")
-    if not hook_installed:
+    missing: list[str] = []
+    for integration in all_integrations():
+        if not integration.detect(root):
+            continue
+        spec = integration.guard_spec()
+        if spec.level == "none":
+            level = "none"
+        elif integration.guard_installed(root):
+            level = spec.level
+        else:
+            level = "none"
+            missing.append(integration.name)
+        note = f"  [dim]{spec.note}[/dim]" if spec.note and level != "none" else ""
+        console.print(f"  {integration.display:<12} {badges[level]}{note}")
+    for name in missing:
         console.print(
-            "[dim]Install the Claude Code guard hook with[/dim] "
-            "[cyan]cgh setup claude[/cyan]"
+            f"[dim]Install the {name} guard hook with[/dim] "
+            f"[cyan]cgh setup {name}[/cyan]"
         )
     console.print(
         "[dim]An agent listed unprotected can read anything its own tools "
         "allow; the only barrier there is cgh's MCP-side gate.[/dim]"
     )
-
-
-def _claude_guard_hook_installed(root: Path) -> bool:
-    for name in ("settings.local.json", "settings.json"):
-        p = root / ".claude" / name
-        try:
-            if p.exists() and "cgh-guard" in p.read_text(encoding="utf-8"):
-                return True
-        except OSError:
-            continue
-    return False

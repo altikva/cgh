@@ -1118,6 +1118,37 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
     ]
 
 
+def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[str]:
+    """Standalone entry point for the Claude hook install: load both
+    settings files, route every cgh hook spec to the right one, write
+    back what changed. Returns the labels of hooks added. Used by the
+    AgentIntegration surface; cgh init drives the same machinery with
+    its own console output."""
+    import json as _json
+
+    settings_dir = Path(root) / ".claude"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    shared_path = settings_dir / "settings.json"
+    local_path = settings_dir / "settings.local.json"
+
+    def _load(path: Path) -> dict:
+        try:
+            return (
+                _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            )
+        except (ValueError, OSError):
+            return {}
+
+    shared = _load(shared_path)
+    local = _load(local_path)
+    result = _ensure_claude_hooks(shared, local, cli_prefix)
+    if result["shared_changed"]:
+        shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
+    if result["local_changed"]:
+        local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+    return list(result["added"])
+
+
 def _find_hook(settings: dict, spec: dict) -> bool:
     """True iff `settings` contains a hook entry tagged with spec['marker'].
     Lifecycle hooks carry no matcher; treat missing and empty as equal."""
@@ -1601,6 +1632,20 @@ def cmd_setup(args) -> None:
     for tool_key in targets:
         console.print(f"\n[bold]{tool_key}[/bold]")
         _install_integration(root, tool_key, overwrite_skills=True)
+
+        # Guard hooks, through the integration surface. Claude's ride the
+        # shared hook specs above; Gemini and Codex get their own files.
+        from codegraph.integrations.base import get_integration
+
+        integration = get_integration(tool_key)
+        if integration is not None and integration.guard_spec().level != "none":
+            if integration.install_guard(root):
+                console.print(
+                    f"    [green]+[/green] guard hook installed "
+                    f"[dim]({integration.guard_spec().level})[/dim]"
+                )
+            elif integration.guard_installed(root):
+                console.print("    [dim]• guard hook already present[/dim]")
 
         if tool_key == "claude":
             added = _configure_claude_auto_accept(root)

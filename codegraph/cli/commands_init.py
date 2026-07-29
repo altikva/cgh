@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import argparse
 import os
 import sys
@@ -661,6 +663,7 @@ def _count_parseable_files(root: Path) -> dict[str, int]:
             errors="replace",
             cwd=str(root),
             timeout=30,
+            **quiet_subprocess_kwargs(),
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():

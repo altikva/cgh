@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import json
 import os
 from pathlib import Path
@@ -94,13 +96,17 @@ def register(mcp) -> None:
                 continue
             if target.is_file():
                 if is_supported(target):
-                    preview_files.append(str(target.relative_to(root) if root else target))
+                    preview_files.append(
+                        str(target.relative_to(root) if root else target)
+                    )
             elif target.is_dir():
                 for dirpath, _, filenames in os.walk(target):
                     for filename in filenames:
                         full = Path(dirpath) / filename
                         if is_supported(full):
-                            preview_files.append(str(full.relative_to(root) if root else full))
+                            preview_files.append(
+                                str(full.relative_to(root) if root else full)
+                            )
 
         if not confirmed:
             return json.dumps(
@@ -135,9 +141,13 @@ def register(mcp) -> None:
                 try:
                     ok = index_file(target, root, force=True)
                     if ok:
-                        indexed.append(str(target.relative_to(root) if root else target))
+                        indexed.append(
+                            str(target.relative_to(root) if root else target)
+                        )
                     else:
-                        skipped.append(str(target.relative_to(root) if root else target))
+                        skipped.append(
+                            str(target.relative_to(root) if root else target)
+                        )
                 except Exception as exc:
                     errors.append({"file": str(target), "error": str(exc)})
 
@@ -150,9 +160,13 @@ def register(mcp) -> None:
                         try:
                             ok = index_file(full, root, force=True)
                             if ok:
-                                indexed.append(str(full.relative_to(root) if root else full))
+                                indexed.append(
+                                    str(full.relative_to(root) if root else full)
+                                )
                             else:
-                                skipped.append(str(full.relative_to(root) if root else full))
+                                skipped.append(
+                                    str(full.relative_to(root) if root else full)
+                                )
                         except Exception as exc:
                             errors.append({"file": str(full), "error": str(exc)})
             else:
@@ -297,7 +311,9 @@ def register(mcp) -> None:
             dirnames[:] = [
                 d
                 for d in dirnames
-                if not d.startswith(".") and d not in {"node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
+                if not d.startswith(".")
+                and d
+                not in {"node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
             ]
             for filename in filenames:
                 full = Path(dirpath) / filename
@@ -305,7 +321,11 @@ def register(mcp) -> None:
                     continue
                 try:
                     if index_file(full, root):
-                        indexed.append(str(full.relative_to(root) if root in full.parents else full))
+                        indexed.append(
+                            str(
+                                full.relative_to(root) if root in full.parents else full
+                            )
+                        )
                 except Exception as exc:
                     errors.append({"file": str(full), "error": str(exc)[:200]})
 
@@ -373,8 +393,11 @@ def register(mcp) -> None:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=str(root),
+                **quiet_subprocess_kwargs(),
             )
             files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
         except Exception as exc:

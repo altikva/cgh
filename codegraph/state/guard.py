@@ -208,6 +208,63 @@ def sync_static_rules(repo_root: str | Path) -> tuple[int, int]:
     return (len(added), len(removed))
 
 
+_BOBIGNORE_START = "# >>> cgh guard (managed, do not edit) >>>"
+_BOBIGNORE_END = "# <<< cgh guard <<<"
+
+
+def sync_bobignore(repo_root: str | Path) -> tuple[int, int]:
+    """Mirror the barred paths into a managed block in .bobignore, the
+    file IBM Bob reads to decide what it may access. Only lines inside
+    the marker block are ever touched, so user-authored ignores stay as
+    they are. No-op outside secure mode (an existing managed block is
+    still cleared). Returns (added, removed)."""
+    root = Path(repo_root)
+    ignore_path = root / ".bobignore"
+    existing = ""
+    if ignore_path.exists():
+        try:
+            existing = ignore_path.read_text(encoding="utf-8")
+        except OSError:
+            return (0, 0)
+
+    before: set[str] = set()
+    block_re = re.compile(
+        re.escape(_BOBIGNORE_START) + r"\n(.*?)" + re.escape(_BOBIGNORE_END) + r"\n?",
+        re.DOTALL,
+    )
+    match = block_re.search(existing)
+    if match:
+        before = {line for line in match.group(1).splitlines() if line.strip()}
+
+    wanted: set[str] = set()
+    if guard_mode(root) == "secure":
+        for p in blocking_paths(root):
+            try:
+                wanted.add(Path(p).resolve().relative_to(root.resolve()).as_posix())
+            except ValueError:
+                continue  # outside the repo, .bobignore cannot express it
+
+    if wanted == before:
+        return (0, 0)
+
+    body = (
+        _BOBIGNORE_START
+        + "\n"
+        + "".join(f"{p}\n" for p in sorted(wanted))
+        + _BOBIGNORE_END
+        + "\n"
+    )
+    if match:
+        new = block_re.sub(lambda _m: body, existing, count=1)
+    elif wanted:
+        sep = "" if (not existing or existing.endswith("\n")) else "\n"
+        new = existing + sep + body
+    else:
+        return (0, 0)
+    ignore_path.write_text(new, encoding="utf-8")
+    return (len(wanted - before), len(before - wanted))
+
+
 def audit(repo_root: str | Path, message: str) -> None:
     try:
         from codegraph.state.activity import log as activity_log

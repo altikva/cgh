@@ -75,9 +75,9 @@ jobs:
         # suites run end to end instead of import-skipping.
         run: |
           if [ "$PYTHON_VERSION" = "3.14" ]; then
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize pytest -q
           else
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --extra kuzu pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --extra kuzu pytest -q
           fi
 
   # Advisory early-warning job: resolve the newest deps allowed by the

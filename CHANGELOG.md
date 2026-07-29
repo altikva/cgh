@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Finding store and scanner pipeline**: plugin scanners now run,
+  inline ones right after a file is indexed, heavy ones through a
+  deferred queue that dedupes by git blob SHA and stays off the watcher
+  hot path. Findings (`pii.email`, `secret.aws_key`, `confidential`,
+  `summary`, ...) live in `.codegraph/findings.db`, SQLite in WAL mode
+  so they stay readable while an owner holds the graph write lock and
+  when no owner runs at all. They feed the full-text search (a search
+  for "IBAN" surfaces flagged files), are purged with their file, and
+  are queryable through the federated `findings` MCP tool and the new
+  `cgh findings` command (filters by file, key prefix, severity, scope
+  tag per subrepo).
 - **Plugin loader**: cgh discovers pip-installed plugins through the
   `cgh` entry point group. A plugin exposes `CGH_PLUGIN_API = 1` and
   `register(api)`; the versioned `PluginAPI` covers parsers (shared

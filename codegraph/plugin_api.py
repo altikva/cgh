@@ -49,7 +49,8 @@ class FileScanner(Protocol):
 
     ``deferred = False`` runs inline in ``index_file`` and must be fast
     (regex tier). ``deferred = True`` is queued and executed off the hot
-    path by the owner, keyed by blob SHA (NER tier, model calls).
+    path, keyed by blob SHA (NER tier, model calls); deferred scanners
+    receive ``index=None`` since the parse result is no longer around.
 
     NOTE: registration is available from API v1 so plugins can ship
     scanners today, but core only starts invoking them once the finding

@@ -34,6 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Refuse manual dispatch from non-main refs
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::workflow_dispatch runs only from main"
+          exit 1
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
         with:
@@ -118,7 +124,54 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # Defaults to https://upload.pypi.org/legacy/ when the trusted
-        # publisher is configured on PyPI.
+        # publisher is configured on PyPI. skip-existing lets a
+        # workflow_dispatch re-run publish only what is new (plugin
+        # versions move independently of the core tag).
+        with:
+          skip-existing: true
+
+  publish-plugins:
+    name: Publish first-party plugins to PyPI
+    needs: validate
+    runs-on: ubuntu-latest
+    # One GitHub environment PER plugin (pypi-cgh-docs, pypi-cgh-pii, ...):
+    # PyPI requires every PENDING trusted publisher to have a unique
+    # (owner, repo, workflow, environment) configuration, since before
+    # the first upload nothing else can map a token to a project name.
+    # Each plugin's PyPI entry therefore uses its matching environment;
+    # until an entry exists, that plugin's upload fails without blocking
+    # the others.
+    environment:
+      name: pypi-${{ matrix.plugin }}
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - cgh-docs
+          - cgh-pii
+          - cgh-summarize
+          - cgh-classify
+          - cgh-bugreport
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Build ${{ matrix.plugin }}
+        run: uv build plugins/${{ matrix.plugin }} --out-dir plugin-dist/
+
+      - name: Publish ${{ matrix.plugin }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: plugin-dist/
+          # A tag that does not bump a plugin's version re-uploads the
+          # same file; skip instead of failing the whole release.
+          skip-existing: true
 
   github-release:
     name: Attach dists to GitHub Release

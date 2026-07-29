@@ -128,13 +128,15 @@ jobs:
     name: Publish first-party plugins to PyPI
     needs: validate
     runs-on: ubuntu-latest
-    # Same environment, same OIDC trust, one approval covers the run.
-    # Each plugin needs its own trusted publisher entry on PyPI
-    # (owner altikva, repo cgh, workflow release.yml, environment pypi)
-    # under its own project name; until an entry exists, that plugin's
-    # upload fails without blocking the others.
+    # One GitHub environment PER plugin (pypi-cgh-docs, pypi-cgh-pii, ...):
+    # PyPI requires every PENDING trusted publisher to have a unique
+    # (owner, repo, workflow, environment) configuration, since before
+    # the first upload nothing else can map a token to a project name.
+    # Each plugin's PyPI entry therefore uses its matching environment;
+    # until an entry exists, that plugin's upload fails without blocking
+    # the others.
     environment:
-      name: pypi
+      name: pypi-${{ matrix.plugin }}
     permissions:
       id-token: write
     strategy:

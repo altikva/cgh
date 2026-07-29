@@ -40,6 +40,10 @@ ignore_patterns = ["*.min.js", "*.bundle.js", "*.map", "*.pyc", "*.pyo", "*.so",
 # Skip files larger than this (in KB). Prevents indexing generated files.
 max_file_size_kb = 500
 
+# Global posture: "assist" (warn, fail open) or "secure" (assist plus
+# enforcement: egress allowlist, guards fail closed, static deny sync).
+# mode = "assist"
+
 # Additional directories to include in the graph (relative to project root).
 # Useful for multi-repo setups. Add with: cgh add-dir add ../frontend
 # extra_dirs = ["../ondonne-frontend", "../ondonne-infra"]
@@ -80,6 +84,18 @@ auto_watch = true
 
 # Rebuild the index before accepting MCP connections.
 reindex_on_start = true
+
+
+[plugins]
+# Narrow or bar installed plugins without uninstalling them.
+# enabled = ["pii", "summarize"]
+# disabled = ["classify"]
+
+# Per-plugin settings live in [plugin.<name>] tables (singular). See each
+# plugin's README for its keys; the template written by `cgh init` lists
+# the first-party ones commented out.
+# [plugin.summarize]
+# backend = "auto"
 ```
 
 ### Section Details

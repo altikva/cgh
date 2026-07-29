@@ -110,19 +110,45 @@ def check_bash(repo_root: str | Path, command: str, mode: str) -> str | None:
     return None
 
 
+# Shell-tool names across agents: Claude's Bash, Gemini's
+# run_shell_command, Codex's shell variants.
+_SHELL_TOOLS = {"Bash", "run_shell_command", "shell", "local_shell", "bash"}
+# Search/glob tools where a directory target is fine (barred files inside
+# are caught when actually read).
+_DIR_OK_TOOLS = {"Grep", "Glob", "search_file_content", "glob"}
+
+
 def check_tool_call(
     repo_root: str | Path, tool_name: str, tool_input: dict, mode: str
 ) -> str | None:
-    """Deny reason for one agent tool call, else None."""
-    if tool_name == "Bash":
-        return check_bash(repo_root, str(tool_input.get("command", "")), mode)
-    target = tool_input.get("file_path") or tool_input.get("path") or ""
+    """Deny reason for one agent tool call, else None. Tool and argument
+    names cover Claude Code and Gemini CLI, whose hook payloads share
+    the tool_name / tool_input shape."""
+    if tool_name in _SHELL_TOOLS:
+        command = tool_input.get("command", "")
+        if isinstance(command, list):
+            command = " ".join(str(c) for c in command)
+        return check_bash(repo_root, str(command), mode)
+
+    # Multi-file reads (Gemini's read_many_files): check every path.
+    many = tool_input.get("paths")
+    if isinstance(many, list):
+        for candidate in many:
+            reason = check_path(repo_root, str(candidate))
+            if reason:
+                return reason
+        return None
+
+    target = (
+        tool_input.get("file_path")
+        or tool_input.get("absolute_path")
+        or tool_input.get("path")
+        or ""
+    )
     if not target:
         return None
-    if tool_name in ("Grep", "Glob"):
-        # A directory target is fine; barred files inside are caught when
-        # actually read. Only a direct file target is checked.
-        p = Path(target)
+    if tool_name in _DIR_OK_TOOLS:
+        p = Path(str(target))
         if not p.suffix and not p.is_file():
             return None
     return check_path(repo_root, str(target))

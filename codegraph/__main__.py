@@ -41,7 +41,11 @@ from codegraph.cli.commands_index import (
 from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_findings import cmd_findings
-from codegraph.cli.commands_guard import cmd_guard, cmd_hook_guard
+from codegraph.cli.commands_guard import (
+    cmd_guard,
+    cmd_hook_guard,
+    cmd_hook_guard_codex,
+)
 from codegraph.cli.commands_session import (
     cmd_hook_checkpoint,
     cmd_hook_resume_header,
@@ -586,6 +590,7 @@ def main() -> None:
 
     # --- _hook_guard (internal: invoked by agent pre-tool-use hooks) ---
     sub.add_parser("_hook_guard", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_guard_codex", help=argparse.SUPPRESS)
 
     # --- session continuity (lifecycle hooks + memory hygiene) ---
     sub.add_parser("_hook_checkpoint", help=argparse.SUPPRESS)
@@ -689,6 +694,7 @@ def main() -> None:
         "findings": cmd_findings,
         "guard": cmd_guard,
         "_hook_guard": cmd_hook_guard,
+        "_hook_guard_codex": cmd_hook_guard_codex,
         "_hook_checkpoint": cmd_hook_checkpoint,
         "_hook_resume_header": cmd_hook_resume_header,
         "memory": cmd_memory,

@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-pii plugin** (in `plugins/cgh-pii`, published separately): every
+  indexed file is scanned inline for personal data and credentials.
+  Emails, international phone numbers, mod-97-validated IBANs and
+  Luhn-validated card numbers become `pii.*` findings (severity warn);
+  AWS access keys and PEM private key blocks become `secret.*` findings
+  (severity block); hardcoded `password = "..."` assignments are warned
+  about. Finding values carry only the match count and first line,
+  never the matched data, so the FTS never spreads what the scanner
+  detects. Keys can be disabled per repo, and an optional deferred NER
+  tier (person names, locations) activates with `cgh-pii[ner]` plus
+  `ner = true` under `[plugin.pii]`.
 - **cgh-docs plugin** (in `plugins/cgh-docs`, published separately):
   pdf, docx and xlsx parsers. Pages, outline entries, Word headings and
   Excel sheets become document sections, searchable through

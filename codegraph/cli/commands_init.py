@@ -1076,6 +1076,15 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "command": f"{cli_prefix} _hook_precheck_read  # cgh-precheck-read",
             "async": False,
         },
+        {
+            "event": "PreToolUse",
+            "matcher": "Read|Grep|Glob|Bash",
+            "marker": "cgh-guard",
+            "label": "confidentiality guard",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_guard  # cgh-guard",
+            "async": False,
+        },
     ]
 
 

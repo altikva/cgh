@@ -553,3 +553,25 @@ cgh findings --key pii.            # every PII finding in the repo
 cgh findings src/billing.py       # everything known about one file
 cgh findings --severity block     # what the gates would stop
 ```
+
+### `guard`
+
+Agent-side confidentiality enforcement. A pre-tool-use hook installed in
+Claude Code (`cgh setup claude` / `cgh init`) consults the finding store
+before every Read, Grep, Glob or Bash call and denies access to files
+flagged confidential or carrying block-severity findings.
+
+```
+cgh guard [status|sync] [--root DIR]
+```
+
+- `status`: active mode, flagged file count, and an honest per-agent map
+  (enforce / advisory / unprotected). An unprotected agent's only barrier
+  is cgh's MCP-side gate.
+- `sync`: mirror flagged paths into static `Read()` deny rules in
+  `.claude/settings.local.json` (secure mode only; user-authored rules
+  are never touched). Runs automatically after `cgh classify train`.
+
+Fail posture follows the mode: `assist` fails open with a logged
+warning, `secure` fails closed, a broken guard reads as blocked. Every
+denial is logged to `.codegraph/activity.log`.

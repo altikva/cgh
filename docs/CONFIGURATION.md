@@ -95,6 +95,7 @@ reindex_on_start = true
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 | `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
+| `mode` | `str` | `"assist"` | Global posture. `assist` optimizes for token savings; `secure` is assist plus enforcement: egress gates switch to allowlist, guards fail closed, static deny rules sync. Nothing turns off in secure. |
 | `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is down. Those children live exactly as long as the parent owner. |
 
 **Default `ignore_dirs`:**

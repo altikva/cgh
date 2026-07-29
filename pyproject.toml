@@ -55,6 +55,15 @@ dependencies = [
 # 3.14 you'll either need a source build (CMake + a C++17 compiler) or
 # you can skip the extra entirely and use the default DuckDB backend.
 kuzu = ["kuzu>=0.7"]
+# Everything in one install: the core plus the five first-party plugins.
+#   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
+plugins = [
+    "cgh-docs>=0.1",
+    "cgh-pii>=0.1",
+    "cgh-summarize>=0.1",
+    "cgh-classify>=0.1",
+    "cgh-bugreport>=0.1",
+]
 
 # Install with `pip install cgh[langs]` to add the optional tree-sitter
 # language parsers (C# and Ruby). They are kept out of the core dependency

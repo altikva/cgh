@@ -40,6 +40,7 @@ from codegraph.cli.commands_index import (
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
+from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
     cmd_compact,
@@ -143,6 +144,7 @@ def _print_help():
                     "force-index",
                     "Index files bypassing .gitignore (requires confirmation)",
                 ),
+                ("plugins", "List installed cgh plugins and their status"),
             ],
         ),
     ]
@@ -563,6 +565,31 @@ def main() -> None:
     p = sub.add_parser("_reindex_hook")
     _add_root(p)
 
+    # --- plugins ---
+    p = sub.add_parser("plugins", help="List installed cgh plugins and their status")
+    _add_root(p)
+    p.add_argument("--json", action="store_true")
+
+    # Load installed plugins BEFORE parse_args so their parsers register
+    # and their CLI verbs exist. The repo root isn't parsed yet, so config
+    # resolution walks up from the CWD; a failure here must never take the
+    # CLI down (the plugin is reported broken by `cgh plugins` instead).
+    try:
+        from codegraph.core.config import find_codegraph_root as _find_root
+        from codegraph.plugins import cli_registrars, load_plugins
+
+        load_plugins(_find_root(os.getcwd()))
+        for _plugin_name, _registrar in cli_registrars():
+            try:
+                _registrar(sub)
+            except Exception as exc:
+                print(
+                    f"[codegraph] plugin {_plugin_name}: CLI registration failed: {exc}",
+                    file=sys.stderr,
+                )
+    except Exception as exc:
+        print(f"[codegraph] plugin loading failed: {exc}", file=sys.stderr)
+
     args = ap.parse_args()
 
     if args.help or not args.cmd:
@@ -624,9 +651,11 @@ def main() -> None:
         "hooks": cmd_githooks,
         "ensurepath": cmd_ensurepath,
         "_reindex_hook": cmd_reindex_hook,
+        "plugins": cmd_plugins,
     }
 
-    handler = dispatch.get(args.cmd)
+    # Plugin-registered verbs dispatch through argparse's set_defaults(func=…)
+    handler = dispatch.get(args.cmd) or getattr(args, "func", None)
     if not handler:
         _print_help()
         return

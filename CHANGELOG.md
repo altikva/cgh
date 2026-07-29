@@ -8,6 +8,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Plugin loader**: cgh discovers pip-installed plugins through the
+  `cgh` entry point group. A plugin exposes `CGH_PLUGIN_API = 1` and
+  `register(api)`; the versioned `PluginAPI` covers parsers (shared
+  registry, indexer and watcher pick them up), per-file scanners
+  (registered now, invoked once the finding store lands), MCP tools
+  (called with the FastMCP instance at owner startup), CLI subcommands,
+  and a generic namespaced extension registry so a plugin can extend
+  another plugin. `[plugins] enabled / disabled` in config gates
+  loading per repo, `[plugin.<name>]` tables pass through to each
+  plugin, and the new `cgh plugins` command lists status, version, and
+  surfaces. A broken, incompatible, or duplicate plugin is a warning
+  and a status line, never a crash.
+
 ### Changed
 - **License: plugin exception added.** Plugins that interact with cgh only
   through the documented plugin interfaces (the `cgh` entry-point group and

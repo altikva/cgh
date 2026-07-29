@@ -246,9 +246,11 @@ class CodexIntegration:
 
 
 class BobIntegration:
-    """IBM Bob (BobShell + the Bob IDE): instructions land as plain
-    markdown in .bob/rules/, loaded alphabetically into every mode, and
-    the guard mirrors barred paths into a managed .bobignore block, the
+    """IBM Bob (BobShell + the Bob IDE): the bundled skills install
+    verbatim under .bob/skills/ (Bob speaks the same Agent Skills
+    standard as Claude Code), the usage guidelines land in .bob/rules/
+    where every mode loads them, and the guard mirrors barred paths
+    into a managed .bobignore block, the
     file Bob honors when deciding what it may access. Static denies
     only: Bob publishes no pre-tool hook with a veto, so the level is
     "partial" and `cgh guard sync` keeps the block fresh."""

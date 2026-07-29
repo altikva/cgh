@@ -1660,7 +1660,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
-        _skills_line(".bob/rules/", install_bob(root))
+        _skills_line(".bob/skills/", install_bob(root))
 
 
 # ---------------------------------------------------------------------------

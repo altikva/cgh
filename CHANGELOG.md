@@ -19,9 +19,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **IBM Bob integration** (`cgh setup bob`, detected by `cgh init`): a
   repo using Bob is recognized by its `.bob/` folder, a `.bobignore`
   file, or the `bob` binary on PATH. Setup registers the MCP server in
-  `.bob/mcp.json` (Bob's project-level config), installs the cgh
-  instructions as plain markdown in `.bob/rules/` (loaded into every
-  Bob mode), and in secure mode the guard mirrors barred paths into a
+  `.bob/mcp.json` (Bob's project-level config), installs the bundled
+  skills verbatim under `.bob/skills/` (Bob speaks the same Agent
+  Skills standard as Claude Code, SKILL.md front matter included),
+  drops the usage guidelines in `.bob/rules/` where every Bob mode
+  loads them, and in secure mode the guard mirrors barred paths into a
   managed `.bobignore` block that `cgh guard sync` keeps fresh. Bob
   publishes no pre-tool veto hook, so the enforcement level is
   declared "partial": static file denies, honestly labeled.

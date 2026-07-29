@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Self-documenting default config**: the `config.toml` written by
+  `cgh init` now lists every option cgh reads, active defaults live,
+  optional ones commented out with an explanation (`mode`, log
+  rotation, `extra_dirs`, `[plugins]` narrowing and the first-party
+  `[plugin.*]` tables included). The file doubles as the reference a
+  user edits instead of hunting through the docs, and a test keeps
+  the template valid TOML even with every option uncommented.
 - **IBM Bob integration** (`cgh setup bob`, detected by `cgh init`): a
   repo using Bob is recognized by its `.bob/` folder, a `.bobignore`
   file, or the `bob` binary on PATH. Setup registers the MCP server in

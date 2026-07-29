@@ -1,6 +1,6 @@
 # Proposal 003: guard, enforcing confidentiality on the agent side
 
-Status: draft, for discussion. Depends on 001 (plugins, findings,
+Status: accepted 2026-07-29. Depends on 001 (plugins, findings,
 integrations surface) and 002 (classification as egress policy). Based
 on the maintainer's survey of agent hook surfaces (2026-07).
 
@@ -126,13 +126,40 @@ idempotent-write discipline exist.
   window small; strict mode plus `require_label` (002) close it for
   organizations that need allowlist semantics.
 
-## Open questions
+## One posture switch: `mode`
 
-1. Should redact mode (PostToolUse `updatedToolOutput`) ship in v1 of
-   the guard, or after block mode has soaked? Redaction rewrites agent
-   context and is harder to verify.
-2. Static deny-rule sync for Claude Code: opt-in (proposed) or default
-   in strict mode?
-3. `Bash` matching: block-list of read-ish commands (`cat`, `head`,
-   `sed`, `rg` on flagged paths) or deny any Bash whose arguments
-   contain a flagged path (simpler, more false positives)?
+The same two user profiles keep resurfacing across proposals 002 and
+003: the token-saver and the egress-controller. Instead of asking users
+to keep five knobs coherent, one machine-local switch names the
+posture, `mode` under `[codegraph]`.
+
+`secure` is a strict superset: **secure = assist + security**.
+Everything assist provides (summaries, corpus insights, token savings,
+all conveniences) stays fully active in secure mode; secure only adds
+the enforcement layer on top. Switching to secure never turns a
+feature off, it puts gates in front of what leaves the machine:
+
+| Setting | `mode = "assist"` (default) | `mode = "secure"` |
+|---|---|---|
+| Egress gate (002) | `open`: block on known findings | `strict`: allowlist, labeled files only |
+| Guard fail posture | fail-open, warning logged | fail-closed, broken guard denies |
+| Claude static deny rules | off | on, synced by the owner |
+| Bash matching | read-command list on flagged paths | deny any Bash argument hitting a flagged path |
+
+Every derived setting remains individually overridable in config;
+`mode` only sets the defaults. `cgh guard status` prints the active
+mode first, so the posture is always one glance away.
+
+## Decisions (2026-07-29)
+
+1. **Guard v1 is block-only.** Redact mode (PostToolUse
+   `updatedToolOutput` rewriting) lands in v1.1 behind a flag, after
+   block mode has soaked: rewriting agent context is harder to verify
+   and a botched redaction is a silent leak with false comfort.
+2. **Static deny rules follow the mode**: on by default in `secure`,
+   off in `assist` where the goal is saving tokens, not controlling
+   egress. Confirmed by the maintainer.
+3. **Bash matching follows the mode**: path-based deny (any Bash whose
+   arguments contain a flagged path) in `secure`, read-command list in
+   `assist`. Secure prefers a false positive to a leak, assist prefers
+   flow.

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import argparse
 import json
 import os
@@ -886,6 +888,7 @@ def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
             encoding="utf-8",
             errors="replace",
             timeout=3,
+            **quiet_subprocess_kwargs(),
         )
         lines = [ln.rstrip() for ln in r.stdout.splitlines() if ln.strip()]
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -974,6 +977,7 @@ def cmd_reset(args: argparse.Namespace) -> None:
             ["pkill", "-9", "-f", "codegraph _serve_owner"],
             capture_output=True,
             timeout=3,
+            **quiet_subprocess_kwargs(),
         )
     except (FileNotFoundError, OSError):
         pass
@@ -1312,6 +1316,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
             encoding="utf-8",
             errors="replace",
             cwd=root,
+            **quiet_subprocess_kwargs(),
         )
         changed_files = [f for f in result.stdout.strip().splitlines() if f]
     except FileNotFoundError:
@@ -1327,6 +1332,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
             encoding="utf-8",
             errors="replace",
             cwd=root,
+            **quiet_subprocess_kwargs(),
         )
         untracked_files = [f for f in result_untracked.stdout.strip().splitlines() if f]
     except FileNotFoundError:

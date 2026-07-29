@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import argparse
 import json
 import os
@@ -56,6 +58,7 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
             errors="replace",
             cwd=root,
             timeout=30,
+            **quiet_subprocess_kwargs(),
         )
     except Exception as exc:
         return [], f"git diff failed: {exc}"

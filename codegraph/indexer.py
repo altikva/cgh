@@ -127,7 +127,9 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
         if fnmatch.fnmatch(Path(rel).name, pattern):
             return True
         # Also match against any path component
-        if "/" not in pattern and any(fnmatch.fnmatch(part, pattern) for part in Path(rel).parts):
+        if "/" not in pattern and any(
+            fnmatch.fnmatch(part, pattern) for part in Path(rel).parts
+        ):
             return True
 
     return False
@@ -173,6 +175,71 @@ def _purge_file(conn, path: str, fts_conn=None) -> None:
     conn.purge_file_data(path)
     if fts_conn is not None:
         delete_file_symbols(fts_conn, path)
+
+
+def _run_scanners(root, path, idx: FileIndex, blob_sha: str | None, fts_conn) -> None:
+    """Run registered inline plugin scanners on a freshly indexed file and
+    queue the file for the deferred ones. A scanner failure is logged and
+    never breaks indexing. Findings land in the finding store (SQLite)
+    and, for searchability, in the FTS as kind="finding" rows that
+    delete_file_symbols purges on the next reindex.
+    """
+    from codegraph.plugins import scanners as _plugin_scanners
+
+    registered = _plugin_scanners()
+    if not registered:
+        return
+
+    inline = [(n, s) for n, s in registered if not getattr(s, "deferred", False)]
+    deferred = [(n, s) for n, s in registered if getattr(s, "deferred", False)]
+
+    if deferred:
+        from codegraph.state.deferred_scan import enqueue
+
+        enqueue(root, path, blob_sha or "")
+
+    if not inline:
+        return
+
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+
+    from codegraph.state.findings import record_findings
+
+    for plugin_name, scanner in inline:
+        try:
+            found = scanner.scan(Path(path), text, idx) or []
+            record_findings(
+                root, str(path), scanner.name, found, blob_sha=blob_sha or ""
+            )
+            _fts_ingest_findings(fts_conn, str(path), scanner.name, found)
+        except Exception as exc:
+            from codegraph.state.activity import log as _act_log
+
+            msg = f"{path}: scanner {scanner.name} ({plugin_name}): {exc}"
+            print(f"[codegraph] scan error: {msg}", file=sys.stderr, flush=True)
+            _act_log(root, "scan_error", msg)
+
+
+def _fts_ingest_findings(fts_conn, file_path: str, scanner: str, found: list) -> None:
+    """Feed findings into the FTS so a text search can surface flagged
+    files through the search tools agents already use."""
+    if fts_conn is None or not found:
+        return
+    for f in found:
+        line = int(getattr(f, "line", 0) or 0)
+        upsert_symbol(
+            fts_conn,
+            sym_id=f"{file_path}::finding::{scanner}::{f.key}::{line}",
+            kind="finding",
+            name=f.key,
+            file_path=file_path,
+            start_line=line,
+            docstring=str(f.value)[:500],
+        )
+    fts_commit(fts_conn)
 
 
 def _fts_ingest(fts_conn, idx: FileIndex) -> None:
@@ -520,9 +587,7 @@ def _ingest_markdown(conn, idx: FileIndex) -> None:
         if not section:
             continue
         for file_key in conn.find_node_keys("File", "path", resolved_target):
-            conn.ensure_edge(
-                "MD_LINKS_TO", section.id, file_key, {"label": link.label}
-            )
+            conn.ensure_edge("MD_LINKS_TO", section.id, file_key, {"label": link.label})
 
     # Code references: link sections to code symbols they mention
     for ref in idx.code_refs:
@@ -705,6 +770,9 @@ def index_file(
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)
 
+    # Plugin scanners: inline tier runs now, deferred tier gets queued
+    _run_scanners(root, path, idx, blob_sha, fts_conn)
+
     return True
 
 
@@ -726,7 +794,9 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(repo_root),
             timeout=30,
         )
@@ -780,7 +850,9 @@ def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[P
     subrepos = child_paths_to_skip(repo_root)
     for base in include_dirs:
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+            dirnames[:] = [
+                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
+            ]
             for filename in filenames:
                 p = Path(dirpath) / filename
                 if p in seen:
@@ -809,16 +881,34 @@ def _discover_find(repo_root: Path) -> list[Path]:
         prune += ["-name", d, "-o"]
     prune = prune[:-1]  # drop the trailing -o
     cmd = [
-        "find", str(repo_root),
-        "(", "-type", "d", "(", *prune, ")", "-prune", ")",
-        "-o", "(", "-type", "f", "-not", "-path", "*/.*", "-print", ")",
+        "find",
+        str(repo_root),
+        "(",
+        "-type",
+        "d",
+        "(",
+        *prune,
+        ")",
+        "-prune",
+        ")",
+        "-o",
+        "(",
+        "-type",
+        "f",
+        "-not",
+        "-path",
+        "*/.*",
+        "-print",
+        ")",
     ]
 
     try:
         r = subprocess.run(
             cmd,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
         if r.returncode != 0:
@@ -846,10 +936,14 @@ def _discover_os_walk(repo_root: Path) -> list[Path]:
     subrepos = child_paths_to_skip(repo_root)
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+        dirnames[:] = [
+            d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
+        ]
         # Prune subrepo directories so we don't even descend into them
         if subrepos:
-            dirnames[:] = [d for d in dirnames if not is_under_any(Path(dirpath) / d, subrepos)]
+            dirnames[:] = [
+                d for d in dirnames if not is_under_any(Path(dirpath) / d, subrepos)
+            ]
         for filename in filenames:
             p = Path(dirpath) / filename
             if _is_cghignored(p, repo_root):
@@ -879,7 +973,9 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
         r = subprocess.run(
             ["git", "diff", "--name-status", f"{last_sha}..HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(repo_root),
             # Match git ls-files (30s): a large rebase diff was timing out at
             # 10s and silently falling back to a full scan.
@@ -972,7 +1068,9 @@ def index_repo(
         git_files = _git_tracked_files(repo_root)
         if git_files is None:
             if method == "git_ls_files":
-                raise RuntimeError("git_ls_files requested but git is unavailable or repo not initialised")
+                raise RuntimeError(
+                    "git_ls_files requested but git is unavailable or repo not initialised"
+                )
             # auto → fall back
             actual_method = "os_walk"
             candidates = _discover_os_walk(repo_root)
@@ -996,7 +1094,11 @@ def index_repo(
             # No prior scan meta → do a full scan instead
             actual_method = "git_ls_files"
             git_files = _git_tracked_files(repo_root)
-            candidates = list(git_files) if git_files is not None else _discover_os_walk(repo_root)
+            candidates = (
+                list(git_files)
+                if git_files is not None
+                else _discover_os_walk(repo_root)
+            )
             if git_files is None:
                 actual_method = "os_walk"
 
@@ -1046,6 +1148,9 @@ def index_repo(
                 conn.delete_file_completely(str(gone))
                 if fts_conn is not None:
                     delete_file_symbols(fts_conn, str(gone))
+                from codegraph.state.findings import purge_file_findings
+
+                purge_file_findings(repo_root, str(gone))
             except Exception as exc:
                 # A failed delete leaves a ghost file in the graph; record it
                 # rather than silently reporting a clean scan.
@@ -1100,7 +1205,9 @@ def index_repo(
             continue
         _activity_log(repo_root, "extra_dir_scan", str(extra_root))
         for dirpath, dirnames, filenames in os.walk(extra_root):
-            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")]
+            dirnames[:] = [
+                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
+            ]
             for filename in filenames:
                 full_path = Path(dirpath) / filename
                 if not is_supported(full_path):
@@ -1170,7 +1277,11 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     # Drop any path that lives under a federated subrepo. The subrepo
     # owns its own index; the parent acts as a passe-plat.
     if subrepos:
-        head_shas = {rel: sha for rel, sha in head_shas.items() if not is_under_any(repo_root / rel, subrepos)}
+        head_shas = {
+            rel: sha
+            for rel, sha in head_shas.items()
+            if not is_under_any(repo_root / rel, subrepos)
+        }
 
     conn = get_connection(repo_root)
 
@@ -1231,7 +1342,11 @@ def incremental_reindex(repo_root: str | Path) -> dict:
             return False
         return is_under_any(path_str, subrepos)
 
-    to_delete = [p for p in stored if p not in head_abs and not _under_include(p) and not _under_subrepo(p)]
+    to_delete = [
+        p
+        for p in stored
+        if p not in head_abs and not _under_include(p) and not _under_subrepo(p)
+    ]
 
     fts_conn = _get_fts(repo_root) if repo_root else None
 
@@ -1242,6 +1357,9 @@ def incremental_reindex(repo_root: str | Path) -> dict:
             conn.delete_file_completely(path)
             if fts_conn is not None:
                 delete_file_symbols(fts_conn, path)
+            from codegraph.state.findings import purge_file_findings
+
+            purge_file_findings(repo_root, path)
             deleted_count += 1
         except Exception:
             pass

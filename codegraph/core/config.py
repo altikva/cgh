@@ -205,6 +205,13 @@ class CodegraphConfig:
     # live exactly as long as the parent owner.
     federate_auto_up: bool = True
 
+    # Plugins (proposal 001). enabled = None means "no allowlist, load
+    # everything installed that isn't in disabled". plugin_tables carries
+    # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
+    plugins_enabled: list[str] | None = None
+    plugins_disabled: list[str] = field(default_factory=list)
+    plugin_tables: dict[str, dict] = field(default_factory=dict)
+
     # Ruflo
     ruflo_enabled: bool | None = None  # None = auto-detect
 
@@ -307,6 +314,18 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.auto_watch = mcp["auto_watch"]
     if "reindex_on_start" in mcp:
         config.reindex_on_start = mcp["reindex_on_start"]
+
+    plugins = data.get("plugins", {})
+    if "enabled" in plugins:
+        config.plugins_enabled = list(plugins["enabled"])
+    if "disabled" in plugins:
+        config.plugins_disabled = list(plugins["disabled"])
+
+    # [plugin.<name>] tables pass through verbatim; project-level tables
+    # replace global ones per plugin name (table-level, not key-merge).
+    for name, table in (data.get("plugin") or {}).items():
+        if isinstance(table, dict):
+            config.plugin_tables[name] = table
 
     ruflo = data.get("ruflo", {})
     if "enabled" in ruflo:

@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import subprocess
 from pathlib import Path
 
@@ -46,6 +48,7 @@ def _git(repo_root: str | Path, *args: str) -> str | None:
             errors="replace",
             cwd=str(repo_root),
             timeout=_GIT_TIMEOUT,
+            **quiet_subprocess_kwargs(),
         )
         if r.returncode == 0:
             return r.stdout

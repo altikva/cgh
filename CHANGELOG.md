@@ -142,6 +142,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the plugin architecture proposal (docs/proposals/001).
 
 ### Fixed
+- **Flashing console windows on Windows.** A detached owner has no
+  console, so every `git.exe` the watcher spawned opened its own
+  conhost window; on a busy monorepo that meant a constant stream of
+  flashing terminals (measured at ~24 git processes per 30 seconds).
+  Every git and ripgrep subprocess now runs with `CREATE_NO_WINDOW`
+  on Windows, and the watcher was reworked to batch: one debounce
+  timer for the whole event burst and a single
+  `git check-ignore --stdin` call for every uncached path, instead of
+  one process per file. The dozens-of-git-per-burst pattern collapses
+  to one, on every platform.
 - **Kuzu migration on installs without the kuzu package**: on a kuzu-less
   install (the default on Python 3.14), the old `graph.db` reads as 0 rows,
   so the migration verifier flagged the fresh DuckDB index as "unexplained

@@ -50,16 +50,23 @@ echo -e "${GREEN}+${RESET} Python $PY_VERSION found"
 
 # --- install ----------------------------------------------------------------
 # The PyPI package is `cgh` (not `codegraph`, which is an unrelated project).
+# CGH_PLUGINS=1 installs the five first-party plugins in the same shot:
+#   curl -fsSL .../install.sh | CGH_PLUGINS=1 bash
+SPEC="cgh"
+if [ -n "${CGH_PLUGINS:-}" ]; then
+  SPEC="cgh[plugins]"
+  echo -e "${GREEN}+${RESET} Including the first-party plugins (cgh[plugins])"
+fi
 INSTALLER=""
 if command -v uv >/dev/null 2>&1; then
   echo -e "${GREEN}+${RESET} Installing with uv tool"
-  uv tool install cgh && INSTALLER="uv"
+  uv tool install "$SPEC" && INSTALLER="uv"
 elif command -v pipx >/dev/null 2>&1; then
   echo -e "${GREEN}+${RESET} Installing with pipx"
-  pipx install cgh && INSTALLER="pipx"
+  pipx install "$SPEC" && INSTALLER="pipx"
 else
   echo -e "${YELLOW}!${RESET} uv and pipx not found, using pip --user"
-  "$PY" -m pip install --user cgh && INSTALLER="pip"
+  "$PY" -m pip install --user "$SPEC" && INSTALLER="pip"
 fi
 
 # --- verify, and offer to fix PATH ------------------------------------------

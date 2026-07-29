@@ -42,16 +42,23 @@ Write-Step "Python $pyVer found"
 
 # --- install ----------------------------------------------------------------
 # The PyPI package is `cgh` (not `codegraph`, an unrelated project).
+# $env:CGH_PLUGINS = 1 installs the five first-party plugins in one shot:
+#   $env:CGH_PLUGINS = 1; irm .../install.ps1 | iex
+$spec = "cgh"
+if ($env:CGH_PLUGINS) {
+    $spec = "cgh[plugins]"
+    Write-Step "Including the first-party plugins (cgh[plugins])"
+}
 $installer = ""
 if (Get-Command uv -ErrorAction SilentlyContinue) {
     Write-Step "Installing with uv tool"
-    uv tool install cgh; $installer = "uv"
+    uv tool install $spec; $installer = "uv"
 } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
     Write-Step "Installing with pipx"
-    pipx install cgh; $installer = "pipx"
+    pipx install $spec; $installer = "pipx"
 } else {
     Write-Warn "uv and pipx not found, using pip --user"
-    & $py -m pip install --user cgh; $installer = "pip"
+    & $py -m pip install --user $spec; $installer = "pip"
 }
 
 # --- verify, and offer to fix PATH ------------------------------------------

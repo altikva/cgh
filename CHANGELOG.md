@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **One-shot install**: `pip install "cgh[plugins]"` (or
+  `uv tool install "cgh[plugins]"`) brings the core and the five
+  first-party plugins together, and the one-line install scripts do
+  the same with `CGH_PLUGINS=1` (bash) or `$env:CGH_PLUGINS = 1`
+  (PowerShell).
+
 ## [0.7.0] - 2026-07-29
 
 ### Added

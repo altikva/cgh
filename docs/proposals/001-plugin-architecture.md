@@ -250,6 +250,13 @@ Estimated as three PRs: (1) loader + parser/CLI surfaces + `cgh plugins`,
 (2) scanner surface + Finding store + MCP/CLI query tools, (3) cgh-docs as
 a separate repo/package validating the whole chain end to end.
 
+Sequencing decision (2026-07-29): after the three core PRs, plugins land
+in pillar order, value for every user first, security posture second:
+cgh-docs then cgh-summarize (gated by the PII regex tier, sufficient in
+assist mode) deliver the token and comprehension gains; cgh-classify and
+the guard (proposal 003) follow for secure mode users. Proposal 004
+(shared memory) is scheduled as core work alongside that second wave.
+
 ## Amendment 2026-07-29: generic registry and agent integrations
 
 Two additions from the proposal 002 discussion, both part of API v1.

@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh[full]` extra**: the five first-party plugins plus the `langs`
+  and `lsp` extras in one install. The tree-sitter grammars ship abi3
+  wheels covering every Python cgh supports and jedi is pure Python,
+  so the superset is safe everywhere; only the legacy kuzu backend
+  stays out. The install scripts' `CGH_PLUGINS=1` now uses it.
+
 ## [0.7.1] - 2026-07-29
 
 ### Added

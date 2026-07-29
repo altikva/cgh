@@ -115,7 +115,7 @@ cgh setup <target> [--root DIR]
 ```bash
 cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
-cgh setup bob        # writes .bob/mcp.json + .bob/rules/
+cgh setup bob        # writes .bob/mcp.json + .bob/skills/
 cgh setup all        # writes configs for all tools
 ```
 

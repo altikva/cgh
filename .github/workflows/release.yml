@@ -118,7 +118,52 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # Defaults to https://upload.pypi.org/legacy/ when the trusted
-        # publisher is configured on PyPI.
+        # publisher is configured on PyPI. skip-existing lets a
+        # workflow_dispatch re-run publish only what is new (plugin
+        # versions move independently of the core tag).
+        with:
+          skip-existing: true
+
+  publish-plugins:
+    name: Publish first-party plugins to PyPI
+    needs: validate
+    runs-on: ubuntu-latest
+    # Same environment, same OIDC trust, one approval covers the run.
+    # Each plugin needs its own trusted publisher entry on PyPI
+    # (owner altikva, repo cgh, workflow release.yml, environment pypi)
+    # under its own project name; until an entry exists, that plugin's
+    # upload fails without blocking the others.
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - cgh-docs
+          - cgh-pii
+          - cgh-summarize
+          - cgh-classify
+          - cgh-bugreport
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Build ${{ matrix.plugin }}
+        run: uv build plugins/${{ matrix.plugin }} --out-dir plugin-dist/
+
+      - name: Publish ${{ matrix.plugin }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: plugin-dist/
+          # A tag that does not bump a plugin's version re-uploads the
+          # same file; skip instead of failing the whole release.
+          skip-existing: true
 
   github-release:
     name: Attach dists to GitHub Release

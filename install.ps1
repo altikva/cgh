@@ -46,8 +46,8 @@ Write-Step "Python $pyVer found"
 #   $env:CGH_PLUGINS = 1; irm .../install.ps1 | iex
 $spec = "cgh"
 if ($env:CGH_PLUGINS) {
-    $spec = "cgh[plugins]"
-    Write-Step "Including the first-party plugins (cgh[plugins])"
+    $spec = "cgh[full]"
+    Write-Step "Including plugins, extra parsers and precise calls (cgh[full])"
 }
 $installer = ""
 if (Get-Command uv -ErrorAction SilentlyContinue) {

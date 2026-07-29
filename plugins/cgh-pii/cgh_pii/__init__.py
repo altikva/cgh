@@ -1,0 +1,34 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-07-29
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: cgh plugin entry point: registers the inline regex PII and
+#              secret scanner, and the optional deferred NER scanner when
+#              [plugin.pii] ner = true and presidio is installed.
+
+from __future__ import annotations
+
+import sys
+
+CGH_PLUGIN_API = 1
+
+
+def register(api) -> None:
+    from .regex_scanner import RegexPiiScanner
+
+    disabled = set(api.config.get("disable_keys", []))
+    api.register_scanner(RegexPiiScanner(disabled_keys=disabled))
+
+    if api.config.get("ner"):
+        try:
+            from .ner_scanner import NerScanner
+
+            api.register_scanner(NerScanner())
+        except ImportError:
+            print(
+                "[cgh-pii] ner = true but presidio is not installed; "
+                'run pip install "cgh-pii[ner]". NER tier skipped.',
+                file=sys.stderr,
+            )

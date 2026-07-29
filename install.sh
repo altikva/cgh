@@ -54,8 +54,8 @@ echo -e "${GREEN}+${RESET} Python $PY_VERSION found"
 #   curl -fsSL .../install.sh | CGH_PLUGINS=1 bash
 SPEC="cgh"
 if [ -n "${CGH_PLUGINS:-}" ]; then
-  SPEC="cgh[plugins]"
-  echo -e "${GREEN}+${RESET} Including the first-party plugins (cgh[plugins])"
+  SPEC="cgh[full]"
+  echo -e "${GREEN}+${RESET} Including plugins, extra parsers and precise calls (cgh[full])"
 fi
 INSTALLER=""
 if command -v uv >/dev/null 2>&1; then

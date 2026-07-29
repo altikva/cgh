@@ -515,9 +515,9 @@ def autostart_children(repo_root: str | Path) -> list[dict]:
     """
     from codegraph.state.ipc import (
         is_owner_alive,
-        register_worker,
+        register_parent_marker,
         spawn_owner,
-        unregister_worker,
+        unregister_parent_marker,
     )
 
     results: list[dict] = []
@@ -542,11 +542,13 @@ def autostart_children(repo_root: str | Path) -> list[dict]:
             )
             continue
         # Register before spawning so the child's grace window for the
-        # first worker always sees this parent as a live worker.
-        register_worker(child)
+        # first worker always sees this parent as a live worker. The
+        # parent-<pid> marker keeps the child alive without counting as
+        # an MCP worker, so the child may drop its write lock when idle.
+        register_parent_marker(child)
         port = spawn_owner(child, watch=True, reindex=False)
         if port is None:
-            unregister_worker(child)
+            unregister_parent_marker(child)
             results.append(
                 {"child": str(child), "name": child.name, "status": "failed"}
             )
@@ -570,10 +572,10 @@ def release_children(repo_root: str | Path) -> None:
     (or a keepalive from `cgh federate up`) keep running. Removing a
     marker that was never written is a no-op.
     """
-    from codegraph.state.ipc import unregister_worker
+    from codegraph.state.ipc import unregister_parent_marker
 
     for child in resolve_children(repo_root):
-        unregister_worker(child)
+        unregister_parent_marker(child)
 
 
 # ---------------------------------------------------------------------------

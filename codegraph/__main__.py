@@ -42,6 +42,11 @@ from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_preche
 from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_guard import cmd_guard, cmd_hook_guard
+from codegraph.cli.commands_session import (
+    cmd_hook_checkpoint,
+    cmd_hook_resume_header,
+    cmd_memory,
+)
 from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
@@ -582,6 +587,14 @@ def main() -> None:
     # --- _hook_guard (internal: invoked by agent pre-tool-use hooks) ---
     sub.add_parser("_hook_guard", help=argparse.SUPPRESS)
 
+    # --- session continuity (lifecycle hooks + memory hygiene) ---
+    sub.add_parser("_hook_checkpoint", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_resume_header", help=argparse.SUPPRESS)
+    p = sub.add_parser("memory", help="Shared memory hygiene (review stale entries)")
+    p.add_argument("action", nargs="?", default="review", choices=["review"])
+    p.add_argument("--days", type=int, default=90)
+    _add_root(p)
+
     # --- findings ---
     p = sub.add_parser("findings", help="Query scanner findings (pii, secrets, ...)")
     _add_root(p)
@@ -676,6 +689,9 @@ def main() -> None:
         "findings": cmd_findings,
         "guard": cmd_guard,
         "_hook_guard": cmd_hook_guard,
+        "_hook_checkpoint": cmd_hook_checkpoint,
+        "_hook_resume_header": cmd_hook_resume_header,
+        "memory": cmd_memory,
     }
 
     # Plugin-registered verbs dispatch through argparse's set_defaults(func=…)

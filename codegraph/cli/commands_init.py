@@ -1085,16 +1085,47 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "command": f"{cli_prefix} _hook_guard  # cgh-guard",
             "async": False,
         },
+        # Lifecycle hooks (no matcher): session continuity. PreCompact and
+        # SessionEnd record an automatic checkpoint marker; SessionStart
+        # prints the tiny resume header, the full bundle loads on demand.
+        {
+            "event": "PreCompact",
+            "matcher": "",
+            "marker": "cgh-auto-checkpoint",
+            "label": "auto checkpoint before compaction",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_checkpoint  # cgh-auto-checkpoint",
+            "async": False,
+        },
+        {
+            "event": "SessionEnd",
+            "matcher": "",
+            "marker": "cgh-auto-checkpoint-end",
+            "label": "auto checkpoint at session end",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_checkpoint  # cgh-auto-checkpoint-end",
+            "async": False,
+        },
+        {
+            "event": "SessionStart",
+            "matcher": "",
+            "marker": "cgh-resume-header",
+            "label": "resume bundle header",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_resume_header  # cgh-resume-header",
+            "async": False,
+        },
     ]
 
 
 def _find_hook(settings: dict, spec: dict) -> bool:
-    """True iff `settings` contains a hook entry tagged with spec['marker']."""
+    """True iff `settings` contains a hook entry tagged with spec['marker'].
+    Lifecycle hooks carry no matcher; treat missing and empty as equal."""
     bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
     return any(
         spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
         for h in bucket
-        if h.get("matcher") == spec["matcher"]
+        if (h.get("matcher") or "") == (spec["matcher"] or "")
     )
 
 
@@ -1106,7 +1137,7 @@ def _drop_hook(settings: dict, spec: dict) -> bool:
         h
         for h in bucket
         if not (
-            h.get("matcher") == spec["matcher"]
+            (h.get("matcher") or "") == (spec["matcher"] or "")
             and spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
         )
     ]
@@ -1128,7 +1159,10 @@ def _append_hook(settings: dict, spec: dict) -> None:
         entry["async"] = True
     if spec.get("statusMessage"):
         entry["statusMessage"] = spec["statusMessage"]
-    bucket.append({"matcher": spec["matcher"], "hooks": [entry]})
+    wrapper: dict = {"hooks": [entry]}
+    if spec.get("matcher"):
+        wrapper["matcher"] = spec["matcher"]
+    bucket.append(wrapper)
 
 
 def _ensure_claude_hooks(

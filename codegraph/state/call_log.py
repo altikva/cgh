@@ -145,11 +145,21 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
                 VALUES (new.id, new.title, new.body, new.tags, new.kind);
         END
     """)
+    # Supersede links: an entry can replace an older one; superseded
+    # entries stop appearing in searches, lists and resume bundles but
+    # stay queryable by id. Guarded ALTER for databases created before
+    # the column existed.
+    try:
+        _conn.execute("ALTER TABLE knowledge ADD COLUMN superseded_by INTEGER")
+    except sqlite3.OperationalError:
+        pass  # column already there
     _conn.commit()
     # Self-heal: if the FTS references rowids that no longer exist, rebuild
     # from the content table. Cheap at open time (runs once per connection).
     try:
-        _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('integrity-check')").fetchall()
+        _conn.execute(
+            "INSERT INTO knowledge_fts(knowledge_fts) VALUES('integrity-check')"
+        ).fetchall()
     except sqlite3.DatabaseError:
         try:
             _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
@@ -219,7 +229,9 @@ def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
     if not session_id:
         return 0
     conn = _get_conn(repo_root)
-    cur = conn.execute("DELETE FROM session_mentions WHERE session_id = ?", (session_id,))
+    cur = conn.execute(
+        "DELETE FROM session_mentions WHERE session_id = ?", (session_id,)
+    )
     conn.commit()
     return cur.rowcount or 0
 
@@ -229,7 +241,15 @@ def clear_session(session_id: str, repo_root: str | Path | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
-_VALID_KINDS = ("pattern", "decision", "gotcha", "style", "glossary", "note")
+_VALID_KINDS = (
+    "pattern",
+    "decision",
+    "gotcha",
+    "style",
+    "glossary",
+    "note",
+    "standing_instruction",
+)
 
 
 @_locked
@@ -241,6 +261,7 @@ def knowledge_record(
     file_refs: list[str] | str = "",
     session_id: str = "",
     repo_root: str | Path | None = None,
+    supersedes: int = 0,
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -258,10 +279,23 @@ def knowledge_record(
     conn = _get_conn(repo_root)
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (session_id, title or "", body or "", tags or "", kind, file_refs or "", time.time()),
+        (
+            session_id,
+            title or "",
+            body or "",
+            tags or "",
+            kind,
+            file_refs or "",
+            time.time(),
+        ),
     )
     row_id = cur.lastrowid
     # FTS mirror is now maintained by the AFTER INSERT trigger.
+    if supersedes and row_id:
+        conn.execute(
+            "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
+            (int(row_id), int(supersedes)),
+        )
     conn.commit()
     return int(row_id or 0)
 
@@ -280,7 +314,7 @@ def knowledge_search(
         sql = (
             "SELECT k.id, k.kind, k.title, k.body, k.tags, k.file_refs, k.session_id, k.ts, rank AS score "
             "FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
-            "WHERE knowledge_fts MATCH ? "
+            "WHERE knowledge_fts MATCH ? AND k.superseded_by IS NULL "
         )
         params: list = [query]
         if kind:
@@ -294,7 +328,7 @@ def knowledge_search(
         like = f"%{query}%"
         sql = (
             "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
-            "WHERE title LIKE ? OR body LIKE ? OR tags LIKE ? "
+            "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
         )
         params = [like, like, like]
         if kind:
@@ -305,6 +339,43 @@ def knowledge_search(
         for i, row in enumerate(conn.execute(sql, params).fetchall()):
             out.append(_knowledge_row_to_dict(row, score=1.0 / (i + 1)))
     return out
+
+
+def knowledge_search_ro(
+    db_path: Path, query: str, kind: str | None = None, limit: int = 10
+) -> list[dict]:
+    """Read-only knowledge search against an arbitrary call_log.db
+    (federated children). Fresh connection, LIKE-based on purpose:
+    robust against FTS schema drift in the child. Superseded entries
+    stay out, like everywhere else."""
+    if not db_path.exists():
+        return []
+    from codegraph.core.utils import ro_sqlite_uri
+
+    try:
+        conn = sqlite3.connect(ro_sqlite_uri(db_path), uri=True)
+    except sqlite3.Error:
+        return []
+    like = f"%{query}%"
+    sql = (
+        "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
+        "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
+    )
+    params: list = [like, like, like]
+    if kind:
+        sql += "AND kind = ? "
+        params.append(kind)
+    sql += "ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return [
+        _knowledge_row_to_dict(row, score=1.0 / (i + 1)) for i, row in enumerate(rows)
+    ]
 
 
 @_locked
@@ -321,7 +392,7 @@ def knowledge_list(
     """
     conn = _get_conn(repo_root)
     sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
-    where: list[str] = []
+    where: list[str] = ["superseded_by IS NULL"]
     params: list = []
     if kind:
         where.append("kind = ?")
@@ -336,7 +407,10 @@ def knowledge_list(
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
     params.extend([limit, max(0, offset)])
-    return [_knowledge_row_to_dict(row, score=row[7]) for row in conn.execute(sql, params).fetchall()]
+    return [
+        _knowledge_row_to_dict(row, score=row[7])
+        for row in conn.execute(sql, params).fetchall()
+    ]
 
 
 @_locked
@@ -395,7 +469,9 @@ def knowledge_forget(
 ) -> bool:
     """Delete a single knowledge entry + its FTS row."""
     conn = _get_conn(repo_root)
-    existed = conn.execute("SELECT 1 FROM knowledge WHERE id = ?", (entry_id,)).fetchone()
+    existed = conn.execute(
+        "SELECT 1 FROM knowledge WHERE id = ?", (entry_id,)
+    ).fetchone()
     if not existed:
         return False
     # FTS sync is handled by the AFTER DELETE trigger.
@@ -516,7 +592,9 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
     last = conn.execute("SELECT MAX(timestamp) FROM call_log").fetchone()[0]
 
     # Errors
-    error_count = conn.execute("SELECT COUNT(*) FROM call_log WHERE success = 0").fetchone()[0]
+    error_count = conn.execute(
+        "SELECT COUNT(*) FROM call_log WHERE success = 0"
+    ).fetchone()[0]
 
     # Top queries (most recent 10)
     recent = conn.execute("""

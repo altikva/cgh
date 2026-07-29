@@ -9,6 +9,23 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Guard adapters for Gemini CLI and Codex CLI**, wired against their
+  verified hook surfaces. Gemini enforces like Claude: a `BeforeTool`
+  hook in `.gemini/settings.json` (matcher on `read_file`,
+  `read_many_files`, `run_shell_command`, `search_file_content`,
+  `glob`) feeds the same guard handler, exit 2 with a named reason
+  denies. Codex is partial by nature: its `PreToolUse` hooks intercept
+  shell commands only, so `cgh _hook_guard_codex` answers with the
+  stdout JSON decision (both accepted field spellings) and the
+  `codex_hooks = true` feature flag is set in `.codex/config.toml`.
+  `cgh setup gemini|codex` installs the hooks; `cgh guard status` now
+  reports each detected agent from its declared capability.
+- **AgentIntegration surface**: the knowledge of each AI tool (detect
+  it, install the cgh instructions, wire the guard, declare an honest
+  enforcement level) now lives behind one protocol, with the four
+  built-ins (Claude Code, Cursor, Codex, Gemini) as its first
+  consumers. Plugins add new tools under the `integration` extension
+  namespace and `cgh setup` and `cgh guard status` pick them up.
 - **Session continuity: checkpoint and resume.** Clearing an agent's
   context stops costing anything. The `checkpoint` MCP tool persists a
   session digest that supersedes the previous one for the same session;

@@ -215,3 +215,28 @@ class TestInsights:
         assert "donations" in cloud.calls[0]
         assert "hidden" not in cloud.calls[0]
         assert recorded["kind"] == "pattern"
+
+
+class TestCliCommandShapes:
+    def _argv(self, tool: str, monkeypatch) -> list[str]:
+        from cgh_summarize.backends import CliBackend
+        import cgh_summarize.backends as backends
+
+        monkeypatch.setattr(backends.shutil, "which", lambda t: f"/usr/bin/{t}")
+        return CliBackend(tool)._command("hello", {})
+
+    def test_bob_headless_prompt(self, monkeypatch):
+        argv = self._argv("bob", monkeypatch)
+        assert argv == ["/usr/bin/bob", "-p", "hello"]
+
+    def test_codex_uses_exec(self, monkeypatch):
+        argv = self._argv("codex", monkeypatch)
+        assert argv == ["/usr/bin/codex", "exec", "hello"]
+
+    def test_bob_in_auto_selection_order(self):
+        from cgh_summarize.backends import _BUILTINS
+
+        names = [b.name for b in _BUILTINS]
+        assert "cli:bob" in names
+        # After the other CLIs, before the local daemon fallbacks.
+        assert names.index("cli:codex") < names.index("cli:bob") < names.index("ollama")

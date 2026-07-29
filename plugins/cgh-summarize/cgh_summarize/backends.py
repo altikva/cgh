@@ -7,7 +7,8 @@
 # Description: Summarizer backends. A backend declares a name, an egress
 #              class ("cloud" or "local", which is what the gate reads),
 #              an availability probe, and summarize(prompt). Built-ins:
-#              the agent CLIs (claude, gemini, codex) in headless mode,
+#              the agent CLIs (claude, gemini, codex, bob) in headless
+#              mode,
 #              a local Ollama daemon, any OpenAI-compatible endpoint,
 #              and "structural" which returns the outline with no model.
 #              Third-party backends join through the summarize.backend
@@ -68,8 +69,10 @@ class CliBackend:
         elif self.tool == "gemini":
             model = config.get("gemini_model", "gemini-2.5-flash")
             argv = [exe, "-m", str(model), "-p", prompt]
-        else:  # codex
+        elif self.tool == "codex":
             argv = [exe, "exec", prompt]
+        else:  # bob (IBM BobShell) and anything else claude-shaped
+            argv = [exe, "-p", prompt]
         if exe.lower().endswith((".cmd", ".bat")):
             argv = ["cmd", "/c", *argv]
         return argv
@@ -166,6 +169,7 @@ _BUILTINS = [
     CliBackend("claude"),
     CliBackend("gemini"),
     CliBackend("codex"),
+    CliBackend("bob"),
     OllamaBackend(),
     OpenAICompatibleBackend(),
     StructuralBackend(),

@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Secure mode from the init wizard**: `cgh init` now asks whether to
+  enable secure mode (assist stays the default and `--yes` alone never
+  changes posture), and `cgh init --secure` enables it without
+  prompting. Federated children initialized by a secure parent inherit
+  the posture automatically, so a monorepo hardens as one unit.
 - **Self-documenting default config**: the `config.toml` written by
   `cgh init` now lists every option cgh reads, active defaults live,
   optional ones commented out with an explanation (`mode`, log

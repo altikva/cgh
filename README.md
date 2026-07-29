@@ -63,8 +63,9 @@ uv pip install -e .     # or: pip install -e .
 Optional extras (none are required; the core install is lean and works on Python 3.11 through 3.14):
 
 ```bash
+pip install "cgh[full]"    # everything below except kuzu, in one shot
 pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
-pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars)
+pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars, abi3 wheels)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
 pip install "cgh[kuzu]"    # the legacy Kuzu graph backend (DuckDB is the default)
 
@@ -852,7 +853,7 @@ codegraph supports any language through a plugin system. Adding a new language r
 | C# (optional) | tree-sitter | `.cs` | classes, interfaces, structs, enums, records, methods, usings, calls |
 | Ruby (optional) | tree-sitter | `.rb` | classes, modules, methods, requires, calls |
 
-C# and Ruby ship in the optional `langs` extra (`pip install cgh[langs]`) so the core install stays lean and Python-3.14-safe. When the extra is absent, those file types are simply skipped.
+C# and Ruby ship in the optional `langs` extra (`pip install "cgh[langs]"`, abi3 wheels that cover every Python cgh supports) so the core install stays lean. When the extra is absent, those file types are simply skipped.
 
 ### Adding a New Language
 

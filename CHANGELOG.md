@@ -9,6 +9,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-bugreport plugin** (in `plugins/cgh-bugreport`, published
+  separately): crash reports that keep the egress promise. Payloads
+  are built by allowlist, never by scrubbing: versions, OS, command
+  name, exception type and stack frames normalized to cgh's own
+  modules; exception messages, paths, arguments and log lines are not
+  fields, so they structurally cannot leave, and the PII scanner runs
+  over the finished payload as a loud tripwire. Reports spool locally
+  (capped, purged, never indexed), `cgh bug preview` prints the exact
+  raw payload, and `cgh bug send` is always explicit: it goes through
+  the user's own gh CLI to a private repo only (public refused,
+  unverifiable refused), dedups by fingerprint (version excluded so
+  known crashes stay one issue), confirms the payload first in secure
+  mode, and lands in activity.log. The core itself still contains no
+  reporting code at all. Incident playbook in
+  `docs/BUGREPORT_PLAYBOOK.md`.
 - **`cgh init` propagates to federated children.** On a federated
   parent, init now offers (or, with `--yes`, just does) an init of
   every declared subrepo: uninitialized ones get a full init and

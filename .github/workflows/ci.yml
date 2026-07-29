@@ -71,11 +71,13 @@ jobs:
         run: uvx ruff@0.15.9 check .
 
       - name: Run pytest
+        # First-party plugins from plugins/ join the test env so their
+        # suites run end to end instead of import-skipping.
         run: |
           if [ "$PYTHON_VERSION" = "3.14" ]; then
-            uv run --python "$PYTHON_VERSION" --with pytest pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs pytest -q
           else
-            uv run --python "$PYTHON_VERSION" --with pytest --extra kuzu pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --extra kuzu pytest -q
           fi
 
   # Advisory early-warning job: resolve the newest deps allowed by the

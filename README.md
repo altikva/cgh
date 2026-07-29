@@ -905,6 +905,7 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
 | `cgh-classify` | human-trainable confidentiality labels + a local classifier |
 | `cgh-summarize` | file summaries via your agent CLIs, Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
+| `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
 
 ---
 

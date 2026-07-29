@@ -204,7 +204,11 @@ def _run_scanners(root, path, idx: FileIndex, blob_sha: str | None, fts_conn) ->
         return
 
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        # Strip embedded nulls: binary-ish files decoded with replace keep
+        # \x00, which downstream consumers (argv, SQL) reject.
+        text = (
+            Path(path).read_text(encoding="utf-8", errors="replace").replace("\x00", "")
+        )
     except OSError:
         return
 

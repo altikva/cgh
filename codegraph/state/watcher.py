@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import subprocess
 import threading
 import time
@@ -37,16 +39,25 @@ _GIT_IGNORE_CACHE_TS: float = 0
 
 
 class _CodeGraphHandler(FileSystemEventHandler):
+    """Event handler with batched scheduling: paths accumulate in one
+    pending set, a single debounce timer flushes them together, and the
+    git-ignore check runs ONCE per flush over every uncached path
+    (`git check-ignore --stdin -z`) instead of once per file. On a busy
+    monorepo this turns dozens of git processes per burst into one."""
+
     def __init__(self, repo_root: Path) -> None:
         super().__init__()
         self._root = repo_root
-        self._timers: dict[str, threading.Timer] = {}
+        self._pending: set[str] = set()
+        self._batch_timer: threading.Timer | None = None
         self._lock = threading.Lock()
         # Cached at startup. Federation membership rarely changes mid-session;
         # restart the owner if the user runs `cgh federate add`.
         self._subrepos: list[Path] = child_paths_to_skip(repo_root)
 
-    def _should_ignore(self, path: str) -> bool:
+    def _cheap_ignore(self, path: str) -> bool:
+        """The zero-subprocess part of the ignore chain, safe to run in
+        the watchdog event thread."""
         p = Path(path)
 
         # 1. Unsupported extension
@@ -66,55 +77,71 @@ class _CodeGraphHandler(FileSystemEventHandler):
         if self._subrepos and is_under_any(p, self._subrepos):
             return True
 
-        # 5. git check-ignore (cached)
-        if self._is_gitignored(path):
-            return True
-
         return False
 
-    def _is_gitignored(self, path: str) -> bool:
-        """Check git ignore status with caching to avoid subprocess spam."""
+    def _git_ignored_batch(self, paths: list[str]) -> set[str]:
+        """One `git check-ignore --stdin -z` for the whole batch. Returns
+        the subset of ``paths`` git considers ignored. Exit code 1 means
+        none ignored; anything above 1 is an error and nothing is treated
+        as ignored (indexing an ignored file once beats dropping a real
+        one)."""
+        try:
+            result = subprocess.run(
+                ["git", "check-ignore", "-z", "--stdin"],
+                input="\0".join(paths) + "\0",
+                capture_output=True,
+                text=True,
+                cwd=str(self._root),
+                timeout=5,
+                **quiet_subprocess_kwargs(),
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return set()
+        if result.returncode not in (0, 1):
+            return set()
+        return {p for p in result.stdout.split("\0") if p}
+
+    def _resolve_gitignored(self, paths: list[str]) -> dict[str, bool]:
+        """Cached batch resolution of git-ignore status."""
         global _GIT_IGNORE_CACHE, _GIT_IGNORE_CACHE_TS
 
-        # Expire cache periodically
         now = time.time()
         if now - _GIT_IGNORE_CACHE_TS > _GIT_IGNORE_CACHE_TTL:
             _GIT_IGNORE_CACHE.clear()
             _GIT_IGNORE_CACHE_TS = now
 
-        if path in _GIT_IGNORE_CACHE:
-            return _GIT_IGNORE_CACHE[path]
-
-        try:
-            result = subprocess.run(
-                ["git", "check-ignore", "-q", path],
-                capture_output=True,
-                cwd=str(self._root),
-                timeout=2,
-            )
-            ignored = result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            ignored = False
-
-        _GIT_IGNORE_CACHE[path] = ignored
-        return ignored
+        unknown = [p for p in paths if p not in _GIT_IGNORE_CACHE]
+        if unknown:
+            ignored = self._git_ignored_batch(unknown)
+            for p in unknown:
+                _GIT_IGNORE_CACHE[p] = p in ignored
+        return {p: _GIT_IGNORE_CACHE.get(p, False) for p in paths}
 
     def _schedule(self, path: str) -> None:
-        if self._should_ignore(path):
+        if self._cheap_ignore(path):
             return
         with self._lock:
-            existing = self._timers.pop(path, None)
-            if existing:
-                existing.cancel()
-            t = threading.Timer(_DEBOUNCE, self._reindex, args=(path,))
-            self._timers[path] = t
-            t.start()
+            self._pending.add(path)
+            if self._batch_timer is not None:
+                self._batch_timer.cancel()
+            self._batch_timer = threading.Timer(_DEBOUNCE, self._flush)
+            self._batch_timer.start()
+
+    def _flush(self) -> None:
+        with self._lock:
+            batch = sorted(self._pending)
+            self._pending.clear()
+            self._batch_timer = None
+        if not batch:
+            return
+        gitignored = self._resolve_gitignored(batch)
+        for path in batch:
+            if not gitignored.get(path, False):
+                self._reindex(path)
 
     def _reindex(self, path: str) -> None:
         from codegraph.state.activity import log as _activity_log
 
-        with self._lock:
-            self._timers.pop(path, None)
         try:
             ok = index_file(path, self._root)
             if ok:

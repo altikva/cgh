@@ -191,7 +191,7 @@ wheels = [
 
 [[package]]
 name = "cgh"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
@@ -209,6 +209,16 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+full = [
+    { name = "cgh-bugreport" },
+    { name = "cgh-classify" },
+    { name = "cgh-docs" },
+    { name = "cgh-pii" },
+    { name = "cgh-summarize" },
+    { name = "jedi" },
+    { name = "tree-sitter-c-sharp" },
+    { name = "tree-sitter-ruby" },
+]
 kuzu = [
     { name = "kuzu" },
 ]
@@ -229,29 +239,37 @@ plugins = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cgh-bugreport", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-bugreport", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-classify", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-classify", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-docs", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-docs", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-pii", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.1" },
     { name = "duckdb", specifier = ">=1.0" },
     { name = "fastmcp", specifier = ">=2.0" },
+    { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
     { name = "jedi", marker = "extra == 'lsp'", specifier = ">=0.19" },
     { name = "kuzu", marker = "extra == 'kuzu'", specifier = ">=0.7" },
     { name = "questionary", specifier = ">=2.0" },
     { name = "rank-bm25", specifier = ">=0.2" },
     { name = "rich", specifier = ">=13.0" },
     { name = "tree-sitter", specifier = ">=0.23" },
+    { name = "tree-sitter-c-sharp", marker = "extra == 'full'", specifier = ">=0.23" },
     { name = "tree-sitter-c-sharp", marker = "extra == 'langs'", specifier = ">=0.23" },
     { name = "tree-sitter-go", specifier = ">=0.23" },
     { name = "tree-sitter-java", specifier = ">=0.23" },
     { name = "tree-sitter-python", specifier = ">=0.23" },
+    { name = "tree-sitter-ruby", marker = "extra == 'full'", specifier = ">=0.23" },
     { name = "tree-sitter-ruby", marker = "extra == 'langs'", specifier = ">=0.23" },
     { name = "tree-sitter-rust", specifier = ">=0.23" },
     { name = "tree-sitter-typescript", specifier = ">=0.23" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["kuzu", "plugins", "langs", "lsp"]
+provides-extras = ["kuzu", "plugins", "full", "langs", "lsp"]
 
 [[package]]
 name = "cgh-bugreport"

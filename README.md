@@ -875,6 +875,30 @@ See `docs/PARSERS.md` for a complete walkthrough.
 
 ---
 
+## Plugins
+
+cgh discovers pip-installed plugins through the `cgh` entry point group: install one, and the next run picks it up. A plugin can add file parsers, per-file scanners, MCP tools, and CLI subcommands through a small versioned API (`codegraph.plugin_api`, contracts documented in its docstrings).
+
+```bash
+pip install some-cgh-plugin   # discovery is automatic
+cgh plugins                   # list plugins: status, version, surfaces
+```
+
+Control which plugins load per repo in `.codegraph/config.toml`:
+
+```toml
+[plugins]
+# disabled = ["heavy-plugin"]     # skip without uninstalling
+# enabled = ["docs", "pii"]       # allowlist mode: load ONLY these
+
+[plugin.pii]                      # per-plugin settings, passed verbatim
+# ner = false
+```
+
+A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
+
+---
+
 ## Configuration
 
 codegraph uses a layered config system. See `docs/CONFIGURATION.md` for all options.

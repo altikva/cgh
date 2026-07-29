@@ -63,7 +63,6 @@ uv pip install -e .     # or: pip install -e .
 Optional extras (none are required; the core install is lean and works on Python 3.11 through 3.14):
 
 ```bash
-pip install "cgh[full]"    # everything below except kuzu, in one shot
 pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
 pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars, abi3 wheels)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
@@ -71,6 +70,9 @@ pip install "cgh[kuzu]"    # the legacy Kuzu graph backend (DuckDB is the defaul
 
 # Combine extras in one bracket, comma-separated:
 pip install "cgh[langs,lsp]"
+
+# Or everything above except kuzu, in one shot:
+pip install "cgh[full]"
 ```
 
 Quote the package spec (`"cgh[...]"`) so zsh and bash do not try to glob the brackets. The same form works with `pipx install`, `uv tool install`, `uv pip install`, and from a source checkout: `pip install -e ".[langs,lsp]"`.

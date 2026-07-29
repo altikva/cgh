@@ -8,6 +8,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-07-29
+
+### Fixed
+- **Deferred scans of binary documents on Windows**: docx/xlsx files
+  decoded with `errors="replace"` kept embedded null characters, which
+  no OS accepts in a subprocess argument, so summarize calls died with
+  "embedded null character". Nulls are now stripped at both scanner
+  text entry points, and when the excerpt is replacement-character
+  soup the summarize prompt falls back to the parser's section
+  previews (the real document text) instead of raw bytes.
+- **npm-installed agent CLIs on Windows**: `claude`/`gemini` installed
+  through npm are `.cmd` shims that `shutil.which` finds but
+  `CreateProcess` cannot launch, so every summarize attempt failed
+  with "[WinError 2] file not found" misleadingly pointing at the
+  scanned file. The summarize backends now run the resolved
+  `.cmd`/`.bat` path through `cmd /c`, and a backend failure is
+  re-raised named after the backend, leaving nothing recorded so the
+  file retries on its next change.
+
 ## [0.7.2] - 2026-07-29
 
 ### Added
@@ -508,7 +527,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/altikva/cgh/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/altikva/cgh/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/altikva/cgh/compare/v0.6.0...v0.7.0

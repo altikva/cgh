@@ -1,6 +1,6 @@
 # Proposal 004: shared memory, deepening the third pillar
 
-Status: draft, for discussion. Builds on 001 (agent integrations
+Status: accepted 2026-07-29. Builds on 001 (agent integrations
 surface), 002 (summaries as substrate), 003 (hook adapters, mode).
 Mostly core work, not a plugin: memory is one of cgh's three founding
 pillars, not an extension.
@@ -137,15 +137,21 @@ leaves, whatever shape it left in.
 - Not infinite context: `resume` is budgeted by design; the point is a
   small, dense bundle, not a replay of everything.
 
-## Open questions
+## Decisions (2026-07-29)
 
-1. Should knowledge federate read-only across parent and children
-   (scope-tagged, like findings), or stay strictly per repo as decided
-   in 001? Cross-repo learnings ("the API contract lives in repo X")
-   argue for read-only fan-out; noise argues against.
-2. Besides `PreCompact`, should `checkpoint` also auto-fire on a token
-   threshold (e.g. the agent's context passing 80%), where the agent
-   surface exposes that signal?
-3. Does `resume` inject as instructions (SessionStart context) or as a
-   tool result the agent must request? Injection is zero-cooperation
-   but consumes budget every session; on-request is free until used.
+1. **Knowledge federates read-only, opt-in per query.** Default stays
+   strictly per repo (001 unchanged as the default behavior); passing
+   `scope="all"` to `knowledge_search` or `resume` fans out read-only
+   to the federation's children, scope-tagged like everything else.
+   Never on by default: cross-repo learnings are reachable when the
+   agent asks, noise never leaks into bundles unrequested.
+2. **Auto-checkpoint triggers, v1**: `PreCompact` and `SessionEnd`,
+   the two reliable events. A token-threshold trigger (context passing
+   ~80%) is supported where the agent surface exposes the signal, off
+   by default: too-frequent checkpoints dilute digests.
+3. **Resume is hybrid.** `SessionStart` injects only a two-to-three
+   line header ("cgh holds a resume bundle for this session: N
+   standing instructions, N digests, N open plans; call `resume` to
+   load it"); the full budgeted bundle loads on demand. The model
+   cannot forget what it was just shown, and the bundle is only paid
+   for when used. Pillar 1 stays honored.

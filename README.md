@@ -741,7 +741,7 @@ Owners are independent: the parent reads child DBs directly as files, it does NO
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 47 tools.
+When running as an MCP server (`cgh serve`), codegraph exposes 50 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -872,6 +872,96 @@ class RustParser(BaseParser):
 ```
 
 See `docs/PARSERS.md` for a complete walkthrough.
+
+---
+
+## Plugins
+
+cgh discovers pip-installed plugins through the `cgh` entry point group: install one, and the next run picks it up. A plugin can add file parsers, per-file scanners, MCP tools, and CLI subcommands through a small versioned API (`codegraph.plugin_api`, contracts documented in its docstrings).
+
+```bash
+pip install some-cgh-plugin   # discovery is automatic
+cgh plugins                   # list plugins: status, version, surfaces
+```
+
+Control which plugins load per repo in `.codegraph/config.toml`:
+
+```toml
+[plugins]
+# disabled = ["heavy-plugin"]     # skip without uninstalling
+# enabled = ["docs", "pii"]       # allowlist mode: load ONLY these
+
+[plugin.pii]                      # per-plugin settings, passed verbatim
+# ner = false
+```
+
+A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
+
+First-party plugins live in [plugins/](./plugins) and install separately, so the core stays lean:
+
+| Plugin | What it adds |
+|---|---|
+| `cgh-docs` | pdf, docx and xlsx files become searchable sections |
+| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
+| `cgh-classify` | human-trainable confidentiality labels + a local classifier |
+| `cgh-summarize` | file summaries via your agent CLIs, Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
+| `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
+
+---
+
+## Findings, modes and the guard
+
+Scanner plugins attach **findings** to files (`pii.email`,
+`secret.aws_key`, `confidential`, `summary`, ...), stored in SQLite next
+to the index and queryable anytime with `cgh findings` or the federated
+`findings` MCP tool, even while a server is running.
+
+One switch names your posture in `.codegraph/config.toml`:
+
+```toml
+[codegraph]
+mode = "assist"   # default: optimize for token savings and flow
+# mode = "secure" # assist + enforcement: nothing turns off, gates are added
+```
+
+What the findings feed:
+
+- **The egress gate** (cgh-summarize): a file flagged confidential, or
+  carrying secrets or PII, never reaches a cloud model. In `secure`
+  mode the gate is an allowlist: only files a human labeled
+  non-confidential go out. Every cloud send is logged.
+- **The guard**: `cgh init` / `cgh setup` install pre-tool-use hooks in
+  your agents, so the agent's own Read, Grep and shell calls are denied
+  on flagged files, with a named reason. `cgh guard status` shows the
+  honest per-agent map: Claude Code and Gemini CLI enforce (read and
+  shell veto), Codex CLI is partial (shell veto only), agents without a
+  veto surface are listed unprotected. In `secure` mode the guard fails
+  closed and flagged paths also sync into static Claude deny rules.
+
+This is policy enforcement inside cooperating agent frameworks, not a
+sandbox: an agent free to run arbitrary code can read what the OS
+allows. The guard narrows the path; `mode = "secure"` narrows it hard.
+
+---
+
+## Session memory
+
+cgh is the memory that survives context clears, shared by every agent
+that connects:
+
+- **`checkpoint` / `resume`** (MCP): save a session digest before a
+  clear; get back ONE ranked, budget-capped bundle: standing
+  instructions first, then digests, task-relevant knowledge, open
+  plans, and recent file summaries.
+- **Automatic in Claude Code**: hooks record a checkpoint marker at
+  compaction and session end, and a two-line header at session start
+  announces the bundle; the full bundle loads only when used.
+- **Standing instructions**: durable rules recorded with
+  `knowledge_record(kind="standing_instruction", ...)` lead every
+  bundle. Entries can supersede older ones, and `cgh memory review`
+  lists stale entries for pruning.
+- What Claude learns in the morning, Gemini knows in the afternoon:
+  writes go through cgh, agent-native memories are indexed read-only.
 
 ---
 
@@ -1045,3 +1135,5 @@ The key file has `600` permissions and the `.codegraph/` directory is `700` (own
 ## License
 
 Dual-licensed under MIT **and** CC BY-NC-SA 4.0: both licenses apply together and you must comply with both. In practice that means non-commercial use, share-alike derivatives, attribution, and no warranty. Copyright (c) 2026 ALTIKVA. See [LICENSE](./LICENSE) or the canonical notice at https://www.altikva.com/licenses/LICENSE-1.0.
+
+**Plugin exception**: a plugin that talks to cgh only through the documented plugin interfaces (the `cgh` entry-point group and the public plugin API) is not treated as a derivative work and may be licensed under any terms its author chooses, including commercial ones. Using cgh itself stays under the dual license whatever plugins are installed. Full wording in [LICENSE](./LICENSE).

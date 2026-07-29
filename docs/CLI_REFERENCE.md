@@ -511,3 +511,81 @@ cgh force-index <paths...> [--yes | -y] [--verbose | -v] [--root DIR]
 cgh force-index build/output.py docs/generated/
 cgh force-index build/output.py --yes
 ```
+
+### `plugins`
+
+List installed cgh plugins with their status. Plugins are discovered
+through the `cgh` entry point group; anything installed with pip that
+exposes it shows up here.
+
+```
+cgh plugins [--json] [--root DIR]
+```
+
+| Column | Meaning |
+|--------|---------|
+| `status` | `active`, `disabled` (via `[plugins]` config), `incompatible` (API version mismatch), `broken` (import or registration failed), `duplicate` |
+| `api` | The `CGH_PLUGIN_API` version the plugin declares |
+| `surfaces` | What it registered: `parsers`, `scanners`, `mcp`, `cli`, `extensions` |
+| `note` | The reason for any non-active status |
+
+**Example:**
+
+```bash
+cgh plugins
+cgh plugins --json      # machine-readable, for scripts
+```
+
+### `findings`
+
+Query the finding store: what scanner plugins know about each file
+(`pii.email`, `secret.aws_key`, `confidential`, `summary`, ...).
+Federated over subrepos with a `scope` column.
+
+```
+cgh findings [FILE] [--key PREFIX] [--severity info|warn|block] [--limit N] [--json] [--root DIR]
+```
+
+**Example:**
+
+```bash
+cgh findings --key pii.            # every PII finding in the repo
+cgh findings src/billing.py       # everything known about one file
+cgh findings --severity block     # what the gates would stop
+```
+
+### `guard`
+
+Agent-side confidentiality enforcement. A pre-tool-use hook installed in
+Claude Code (`cgh setup claude` / `cgh init`) consults the finding store
+before every Read, Grep, Glob or Bash call and denies access to files
+flagged confidential or carrying block-severity findings.
+
+```
+cgh guard [status|sync] [--root DIR]
+```
+
+- `status`: active mode, flagged file count, and an honest per-agent map
+  (enforce / advisory / unprotected). An unprotected agent's only barrier
+  is cgh's MCP-side gate.
+- `sync`: mirror flagged paths into static `Read()` deny rules in
+  `.claude/settings.local.json` (secure mode only; user-authored rules
+  are never touched). Runs automatically after `cgh classify train`.
+
+Fail posture follows the mode: `assist` fails open with a logged
+warning, `secure` fails closed, a broken guard reads as blocked. Every
+denial is logged to `.codegraph/activity.log`.
+
+### `memory`
+
+Shared memory hygiene. cgh's knowledge store is the canonical
+cross-agent memory (standing instructions, session digests, learnings);
+this command keeps it dense instead of noisy.
+
+```
+cgh memory review [--days N] [--root DIR]
+```
+
+Lists entries older than the window (default 90 days) so a human, or an
+agent asked to tidy, can prune with the `knowledge_forget` MCP tool or
+supersede them with fresh entries.

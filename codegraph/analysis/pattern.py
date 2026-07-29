@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import os
 import re
 import shutil
@@ -75,7 +77,9 @@ def pattern_search(
             cfg = repo_root / ".codegraph" / "config.toml"
             if cfg.exists():
                 with open(cfg, "rb") as f:
-                    for rel in tomllib.load(f).get("codegraph", {}).get("extra_dirs", []):
+                    for rel in (
+                        tomllib.load(f).get("codegraph", {}).get("extra_dirs", [])
+                    ):
                         p = (repo_root / rel).resolve()
                         if p.exists() and p.is_dir():
                             roots.append(p)
@@ -90,7 +94,9 @@ def pattern_search(
 
     # Strategy 2, git grep (respects .gitignore; repo-by-repo)
     if shutil.which("git"):
-        hits, ok = _run_git_grep(roots, pattern, glob, max_results, regex, case_sensitive)
+        hits, ok = _run_git_grep(
+            roots, pattern, glob, max_results, regex, case_sensitive
+        )
         if ok:
             return hits[:max_results], "git-grep"
 
@@ -109,7 +115,14 @@ def _run_rg(
 ) -> tuple[list[PatternHit], bool]:
     out: list[PatternHit] = []
     for root in roots:
-        args = ["rg", "--no-heading", "--line-number", "--max-count", str(max_results), "--json"]
+        args = [
+            "rg",
+            "--no-heading",
+            "--line-number",
+            "--max-count",
+            str(max_results),
+            "--json",
+        ]
         if not case_sensitive:
             args.append("--ignore-case")
         if not regex:
@@ -120,7 +133,15 @@ def _run_rg(
         # pattern like "--pre=sh" reaches ripgrep's preprocessor (code exec).
         args.extend(["--", pattern, str(root)])
         try:
-            r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+            r = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                **quiet_subprocess_kwargs(),
+            )
         except (subprocess.TimeoutExpired, OSError):
             return [], False
         if r.returncode not in (0, 1):  # 1 = no matches, still OK
@@ -175,7 +196,16 @@ def _run_git_grep(
         if glob:
             args.extend(["--", glob])
         try:
-            r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(root), timeout=30)
+            r = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(root),
+                timeout=30,
+                **quiet_subprocess_kwargs(),
+            )
         except (subprocess.TimeoutExpired, OSError):
             return [], False
         if r.returncode not in (0, 1):
@@ -226,7 +256,11 @@ def _run_python(
 
     for root in roots:
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIR_NAMES and not d.startswith(".")]
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if d not in _IGNORE_DIR_NAMES and not d.startswith(".")
+            ]
             for filename in filenames:
                 if glob and not _fn.fnmatch(filename, glob):
                     continue

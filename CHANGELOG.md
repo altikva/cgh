@@ -9,6 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh init` propagates to federated children.** On a federated
+  parent, init now offers (or, with `--yes`, just does) an init of
+  every declared subrepo: uninitialized ones get a full init and
+  index, initialized ones get the idempotent refresh (Kuzu
+  auto-migration, hooks, missing config). Each child runs in its own
+  subprocess with the new `--no-children` flag, so propagation stays
+  single-level, a federation cycle cannot loop, and one failing child
+  never aborts the others. Upgrading cgh on a big monorepo is now one
+  `cgh init --yes` at the parent instead of one per subrepo.
 - **Guard adapters for Gemini CLI and Codex CLI**, wired against their
   verified hook surfaces. Gemini enforces like Claude: a `BeforeTool`
   hook in `.gemini/settings.json` (matcher on `read_file`,

@@ -10,8 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT AND CC-BY-NC-SA-4.0"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+# cgh itself is a peer dependency, deliberately not declared: the plugin
+# only ever loads through cgh's entry point group, so it is inert without
+# cgh installed, and declaring it makes resolvers overlay a second cgh on
+# top of a dev checkout. Requires cgh >= 0.6.1 at runtime.
 dependencies = [
-    "cgh>=0.6",
     "pypdf>=4.0",
     "python-docx>=1.1",
     "openpyxl>=3.1",

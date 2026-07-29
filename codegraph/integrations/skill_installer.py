@@ -283,6 +283,27 @@ def install_gemini(project_root: Path) -> list[str]:
     return _install_agents_md(project_root / "GEMINI.md")
 
 
+def install_bob(project_root: Path) -> list[str]:
+    """Emit each skill to <project>/.bob/rules/<name>.md. Bob loads the
+    files in .bob/rules alphabetically into every mode, so plain
+    markdown is enough; the files version with the repo like Cursor's
+    rules do."""
+    rules_dir = project_root / ".bob" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    for name, fm, body, _skill_dir in _iter_skills():
+        description = fm.get("description", "").strip()
+        lines = [f"# {name}", ""]
+        if description:
+            lines += [f"_{description}_", ""]
+        lines.append(body.rstrip())
+        lines.append("")
+        (rules_dir / f"{name}.md").write_text("\n".join(lines), encoding="utf-8")
+        installed.append(name)
+    return installed
+
+
 # ---------------------------------------------------------------------------
 # Formatters
 # ---------------------------------------------------------------------------
@@ -373,6 +394,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
       codex   → ./AGENTS.md
       gemini  → ./GEMINI.md
       cursor  → ./.cursor/rules/codegraph-usage.mdc
+      bob     → ./.bob/rules/00-codegraph-usage.md
 
     Returns the path written (as str) or None if skipped.
     """
@@ -387,6 +409,16 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
             "---\n\n" + _USAGE_BODY
         )
         target.write_text(mdc, encoding="utf-8")
+        return str(target)
+
+    if tool == "bob":
+        # 00- prefix so the alphabetical rules loading reads it first.
+        target = project_root / ".bob" / "rules" / "00-codegraph-usage.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
+            encoding="utf-8",
+        )
         return str(target)
 
     # Pick the root file per tool
@@ -434,4 +466,6 @@ def install_for_tools(project_root: Path, tools: list[str]) -> dict[str, list[st
         result["codex"] = install_codex(project_root)
     if "gemini" in tools:
         result["gemini"] = install_gemini(project_root)
+    if "bob" in tools:
+        result["bob"] = install_bob(project_root)
     return result

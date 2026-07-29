@@ -320,6 +320,40 @@ def owner_main(
 
     auth_key = ensure_auth_key(_root)
 
+    # Load installed plugins (proposal 001). The owner is the full home:
+    # parsers register into the shared registry (indexer + watcher pick
+    # them up), and each plugin's MCP registrar gets the FastMCP instance,
+    # exactly like the internal tools_*.py modules. A broken plugin is a
+    # logged warning, never a dead owner.
+    try:
+        from codegraph.plugins import load_plugins, mcp_registrars
+
+        for _rec in load_plugins(_root):
+            if _rec.status != "active":
+                continue
+            print(
+                f"[codegraph owner] plugin {_rec.name}: active"
+                + (f" ({', '.join(_rec.surfaces)})" if _rec.surfaces else ""),
+                file=sys.stderr,
+                flush=True,
+            )
+        for _plugin_name, _registrar in mcp_registrars():
+            try:
+                _registrar(mcp)
+            except Exception as exc:
+                print(
+                    f"[codegraph owner] plugin {_plugin_name}: "
+                    f"MCP registration failed: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    except Exception as exc:
+        print(
+            f"[codegraph owner] plugin loading failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     # Reindex + watcher (if requested)
     if reindex:
         from codegraph.indexer import index_repo

@@ -5,11 +5,11 @@
 / /__| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |
 ```
 
-**Local code graph index for AI coding assistants.**
+**Local code graph, shared memory and guardrails for AI coding assistants.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, and Gemini can do symbol-level lookups instead of reading entire files.
+Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, and Gemini can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
 
-**Result:** 60-90% fewer tokens on typical navigation tasks.
+**Result:** 60-90% fewer tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
 
 ---
 
@@ -31,12 +31,18 @@ macOS, Linux, WSL, Git Bash ([install.sh](./install.sh)):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
+
+# Core + the five first-party plugins in one shot:
+curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | CGH_PLUGINS=1 bash
 ```
 
 Windows PowerShell ([install.ps1](./install.ps1)):
 
 ```powershell
 irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
+
+# Core + the five first-party plugins in one shot:
+$env:CGH_PLUGINS = 1; irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 ```
 
 ### With pip, pipx, or uv
@@ -57,6 +63,7 @@ uv pip install -e .     # or: pip install -e .
 Optional extras (none are required; the core install is lean and works on Python 3.11 through 3.14):
 
 ```bash
+pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
 pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
 pip install "cgh[kuzu]"    # the legacy Kuzu graph backend (DuckDB is the default)
@@ -897,7 +904,7 @@ Control which plugins load per repo in `.codegraph/config.toml`:
 
 A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
 
-First-party plugins live in [plugins/](./plugins) and install separately, so the core stays lean:
+First-party plugins live in [plugins/](./plugins) and install separately, so the core stays lean; grab all five at once with `pip install "cgh[plugins]"`:
 
 | Plugin | What it adds |
 |---|---|

@@ -9,6 +9,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-classify plugin** (in `plugins/cgh-classify`, published
+  separately): human-trainable confidentiality classification, pure
+  standard library. `cgh classify label <file> [--not]` maintains the
+  ground truth, `train` fits a TF-IDF + naive Bayes model on it and
+  sweeps the repo, `review` lists the files the model is unsure about.
+  The safety asymmetry is deliberate: a model prediction can only ever
+  block (a predicted-confidential file gets the `confidential` finding),
+  while only a human label can clear a file when `mode = "secure"`
+  makes the egress gate an allowlist. Labels and model live next to the
+  index, machine-local, retraining is instant.
 - **cgh-summarize plugin** (in `plugins/cgh-summarize`, published
   separately): prose summaries of indexed files, produced by whatever
   model is already at hand. Backends: the agent CLIs in headless mode

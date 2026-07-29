@@ -34,6 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Refuse manual dispatch from non-main refs
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::workflow_dispatch runs only from main"
+          exit 1
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
         with:

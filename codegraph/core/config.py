@@ -205,6 +205,13 @@ class CodegraphConfig:
     # live exactly as long as the parent owner.
     federate_auto_up: bool = True
 
+    # Global posture. "assist" optimizes for token savings and flow;
+    # "secure" is assist plus enforcement: egress gates go to allowlist
+    # mode, guards fail closed, nothing is turned off. Consumers (egress
+    # gate, guard) derive their defaults from this; each stays
+    # individually overridable in its own section.
+    mode: str = "assist"  # "assist" | "secure"
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -302,6 +309,10 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.subrepos = list(cg["subrepos"])
     if "federate_auto_up" in cg:
         config.federate_auto_up = bool(cg["federate_auto_up"])
+    if "mode" in cg:
+        value = str(cg["mode"]).strip().lower()
+        if value in ("assist", "secure"):
+            config.mode = value
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:

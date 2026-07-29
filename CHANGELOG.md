@@ -151,6 +151,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the plugin architecture proposal (docs/proposals/001).
 
 ### Fixed
+- **Federated children no longer starve the parent's fan-out.** An
+  auto-started child owner held its graph write connection forever
+  after the first watcher index, and since the graph backend refuses
+  cross-process opens while a writer holds the lock, the parent's
+  read-only fan-out lost that scope (`db unavailable (locked)`) until
+  the child restarted; on a busy monorepo every child ended up locked
+  within minutes. The child's owner now releases its write connection
+  after each watcher burst when no MCP proxy is attached (reopened
+  lazily on the next index or tool call), auto-started children are
+  kept alive by a distinct `parent-<pid>` marker that never counts as
+  an MCP worker, and the owner's tool connection cache was unified
+  into the core connection authority so the release takes effect
+  everywhere at once.
 - **Flashing console windows on Windows.** A detached owner has no
   console, so every `git.exe` the watcher spawned opened its own
   conhost window; on a busy monorepo that meant a constant stream of

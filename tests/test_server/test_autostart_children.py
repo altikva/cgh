@@ -69,7 +69,7 @@ class TestAutostartChildren:
             }
         ]
         assert spawned == [(child, True, False)]
-        marker = child / ".codegraph" / "workers" / str(os.getpid())
+        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
         assert marker.exists()
 
     def test_release_children_drops_pid_marker(self, parent_and_child, monkeypatch):
@@ -77,7 +77,7 @@ class TestAutostartChildren:
         monkeypatch.setattr(ipc, "spawn_owner", lambda root, watch, reindex: 4321)
         monkeypatch.setattr(ipc, "is_owner_alive", lambda root: False)
         autostart_children(parent)
-        marker = child / ".codegraph" / "workers" / str(os.getpid())
+        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
         assert marker.exists()
 
         release_children(parent)
@@ -100,7 +100,7 @@ class TestAutostartChildren:
         ]
         # No pid marker: an already-up child must not be kept alive by this
         # parent, otherwise two repos federating each other never shut down.
-        marker = child / ".codegraph" / "workers" / str(os.getpid())
+        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
         assert not marker.exists()
 
     def test_uninitialized_child_is_skipped(self, tmp_path, monkeypatch):
@@ -131,7 +131,7 @@ class TestAutostartChildren:
         results = autostart_children(parent)
 
         assert results == [{"child": str(child), "name": "child", "status": "failed"}]
-        marker = child / ".codegraph" / "workers" / str(os.getpid())
+        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
         assert not marker.exists()
 
     def test_no_children_is_a_noop(self, tmp_path):

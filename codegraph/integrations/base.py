@@ -4,8 +4,9 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The AgentIntegration protocol and its four built-in
-#              implementations (Claude Code, Cursor, Codex, Gemini CLI).
+# Description: The AgentIntegration protocol and its five built-in
+#              implementations (Claude Code, Cursor, Codex, Gemini CLI,
+#              IBM Bob).
 #              An integration knows how to detect its tool, install the
 #              cgh instructions, and wire the confidentiality guard into
 #              the tool's own hook system, each with an honestly declared
@@ -244,6 +245,50 @@ class CodexIntegration:
         return _file_mentions(root / ".codex" / "hooks.json", self._MARKER)
 
 
+class BobIntegration:
+    """IBM Bob (BobShell + the Bob IDE): instructions land as plain
+    markdown in .bob/rules/, loaded alphabetically into every mode, and
+    the guard mirrors barred paths into a managed .bobignore block, the
+    file Bob honors when deciding what it may access. Static denies
+    only: Bob publishes no pre-tool hook with a veto, so the level is
+    "partial" and `cgh guard sync` keeps the block fresh."""
+
+    name = "bob"
+    display = "IBM Bob"
+
+    def detect(self, root: Path) -> bool:
+        import shutil
+
+        return (
+            (root / ".bob").exists()
+            or (root / ".bobignore").exists()
+            or shutil.which("bob") is not None
+        )
+
+    def install_instructions(self, root: Path) -> list[str]:
+        from codegraph.integrations.skill_installer import install_bob
+
+        return install_bob(root)
+
+    def guard_spec(self) -> GuardSpec:
+        return GuardSpec(
+            level="partial",
+            note="static .bobignore denies in secure mode, refreshed by "
+            "cgh guard sync; no dynamic veto hook",
+        )
+
+    def install_guard(self, root: Path) -> bool:
+        from codegraph.state.guard import sync_bobignore
+
+        added, removed = sync_bobignore(root)
+        return bool(added or removed)
+
+    def guard_installed(self, root: Path) -> bool:
+        from codegraph.state.guard import _BOBIGNORE_START
+
+        return _file_mentions(root / ".bobignore", _BOBIGNORE_START)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -253,6 +298,7 @@ _BUILTINS: list[AgentIntegration] = [
     CursorIntegration(),
     CodexIntegration(),
     GeminiIntegration(),
+    BobIntegration(),
 ]
 
 

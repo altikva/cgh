@@ -568,6 +568,13 @@ def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
             or (root / ".gemini").exists()
             or shutil.which("gemini") is not None,
         ),
+        (
+            "IBM Bob",
+            "bob",
+            (root / ".bob").exists()
+            or (root / ".bobignore").exists()
+            or shutil.which("bob") is not None,
+        ),
     ]
 
     for name, _, detected in all_tools:
@@ -1523,6 +1530,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         }
 
     from codegraph.integrations.skill_installer import (
+        install_bob,
         install_claude,
         install_codex,
         install_cursor,
@@ -1639,6 +1647,21 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         )
         _skills_line("GEMINI.md", install_gemini(root))
 
+    elif tool == "bob":
+        # Bob reads project-level MCP servers from .bob/mcp.json (its
+        # global file is ~/.bob/mcp_settings.json; project wins).
+        bob_dir = root / ".bob"
+        bob_dir.mkdir(exist_ok=True)
+        mcp_path = bob_dir / "mcp.json"
+        if mcp_path.exists():
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
+        else:
+            data = {"mcpServers": {}}
+        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
+        _skills_line(".bob/rules/", install_bob(root))
+
 
 # ---------------------------------------------------------------------------
 # cmd_parsers
@@ -1713,13 +1736,15 @@ def cmd_setup(args) -> None:
 
     console.print(LOGO)
 
-    valid = ("claude", "cursor", "codex", "gemini", "all")
+    valid = ("claude", "cursor", "codex", "gemini", "bob", "all")
     if target not in valid:
         console.print(f"[dim]Unknown target: {target}[/dim]")
         console.print(f"[dim]Options: {', '.join(valid)}[/dim]")
         return
 
-    targets = ["claude", "cursor", "codex", "gemini"] if target == "all" else [target]
+    targets = (
+        ["claude", "cursor", "codex", "gemini", "bob"] if target == "all" else [target]
+    )
 
     console.print(Panel(f"[bold]Setup for {target}[/bold]", border_style="cyan"))
 

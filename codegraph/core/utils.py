@@ -100,3 +100,18 @@ def ro_sqlite_uri(db_path: "str | Path") -> str:
     from urllib.request import pathname2url
 
     return "file:" + pathname2url(str(db_path)) + "?mode=ro"
+
+
+def quiet_subprocess_kwargs() -> dict:
+    """Keyword arguments that stop a child process from opening a console
+    window on Windows. A detached owner has no console of its own, so
+    every git.exe it spawns otherwise gets a fresh flashing conhost
+    (one per watcher poll on a busy repo). No-op on other platforms.
+    """
+    import os as _os
+
+    if _os.name == "nt":
+        import subprocess as _sp
+
+        return {"creationflags": getattr(_sp, "CREATE_NO_WINDOW", 0)}
+    return {}

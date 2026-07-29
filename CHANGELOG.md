@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **IBM Bob summarize backend** (`cli:bob` in cgh-summarize): BobShell's
+  headless mode (`bob -p`) joins the agent CLI backends. No model
+  option: Bob's orchestration engine routes each call to a model on
+  its own. Auto-selected after claude/gemini/codex when installed,
+  and the Windows `.cmd` shim handling applies to it like the others.
+
 ## [0.7.3] - 2026-07-29
 
 ### Fixed

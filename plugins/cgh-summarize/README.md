@@ -19,6 +19,7 @@ cgh insights              # cross-file patterns from the summaries
 | `cli:claude` | `claude -p`, light model | cloud |
 | `cli:gemini` | `gemini -p`, flash tier | cloud |
 | `cli:codex` | `codex exec` | cloud |
+| `cli:bob` | `bob -p`, IBM BobShell routes the model itself | cloud |
 | `ollama` | local Ollama daemon, model is a config line | none |
 | `openai` | any OpenAI-compatible endpoint (vLLM, LM Studio, watsonx, ...) | cloud |
 | `structural` | cgh's own outline, no model at all | none |

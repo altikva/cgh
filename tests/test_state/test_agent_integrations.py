@@ -242,21 +242,27 @@ class TestBobAdapter:
         (tmp_path / ".bob").mkdir()
         assert bob.detect(tmp_path) is True
 
-    def test_install_writes_rules_files(self, tmp_path, monkeypatch):
+    def test_install_copies_skills_verbatim(self, tmp_path, monkeypatch):
         import codegraph.integrations.skill_installer as installer
 
+        src = tmp_path / "bundled" / "cgh-usage"
+        src.mkdir(parents=True)
+        skill_md = "---\nname: cgh-usage\ndescription: use the graph\n---\nBody.\n"
+        (src / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        (src / "extra.md").write_text("supporting file\n", encoding="utf-8")
         monkeypatch.setattr(
             installer,
             "_iter_skills",
-            lambda: [("cgh-usage", {"description": "use the graph"}, "Body.", None)],
+            lambda: [("cgh-usage", {"name": "cgh-usage"}, "Body.", src)],
         )
-        names = self._bob().install_instructions(tmp_path)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        names = self._bob().install_instructions(repo)
         assert names == ["cgh-usage"]
-        text = (tmp_path / ".bob" / "rules" / "cgh-usage.md").read_text(
-            encoding="utf-8"
-        )
-        assert text.startswith("# cgh-usage")
-        assert "use the graph" in text and "Body." in text
+        dest = repo / ".bob" / "skills" / "cgh-usage"
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == skill_md
+        assert (dest / "extra.md").exists()
 
     def test_bobignore_sync_secure_mode(self, tmp_path):
         from codegraph.state.guard import sync_bobignore

@@ -258,6 +258,11 @@ def main() -> None:
         action="store_true",
         help="Don't initialize / refresh federated subrepos",
     )
+    p.add_argument(
+        "--secure",
+        action="store_true",
+        help='Enable secure mode (mode = "secure") without prompting',
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")

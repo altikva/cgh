@@ -9,6 +9,28 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-summarize plugin** (in `plugins/cgh-summarize`, published
+  separately): prose summaries of indexed files, produced by whatever
+  model is already at hand. Backends: the agent CLIs in headless mode
+  (`cli:claude` on a light model, `cli:gemini` flash tier, `cli:codex`),
+  a local Ollama daemon (the model is one config line), any
+  OpenAI-compatible endpoint (vLLM, LM Studio, watsonx, hosted APIs),
+  and `structural`, cgh's own outline with no model at all. Third-party
+  backends join through the `summarize.backend` extension namespace.
+  Before any cloud backend sees a file, the egress gate checks its
+  findings: confidential flags, block-severity secrets, and PII (unless
+  `allow_pii = true`) stop it; with the new global `mode = "secure"`
+  the gate switches to allowlist and only files explicitly labeled
+  non-confidential go out. Local backends bypass the gate, every cloud
+  call and every denial is logged to activity.log. Files under 4 KB are
+  skipped; changed files keep their summary while drift stays under 30%
+  of lines across at most 5 changes. Ships `cgh summarize status|run`,
+  `cgh insights`, and the `summaries` / `corpus_insights` MCP tools;
+  insights batch the gate-cleared summaries into one model call and
+  persist the result to the knowledge store.
+- **Global `mode` switch** in `[codegraph]`: `assist` (default) or
+  `secure`. Secure is assist plus enforcement, nothing turns off; gate
+  and guard consumers derive their defaults from it, each overridable.
 - **cgh-pii plugin** (in `plugins/cgh-pii`, published separately): every
   indexed file is scanned inline for personal data and credentials.
   Emails, international phone numbers, mod-97-validated IBANs and

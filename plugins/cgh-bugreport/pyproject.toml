@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cgh-bugreport"
+version = "0.1.0"
+description = "Crash reports for cgh, built by allowlist and sent only by hand: local spool, exact-payload preview, private GitHub issues with fingerprint dedup"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT AND CC-BY-NC-SA-4.0"
+authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+# cgh itself is a peer dependency, deliberately not declared: the plugin
+# only ever loads through cgh's entry point group, so it is inert without
+# cgh installed, and declaring it makes resolvers overlay a second cgh on
+# top of a dev checkout. Requires cgh >= 0.7 at runtime. Sending uses the
+# gh CLI already on the machine; the plugin itself has no network code.
+dependencies = []
+
+[project.entry-points.cgh]
+bugreport = "cgh_bugreport"
+
+[tool.setuptools.packages.find]
+include = ["cgh_bugreport*"]

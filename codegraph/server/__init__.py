@@ -186,6 +186,7 @@ mcp = FastMCP(
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
+from codegraph.server.tools_findings import register as _register_findings  # noqa: E402
 from codegraph.server.tools_history import register as _register_history  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
 from codegraph.server.tools_insight import register as _register_insight  # noqa: E402
@@ -209,6 +210,7 @@ _register_memory(mcp)
 _register_plans(mcp)
 _register_knowledge(mcp)
 _register_history(mcp)  # hotspots, who_knows
+_register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
 
 
 # ---------------------------------------------------------------------------

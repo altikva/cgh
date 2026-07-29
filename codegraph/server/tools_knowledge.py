@@ -26,6 +26,7 @@ def register(mcp) -> None:
         tags: str = "",
         file_refs: str = "",
         session_id: str = "",
+        supersedes: int = 0,
     ) -> str:
         """
         Persist a distilled knowledge entry so future sessions can recall it.
@@ -37,10 +38,14 @@ def register(mcp) -> None:
           - a user style preference ("user prefers French in commit bodies")
           - a glossary entry ("RFM = Recency, Frequency, Monetary")
 
-        kind: pattern | decision | gotcha | style | glossary | note
+        kind: pattern | decision | gotcha | style | glossary | note |
+              standing_instruction (durable rules and corrections from the
+              user; these lead every resume bundle)
         tags: comma-separated, short. These ARE the glossary index.
         file_refs: comma-separated canonical file paths involved.
         session_id: optional, stamps the entry with the current session.
+        supersedes: optional id of an entry this one replaces; the old
+              entry stops appearing in searches and bundles.
         """
         from codegraph.state.call_log import knowledge_record as _record
 
@@ -52,28 +57,53 @@ def register(mcp) -> None:
             file_refs=file_refs,
             session_id=session_id,
             repo_root=_srv._root,
+            supersedes=supersedes,
         )
         try:
             from codegraph.state.activity import log as _log
 
-            _log(_srv._root, "knowledge_record", f"id={entry_id} kind={kind} title={title[:60]}")
+            _log(
+                _srv._root,
+                "knowledge_record",
+                f"id={entry_id} kind={kind} title={title[:60]}",
+            )
         except Exception:
             pass
         return json.dumps({"id": entry_id, "kind": kind, "title": title})
 
     @mcp.tool()
     @_logged_tool
-    def knowledge_search(query: str, kind: str = "", limit: int = 10) -> str:
+    def knowledge_search(
+        query: str, kind: str = "", limit: int = 10, scope: str = ""
+    ) -> str:
         """
         BM25 search over persisted knowledge. Use when facing a problem
         you suspect has been solved before, or when looking up a pattern
         by keyword / tag.
 
-        kind: optional filter, pattern/decision/gotcha/style/glossary/note
+        kind: optional filter, pattern/decision/gotcha/style/glossary/
+              note/standing_instruction
+        scope: default searches THIS repo only. Pass "all" to also
+              search federated subrepos' knowledge read-only; their hits
+              come back tagged with a `scope` field. Never on by
+              default: cross-repo learnings load only when asked.
         """
         from codegraph.state.call_log import knowledge_search as _search
 
         hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
+        if scope == "all" and _srv._root is not None:
+            from codegraph.analysis.federation import resolve_children
+            from codegraph.state.call_log import knowledge_search_ro
+
+            for child in resolve_children(_srv._root):
+                for row in knowledge_search_ro(
+                    child / ".codegraph" / "call_log.db",
+                    query,
+                    kind=kind or None,
+                    limit=limit,
+                ):
+                    row["scope"] = child.name
+                    hits.append(row)
         return json.dumps(
             {"query": query, "kind": kind or None, "total": len(hits), "hits": hits},
             indent=2,
@@ -195,4 +225,10 @@ def register(mcp) -> None:
             _log(_srv._root, "session_compact", f"{session_id} id={entry_id}")
         except Exception:
             pass
-        return json.dumps({"id": entry_id, "session_id": session_id, "title": title or f"Session digest {session_id}"})
+        return json.dumps(
+            {
+                "id": entry_id,
+                "session_id": session_id,
+                "title": title or f"Session digest {session_id}",
+            }
+        )

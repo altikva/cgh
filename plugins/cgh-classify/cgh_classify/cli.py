@@ -155,6 +155,20 @@ def _cmd_train(console, root: Path, config: dict):
         f"[green]+[/green] swept {swept} file(s), {flagged} flagged confidential."
     )
 
+    # Secure mode: mirror the fresh flags into Claude Code's static deny
+    # rules right away (older cgh without the guard: silently skip).
+    try:
+        from codegraph.state.guard import sync_static_rules
+
+        added, removed = sync_static_rules(root)
+        if added or removed:
+            console.print(
+                f"[green]+[/green] guard deny rules synced "
+                f"({added} added, {removed} removed)."
+            )
+    except ImportError:
+        pass
+
 
 def _cmd_review(console, root: Path):
     from codegraph.state.findings import query_findings

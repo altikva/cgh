@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cgh-docs"
+version = "0.1.0"
+description = "Document parsers for cgh: pdf, docx and xlsx files become searchable sections in the code graph"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT AND CC-BY-NC-SA-4.0"
+authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+dependencies = [
+    "cgh>=0.6",
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+]
+
+[project.entry-points.cgh]
+docs = "cgh_docs"
+
+[tool.setuptools.packages.find]
+include = ["cgh_docs*"]

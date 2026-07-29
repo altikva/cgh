@@ -741,7 +741,7 @@ Owners are independent: the parent reads child DBs directly as files, it does NO
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 47 tools.
+When running as an MCP server (`cgh serve`), codegraph exposes 50 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 

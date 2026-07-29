@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-29
+
 ### Added
 - **cgh-bugreport plugin** (in `plugins/cgh-bugreport`, published
   separately): crash reports that keep the egress promise. Payloads
@@ -488,7 +490,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/altikva/cgh/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/altikva/cgh/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/altikva/cgh/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6

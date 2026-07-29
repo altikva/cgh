@@ -1031,8 +1031,99 @@ def cmd_init(args: argparse.Namespace) -> None:
             "  [dim]No parseable files found. Run 'codegraph parsers' to see supported languages.[/dim]"
         )
 
+    # -- Federated children: propagate the init --
+    if not getattr(args, "no_children", False):
+        _init_children(root, assume_yes=bool(getattr(args, "yes", False)))
+
     # -- Done --
     _print_init_summary()
+
+
+def _init_children(root: Path, assume_yes: bool) -> None:
+    """Bring every declared subrepo to the current cgh version.
+
+    A parent that upgrades cgh, or re-runs init, propagates to its
+    children: uninitialized ones get a full init + index, initialized
+    ones get the idempotent refresh (Kuzu auto-migration, hooks, missing
+    config, auth key). Each child runs in its own subprocess with
+    --no-children, so propagation stays single-level and a federation
+    cycle cannot loop. Failures are per-child and never abort the
+    parent's init.
+    """
+    import subprocess
+    import sys as _sys
+
+    from codegraph.analysis.federation import resolve_children, verify_child
+    from codegraph.core.utils import quiet_subprocess_kwargs
+
+    children = resolve_children(root)
+    if not children:
+        return
+
+    fresh = [c for c in children if not verify_child(c).ok]
+    console.print(
+        f"\n[bold]Federated children[/bold] [dim]({len(children)} declared, "
+        f"{len(fresh)} need a first init)[/dim]"
+    )
+
+    if not assume_yes:
+        try:
+            answer = (
+                console.input(
+                    f"  Initialize / refresh the {len(children)} federated "
+                    "subrepo(s) now? [Y/n] "
+                )
+                .strip()
+                .lower()
+            )
+        except EOFError:
+            answer = "n"
+        if answer in ("n", "no"):
+            console.print(
+                "  [dim]Skipped. Run[/dim] [cyan]cgh init --yes[/cyan] "
+                "[dim]inside each subrepo when ready.[/dim]"
+            )
+            return
+
+    for child in children:
+        was_ok = verify_child(child).ok
+        try:
+            proc = subprocess.run(
+                [
+                    _sys.executable,
+                    "-m",
+                    "codegraph",
+                    "init",
+                    "--root",
+                    str(child),
+                    "--yes",
+                    "--no-children",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                **quiet_subprocess_kwargs(),
+            )
+            if proc.returncode != 0:
+                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                console.print(
+                    f"  [red]x[/red] {child.name}: init failed"
+                    + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
+                )
+                continue
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            console.print(f"  [red]x[/red] {child.name}: {exc}")
+            continue
+
+        status = verify_child(child)
+        if status.ok:
+            label = "refreshed" if was_ok else "initialized + indexed"
+            console.print(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
+        else:
+            console.print(
+                f"  [yellow]~[/yellow] {child.name} "
+                "[dim]initialized but still no graph DB, run cgh index there[/dim]"
+            )
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:

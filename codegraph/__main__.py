@@ -253,6 +253,11 @@ def main() -> None:
     p.add_argument(
         "--yes", "-y", action="store_true", help="Accept all defaults (non-interactive)"
     )
+    p.add_argument(
+        "--no-children",
+        action="store_true",
+        help="Don't initialize / refresh federated subrepos",
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")

@@ -535,3 +535,21 @@ cgh plugins [--json] [--root DIR]
 cgh plugins
 cgh plugins --json      # machine-readable, for scripts
 ```
+
+### `findings`
+
+Query the finding store: what scanner plugins know about each file
+(`pii.email`, `secret.aws_key`, `confidential`, `summary`, ...).
+Federated over subrepos with a `scope` column.
+
+```
+cgh findings [FILE] [--key PREFIX] [--severity info|warn|block] [--limit N] [--json] [--root DIR]
+```
+
+**Example:**
+
+```bash
+cgh findings --key pii.            # every PII finding in the repo
+cgh findings src/billing.py       # everything known about one file
+cgh findings --severity block     # what the gates would stop
+```

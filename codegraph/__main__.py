@@ -40,6 +40,7 @@ from codegraph.cli.commands_index import (
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
+from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
 from codegraph.cli.commands_monitor import (
@@ -116,6 +117,7 @@ def _print_help():
                 ("diff", "Files changed since last index"),
                 ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
                 ("parsers", "List registered language parsers"),
+                ("findings", "Scanner findings: pii, secrets, summaries"),
             ],
         ),
         (
@@ -570,6 +572,15 @@ def main() -> None:
     _add_root(p)
     p.add_argument("--json", action="store_true")
 
+    # --- findings ---
+    p = sub.add_parser("findings", help="Query scanner findings (pii, secrets, ...)")
+    _add_root(p)
+    p.add_argument("file", nargs="?", default="", help="Restrict to one file")
+    p.add_argument("--key", default="", help="Key prefix filter, e.g. pii. or secret")
+    p.add_argument("--severity", default="", choices=["", "info", "warn", "block"])
+    p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--json", action="store_true")
+
     # Load installed plugins BEFORE parse_args so their parsers register
     # and their CLI verbs exist. The repo root isn't parsed yet, so config
     # resolution walks up from the CWD; a failure here must never take the
@@ -652,6 +663,7 @@ def main() -> None:
         "ensurepath": cmd_ensurepath,
         "_reindex_hook": cmd_reindex_hook,
         "plugins": cmd_plugins,
+        "findings": cmd_findings,
     }
 
     # Plugin-registered verbs dispatch through argparse's set_defaults(func=…)

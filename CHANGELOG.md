@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-docs plugin** (in `plugins/cgh-docs`, published separately):
+  pdf, docx and xlsx parsers. Pages, outline entries, Word headings and
+  Excel sheets become document sections, searchable through
+  `search_docs`, `doc_outline`, `fts_search` and the federated fan-out
+  exactly like markdown. Parsing is best effort: an encrypted pdf or a
+  corrupt workbook yields an empty index and a log line, never a failed
+  scan. First pip-installable plugin, exercising the loader end to end.
 - **Finding store and scanner pipeline**: plugin scanners now run,
   inline ones right after a file is indexed, heavy ones through a
   deferred queue that dedupes by git blob SHA and stays off the watcher

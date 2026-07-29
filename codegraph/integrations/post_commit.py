@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import json
 import subprocess
 import sys
@@ -25,8 +27,11 @@ def _git_changed_files(repo_root: Path, since: str = "HEAD~1") -> list[str]:
     result = subprocess.run(
         ["git", "diff", "--name-only", "--diff-filter=ACMR", since],
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(repo_root),
+        **quiet_subprocess_kwargs(),
     )
     return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
 
@@ -36,8 +41,11 @@ def _git_commit_info(repo_root: Path) -> dict:
     result = subprocess.run(
         ["git", "log", "-1", "--format=%H%n%s%n%an%n%ai"],
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(repo_root),
+        **quiet_subprocess_kwargs(),
     )
     lines = result.stdout.strip().splitlines()
     if len(lines) >= 4:
@@ -71,7 +79,9 @@ def _detect_patterns(files: list[str]) -> list[str]:
     """Detect actionable patterns from changed files."""
     alerts = []
 
-    router_or_schema = [f for f in files if f.startswith("api/routers/") or f.startswith("api/schemas/")]
+    router_or_schema = [
+        f for f in files if f.startswith("api/routers/") or f.startswith("api/schemas/")
+    ]
     if router_or_schema:
         alerts.append(
             "OPENAPI_REGEN: Router/schema files changed, openapi.json may need regeneration + frontend backlog issue"
@@ -85,7 +95,9 @@ def _detect_patterns(files: list[str]) -> list[str]:
 
     webhook_files = [f for f in files if "webhook" in f.lower()]
     if webhook_files:
-        alerts.append("SECURITY_CHECK: Webhook handler changed, verify SSRF guards and signature validation")
+        alerts.append(
+            "SECURITY_CHECK: Webhook handler changed, verify SSRF guards and signature validation"
+        )
 
     handler_files = [f for f in files if f.startswith("api/handlers/")]
     if handler_files:
@@ -94,9 +106,15 @@ def _detect_patterns(files: list[str]) -> list[str]:
             "verify cross-table search includes tags/custom fields if list() modified"
         )
 
-    tenant_files = [f for f in files if "tenant" in f.lower() or "rls" in f.lower() or "auth" in f.lower()]
+    tenant_files = [
+        f
+        for f in files
+        if "tenant" in f.lower() or "rls" in f.lower() or "auth" in f.lower()
+    ]
     if tenant_files:
-        alerts.append("TENANT_SECURITY: Tenant/auth file changed, verify RLS context is always set, never swallowed")
+        alerts.append(
+            "TENANT_SECURITY: Tenant/auth file changed, verify RLS context is always set, never swallowed"
+        )
 
     return alerts
 

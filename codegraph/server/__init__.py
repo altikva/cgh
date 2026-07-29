@@ -89,12 +89,13 @@ def _logged_tool(fn):
 
 
 def _get_conn():
-    global _conn
-    if _conn is None:
-        from codegraph.core.db import get_connection
+    # Deliberately no local cache: codegraph.core.db is the single
+    # connection authority, so the watcher's idle release (dropping the
+    # write lock between bursts when no MCP worker is attached) takes
+    # effect here immediately, and the next tool call reopens lazily.
+    from codegraph.core.db import get_connection
 
-        _conn = get_connection(_root)
-    return _conn
+    return get_connection(_root)
 
 
 def _get_fts():
@@ -141,8 +142,14 @@ mcp = FastMCP(
         "       1. knowledge_record(title, body, kind, tags)\n"
         "  • Context ~80% full (long session, many results):\n"
         "       1. knowledge_record(...) for EVERY non-trivial insight\n"
-        "       2. compact_session(session_id, title, digest)\n"
+        "       2. checkpoint(session_id, digest), survives clears\n"
         "       These survive compaction, raw conversation does NOT.\n"
+        "  • Session start (especially when a cgh header announces a\n"
+        "    resume bundle): resume(session_id?, task?), ONE call returns\n"
+        "    standing instructions + digests + knowledge + plans.\n"
+        "  • User states a durable rule or correction mid-session:\n"
+        "       1. knowledge_record(kind='standing_instruction', ...)\n"
+        "          It leads every future resume bundle.\n"
         "  • After compaction / session resume / new session:\n"
         "       1. knowledge_list(limit=20), reload recent learnings\n"
         "       2. knowledge_search(query), targeted reload\n"
@@ -186,6 +193,8 @@ mcp = FastMCP(
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
 from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
+from codegraph.server.tools_findings import register as _register_findings  # noqa: E402
+from codegraph.server.tools_session import register as _register_session  # noqa: E402
 from codegraph.server.tools_history import register as _register_history  # noqa: E402
 from codegraph.server.tools_index import register as _register_index  # noqa: E402
 from codegraph.server.tools_insight import register as _register_insight  # noqa: E402
@@ -209,6 +218,8 @@ _register_memory(mcp)
 _register_plans(mcp)
 _register_knowledge(mcp)
 _register_history(mcp)  # hotspots, who_knows
+_register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
+_register_session(mcp)  # checkpoint / resume session continuity
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +330,40 @@ def owner_main(
     from codegraph.state.auth import ensure_auth_key
 
     auth_key = ensure_auth_key(_root)
+
+    # Load installed plugins (proposal 001). The owner is the full home:
+    # parsers register into the shared registry (indexer + watcher pick
+    # them up), and each plugin's MCP registrar gets the FastMCP instance,
+    # exactly like the internal tools_*.py modules. A broken plugin is a
+    # logged warning, never a dead owner.
+    try:
+        from codegraph.plugins import load_plugins, mcp_registrars
+
+        for _rec in load_plugins(_root):
+            if _rec.status != "active":
+                continue
+            print(
+                f"[codegraph owner] plugin {_rec.name}: active"
+                + (f" ({', '.join(_rec.surfaces)})" if _rec.surfaces else ""),
+                file=sys.stderr,
+                flush=True,
+            )
+        for _plugin_name, _registrar in mcp_registrars():
+            try:
+                _registrar(mcp)
+            except Exception as exc:
+                print(
+                    f"[codegraph owner] plugin {_plugin_name}: "
+                    f"MCP registration failed: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    except Exception as exc:
+        print(
+            f"[codegraph owner] plugin loading failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     # Reindex + watcher (if requested)
     if reindex:

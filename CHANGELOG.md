@@ -8,6 +8,198 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-29
+
+### Added
+- **cgh-bugreport plugin** (in `plugins/cgh-bugreport`, published
+  separately): crash reports that keep the egress promise. Payloads
+  are built by allowlist, never by scrubbing: versions, OS, command
+  name, exception type and stack frames normalized to cgh's own
+  modules; exception messages, paths, arguments and log lines are not
+  fields, so they structurally cannot leave, and the PII scanner runs
+  over the finished payload as a loud tripwire. Reports spool locally
+  (capped, purged, never indexed), `cgh bug preview` prints the exact
+  raw payload, and `cgh bug send` is always explicit: it goes through
+  the user's own gh CLI to a private repo only (public refused,
+  unverifiable refused), dedups by fingerprint (version excluded so
+  known crashes stay one issue), confirms the payload first in secure
+  mode, and lands in activity.log. The core itself still contains no
+  reporting code at all. Incident playbook in
+  `docs/BUGREPORT_PLAYBOOK.md`.
+- **`cgh init` propagates to federated children.** On a federated
+  parent, init now offers (or, with `--yes`, just does) an init of
+  every declared subrepo: uninitialized ones get a full init and
+  index, initialized ones get the idempotent refresh (Kuzu
+  auto-migration, hooks, missing config). Each child runs in its own
+  subprocess with the new `--no-children` flag, so propagation stays
+  single-level, a federation cycle cannot loop, and one failing child
+  never aborts the others. Upgrading cgh on a big monorepo is now one
+  `cgh init --yes` at the parent instead of one per subrepo.
+- **Guard adapters for Gemini CLI and Codex CLI**, wired against their
+  verified hook surfaces. Gemini enforces like Claude: a `BeforeTool`
+  hook in `.gemini/settings.json` (matcher on `read_file`,
+  `read_many_files`, `run_shell_command`, `search_file_content`,
+  `glob`) feeds the same guard handler, exit 2 with a named reason
+  denies. Codex is partial by nature: its `PreToolUse` hooks intercept
+  shell commands only, so `cgh _hook_guard_codex` answers with the
+  stdout JSON decision (both accepted field spellings) and the
+  `codex_hooks = true` feature flag is set in `.codex/config.toml`.
+  `cgh setup gemini|codex` installs the hooks; `cgh guard status` now
+  reports each detected agent from its declared capability.
+- **AgentIntegration surface**: the knowledge of each AI tool (detect
+  it, install the cgh instructions, wire the guard, declare an honest
+  enforcement level) now lives behind one protocol, with the four
+  built-ins (Claude Code, Cursor, Codex, Gemini) as its first
+  consumers. Plugins add new tools under the `integration` extension
+  namespace and `cgh setup` and `cgh guard status` pick them up.
+- **Session continuity: checkpoint and resume.** Clearing an agent's
+  context stops costing anything. The `checkpoint` MCP tool persists a
+  session digest that supersedes the previous one for the same session;
+  `resume` returns ONE ranked, budget-capped bundle: standing
+  instructions first (never truncated), then recent digests,
+  task-relevant knowledge, open plans, and recent file summaries.
+  Claude Code lifecycle hooks make it automatic: PreCompact and
+  SessionEnd record a checkpoint marker even when the model forgot,
+  and SessionStart prints a two-line header announcing the bundle, the
+  full bundle loading on demand so it only costs tokens when used.
+- **Knowledge store upgrades**: a `standing_instruction` kind for
+  durable user rules (they lead every resume bundle), supersede links
+  (a new entry can replace an older one, which drops out of searches
+  and bundles), read-only federation on request (`scope="all"` on
+  `knowledge_search` and `resume` pulls subrepo knowledge,
+  scope-tagged, never by default), and `cgh memory review` listing
+  stale entries for pruning.
+- **Confidentiality guard**: detection is now enforced by default at the
+  agent's own tools, not just at cgh's MCP responses. `cgh init` /
+  `cgh setup claude` install a Claude Code pre-tool-use hook that
+  consults the finding store before every Read, Grep, Glob or Bash call
+  and denies access (exit 2 with a named reason) to files flagged
+  confidential or carrying block-severity findings, in single-digit
+  milliseconds via direct SQLite reads. Bash matching follows the mode:
+  `assist` guards known read commands, `secure` denies any command
+  whose arguments hit a flagged path. Fail posture follows the mode
+  too: assist fails open with a logged warning, secure fails closed. In
+  secure mode a second static layer mirrors flagged paths into
+  `Read()` deny rules in `.claude/settings.local.json` (synced after
+  `cgh classify train` or via `cgh guard sync`, user-authored rules
+  never touched). `cgh guard status` reports the honest per-agent map:
+  enforce, advisory, or unprotected, where the only barrier is the
+  MCP-side gate. Every denial lands in activity.log.
+- **cgh-classify plugin** (in `plugins/cgh-classify`, published
+  separately): human-trainable confidentiality classification, pure
+  standard library. `cgh classify label <file> [--not]` maintains the
+  ground truth, `train` fits a TF-IDF + naive Bayes model on it and
+  sweeps the repo, `review` lists the files the model is unsure about.
+  The safety asymmetry is deliberate: a model prediction can only ever
+  block (a predicted-confidential file gets the `confidential` finding),
+  while only a human label can clear a file when `mode = "secure"`
+  makes the egress gate an allowlist. Labels and model live next to the
+  index, machine-local, retraining is instant.
+- **cgh-summarize plugin** (in `plugins/cgh-summarize`, published
+  separately): prose summaries of indexed files, produced by whatever
+  model is already at hand. Backends: the agent CLIs in headless mode
+  (`cli:claude` on a light model, `cli:gemini` flash tier, `cli:codex`),
+  a local Ollama daemon (the model is one config line), any
+  OpenAI-compatible endpoint (vLLM, LM Studio, watsonx, hosted APIs),
+  and `structural`, cgh's own outline with no model at all. Third-party
+  backends join through the `summarize.backend` extension namespace.
+  Before any cloud backend sees a file, the egress gate checks its
+  findings: confidential flags, block-severity secrets, and PII (unless
+  `allow_pii = true`) stop it; with the new global `mode = "secure"`
+  the gate switches to allowlist and only files explicitly labeled
+  non-confidential go out. Local backends bypass the gate, every cloud
+  call and every denial is logged to activity.log. Files under 4 KB are
+  skipped; changed files keep their summary while drift stays under 30%
+  of lines across at most 5 changes. Ships `cgh summarize status|run`,
+  `cgh insights`, and the `summaries` / `corpus_insights` MCP tools;
+  insights batch the gate-cleared summaries into one model call and
+  persist the result to the knowledge store.
+- **Global `mode` switch** in `[codegraph]`: `assist` (default) or
+  `secure`. Secure is assist plus enforcement, nothing turns off; gate
+  and guard consumers derive their defaults from it, each overridable.
+- **cgh-pii plugin** (in `plugins/cgh-pii`, published separately): every
+  indexed file is scanned inline for personal data and credentials.
+  Emails, international phone numbers, mod-97-validated IBANs and
+  Luhn-validated card numbers become `pii.*` findings (severity warn);
+  AWS access keys and PEM private key blocks become `secret.*` findings
+  (severity block); hardcoded `password = "..."` assignments are warned
+  about. Finding values carry only the match count and first line,
+  never the matched data, so the FTS never spreads what the scanner
+  detects. Keys can be disabled per repo, and an optional deferred NER
+  tier (person names, locations) activates with `cgh-pii[ner]` plus
+  `ner = true` under `[plugin.pii]`.
+- **cgh-docs plugin** (in `plugins/cgh-docs`, published separately):
+  pdf, docx and xlsx parsers. Pages, outline entries, Word headings and
+  Excel sheets become document sections, searchable through
+  `search_docs`, `doc_outline`, `fts_search` and the federated fan-out
+  exactly like markdown. Parsing is best effort: an encrypted pdf or a
+  corrupt workbook yields an empty index and a log line, never a failed
+  scan. First pip-installable plugin, exercising the loader end to end.
+- **Finding store and scanner pipeline**: plugin scanners now run,
+  inline ones right after a file is indexed, heavy ones through a
+  deferred queue that dedupes by git blob SHA and stays off the watcher
+  hot path. Findings (`pii.email`, `secret.aws_key`, `confidential`,
+  `summary`, ...) live in `.codegraph/findings.db`, SQLite in WAL mode
+  so they stay readable while an owner holds the graph write lock and
+  when no owner runs at all. They feed the full-text search (a search
+  for "IBAN" surfaces flagged files), are purged with their file, and
+  are queryable through the federated `findings` MCP tool and the new
+  `cgh findings` command (filters by file, key prefix, severity, scope
+  tag per subrepo).
+- **Plugin loader**: cgh discovers pip-installed plugins through the
+  `cgh` entry point group. A plugin exposes `CGH_PLUGIN_API = 1` and
+  `register(api)`; the versioned `PluginAPI` covers parsers (shared
+  registry, indexer and watcher pick them up), per-file scanners
+  (registered now, invoked once the finding store lands), MCP tools
+  (called with the FastMCP instance at owner startup), CLI subcommands,
+  and a generic namespaced extension registry so a plugin can extend
+  another plugin. `[plugins] enabled / disabled` in config gates
+  loading per repo, `[plugin.<name>]` tables pass through to each
+  plugin, and the new `cgh plugins` command lists status, version, and
+  surfaces. A broken, incompatible, or duplicate plugin is a warning
+  and a status line, never a crash.
+
+### Changed
+- **License: plugin exception added.** Plugins that interact with cgh only
+  through the documented plugin interfaces (the `cgh` entry-point group and
+  the public plugin API) are not treated as derivative works and may be
+  licensed under any terms, including commercial ones. Using cgh itself
+  remains governed by the MIT + CC BY-NC-SA dual license. Groundwork for
+  the plugin architecture proposal (docs/proposals/001).
+
+### Fixed
+- **Federated children no longer starve the parent's fan-out.** An
+  auto-started child owner held its graph write connection forever
+  after the first watcher index, and since the graph backend refuses
+  cross-process opens while a writer holds the lock, the parent's
+  read-only fan-out lost that scope (`db unavailable (locked)`) until
+  the child restarted; on a busy monorepo every child ended up locked
+  within minutes. The child's owner now releases its write connection
+  after each watcher burst when no MCP proxy is attached (reopened
+  lazily on the next index or tool call), auto-started children are
+  kept alive by a distinct `parent-<pid>` marker that never counts as
+  an MCP worker, and the owner's tool connection cache was unified
+  into the core connection authority so the release takes effect
+  everywhere at once.
+- **Flashing console windows on Windows.** A detached owner has no
+  console, so every `git.exe` the watcher spawned opened its own
+  conhost window; on a busy monorepo that meant a constant stream of
+  flashing terminals (measured at ~24 git processes per 30 seconds).
+  Every git and ripgrep subprocess now runs with `CREATE_NO_WINDOW`
+  on Windows, and the watcher was reworked to batch: one debounce
+  timer for the whole event burst and a single
+  `git check-ignore --stdin` call for every uncached path, instead of
+  one process per file. The dozens-of-git-per-burst pattern collapses
+  to one, on every platform.
+- **Kuzu migration on installs without the kuzu package**: on a kuzu-less
+  install (the default on Python 3.14), the old `graph.db` reads as 0 rows,
+  so the migration verifier flagged the fresh DuckDB index as "unexplained
+  gains" and refused the swap forever, even with `--force`. The migration
+  now detects that the kuzu package is missing, skips the meaningless count
+  comparison, and completes the swap with an explicit `kuzu_unreadable`
+  status: DuckDB is canonical by construction since it was just rebuilt from
+  a full index of the working tree.
+
 ## [0.6.0] - 2026-07-24
 
 ### Added
@@ -298,7 +490,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/altikva/cgh/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/altikva/cgh/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/altikva/cgh/compare/v0.4.6...v0.5.0
 [0.4.6]: https://github.com/altikva/cgh/compare/v0.4.5...v0.4.6

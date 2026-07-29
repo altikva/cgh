@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 import subprocess
 from pathlib import Path
 
@@ -34,8 +36,11 @@ def _git_dir(repo_root: Path) -> Path | None:
             ["git", "rev-parse", "--git-dir"],
             cwd=str(repo_root),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
+            **quiet_subprocess_kwargs(),
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
@@ -60,7 +65,10 @@ def _hooks_dir(repo_root: Path) -> Path | None:
             ["git", "config", "--get", "core.hooksPath"],
             cwd=str(repo_root),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **quiet_subprocess_kwargs(),
         ).stdout.strip()
     except FileNotFoundError:
         return None
@@ -100,7 +108,7 @@ def _reindex_block(event: str) -> str:
         "# Keep the cgh code graph fresh after git changes file content.\n"
         "# Backgrounded incremental reindex, never blocks or fails the git op.\n"
         f"{guard}"
-        'if command -v cgh >/dev/null 2>&1; then\n'
+        "if command -v cgh >/dev/null 2>&1; then\n"
         '  ( cgh _reindex_hook --root "$(git rev-parse --show-toplevel)" '
         ">/dev/null 2>&1 & )\n"
         "fi\n"
@@ -193,6 +201,8 @@ def git_hooks_status(repo_root: Path | str) -> dict[str, bool]:
         return status
     for event in HOOK_EVENTS:
         hook_path = hooks_dir / event
-        if hook_path.exists() and _MARKER_BEGIN in hook_path.read_text(encoding="utf-8"):
+        if hook_path.exists() and _MARKER_BEGIN in hook_path.read_text(
+            encoding="utf-8"
+        ):
             status[event] = True
     return status

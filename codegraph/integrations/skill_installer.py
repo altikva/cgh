@@ -284,22 +284,25 @@ def install_gemini(project_root: Path) -> list[str]:
 
 
 def install_bob(project_root: Path) -> list[str]:
-    """Emit each skill to <project>/.bob/rules/<name>.md. Bob loads the
-    files in .bob/rules alphabetically into every mode, so plain
-    markdown is enough; the files version with the repo like Cursor's
-    rules do."""
-    rules_dir = project_root / ".bob" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
+    """Copy skills verbatim to <project>/.bob/skills/<name>/. Bob speaks
+    the same Agent Skills standard as Claude Code (a SKILL.md with YAML
+    front matter per folder, activated on demand), so the bundled skills
+    install unchanged, supporting files included."""
+    project_root = Path(project_root)
+    dest_root = project_root / ".bob" / "skills"
+    dest_root.mkdir(parents=True, exist_ok=True)
 
     installed: list[str] = []
-    for name, fm, body, _skill_dir in _iter_skills():
-        description = fm.get("description", "").strip()
-        lines = [f"# {name}", ""]
-        if description:
-            lines += [f"_{description}_", ""]
-        lines.append(body.rstrip())
-        lines.append("")
-        (rules_dir / f"{name}.md").write_text("\n".join(lines), encoding="utf-8")
+    for name, _fm, _body, skill_dir in _iter_skills():
+        target_dir = dest_root / name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for f in skill_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(skill_dir)
+            dest = target_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
         installed.append(name)
     return installed
 

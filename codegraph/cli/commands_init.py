@@ -538,6 +538,67 @@ def _print_prior_state(prior_state: dict) -> None:
     console.print()
 
 
+def _set_config_mode(root: Path, mode: str) -> bool:
+    """Set [codegraph] mode in .codegraph/config.toml, editing in place.
+    Replaces the template's commented line or an existing assignment;
+    otherwise inserts right under [codegraph]. Returns True on write."""
+    import re as _re
+
+    cfg = root / ".codegraph" / "config.toml"
+    if not cfg.exists():
+        return False
+    text = cfg.read_text(encoding="utf-8")
+    line = f'mode = "{mode}"'
+    new, n = _re.subn(
+        r'(?m)^#?\s*mode\s*=\s*"(?:assist|secure)"\s*$', line, text, count=1
+    )
+    if n == 0:
+        new, n = _re.subn(
+            r"(?m)^\[codegraph\]\s*$", "[codegraph]\n" + line, text, count=1
+        )
+    if n == 0:
+        new = text.rstrip() + "\n\n[codegraph]\n" + line + "\n"
+    cfg.write_text(new, encoding="utf-8")
+    return True
+
+
+def _maybe_enable_secure_mode(root: Path, args: argparse.Namespace, cg_style) -> None:
+    """Offer secure mode during the wizard. --secure enables it without
+    prompting (and is how parents propagate it to federated children);
+    --yes alone never changes posture, non-interactive runs must not
+    harden a repo by surprise. Already-secure repos are left alone."""
+    from codegraph.state.guard import guard_mode
+
+    if guard_mode(root) == "secure":
+        console.print('  [dim]mode = "secure" already set[/dim]\n')
+        return
+
+    wants = bool(getattr(args, "secure", False))
+    if not wants and not args.yes:
+        import questionary
+
+        wants = bool(
+            questionary.confirm(
+                "Enable secure mode? Guards fail closed, agents are denied "
+                "flagged files, egress gates switch to allowlist (default "
+                "assist warns without blocking)",
+                default=False,
+                style=cg_style,
+            ).ask()
+        )
+    if not wants:
+        return
+
+    if _set_config_mode(root, "secure"):
+        console.print(
+            '  [green]+[/green] .codegraph/config.toml [dim](mode = "secure")[/dim]'
+        )
+        console.print(
+            "  [dim]Static deny lists sync as findings appear; run "
+            "[cyan]cgh guard sync[/cyan] anytime to refresh them.[/dim]\n"
+        )
+
+
 def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
     """Probe for installed AI tools, print the detection table, and return
     the full (name, key, detected) list."""
@@ -567,6 +628,13 @@ def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
             (root / "GEMINI.md").exists()
             or (root / ".gemini").exists()
             or shutil.which("gemini") is not None,
+        ),
+        (
+            "IBM Bob",
+            "bob",
+            (root / ".bob").exists()
+            or (root / ".bobignore").exists()
+            or shutil.which("bob") is not None,
         ),
     ]
 
@@ -879,7 +947,10 @@ def cmd_init(args: argparse.Namespace) -> None:
                         )
                 console.print()
 
-    # -- Step 3d: Detect already-initialized subrepos --
+    # -- Step 3d: guard posture (assist stays the default) --
+    _maybe_enable_secure_mode(root, args, cg_style)
+
+    # -- Step 3e: Detect already-initialized subrepos --
     # Look for nested directories that already have their own .codegraph/.
     # Each is a candidate to federate: the parent will skip indexing them
     # and instead query their own DBs read-only at runtime. Crucial for
@@ -1085,6 +1156,12 @@ def _init_children(root: Path, assume_yes: bool) -> None:
             )
             return
 
+    # Children inherit the parent's posture: a secure parent must not
+    # federate into assist children that would leak what it blocks.
+    from codegraph.state.guard import guard_mode
+
+    secure_flag = ["--secure"] if guard_mode(root) == "secure" else []
+
     for child in children:
         was_ok = verify_child(child).ok
         try:
@@ -1098,6 +1175,7 @@ def _init_children(root: Path, assume_yes: bool) -> None:
                     str(child),
                     "--yes",
                     "--no-children",
+                    *secure_flag,
                 ],
                 capture_output=True,
                 text=True,
@@ -1523,6 +1601,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         }
 
     from codegraph.integrations.skill_installer import (
+        install_bob,
         install_claude,
         install_codex,
         install_cursor,
@@ -1639,6 +1718,21 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         )
         _skills_line("GEMINI.md", install_gemini(root))
 
+    elif tool == "bob":
+        # Bob reads project-level MCP servers from .bob/mcp.json (its
+        # global file is ~/.bob/mcp_settings.json; project wins).
+        bob_dir = root / ".bob"
+        bob_dir.mkdir(exist_ok=True)
+        mcp_path = bob_dir / "mcp.json"
+        if mcp_path.exists():
+            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
+        else:
+            data = {"mcpServers": {}}
+        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
+        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
+        _skills_line(".bob/skills/", install_bob(root))
+
 
 # ---------------------------------------------------------------------------
 # cmd_parsers
@@ -1713,13 +1807,15 @@ def cmd_setup(args) -> None:
 
     console.print(LOGO)
 
-    valid = ("claude", "cursor", "codex", "gemini", "all")
+    valid = ("claude", "cursor", "codex", "gemini", "bob", "all")
     if target not in valid:
         console.print(f"[dim]Unknown target: {target}[/dim]")
         console.print(f"[dim]Options: {', '.join(valid)}[/dim]")
         return
 
-    targets = ["claude", "cursor", "codex", "gemini"] if target == "all" else [target]
+    targets = (
+        ["claude", "cursor", "codex", "gemini", "bob"] if target == "all" else [target]
+    )
 
     console.print(Panel(f"[bold]Setup for {target}[/bold]", border_style="cyan"))
 

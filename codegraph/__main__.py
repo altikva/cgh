@@ -258,6 +258,11 @@ def main() -> None:
         action="store_true",
         help="Don't initialize / refresh federated subrepos",
     )
+    p.add_argument(
+        "--secure",
+        action="store_true",
+        help='Enable secure mode (mode = "secure") without prompting',
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")
@@ -266,7 +271,7 @@ def main() -> None:
     p = sub.add_parser("setup", help="Generate integration files for AI tools")
     p.add_argument(
         "target",
-        choices=["claude", "cursor", "codex", "gemini", "all"],
+        choices=["claude", "cursor", "codex", "gemini", "bob", "all"],
         help="Which AI tool to configure",
     )
     _add_root(p)

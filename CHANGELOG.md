@@ -8,6 +8,38 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-29
+
+### Added
+- **Secure mode from the init wizard**: `cgh init` now asks whether to
+  enable secure mode (assist stays the default and `--yes` alone never
+  changes posture), and `cgh init --secure` enables it without
+  prompting. Federated children initialized by a secure parent inherit
+  the posture automatically, so a monorepo hardens as one unit.
+- **Self-documenting default config**: the `config.toml` written by
+  `cgh init` now lists every option cgh reads, active defaults live,
+  optional ones commented out with an explanation (`mode`, log
+  rotation, `extra_dirs`, `[plugins]` narrowing and the first-party
+  `[plugin.*]` tables included). The file doubles as the reference a
+  user edits instead of hunting through the docs, and a test keeps
+  the template valid TOML even with every option uncommented.
+- **IBM Bob integration** (`cgh setup bob`, detected by `cgh init`): a
+  repo using Bob is recognized by its `.bob/` folder, a `.bobignore`
+  file, or the `bob` binary on PATH. Setup registers the MCP server in
+  `.bob/mcp.json` (Bob's project-level config), installs the bundled
+  skills verbatim under `.bob/skills/` (Bob speaks the same Agent
+  Skills standard as Claude Code, SKILL.md front matter included),
+  drops the usage guidelines in `.bob/rules/` where every Bob mode
+  loads them, and in secure mode the guard mirrors barred paths into a
+  managed `.bobignore` block that `cgh guard sync` keeps fresh. Bob
+  publishes no pre-tool veto hook, so the enforcement level is
+  declared "partial": static file denies, honestly labeled.
+- **IBM Bob summarize backend** (`cli:bob` in cgh-summarize): BobShell's
+  headless mode (`bob -p`) joins the agent CLI backends. No model
+  option: Bob's orchestration engine routes each call to a model on
+  its own. Auto-selected after claude/gemini/codex when installed,
+  and the Windows `.cmd` shim handling applies to it like the others.
+
 ## [0.7.3] - 2026-07-29
 
 ### Fixed
@@ -527,7 +559,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/altikva/cgh/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/altikva/cgh/compare/v0.7.0...v0.7.1

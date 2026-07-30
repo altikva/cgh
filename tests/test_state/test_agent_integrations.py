@@ -61,14 +61,14 @@ def _bar(root: Path, name: str) -> str:
 
 
 class TestRegistry:
-    def test_four_builtins_present(self):
+    def test_five_builtins_present(self):
         names = [i.name for i in all_integrations()]
-        assert names[:4] == ["claude", "cursor", "codex", "gemini"]
+        assert names[:5] == ["claude", "cursor", "codex", "gemini", "bob"]
 
     def test_plugin_integration_joins_the_registry(self):
-        class BobIntegration:
-            name = "bob"
-            display = "Bob CLI"
+        class AcmeIntegration:
+            name = "acme"
+            display = "Acme CLI"
 
             def detect(self, root):
                 return True
@@ -88,13 +88,13 @@ class TestRegistry:
                 return False
 
         plugins._registries.extensions.setdefault("integration", []).append(
-            ("bob-plugin", BobIntegration())
+            ("acme-plugin", AcmeIntegration())
         )
         registry = {i.name for i in all_integrations()}
-        assert "bob" in registry
-        bob = get_integration("bob")
-        assert isinstance(bob, AgentIntegration)
-        assert bob.display == "Bob CLI"
+        assert "acme" in registry
+        acme = get_integration("acme")
+        assert isinstance(acme, AgentIntegration)
+        assert acme.display == "Acme CLI"
 
     def test_every_builtin_declares_a_guard_spec(self):
         levels = {i.name: i.guard_spec().level for i in all_integrations()}
@@ -102,6 +102,7 @@ class TestRegistry:
         assert levels["gemini"] == "enforce"
         assert levels["codex"] == "partial"
         assert levels["cursor"] == "none"
+        assert levels["bob"] == "partial"
 
 
 class TestGeminiAdapter:
@@ -221,3 +222,98 @@ class TestClaudeAdapter:
         assert claude.guard_installed(tmp_path)
         # Idempotent: a second run adds nothing.
         assert claude.install_guard(tmp_path) is False
+
+
+class TestBobAdapter:
+    def _bob(self):
+        from codegraph.integrations.base import BobIntegration
+
+        return BobIntegration()
+
+    def test_detects_bob_dir_and_bobignore(self, tmp_path, monkeypatch):
+        import shutil as _shutil
+
+        monkeypatch.setattr(_shutil, "which", lambda t: None)
+        bob = self._bob()
+        assert bob.detect(tmp_path) is False
+        (tmp_path / ".bobignore").write_text("dist/\n", encoding="utf-8")
+        assert bob.detect(tmp_path) is True
+        (tmp_path / ".bobignore").unlink()
+        (tmp_path / ".bob").mkdir()
+        assert bob.detect(tmp_path) is True
+
+    def test_install_copies_skills_verbatim(self, tmp_path, monkeypatch):
+        import codegraph.integrations.skill_installer as installer
+
+        src = tmp_path / "bundled" / "cgh-usage"
+        src.mkdir(parents=True)
+        skill_md = "---\nname: cgh-usage\ndescription: use the graph\n---\nBody.\n"
+        (src / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        (src / "extra.md").write_text("supporting file\n", encoding="utf-8")
+        monkeypatch.setattr(
+            installer,
+            "_iter_skills",
+            lambda: [("cgh-usage", {"name": "cgh-usage"}, "Body.", src)],
+        )
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        names = self._bob().install_instructions(repo)
+        assert names == ["cgh-usage"]
+        dest = repo / ".bob" / "skills" / "cgh-usage"
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == skill_md
+        assert (dest / "extra.md").exists()
+
+    def test_bobignore_sync_secure_mode(self, tmp_path):
+        from codegraph.state.guard import sync_bobignore
+
+        root = _repo(tmp_path, mode="secure")
+        (root / "secrets.env").write_text("x", encoding="utf-8")
+        _bar(root, "secrets.env")
+
+        added, removed = sync_bobignore(root)
+        assert (added, removed) == (1, 0)
+        content = (root / ".bobignore").read_text(encoding="utf-8")
+        assert "secrets.env" in content
+        assert "cgh guard" in content
+
+        # Idempotent: second sync changes nothing.
+        assert sync_bobignore(root) == (0, 0)
+        assert self._bob().guard_installed(root) is True
+
+    def test_bobignore_preserves_user_lines(self, tmp_path):
+        from codegraph.state.guard import sync_bobignore
+
+        root = _repo(tmp_path, mode="secure")
+        (root / ".bobignore").write_text("node_modules/\n", encoding="utf-8")
+        (root / "key.pem").write_text("x", encoding="utf-8")
+        _bar(root, "key.pem")
+
+        sync_bobignore(root)
+        content = (root / ".bobignore").read_text(encoding="utf-8")
+        assert content.startswith("node_modules/\n")
+        assert "key.pem" in content
+
+    def test_bobignore_noop_in_assist_mode(self, tmp_path):
+        from codegraph.state.guard import sync_bobignore
+
+        root = _repo(tmp_path, mode="assist")
+        (root / "key.pem").write_text("x", encoding="utf-8")
+        _bar(root, "key.pem")
+
+        assert sync_bobignore(root) == (0, 0)
+        assert not (root / ".bobignore").exists()
+
+    def test_bobignore_clears_when_finding_gone(self, tmp_path):
+        from codegraph.state.guard import sync_bobignore
+
+        root = _repo(tmp_path, mode="secure")
+        (root / "key.pem").write_text("x", encoding="utf-8")
+        barred = _bar(root, "key.pem")
+        sync_bobignore(root)
+
+        store.purge_file_findings(root, barred)
+        added, removed = sync_bobignore(root)
+        assert (added, removed) == (0, 1)
+        content = (root / ".bobignore").read_text(encoding="utf-8")
+        assert "key.pem" not in content

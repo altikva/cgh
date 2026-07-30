@@ -344,9 +344,14 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
 
 
 def generate_default_config() -> str:
-    """Generate a default config.toml content."""
+    """Generate a default config.toml content. Every recognized option
+    appears here, active ones with their real defaults and optional
+    ones commented out with an explanation, so the file doubles as the
+    reference a user edits instead of hunting through the docs."""
     return """# codegraph configuration
 # Docs: https://github.com/altikva/codegraph
+# Every option cgh reads is listed here. Active lines are the real
+# defaults; commented lines are optional features, uncomment to enable.
 
 [codegraph]
 # Directories to skip during indexing (in addition to .gitignore)
@@ -358,15 +363,27 @@ ignore_dirs = [
 ignore_patterns = ["*.min.js", "*.bundle.js", "*.map"]
 # Skip files larger than this (KB)
 max_file_size_kb = 500
+# Guard posture. "assist": scanners flag findings, the guard warns and
+# fails open. "secure": everything assist does, plus the guard fails
+# closed, blocks reads of flagged files in hooked agents, and mirrors
+# barred paths into static deny lists (Claude settings, .bobignore).
+# mode = "assist"
 # Directories to force-index even if .gitignore excludes them (e.g. "docs/",
 # generated schema dumps, vendored source you still want in the graph).
 # Paths are relative to the project root. Use absolute paths for dirs that
 # live outside the repo (sibling repos prefer add_directory / extra_dirs).
 # include_dirs = ["docs", "internal/specs"]
+# Sibling directories indexed into this repo's graph, managed by
+# `cgh add-dir add ../frontend` (kept here so it versions with the repo).
+# extra_dirs = ["../my-frontend"]
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1
 # precise_calls = false
+# Owner log rotation (.codegraph/owner.log), checked when an owner spawns.
+# Zero log_max_mb disables rotation; zero log_backup_count truncates in place.
+# log_max_mb = 5
+# log_backup_count = 3
 # Federated subrepos (see `cgh federate add`). When the owner of this repo
 # starts, it also starts the owner of every initialized subrepo listed here,
 # unless federate_auto_up is set to false. Children started this way stop
@@ -385,6 +402,37 @@ max_file_size_kb = 500
 auto_watch = true
 # Re-index before starting MCP server
 reindex_on_start = true
+
+[plugins]
+# Installed plugins (pip install "cgh[plugins]") register themselves;
+# these lists narrow or bar them without uninstalling anything.
+# enabled = ["pii", "summarize"]
+# disabled = ["classify"]
+
+# Per-plugin settings live in [plugin.<name>] tables (note: singular).
+# A project-level table replaces the same plugin's global table whole.
+
+# [plugin.pii]
+# PII detection runs deferred with its defaults; see the cgh-pii README.
+
+# [plugin.classify]
+# threshold = 0.7        # predict confidential above this probability
+# uncertain_low = 0.35   # review window lower bound
+# uncertain_high = 0.65  # review window upper bound
+
+# [plugin.summarize]
+# backend = "auto"       # or cli:claude, cli:gemini, cli:codex, cli:bob,
+#                        # ollama, openai, structural
+# min_kb = 4             # skip files smaller than this
+# allow_pii = false      # let files with PII findings reach cloud backends
+# language = "en"        # summary language
+# claude_model = "haiku"
+# gemini_model = "gemini-2.5-flash"
+# ollama_model = "qwen2.5:1.5b"
+# ollama_url = "http://127.0.0.1:11434"
+# openai_base_url = ""   # any OpenAI-compatible endpoint, e.g. vLLM
+# openai_model = ""
+# openai_api_key_env = "OPENAI_API_KEY"
 
 [ruflo]
 # Ruflo integration (auto-detected if not set)

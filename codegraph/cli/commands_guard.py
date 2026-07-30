@@ -134,6 +134,18 @@ def cmd_guard(args: argparse.Namespace) -> None:
                 f"[green]+[/green] static deny rules synced "
                 f"({added} added, {removed} removed)."
             )
+        # Bob enforces through .bobignore, keep its managed block fresh.
+        from codegraph.integrations.base import get_integration
+        from codegraph.state.guard import sync_bobignore
+
+        bob = get_integration("bob")
+        if bob is not None and bob.detect(root):
+            b_added, b_removed = sync_bobignore(root)
+            if b_added or b_removed:
+                console.print(
+                    f"[green]+[/green] .bobignore synced "
+                    f"({b_added} added, {b_removed} removed)."
+                )
         return
 
     # status

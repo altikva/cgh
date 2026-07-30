@@ -263,6 +263,7 @@ cgh setup claude
 cgh setup cursor
 cgh setup codex
 cgh setup gemini
+cgh setup bob
 cgh setup all
 ```
 

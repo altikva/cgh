@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-29
+
 ### Added
 - **Secure mode from the init wizard**: `cgh init` now asks whether to
   enable secure mode (assist stays the default and `--yes` alone never
@@ -557,7 +559,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/altikva/cgh/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/altikva/cgh/compare/v0.7.0...v0.7.1

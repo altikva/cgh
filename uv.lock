@@ -247,8 +247,8 @@ requires-dist = [
     { name = "cgh-docs", marker = "extra == 'plugins'", specifier = ">=0.1" },
     { name = "cgh-pii", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.1" },
-    { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.1" },
-    { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.2" },
+    { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.2" },
     { name = "duckdb", specifier = ">=1.0" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
@@ -314,11 +314,11 @@ wheels = [
 
 [[package]]
 name = "cgh-summarize"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/25/c8/d23dee2df9e0d5e5c0faf191c50dba72baf4038325ba77b18f00f62f9ebd/cgh_summarize-0.1.0.tar.gz", hash = "sha256:c9a51368a4c47b143662be5790dfa8b7522c7d84c0007ac83913b5d88b744bb4", size = 13764, upload-time = "2026-07-29T14:59:21.082Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/d5/f36a139c86e183096e18746ddd0f9731fd89fa874d95942e9c3f5fd7889f/cgh_summarize-0.2.0.tar.gz", hash = "sha256:abe920cb755de2bc7462b3a2aaff575a0b4e274dfa802174bd362119c2035455", size = 14735, upload-time = "2026-07-30T03:36:08.561Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/46/71459b950222decdf398828a70ba16889d12ce4c481e86f00034a0dbfdb7/cgh_summarize-0.1.0-py3-none-any.whl", hash = "sha256:12d067f808aba756bb2d9a70d37799ff39e930125bb94d55a704f1b39dca2716", size = 14501, upload-time = "2026-07-29T14:59:20.085Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/7e/61e61d6a8036dfa0f1f85ea4d1aad5b8d264ded1a7a049ac745c7cf38e1e/cgh_summarize-0.2.0-py3-none-any.whl", hash = "sha256:d1cf350a4922e3e8e7511e62896aed9c458ede67c70b53d60027518206155422", size = 15160, upload-time = "2026-07-30T03:36:07.386Z" },
 ]
 
 [[package]]

@@ -41,6 +41,11 @@ reads `__version__` from installed package metadata, so do NOT hardcode a
 version there or anywhere else (this is what made 0.5.0 ship a `0.4.6` banner).
 
 - [ ] Bump `version = "X.Y.Z"` in `pyproject.toml`.
+- [ ] If a first-party plugin ships a new version in this release, raise its
+      floor in BOTH extras (`plugins` and `full`), e.g. `cgh-summarize>=0.2`.
+      With a stale floor, `uv tool install --force` keeps the old plugin
+      (an existing resolution still satisfies `>=0.1`); a raised floor
+      forces the upgrade without `-U`.
 - [ ] Grep for stray hardcoded versions: `grep -rn "X\.Y\.(Z-1)" codegraph/`
       should return nothing in source (CHANGELOG mentions are fine).
 - [ ] `uv lock` to refresh `uv.lock` (its `cgh` entry must match the new

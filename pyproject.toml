@@ -60,7 +60,7 @@ kuzu = ["kuzu>=0.7"]
 plugins = [
     "cgh-docs>=0.1",
     "cgh-pii>=0.1",
-    "cgh-summarize>=0.1",
+    "cgh-summarize>=0.2",
     "cgh-classify>=0.1",
     "cgh-bugreport>=0.1",
 ]
@@ -72,7 +72,7 @@ plugins = [
 full = [
     "cgh-docs>=0.1",
     "cgh-pii>=0.1",
-    "cgh-summarize>=0.1",
+    "cgh-summarize>=0.2",
     "cgh-classify>=0.1",
     "cgh-bugreport>=0.1",
     "tree-sitter-c-sharp>=0.23",

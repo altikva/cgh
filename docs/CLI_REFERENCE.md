@@ -17,19 +17,22 @@ Global flag available on all commands:
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--root DIR]
+cgh init [--yes | -y] [--secure] [--no-children] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
+| `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
+| `--no-children` | Don't initialize / refresh federated subrepos |
 
 **What it does:**
 
 1. Creates `.codegraph/` directory and `config.toml`
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
-4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini)
+4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
+5. Offers secure mode (guards fail closed, egress allowlist); assist stays the default
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
 6. For selected tools: writes MCP config, installs the bundled skills, and (optional) appends codegraph usage guidelines to the agent's root rules file (CLAUDE.md / AGENTS.md / GEMINI.md)
 7. Offers Claude-specific auto-accept for MCP tool calls
@@ -82,6 +85,7 @@ Refresh stats every 500 ms (Rich Live). Ctrl-C to stop.
 ```bash
 cgh init
 cgh init --yes    # CI-friendly, no prompts
+cgh init --secure # harden the repo from the start
 ```
 
 ---
@@ -108,13 +112,14 @@ cgh setup <target> [--root DIR]
 
 | Argument | Values |
 |----------|--------|
-| `target` | `claude`, `cursor`, `codex`, `gemini`, `all` |
+| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all` |
 
 **Example:**
 
 ```bash
 cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
+cgh setup bob        # writes .bob/mcp.json + .bob/skills/
 cgh setup all        # writes configs for all tools
 ```
 

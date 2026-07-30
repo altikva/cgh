@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Plugin floors in the install extras track plugin releases**:
+  `cgh[plugins]` and `cgh[full]` now require `cgh-summarize>=0.2`, so
+  upgrading cgh forces the plugin upgrade too. A stale `>=0.1` floor
+  let `uv tool install --force` keep an already-resolved 0.1.0, the
+  release runbook now includes the floor bump.
+
 ## [0.8.0] - 2026-07-29
 
 ### Added

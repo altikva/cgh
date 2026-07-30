@@ -7,7 +7,7 @@
 
 **Local code graph, shared memory and guardrails for AI coding assistants.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, and Gemini can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
+Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
 
 **Result:** 60-90% fewer tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
 
@@ -80,7 +80,7 @@ Quote the package spec (`"cgh[...]"`) so zsh and bash do not try to glob the bra
 ```bash
 cgh --version
 cgh init           # initialize in any project
-cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
+cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini / Bob
 ```
 
 ### If `cgh` is not found after install
@@ -124,7 +124,7 @@ cgh serve --watch --reindex
 ## How It Works
 
 ```
-AI Assistant (Claude / Cursor / Codex / Gemini)
+AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
     |  symbol_lookup("process_data")
     |  search_docs("reconciliation")
     |  context_for_task("fix auth bug")
@@ -188,6 +188,7 @@ cgh init --yes    # accept all defaults (non-interactive)
     > Cursor          detected
     - Codex CLI       not found
     - Gemini CLI      not found
+    - IBM Bob         not found
 
   ? Install MCP server for: (space to toggle, enter to confirm)
     [x] Claude Code  (MCP server + hooks)
@@ -915,7 +916,7 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | `cgh-docs` | pdf, docx and xlsx files become searchable sections |
 | `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
 | `cgh-classify` | human-trainable confidentiality labels + a local classifier |
-| `cgh-summarize` | file summaries via your agent CLIs, Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
+| `cgh-summarize` | file summaries via your agent CLIs (Claude, Gemini, Codex, IBM Bob), Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
 
 ---
@@ -945,9 +946,11 @@ What the findings feed:
   your agents, so the agent's own Read, Grep and shell calls are denied
   on flagged files, with a named reason. `cgh guard status` shows the
   honest per-agent map: Claude Code and Gemini CLI enforce (read and
-  shell veto), Codex CLI is partial (shell veto only), agents without a
-  veto surface are listed unprotected. In `secure` mode the guard fails
-  closed and flagged paths also sync into static Claude deny rules.
+  shell veto), Codex CLI is partial (shell veto only), IBM Bob is
+  partial (static `.bobignore` denies), agents without a veto surface
+  are listed unprotected. In `secure` mode the guard fails closed and
+  flagged paths also sync into static deny lists (Claude settings,
+  `.bobignore`).
 
 This is policy enforcement inside cooperating agent frameworks, not a
 sandbox: an agent free to run arbitrary code can read what the OS
@@ -1073,6 +1076,14 @@ See `integrations/codex.md` for `AGENTS.md` instructions.
 ### Gemini CLI
 
 See `integrations/gemini.md` for `GEMINI.md` instructions.
+
+### IBM Bob
+
+`cgh setup bob` registers the MCP server in `.bob/mcp.json`, installs
+the bundled skills under `.bob/skills/` (Bob speaks the same Agent
+Skills standard as Claude Code), and drops the usage guidelines in
+`.bob/rules/`. The `cli:bob` summarize backend uses BobShell headless
+(`bob -p`).
 
 ### Automatic Setup
 

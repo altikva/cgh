@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
+  and `secret.*` finding values are replaced at write time by stable
+  one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),
+  so the raw datum never reaches disk and reading the SQLite files
+  directly, bypassing MCP, yields nothing recoverable. Dedup and
+  cross-file search keep working on the pseudonyms.
+- **The index is guard-protected in secure mode**: agent Read/Grep and
+  any shell command touching `.codegraph/` are denied with a reason
+  pointing at the MCP tools, and the static deny lists (Claude
+  settings, `.bobignore`) carry a standing index entry.
+
 ### Changed
 - **Plugin floors in the install extras track plugin releases**:
   `cgh[plugins]` and `cgh[full]` now require `cgh-summarize>=0.2`, so

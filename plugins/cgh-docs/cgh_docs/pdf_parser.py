@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.parsers.base import BaseParser, FileIndex, SectionDef
+from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _PREVIEW_CHARS = 400
 

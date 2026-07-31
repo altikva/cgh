@@ -22,3 +22,6 @@ classify = "cgh_classify"
 
 [tool.setuptools.packages.find]
 include = ["cgh_classify*"]
+
+[tool.setuptools.package-data]
+cgh_classify = ["py.typed"]

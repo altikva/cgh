@@ -24,7 +24,7 @@ def collect_summaries(repo_root: str | Path, config: dict) -> tuple[list[dict], 
     """Gate-cleared summary findings. Returns (rows, excluded_count):
     summaries of files the gate would not send stay out of cloud-bound
     batches, and the caller reports how many were withheld."""
-    from codegraph.state.findings import query_findings
+    from codegraph.plugin_api import query_findings
 
     rows = [
         r
@@ -91,8 +91,8 @@ def run_insights(
     if not text:
         return {"error": f"backend {backend.name} returned nothing"}
 
-    from codegraph.state.activity import log as activity_log
-    from codegraph.state.call_log import knowledge_record
+    from codegraph.plugin_api import activity_log
+    from codegraph.plugin_api import knowledge_record
 
     try:
         activity_log(

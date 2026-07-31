@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.parsers.base import BaseParser, FileIndex, SectionDef
+from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _MAX_HEADER_CELLS = 30
 

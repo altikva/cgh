@@ -41,3 +41,15 @@ fuzzy-duplicate nodes, drops arrow annotations mistaken for boxes,
 dedups reversed edges, and splits identities (IPs, CIDRs, FQDNs,
 emails, server names) out of labels into attributes so the anonymize
 stage has a clean target.
+
+## Content inventory and routing
+
+`gen_misc.py` generates the non-diagram half of the mixed corpus
+(table, bar chart, dense text page, logo, chart+table) with truth
+files; `bench_inventory.py` scores the pass-0 inventory over the whole
+corpus: recall per content type and the false-diagram rate, the
+failure triage exists to prevent. `extract.py <image>` now routes:
+inventory first, then only the extractors the content warrants
+(diagram pipeline, table extractor, chart extractor with data points,
+dense-text summarizer). A logo or a photo costs one call and one
+summary line, and never gets hallucinated nodes.

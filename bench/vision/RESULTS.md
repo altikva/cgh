@@ -40,3 +40,18 @@ local. Dense many-crossing diagrams remain the open weakness (0.30).
 Recommendation for cgh-vision: ensemble as the default pipeline,
 single-model qwen as the fast setting, hard per-call timeout, photos
 treated as best-effort input.
+
+## Inventory pass (mixed corpus)
+
+10 images: the 5 synthetic diagrams plus 5 generated
+non-diagram images (table, chart, dense text, logo, chart+table).
+
+| truth type | recall |
+|---|---|
+| architecture_diagram | 5/5 |
+| chart | 2/2 |
+| dense_text | 1/1 |
+| logo | 1/1 |
+| table | 2/2 |
+
+**False diagrams** (non-diagram inventoried as one, the failure this pass exists to prevent): 0/5

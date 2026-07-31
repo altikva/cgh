@@ -296,8 +296,7 @@ def _detect_existing_state(root: Path) -> dict:
         conn = get_readonly_connection(root)
         if conn is not None:
             try:
-                r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
-                state["indexed_files"] = int(r.get_next()[0])
+                state["indexed_files"] = int(conn.count_nodes("File"))
             except Exception:
                 pass
     except Exception:

@@ -88,6 +88,7 @@ def _backend(repo_root: str | Path | None = None) -> str:
 
     return "duckdb"
 
+
 # Module-level singletons, one DB + connection per process.
 # _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
 # close them explicitly (Kuzu's file lock outlives the GC otherwise).
@@ -135,8 +136,11 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
                 continue
             try:
                 obj.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # A failed close here resurfaces later as a confusing
+                # same-process open conflict; name the real cause now
+                # (reset_connection logs the same way).
+                print(f"[codegraph] warning: RO close before RW open failed: {exc}")
         _ro_conn = None
         _ro_db = None
 

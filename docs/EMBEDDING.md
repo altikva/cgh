@@ -41,13 +41,19 @@ else:
 
 ## Pseudonymize before logging or storing
 
+Pseudonymize the sensitive values your pipeline holds; scanners tell
+you WHERE PII is (key, line, severity), and some deliberately never
+carry the raw value in their findings.
+
 ```python
 import secrets
 KEY = secrets.token_bytes(32)       # persist this yourself, once
 
-for f in findings:
-    if f.key.startswith("pii."):
-        log.warning("found %s at line %s", sdk.pseudonymize(f.key, f.value, KEY), f.line)
+who = sdk.pseudonymize("pii.email", user_email, KEY)
+log.info("%s exported the report", who)
+
+# Tripwire before anything reaches the log:
+assert not [f for f in sdk.scan_text(line) if f.key.startswith("pii.")]
 ```
 
 Same key and value give the same pseudonym, so joins and dedup keep

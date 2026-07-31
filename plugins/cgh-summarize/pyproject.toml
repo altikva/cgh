@@ -22,3 +22,6 @@ summarize = "cgh_summarize"
 
 [tool.setuptools.packages.find]
 include = ["cgh_summarize*"]
+
+[tool.setuptools.package-data]
+cgh_summarize = ["py.typed"]

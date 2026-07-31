@@ -56,6 +56,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   arbitrary readable directories, making their content queryable.
 
 ### Added
+- **Public exception hierarchy** (`codegraph.errors`): `CodegraphError`
+  base with `ConfigurationError`, `BackendError`, `IndexingError`;
+  `CapabilityMissing` now inherits it (RuntimeError kept for
+  compatibility) and the SDK exports the base, so embedders catch one
+  type for everything cgh raises on purpose.
+- **PEP 561 markers everywhere**: `py.typed` ships in the core package
+  and all six plugins; SDK consumers finally get type checking from
+  the annotations that were already there.
+- **Strict pytest configuration**: `--strict-config --strict-markers`,
+  declared `kuzu`/`network` markers and testpaths in pyproject; a
+  typo'd marker is now an error instead of a silently empty filter.
 - **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
   the benchmarked image pipeline as a deferred scanner and a `cgh
   vision` CLI verb. A content inventory decides what each image

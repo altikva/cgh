@@ -112,3 +112,37 @@ jobs:
           else
             uv run --python "$PYTHON_VERSION" --upgrade --with pytest --extra kuzu pytest -q
           fi
+
+  test-oldest:
+    name: Oldest direct deps, advisory (Python 3.11)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      - name: Test on the declared floors
+        # A lower bound nobody tests is an intention, not a compatibility
+        # statement: resolve every direct dependency to its declared
+        # minimum and run the suite against that.
+        run: uv run --python 3.11 --resolution lowest-direct --with pytest pytest -q
+
+  build-check:
+    name: Wheel builds and passes twine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Twine check
+        run: uvx twine check dist/*

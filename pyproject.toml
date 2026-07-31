@@ -118,6 +118,14 @@ include = ["codegraph", "codegraph.*", "cgh"]
 [tool.setuptools.package-data]
 codegraph = ["py.typed", "skills/*/SKILL.md", "skills/*/*.md"]
 
+[dependency-groups]
+# The declared dev toolchain: local and CI run the same artifact
+# instead of ad hoc --with flags (ruff stays pinned via uvx in the
+# workflows so a release cannot be blocked by a linter release).
+dev = [
+    "pytest>=8",
+]
+
 [tool.ruff]
 target-version = "py311"
 

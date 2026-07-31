@@ -17,6 +17,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Changed
+- **CI proves the floors and the artifact**: a new advisory job
+  resolves every direct dependency to its declared minimum
+  (`--resolution lowest-direct`) and runs the suite, so a lower bound
+  nobody tests can no longer pretend to be a compatibility statement;
+  every PR now also builds the wheel and passes `twine check` instead
+  of discovering packaging breakage at release time; and the dev
+  toolchain is declared in `[dependency-groups]`.
 - **Explicit ruff configuration, whole-tree formatting, format gate in
   CI**: the linter ran on its narrow defaults (E4/E7/E9/F), leaving
   bugbear, security, simplify and modernize off. `[tool.ruff.lint]`

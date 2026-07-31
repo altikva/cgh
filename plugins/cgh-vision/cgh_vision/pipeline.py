@@ -2,35 +2,36 @@
 # __creation__ = 2026-07-31
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The enriched extraction pipeline the cgh-vision plugin
-#              will ship, exercised here against the bench corpus.
-#              Profiles parameterize the run (models, richness, timeout);
-#              the model is asked for a typed schema (nodes with kind and
-#              technology, labeled edges, zones with members, legend,
-#              title, free-text notes); post-processing cleans what the
-#              raw bench outputs showed models get wrong: duplicate
-#              nodes, edge labels mistaken for nodes, identities (IPs,
-#              hostnames, emails, CIDRs) embedded in labels, which are
-#              split into attributes so the anonymize stage has a clean
-#              target. Emitters turn the extraction into markdown and
-#              Mermaid. CLI: python extract.py <image> [profile].
+# Description: The image pipeline, ported from the vision benchmark that
+#              shaped it. Pass 0 inventories the content with a
+#              non-directive prompt (never assume a diagram); the router
+#              runs only the extractors the content warrants: diagram
+#              structure with the plain contract, enrichment over found
+#              labels (cannot hurt recall, forbidden to invent a
+#              legend), constrained edge reading by a second model,
+#              table and chart extractors, dense-text summary.
+#              Post-processing merges fuzzy-duplicate nodes, drops
+#              arrow annotations mistaken for boxes, dedups reversed
+#              edges, and splits identities (IPs, CIDRs, FQDNs, emails,
+#              server names) out of labels into attributes for the
+#              anonymization layer. Emitters produce markdown and
+#              Mermaid (zones as subgraphs).
 
 from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
-from run_bench import PROMPT, _label, ask, norm, parse_json
+from .backends import ask
 
 # -- profiles ---------------------------------------------------------------
-# One knob the config exposes; everything else derives from it. The
-# plugin will map [plugin.vision] keys onto these fields.
+# Benchmark verdict: qwen2.5vl:3b owns nodes and zones (node P 1.00),
+# gemma3:4b reads arrows once constrained to qwen's labels (edge recall
+# 0.60 -> 0.80 for the ensemble).
 PROFILES: dict[str, dict] = {
-    # Two-pass ensemble, full schema: the benchmark winner.
     "default": {
         "nodes_model": "qwen2.5vl:3b",
         "edges_model": "gemma3:4b",
@@ -39,7 +40,6 @@ PROFILES: dict[str, dict] = {
         "read_notes": True,
         "timeout_s": 120,
     },
-    # Single model, single call, structure only: for large batches.
     "fast": {
         "nodes_model": "qwen2.5vl:3b",
         "edges_model": None,
@@ -48,8 +48,6 @@ PROFILES: dict[str, dict] = {
         "read_notes": False,
         "timeout_s": 60,
     },
-    # Screen photos: same as default but the prompt warns about noise
-    # and the post-processing is more aggressive on near-duplicates.
     "photo": {
         "nodes_model": "qwen2.5vl:3b",
         "edges_model": "gemma3:4b",
@@ -61,19 +59,109 @@ PROFILES: dict[str, dict] = {
     },
 }
 
+
+def profile_for(config: dict) -> dict:
+    """Resolve the profile from [plugin.vision] config: `profile` picks
+    a base, per-key overrides (nodes_model, edges_model, timeout_s,
+    ollama_url) apply on top."""
+    base = dict(
+        PROFILES.get(str(config.get("profile", "default")), PROFILES["default"])
+    )
+    for key in ("nodes_model", "edges_model", "timeout_s"):
+        if key in config:
+            base[key] = config[key]
+    return base
+
+
+# -- prompts ----------------------------------------------------------------
+
+CONTENT_TYPES = (
+    "architecture_diagram",
+    "flowchart",
+    "chart",
+    "table",
+    "dense_text",
+    "code",
+    "ui_screenshot",
+    "logo",
+    "photo",
+    "handwriting",
+    "other",
+)
+
+INVENTORY_PROMPT = (
+    "Look at this image and inventory what it contains. Do not assume "
+    "it is a technical image.\n"
+    "Return ONLY a JSON object, no prose, no markdown fence, with exactly:\n"
+    '{"summary": "one sentence describing what the image shows",\n'
+    ' "content": ["' + '" | "'.join(CONTENT_TYPES) + '", ...],\n'
+    ' "text_density": "none" | "sparse" | "dense"}\n'
+    "List every content type present; an image can contain several. "
+    'Use ["other"] when nothing fits.'
+)
+
+STRUCTURE_PROMPT = """You are reading a technical architecture diagram.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"nodes": ["label", ...],
+ "edges": [["source label", "target label"], ...],
+ "zones": ["zone label", ...]}
+Rules: copy node labels exactly as written in the image. An edge is a
+drawn arrow between two boxes, directed from source to target. A zone
+is a larger labeled rectangle grouping several boxes. If none, use [].
+"""
+
+PHOTO_HINT = (
+    "\nThe image may be a photo of a screen: expect noise, moire and "
+    "glare; transcribe labels as faithfully as possible and skip "
+    "anything unreadable rather than guessing."
+)
+
 _ENRICH_SCHEMA = """{"title": "diagram title or empty string",
  "kinds": {"node label": "service|database|queue|storage|user|network|external|other", ...},
  "tech": {"node label": "product name recognizable from icon or text", ...}%s%s}"""
-
 _ENRICH_LEGEND = """,
  "legend": [{"symbol": "...", "meaning": "..."}]"""
 _ENRICH_NOTES = """,
  "notes": ["free-standing text annotation", ...]"""
 
+EDGE_PROMPT = """You are reading a technical architecture diagram.
+The boxes in this diagram are exactly these labels:
+{nodes}
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{{"edges": [{{"source": "node label", "target": "node label", "label": "text on the arrow, else empty"}}]}}
+listing every drawn arrow or line between two of these boxes, directed
+from source to target, using exactly the labels above.
+"""
+
+TABLE_PROMPT = """This image contains one or more data tables.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"tables": [{"title": "table title or empty string",
+             "columns": ["header", ...],
+             "rows": [["cell", ...], ...]}]}
+Copy cell text exactly as written. One entry per table.
+"""
+
+CHART_PROMPT = """This image contains one or more charts.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"charts": [{"type": "bar|line|pie|scatter|area|other",
+             "title": "chart title or empty string",
+             "x_axis": "x axis label or empty",
+             "y_axis": "y axis label or empty",
+             "values": [["category or x", "value"], ...],
+             "insight": "one sentence stating what the chart shows"}]}
+Read data points from the chart as precisely as the image allows.
+"""
+
+TEXT_PROMPT = """This image is mostly text.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"title": "document title or empty string",
+ "summary": "3 to 5 sentences summarizing the text",
+ "key_points": ["short bullet", ...]}
+Base everything strictly on the text visible in the image.
+"""
+
 
 def build_enrich_prompt(profile: dict, labels: list[str]) -> str:
-    """Second pass: classify the already-extracted labels and read the
-    peripheral text. Never re-lists nodes, so it cannot hurt recall."""
     schema = _ENRICH_SCHEMA % (
         _ENRICH_LEGEND if profile.get("read_legend") else "",
         _ENRICH_NOTES if profile.get("read_notes") else "",
@@ -97,9 +185,25 @@ def build_enrich_prompt(profile: dict, labels: list[str]) -> str:
     )
 
 
+# -- parsing helpers --------------------------------------------------------
+
+
+def parse_json(text: str) -> dict | None:
+    for candidate in (text, *re.findall(r"\{.*\}", text, re.DOTALL)):
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            continue
+    return None
+
+
 def parse_edge_list(raw: str) -> list:
-    """The edge pass sometimes comes back as a bare JSON array instead
-    of the requested object; accept both."""
+    """The edge pass sometimes returns a bare JSON array; accept both.
+    The array scan runs first: parse_json would otherwise fish the
+    first object out of the array (an edge, not an envelope) and hide
+    every edge behind a missing "edges" key."""
     for candidate in re.findall(r"\[.*\]", raw, re.DOTALL):
         try:
             obj = json.loads(candidate)
@@ -113,18 +217,21 @@ def parse_edge_list(raw: str) -> list:
     return []
 
 
-EDGE_PROMPT = """You are reading a technical architecture diagram.
-The boxes in this diagram are exactly these labels:
-{nodes}
-Return ONLY a JSON object, no prose, no markdown fence, with exactly:
-{{"edges": [{{"source": "node label", "target": "node label", "label": "text on the arrow, else empty"}}]}}
-listing every drawn arrow or line between two of these boxes, directed
-from source to target, using exactly the labels above.
-"""
+def norm(label: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(label).lower())
+
+
+def _label(x) -> str:
+    if isinstance(x, dict):
+        for k in ("label", "name", "id", "text", "title"):
+            if x.get(k):
+                return str(x[k])
+        return ""
+    return str(x)
+
 
 # -- identity separation ----------------------------------------------------
-# What the anonymize stage will scrub; here it is split out of labels so
-# the graph keys on stable names and the identities are attributes.
+
 _IDENTITY = re.compile(
     r"(?P<cidr>\b\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}\b)"
     r"|(?P<ip>\b\d{1,3}(?:\.\d{1,3}){3}\b)"
@@ -135,10 +242,9 @@ _IDENTITY = re.compile(
 
 
 def split_identities(label: str) -> tuple[str, list[str]]:
-    """Pull IPs, CIDRs, emails and server-ish hostnames out of a node
-    label. Returns (clean label, identities). The clean label keeps the
-    human name; a label that was only an identity keeps it (a node must
-    keep some name, anonymization will placeholder it later)."""
+    """Pull IPs, CIDRs, emails, FQDNs and server-ish hostnames out of a
+    node label. The clean label keeps the human name; a label that was
+    only an identity keeps it (anonymization placeholders it later)."""
     identities = [m.group(0) for m in _IDENTITY.finditer(label)]
     clean = _IDENTITY.sub("", label)
     clean = re.sub(r"\s{2,}", " ", clean).strip(" -()[]/\n\t")
@@ -149,9 +255,6 @@ def split_identities(label: str) -> tuple[str, list[str]]:
 
 
 def postprocess(pred: dict) -> dict:
-    """Clean a raw model extraction using what the bench outputs showed:
-    fuzzy-duplicate nodes, edge labels sitting in the node list, node
-    labels carrying identities, reversed duplicate edges."""
     nodes_in = pred.get("nodes") or []
     edges_in = pred.get("edges") or []
 
@@ -171,8 +274,6 @@ def postprocess(pred: dict) -> dict:
         key = norm(clean)
         if not key:
             continue
-        # An entry that exactly matches an edge label and never appears
-        # as an edge endpoint is an arrow annotation, not a box.
         if key in edge_labels and not _is_endpoint(label, edges_in):
             continue
         if key in seen:
@@ -199,7 +300,7 @@ def postprocess(pred: dict) -> dict:
         return None
 
     edges: list[dict] = []
-    seen_pairs: set[frozenset] = set()
+    by_pair: dict[frozenset, dict] = {}
     for e in edges_in:
         if isinstance(e, dict):
             src, dst, lbl = e.get("source"), e.get("target"), str(e.get("label", ""))
@@ -211,10 +312,15 @@ def postprocess(pred: dict) -> dict:
         if not a or not b or a == b:
             continue
         pair = frozenset((a, b))
-        if pair in seen_pairs:
+        if pair in by_pair:
+            # A labeled duplicate enriches the kept edge (the structure
+            # pass emits bare pairs, the edge pass reads the arrow text).
+            if lbl and not by_pair[pair]["label"]:
+                by_pair[pair]["label"] = lbl
             continue
-        seen_pairs.add(pair)
-        edges.append({"source": a, "target": b, "label": lbl})
+        edge = {"source": a, "target": b, "label": lbl}
+        by_pair[pair] = edge
+        edges.append(edge)
 
     zones = []
     for z in pred.get("zones") or []:
@@ -225,7 +331,6 @@ def postprocess(pred: dict) -> dict:
         members = [r for m in raw_members if (r := _resolve(str(m)))]
         zones.append({"label": label, "members": members})
 
-    # Legend entries that echo the schema placeholders are inventions.
     _placeholder = {"", "...", "[]", "free-standing text annotation"}
     legend = [
         entry
@@ -264,28 +369,38 @@ def _is_endpoint(label: str, edges: list) -> bool:
     return False
 
 
-# -- pipeline ---------------------------------------------------------------
+# -- passes -----------------------------------------------------------------
 
 
-def extract(image_path: Path, profile_name: str = "default") -> dict:
-    """Run the profile's pipeline on one image and return the cleaned
-    extraction. Three passes, each doing the one thing the benchmark
-    showed it does well: structure with the plain contract (best node
-    recall), optional enrichment over the found labels (cannot hurt
-    recall, forbidden to invent a legend), then the constrained edge
-    reading."""
-    profile = PROFILES[profile_name]
+def inventory(path: Path, config: dict) -> dict:
+    """Pass 0: what does the image contain?"""
+    profile = profile_for(config)
+    raw = ask(
+        profile["nodes_model"],
+        path,
+        INVENTORY_PROMPT,
+        config,
+        int(profile.get("timeout_s", 120)),
+    )
+    parsed = parse_json(raw) or {}
+    content = [
+        str(c) for c in (parsed.get("content") or []) if str(c) in CONTENT_TYPES
+    ] or ["other"]
+    return {
+        "summary": str(parsed.get("summary", "")),
+        "content": content,
+        "text_density": str(parsed.get("text_density", "none")),
+    }
+
+
+def extract_diagram(path: Path, config: dict) -> dict:
+    """Diagram extraction: structure, optional enrichment, constrained
+    edges, post-processing. Returns the extraction dict plus rendered
+    `markdown` and `mermaid` keys."""
+    profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
-    base_prompt = PROMPT + (
-        "\nThe image may be a photo of a screen: expect noise, moire and "
-        "glare; transcribe labels as faithfully as possible and skip "
-        "anything unreadable rather than guessing."
-        if profile.get("photo_hint")
-        else ""
-    )
-    raw, _dt = ask(
-        profile["nodes_model"], image_path, prompt=base_prompt, timeout_s=timeout
-    )
+    prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    raw = ask(profile["nodes_model"], path, prompt, config, timeout)
     pred = parse_json(raw) or {}
     labels = [_label(n) for n in (pred.get("nodes") or []) if _label(n).strip()]
 
@@ -294,15 +409,14 @@ def extract(image_path: Path, profile_name: str = "default") -> dict:
         or profile.get("read_legend")
         or profile.get("read_notes")
     ):
-        raw_meta, _ = ask(
+        raw_meta = ask(
             profile["nodes_model"],
-            image_path,
-            prompt=build_enrich_prompt(profile, labels),
-            timeout_s=timeout,
+            path,
+            build_enrich_prompt(profile, labels),
+            config,
+            timeout,
         )
         meta = parse_json(raw_meta) or {}
-        # The model rarely reuses the exact label strings as keys;
-        # join on normalized labels instead.
         kinds = {norm(k): str(v) for k, v in (meta.get("kinds") or {}).items()}
         techs = {norm(k): str(v) for k, v in (meta.get("tech") or {}).items()}
         pred["nodes"] = [
@@ -318,13 +432,86 @@ def extract(image_path: Path, profile_name: str = "default") -> dict:
         pred["notes"] = meta.get("notes") or []
 
     if profile.get("edges_model") and labels:
-        prompt = EDGE_PROMPT.format(nodes="\n".join(f"- {n}" for n in labels))
-        raw_e, _ = ask(
-            profile["edges_model"], image_path, prompt=prompt, timeout_s=timeout
+        raw_e = ask(
+            profile["edges_model"],
+            path,
+            EDGE_PROMPT.format(nodes="\n".join(f"- {n}" for n in labels)),
+            config,
+            timeout,
         )
         pred["edges"] = list(pred.get("edges") or []) + parse_edge_list(raw_e)
 
-    return postprocess(pred)
+    out = postprocess(pred)
+    out["mermaid"] = to_mermaid(out)
+    out["markdown"] = to_markdown(out)
+    return out
+
+
+def extract_tables(path: Path, config: dict) -> list[dict]:
+    profile = profile_for(config)
+    raw = ask(
+        profile["nodes_model"], path, TABLE_PROMPT, config, int(profile["timeout_s"])
+    )
+    parsed = parse_json(raw) or {}
+    out = []
+    for tb in parsed.get("tables") or []:
+        if not isinstance(tb, dict):
+            continue
+        cols = [str(c) for c in (tb.get("columns") or [])]
+        rows = [
+            [str(c) for c in r] for r in (tb.get("rows") or []) if isinstance(r, list)
+        ]
+        if cols and rows:
+            out.append(
+                {"title": str(tb.get("title", "")), "columns": cols, "rows": rows}
+            )
+    return out
+
+
+def extract_charts(path: Path, config: dict) -> list[dict]:
+    profile = profile_for(config)
+    raw = ask(
+        profile["nodes_model"], path, CHART_PROMPT, config, int(profile["timeout_s"])
+    )
+    parsed = parse_json(raw) or {}
+    out = []
+    for ch in parsed.get("charts") or []:
+        if not isinstance(ch, dict):
+            continue
+        values = [
+            [str(a), str(b)]
+            for item in (ch.get("values") or [])
+            if isinstance(item, (list, tuple)) and len(item) == 2
+            for a, b in [item]
+        ]
+        out.append(
+            {
+                "type": str(ch.get("type", "other")),
+                "title": str(ch.get("title", "")),
+                "x_axis": str(ch.get("x_axis", "")),
+                "y_axis": str(ch.get("y_axis", "")),
+                "values": values,
+                "insight": str(ch.get("insight", "")),
+            }
+        )
+    return out
+
+
+def extract_text(path: Path, config: dict) -> dict:
+    profile = profile_for(config)
+    raw = ask(
+        profile["nodes_model"], path, TEXT_PROMPT, config, int(profile["timeout_s"])
+    )
+    parsed = parse_json(raw) or {}
+    return {
+        "title": str(parsed.get("title", "")),
+        "summary": str(parsed.get("summary", "")),
+        "key_points": [
+            str(k).lstrip("-* ").strip()
+            for k in (parsed.get("key_points") or [])
+            if str(k).strip()
+        ],
+    }
 
 
 # -- emitters ---------------------------------------------------------------
@@ -379,12 +566,7 @@ def to_markdown(ex: dict) -> str:
         parts.append("## Components")
         for n in ex["nodes"]:
             tech = f" ({n['tech']})" if n["tech"] else ""
-            ids = (
-                f"  <!-- identities: {', '.join(n['identities'])} -->"
-                if n["identities"]
-                else ""
-            )
-            parts.append(f"- **{n['label']}**{tech}, {n['kind']}{ids}")
+            parts.append(f"- **{n['label']}**{tech}, {n['kind']}")
         parts.append("")
     if ex["zones"]:
         parts.append("## Zones")
@@ -395,10 +577,7 @@ def to_markdown(ex: dict) -> str:
     if ex["legend"]:
         parts.append("## Legend")
         for entry in ex["legend"]:
-            if isinstance(entry, dict):
-                parts.append(
-                    f"- {entry.get('symbol', '?')}: {entry.get('meaning', '')}"
-                )
+            parts.append(f"- {entry.get('symbol', '?')}: {entry.get('meaning', '')}")
         parts.append("")
     if ex["notes"]:
         parts.append("## Notes")
@@ -406,155 +585,6 @@ def to_markdown(ex: dict) -> str:
         parts.append("")
     parts += ["## Diagram", "", "```mermaid", to_mermaid(ex), "```", ""]
     return "\n".join(parts)
-
-
-# -- pass 0: content inventory ----------------------------------------------
-# Non-directive on purpose: the extraction prompts presuppose a diagram,
-# which makes small VLMs invent one when shown a logo or a text page.
-# The inventory asks what the image contains and the router decides
-# which extractors (if any) are worth running.
-
-CONTENT_TYPES = (
-    "architecture_diagram",
-    "flowchart",
-    "chart",
-    "table",
-    "dense_text",
-    "code",
-    "ui_screenshot",
-    "logo",
-    "photo",
-    "handwriting",
-    "other",
-)
-
-INVENTORY_PROMPT = (
-    "Look at this image and inventory what it contains. Do not assume "
-    "it is a technical image.\n"
-    "Return ONLY a JSON object, no prose, no markdown fence, with exactly:\n"
-    '{"summary": "one sentence describing what the image shows",\n'
-    ' "content": ["' + '" | "'.join(CONTENT_TYPES) + '", ...],\n'
-    ' "text_density": "none" | "sparse" | "dense"}\n'
-    "List every content type present; an image can contain several. "
-    'Use ["other"] when nothing fits.'
-)
-
-TABLE_PROMPT = """This image contains one or more data tables.
-Return ONLY a JSON object, no prose, no markdown fence, with exactly:
-{"tables": [{"title": "table title or empty string",
-             "columns": ["header", ...],
-             "rows": [["cell", ...], ...]}]}
-Copy cell text exactly as written. One entry per table.
-"""
-
-CHART_PROMPT = """This image contains one or more charts.
-Return ONLY a JSON object, no prose, no markdown fence, with exactly:
-{"charts": [{"type": "bar|line|pie|scatter|area|other",
-             "title": "chart title or empty string",
-             "x_axis": "x axis label or empty",
-             "y_axis": "y axis label or empty",
-             "values": [["category or x", "value"], ...],
-             "insight": "one sentence stating what the chart shows"}]}
-Read data points from the chart as precisely as the image allows.
-"""
-
-TEXT_PROMPT = """This image is mostly text.
-Return ONLY a JSON object, no prose, no markdown fence, with exactly:
-{"title": "document title or empty string",
- "summary": "3 to 5 sentences summarizing the text",
- "key_points": ["short bullet", ...]}
-Base everything strictly on the text visible in the image.
-"""
-
-
-def inventory(image_path: Path, profile_name: str = "default") -> dict:
-    profile = PROFILES[profile_name]
-    timeout = int(profile.get("timeout_s", 120))
-    raw, _ = ask(
-        profile["nodes_model"], image_path, prompt=INVENTORY_PROMPT, timeout_s=timeout
-    )
-    parsed = parse_json(raw) or {}
-    content = [
-        str(c) for c in (parsed.get("content") or []) if str(c) in CONTENT_TYPES
-    ] or ["other"]
-    return {
-        "summary": str(parsed.get("summary", "")),
-        "content": content,
-        "text_density": str(parsed.get("text_density", "none")),
-    }
-
-
-def extract_tables(image_path: Path, profile: dict) -> list[dict]:
-    raw, _ = ask(
-        profile["nodes_model"],
-        image_path,
-        prompt=TABLE_PROMPT,
-        timeout_s=int(profile.get("timeout_s", 120)),
-    )
-    parsed = parse_json(raw) or {}
-    out = []
-    for tb in parsed.get("tables") or []:
-        if not isinstance(tb, dict):
-            continue
-        cols = [str(c) for c in (tb.get("columns") or [])]
-        rows = [
-            [str(c) for c in r] for r in (tb.get("rows") or []) if isinstance(r, list)
-        ]
-        if cols and rows:
-            out.append(
-                {"title": str(tb.get("title", "")), "columns": cols, "rows": rows}
-            )
-    return out
-
-
-def extract_charts(image_path: Path, profile: dict) -> list[dict]:
-    raw, _ = ask(
-        profile["nodes_model"],
-        image_path,
-        prompt=CHART_PROMPT,
-        timeout_s=int(profile.get("timeout_s", 120)),
-    )
-    parsed = parse_json(raw) or {}
-    out = []
-    for ch in parsed.get("charts") or []:
-        if not isinstance(ch, dict):
-            continue
-        values = [
-            [str(a), str(b)]
-            for item in (ch.get("values") or [])
-            if isinstance(item, (list, tuple)) and len(item) == 2
-            for a, b in [item]
-        ]
-        out.append(
-            {
-                "type": str(ch.get("type", "other")),
-                "title": str(ch.get("title", "")),
-                "x_axis": str(ch.get("x_axis", "")),
-                "y_axis": str(ch.get("y_axis", "")),
-                "values": values,
-                "insight": str(ch.get("insight", "")),
-            }
-        )
-    return out
-
-
-def extract_text(image_path: Path, profile: dict) -> dict:
-    raw, _ = ask(
-        profile["nodes_model"],
-        image_path,
-        prompt=TEXT_PROMPT,
-        timeout_s=int(profile.get("timeout_s", 120)),
-    )
-    parsed = parse_json(raw) or {}
-    return {
-        "title": str(parsed.get("title", "")),
-        "summary": str(parsed.get("summary", "")),
-        "key_points": [
-            str(k).lstrip("-* ").strip()
-            for k in (parsed.get("key_points") or [])
-            if str(k).strip()
-        ],
-    }
 
 
 def tables_to_markdown(tables: list[dict]) -> str:
@@ -592,34 +622,37 @@ def charts_to_markdown(charts: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def route(image_path: Path, profile_name: str = "default") -> str:
-    """The full pipeline: inventory first, then only the extractors the
-    content warrants. Returns markdown; an image with nothing technical
-    costs exactly one model call and one summary line."""
-    profile = PROFILES[profile_name]
-    inv = inventory(image_path, profile_name)
-    parts = [f"# {image_path.name}", "", f"_{inv['summary']}_", ""]
+# -- router -----------------------------------------------------------------
+
+DIAGRAM_KINDS = {"architecture_diagram", "flowchart"}
+
+
+def route(path: Path, config: dict) -> tuple[dict, str]:
+    """The full pipeline: inventory, then only the extractors the
+    content warrants. Returns (inventory, markdown)."""
+    inv = inventory(path, config)
+    parts = [f"# {path.name}", "", f"_{inv['summary']}_", ""]
     parts.append(f"Detected content: {', '.join(inv['content'])}")
     parts.append("")
 
-    if {"architecture_diagram", "flowchart"} & set(inv["content"]):
-        ex = extract(image_path, profile_name)
-        parts.append(to_markdown(ex))
+    if DIAGRAM_KINDS & set(inv["content"]):
+        ex = extract_diagram(path, config)
+        parts.append(ex["markdown"])
     if "table" in inv["content"]:
-        tables = extract_tables(image_path, profile)
+        tables = extract_tables(path, config)
         if tables:
             parts.append("## Tables")
             parts.append(tables_to_markdown(tables))
     if "chart" in inv["content"]:
-        charts = extract_charts(image_path, profile)
+        charts = extract_charts(path, config)
         if charts:
             parts.append("## Charts")
             parts.append(charts_to_markdown(charts))
     if "dense_text" in inv["content"] or (
         inv["text_density"] == "dense"
-        and not ({"architecture_diagram", "flowchart", "table"} & set(inv["content"]))
+        and not ({"table", *DIAGRAM_KINDS} & set(inv["content"]))
     ):
-        txt = extract_text(image_path, profile)
+        txt = extract_text(path, config)
         if txt["summary"]:
             parts.append("## Text")
             if txt["title"]:
@@ -627,12 +660,4 @@ def route(image_path: Path, profile_name: str = "default") -> str:
             parts.append(txt["summary"])
             parts.extend(f"- {k}" for k in txt["key_points"])
             parts.append("")
-    return "\n".join(parts)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit("usage: extract.py <image> [profile]")
-    image = Path(sys.argv[1])
-    profile = sys.argv[2] if len(sys.argv) > 2 else "default"
-    print(route(image, profile))
+    return inv, "\n".join(parts)

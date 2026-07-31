@@ -1142,6 +1142,25 @@ cgh init          # generates the key and the .codegraph/ index dir
 
 The key file has `600` permissions and the `.codegraph/` directory is `700` (owner-only). Never commit either to git.
 
+### Sensitive data at rest (secure mode)
+
+In `mode = "secure"`, the index never stores the sensitive datum
+itself. Every `pii.*` and `secret.*` finding value is replaced at
+write time by a keyed one-way pseudonym (`<pii.email:3fa2c1b4d5>`),
+computed with a per-repo HMAC key (`.codegraph/pseudo.key`, `600`).
+Pseudonyms are stable, so dedup and cross-file search keep working,
+but irreversible: reading the SQLite files directly, even with the
+key, yields nothing recoverable, because HMAC does not decode and
+the raw value was never written.
+
+The guard closes the direct path too: in secure mode an agent's Read,
+Grep or shell call touching `.codegraph/` is denied with a reason
+pointing at the MCP tools, and the static deny lists (Claude settings,
+`.bobignore`) carry a standing index entry. This is policy inside
+cooperating agent frameworks, not a sandbox; the pseudonymization is
+what protects against a process that reads the files anyway: there is
+nothing sensitive in them to find.
+
 ---
 
 ## Limitations

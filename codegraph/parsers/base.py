@@ -18,7 +18,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class SymbolDef:
     """A function, method, or callable."""
 
@@ -33,7 +33,7 @@ class SymbolDef:
     kind: str = "function"  # "function", "method", "arrow", "handler", etc.
 
 
-@dataclass
+@dataclass(slots=True)
 class ClassDef:
     """A class, struct, interface, trait, type, etc."""
 
@@ -47,7 +47,7 @@ class ClassDef:
     kind: str = "class"  # "class", "interface", "struct", "trait", "type"
 
 
-@dataclass
+@dataclass(slots=True)
 class ImportRef:
     """An import/require/include statement."""
 
@@ -55,7 +55,7 @@ class ImportRef:
     symbols: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class ResourceDef:
     """A generic resource (Terraform resource, Docker service, K8s manifest, etc.)."""
 
@@ -68,7 +68,7 @@ class ResourceDef:
     kind: str = "resource"  # "resource", "variable", "output", "service"
 
 
-@dataclass
+@dataclass(slots=True)
 class SectionDef:
     """A documentation section (Markdown heading, RST section, etc.)."""
 
@@ -82,7 +82,7 @@ class SectionDef:
     anchor: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class CodeRef:
     """A reference to a code symbol found in docs."""
 
@@ -91,7 +91,7 @@ class CodeRef:
     context: str = "inline"  # "inline", "fenced", "link"
 
 
-@dataclass
+@dataclass(slots=True)
 class LinkRef:
     """An internal link between files."""
 
@@ -100,7 +100,7 @@ class LinkRef:
     line: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class FileIndex:
     """
     The universal output of every parser.

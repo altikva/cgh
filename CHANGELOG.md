@@ -16,6 +16,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   FTS write-batching change was prototyped alongside, benchmarked at
   exactly zero gain, and dropped.)
 
+### Changed
+- **The plugin API covers what plugins actually need**: the finding
+  store, activity log, knowledge record, config resolution, parser
+  lookup, federation children, subprocess hygiene and a `server_root()`
+  accessor are re-exported (lazily) from `codegraph.plugin_api`, the
+  one import path with a stability promise. All six first-party
+  plugins migrated off `codegraph.state/*` and friends, and a boundary
+  test now fails any plugin import that reaches into internals, which
+  is what keeps `API_VERSION` honest.
+
 ### Fixed
 - **One backend factory, identifier allow-list in both backends**:
   which graph backend a repo uses (and which file) was decided by

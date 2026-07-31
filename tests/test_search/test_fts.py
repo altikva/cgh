@@ -2,7 +2,13 @@
 
 import pytest
 
-from codegraph.core.fts import commit, delete_file_symbols, fts_search, get_fts_conn, upsert_symbol
+from codegraph.core.fts import (
+    commit,
+    delete_file_symbols,
+    fts_search,
+    get_fts_conn,
+    upsert_symbol,
+)
 
 
 @pytest.fixture

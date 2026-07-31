@@ -69,7 +69,9 @@ class TestParserNormalization:
         conn = get_connection(tmp_path)
         names = [
             f["name"]
-            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+            for f in conn.find_nodes(
+                "Function", return_fields=["name"], order_by=["name"]
+            )
         ]
         # We expect "café" (NFKC composed) appearing once, plus the caller.
         assert names.count("café") == 1, (
@@ -109,7 +111,9 @@ class TestParserNormalization:
         conn = get_connection(tmp_path)
         names = [
             f["name"]
-            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+            for f in conn.find_nodes(
+                "Function", return_fields=["name"], order_by=["name"]
+            )
         ]
         assert names.count("café") == 1, (
             f"expected one normalized 'café' entry, got names={names}"

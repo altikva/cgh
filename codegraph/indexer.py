@@ -13,8 +13,6 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import os
 import sys
 import time
@@ -24,6 +22,8 @@ from pathlib import Path
 from codegraph.core.db import get_connection
 from codegraph.core.fts import commit as fts_commit
 from codegraph.core.fts import delete_file_symbols, get_fts_conn, upsert_symbol
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
 
@@ -624,9 +624,10 @@ def _find_section_for_line(sections: list, line: int):
     """Find the deepest (most specific) section containing a given line."""
     best = None
     for sec in sections:
-        if sec.start_line <= line <= sec.end_line:
-            if best is None or sec.level > best.level:
-                best = sec
+        if sec.start_line <= line <= sec.end_line and (
+            best is None or sec.level > best.level
+        ):
+            best = sec
     return best
 
 
@@ -855,8 +856,8 @@ def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
 def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[Path]:
     """Walk configured include_dirs (config.toml) and return files not yet seen.
     Files inside any federated subrepo are skipped."""
-    from codegraph.core.config import resolve_include_dirs
     from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+    from codegraph.core.config import resolve_include_dirs
 
     seen = seen or set()
     out: list[Path] = []

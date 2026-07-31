@@ -38,7 +38,9 @@ class TestRotation:
 
         assert not log.exists(), "active log should have been moved aside"
         assert (tmp_path / ".codegraph" / "owner.log.1").exists()
-        assert (tmp_path / ".codegraph" / "owner.log.1").stat().st_size == 2 * 1024 * 1024
+        assert (
+            tmp_path / ".codegraph" / "owner.log.1"
+        ).stat().st_size == 2 * 1024 * 1024
 
     def test_keeps_only_backup_count_backups(self, tmp_path):
         _write_config(tmp_path, log_max_mb=1, log_backup_count=2)

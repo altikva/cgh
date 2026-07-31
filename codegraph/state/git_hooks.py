@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import subprocess
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # post-merge   fires after `git pull` and `git merge`.
 # post-checkout fires after `git checkout <branch>` / `git switch` (and file
@@ -84,7 +84,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
     return git_dir / "hooks"
 
 
-def hooks_target_info(repo_root: Path | str) -> "tuple[Path | None, bool]":
+def hooks_target_info(repo_root: Path | str) -> tuple[Path | None, bool]:
     """Return (hooks_dir, is_shared).
 
     hooks_dir is None when this is not a git repo. is_shared is True when

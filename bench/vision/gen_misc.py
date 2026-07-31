@@ -94,7 +94,7 @@ def gen_chart() -> None:
     vmax = max(CHART["values"])
     d.line([60, base_y, 600, base_y], fill="#333", width=2)
     d.line([60, base_y, 60, base_y - max_h - 20], fill="#333", width=2)
-    for i, (lbl, v) in enumerate(zip(CHART["labels"], CHART["values"])):
+    for i, (lbl, v) in enumerate(zip(CHART["labels"], CHART["values"], strict=False)):
         x0 = 90 + i * (bw + 30)
         h = int(max_h * v / vmax)
         d.rectangle(

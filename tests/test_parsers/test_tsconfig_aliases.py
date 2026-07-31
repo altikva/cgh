@@ -14,7 +14,13 @@ import textwrap
 import pytest
 
 from codegraph.imports.resolver import resolve_js_ts
-from codegraph.imports.tsconfig import _clear_cache, _read_tsconfig, _strip_jsonc, load_aliases, resolve_alias
+from codegraph.imports.tsconfig import (
+    _clear_cache,
+    _read_tsconfig,
+    _strip_jsonc,
+    load_aliases,
+    resolve_alias,
+)
 
 
 @pytest.fixture(autouse=True)

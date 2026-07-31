@@ -43,7 +43,9 @@ class TestWriterRoundTrip:
         parsed = tomllib.loads(cfg.read_text(encoding="utf-8"))
         assert parsed["codegraph"]["subrepos"] == ["./edf-sa\\services-backup"]
         # And our own resilient reader agrees.
-        assert _read_config_toml(cfg)["codegraph"]["subrepos"] == ["./edf-sa\\services-backup"]
+        assert _read_config_toml(cfg)["codegraph"]["subrepos"] == [
+            "./edf-sa\\services-backup"
+        ]
 
 
 class TestAddSubrepoForwardSlash:

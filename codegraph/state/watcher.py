@@ -15,8 +15,6 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import subprocess
 import threading
 import time
@@ -26,6 +24,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+from codegraph.core.utils import quiet_subprocess_kwargs
 from codegraph.indexer import _IGNORE_DIRS, _is_cghignored, index_file
 from codegraph.parsers import is_supported
 
@@ -74,10 +73,7 @@ class _CodeGraphHandler(FileSystemEventHandler):
             return True
 
         # 4. Federated subrepo, owned by its own index
-        if self._subrepos and is_under_any(p, self._subrepos):
-            return True
-
-        return False
+        return bool(self._subrepos and is_under_any(p, self._subrepos))
 
     def _git_ignored_batch(self, paths: list[str]) -> set[str]:
         """One `git check-ignore --stdin -z` for the whole batch. Returns
@@ -272,9 +268,9 @@ def start_watcher(repo_root: str | Path) -> Observer:
         pass
 
     # Memory + plans dirs (auto-discovered; env / config-overridable)
-    from codegraph.core.config import memory_dir, plans_dir
     from codegraph.claude_state.memory import scan_memory_dir
     from codegraph.claude_state.plans import scan_plan_dir
+    from codegraph.core.config import memory_dir, plans_dir
 
     aux_targets: list[tuple[Path, str, object]] = []
     try:

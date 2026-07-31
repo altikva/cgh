@@ -22,3 +22,6 @@ vision = "cgh_vision"
 
 [tool.setuptools.packages.find]
 include = ["cgh_vision*"]
+
+[tool.setuptools.package-data]
+cgh_vision = ["py.typed"]

@@ -25,3 +25,6 @@ docs = "cgh_docs"
 
 [tool.setuptools.packages.find]
 include = ["cgh_docs*"]
+
+[tool.setuptools.package-data]
+cgh_docs = ["py.typed"]

@@ -35,6 +35,7 @@ __all__ = [
     "SDK_API",
     "ScanFinding",
     "Verdict",
+    "CodegraphError",
     "CapabilityMissing",
     "InMemoryFindingStore",
     "scan_text",
@@ -48,16 +49,9 @@ __all__ = [
 ]
 
 
-class CapabilityMissing(RuntimeError):
-    """A requested capability has no installed provider. The message
-    names the package that supplies it."""
-
-    def __init__(self, capability: str, package: str) -> None:
-        self.capability = capability
-        self.package = package
-        super().__init__(
-            f"no installed provider for {capability!r}: pip install {package}"
-        )
+# The SDK's errors are the public hierarchy: catch CodegraphError to
+# handle everything cgh raises on purpose.
+from codegraph.errors import CapabilityMissing, CodegraphError  # noqa: E402
 
 
 # -- text scanning ----------------------------------------------------------

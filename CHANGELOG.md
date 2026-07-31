@@ -17,6 +17,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Fixed
+- **`cgh graph` works on DuckDB**: the CLI visualization went through
+  raw-Cypher generators that only Kuzu understood, so every scope
+  silently rendered "No edges found" on the default backend. The
+  generators now live once in `codegraph.viz.graphviews`, speak the
+  GraphDB protocol only, and serve both entry points (the
+  `visualize_graph` MCP tool and the CLI); the Kuzu-only ancestors are
+  retired, and the init wizard's file count uses the protocol too.
 - **Silent failures on write paths now log**: a failed node deletion in
   the incremental reindex (previously a ghost-node source reporting
   success), dropped CALLS edges from the precise resolver, a malformed

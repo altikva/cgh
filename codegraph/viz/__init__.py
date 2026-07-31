@@ -6,23 +6,27 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Visualization package: Mermaid diagram generators and HTML rendering.
 
-from codegraph.viz.html import generate_html, open_in_browser
-from codegraph.viz.mermaid import (
-    mermaid_calls,
-    mermaid_classes,
-    mermaid_docs,
-    mermaid_imports,
-    mermaid_layers,
-    mermaid_overview,
+from codegraph.viz.graphviews import (
+    viz_call_graph,
+    viz_class_hierarchy,
+    viz_doc_structure,
+    viz_file_imports,
+    viz_file_symbols,
+    viz_full_overview,
+    viz_layers,
 )
+from codegraph.viz.html import generate_html, open_in_browser
+from codegraph.viz.mermaid import mermaid_layers
 
 __all__ = [
-    "mermaid_calls",
-    "mermaid_classes",
-    "mermaid_docs",
-    "mermaid_imports",
+    "viz_call_graph",
+    "viz_class_hierarchy",
+    "viz_doc_structure",
+    "viz_file_imports",
+    "viz_file_symbols",
+    "viz_full_overview",
+    "viz_layers",
     "mermaid_layers",
-    "mermaid_overview",
     "generate_html",
     "open_in_browser",
 ]

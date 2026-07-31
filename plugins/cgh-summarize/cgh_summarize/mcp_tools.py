@@ -17,7 +17,7 @@ import os
 
 def make_mcp_registrar(config: dict, extras_fn):
     def register_tools(mcp) -> None:
-        import codegraph.server as _srv
+        from codegraph.plugin_api import server_root
 
         @mcp.tool()
         def summaries(file_path: str = "", limit: int = 50) -> str:
@@ -28,26 +28,26 @@ def make_mcp_registrar(config: dict, extras_fn):
             its gist. Federated: children's summaries come back with a
             scope tag.
             """
-            from codegraph.analysis.federation import resolve_children
-            from codegraph.state.findings import (
+            from codegraph.plugin_api import resolve_children
+            from codegraph.plugin_api import (
                 findings_db_path,
                 query_findings,
                 query_findings_ro,
             )
 
-            if file_path and not os.path.isabs(file_path) and _srv._root:
-                file_path = str(_srv._root / file_path)
+            if file_path and not os.path.isabs(file_path) and server_root():
+                file_path = str(server_root() / file_path)
 
             rows: list[dict] = []
             for row in query_findings(
-                _srv._root, key_prefix="summary", file_path=file_path, limit=limit
+                server_root(), key_prefix="summary", file_path=file_path, limit=limit
             ):
                 if row["key"] != "summary":
                     continue
                 rows.append(
                     {"scope": "parent", "file": row["file"], "summary": row["value"]}
                 )
-            for child in resolve_children(_srv._root) if _srv._root else []:
+            for child in resolve_children(server_root()) if server_root() else []:
                 for row in query_findings_ro(
                     findings_db_path(child), key_prefix="summary", limit=limit
                 ):
@@ -77,7 +77,7 @@ def make_mcp_registrar(config: dict, extras_fn):
             from .insights import run_insights
 
             result = run_insights(
-                _srv._root, config, extras_fn=extras_fn, question=question
+                server_root(), config, extras_fn=extras_fn, question=question
             )
             return json.dumps(result, indent=2)
 

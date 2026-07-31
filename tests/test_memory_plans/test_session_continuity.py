@@ -30,15 +30,13 @@ from codegraph.state.call_log import (
 
 
 @pytest.fixture
-def repo(tmp_path, monkeypatch):
-    """A fresh call_log connection bound to this tmp repo."""
+def repo(tmp_path):
+    """A fresh call_log store bound to this tmp repo (the cache is
+    keyed by root, so isolation only needs the reset hook)."""
     (tmp_path / ".codegraph").mkdir()
-    monkeypatch.setattr(call_log, "_conn", None)
+    call_log.reset_for_tests()
     yield tmp_path
-    conn = call_log._conn
-    if conn is not None:
-        conn.close()
-    call_log._conn = None
+    call_log.reset_for_tests()
 
 
 class TestStandingInstructionsAndSupersede:
@@ -124,17 +122,15 @@ class TestResumeBundle:
 
 
 class TestFederatedKnowledge:
-    def test_ro_search_reads_a_child_store(self, repo, monkeypatch):
+    def test_ro_search_reads_a_child_store(self, repo):
         child = repo / "child"
         (child / ".codegraph").mkdir(parents=True)
-        # Write into the child store through a temporarily rebound conn.
-        monkeypatch.setattr(call_log, "_conn", None)
+        # The keyed cache gives the child its own store directly.
         knowledge_record(
             "API contract lives here", "types come from the api repo",
             kind="decision", repo_root=child,
         )  # fmt: skip
-        call_log._conn.close()
-        monkeypatch.setattr(call_log, "_conn", None)
+        call_log.reset_for_tests()  # close so the RO open sees a settled file
 
         hits = knowledge_search_ro(
             child / ".codegraph" / "call_log.db", "contract", limit=5

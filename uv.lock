@@ -215,6 +215,7 @@ full = [
     { name = "cgh-docs" },
     { name = "cgh-pii" },
     { name = "cgh-summarize" },
+    { name = "cgh-vision" },
     { name = "jedi" },
     { name = "tree-sitter-c-sharp" },
     { name = "tree-sitter-ruby" },
@@ -235,6 +236,7 @@ plugins = [
     { name = "cgh-docs" },
     { name = "cgh-pii" },
     { name = "cgh-summarize" },
+    { name = "cgh-vision" },
 ]
 
 [package.metadata]
@@ -249,6 +251,8 @@ requires-dist = [
     { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.1" },
     { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.2" },
     { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.2" },
+    { name = "cgh-vision", marker = "extra == 'full'", directory = "plugins/cgh-vision" },
+    { name = "cgh-vision", marker = "extra == 'plugins'", directory = "plugins/cgh-vision" },
     { name = "duckdb", specifier = ">=1.0" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
@@ -320,6 +324,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/fe/d5/f36a139c86e183096
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/7e/61e61d6a8036dfa0f1f85ea4d1aad5b8d264ded1a7a049ac745c7cf38e1e/cgh_summarize-0.2.0-py3-none-any.whl", hash = "sha256:d1cf350a4922e3e8e7511e62896aed9c458ede67c70b53d60027518206155422", size = 15160, upload-time = "2026-07-30T03:36:07.386Z" },
 ]
+
+[[package]]
+name = "cgh-vision"
+version = "0.1.0"
+source = { directory = "plugins/cgh-vision" }
 
 [[package]]
 name = "click"

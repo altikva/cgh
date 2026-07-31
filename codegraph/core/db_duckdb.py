@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 from typing import Any
-from codegraph.core.utils import checked_identifier as _ident
 
 import duckdb
 
 from codegraph.core.protocol import QueryResult
 from codegraph.core.schema_duckdb import init_schema
+from codegraph.core.utils import checked_identifier as _ident
 
 
 class DuckDBQueryResult:
@@ -131,9 +131,10 @@ class DuckDBGraphDB:
         cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
         values: list[Any] = [src_key_value, dst_key_value]
         if spec.prop_columns:
-            assert edge_props is not None, (
-                f"Edge {edge_type!r} requires props {spec.prop_columns}, got None"
-            )
+            if edge_props is None:
+                raise ValueError(
+                    f"Edge {edge_type!r} requires props {spec.prop_columns}, got None"
+                )
             for col in spec.prop_columns:
                 values.append(edge_props.get(col, ""))
         placeholders = ", ".join("?" for _ in cols)
@@ -312,7 +313,7 @@ class DuckDBGraphDB:
 
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
         from codegraph.core.graph_model import NODES
@@ -390,7 +391,7 @@ class DuckDBGraphDB:
         )
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def find_neighbors(
         self,
@@ -451,7 +452,7 @@ class DuckDBGraphDB:
 
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def reach_via_edge(
         self,
@@ -486,7 +487,7 @@ class DuckDBGraphDB:
         """
         cursor = self._conn.execute(sql, [start_key, int(max_depth)])
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     # Escape hatch for tooling that needs the raw DuckDB connection
     # (e.g. ATTACH for federation, EXPLAIN ANALYZE). Symmetric with

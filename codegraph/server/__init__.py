@@ -10,6 +10,7 @@
 # Description: fastmcp MCP server exposing code graph query tools to Claude Code.
 #              Run with:  python -m codegraph.server --root /path/to/repo
 
+# ruff: noqa: E402  # tool modules must import after `mcp = FastMCP(...)` exists
 from __future__ import annotations
 
 import argparse
@@ -191,20 +192,22 @@ mcp = FastMCP(
 )
 
 # Register tools from sub-modules (must be after mcp = FastMCP)
-from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
-from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
-from codegraph.server.tools_findings import register as _register_findings  # noqa: E402
-from codegraph.server.tools_session import register as _register_session  # noqa: E402
-from codegraph.server.tools_history import register as _register_history  # noqa: E402
-from codegraph.server.tools_index import register as _register_index  # noqa: E402
-from codegraph.server.tools_insight import register as _register_insight  # noqa: E402
-from codegraph.server.tools_knowledge import register as _register_knowledge  # noqa: E402
-from codegraph.server.tools_memory import register as _register_memory  # noqa: E402
-from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
-from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
-from codegraph.server.tools_query import register as _register_query  # noqa: E402
-from codegraph.server.tools_tests import register as _register_tests  # noqa: E402
-from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
+from codegraph.server.tools_arch import register as _register_arch
+from codegraph.server.tools_docs import register as _register_docs
+from codegraph.server.tools_findings import register as _register_findings
+from codegraph.server.tools_history import register as _register_history
+from codegraph.server.tools_index import register as _register_index
+from codegraph.server.tools_insight import register as _register_insight
+from codegraph.server.tools_knowledge import (
+    register as _register_knowledge,
+)
+from codegraph.server.tools_memory import register as _register_memory
+from codegraph.server.tools_meta import register as _register_meta
+from codegraph.server.tools_plans import register as _register_plans
+from codegraph.server.tools_query import register as _register_query
+from codegraph.server.tools_session import register as _register_session
+from codegraph.server.tools_tests import register as _register_tests
+from codegraph.server.tools_viz import register as _register_viz
 
 _register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)

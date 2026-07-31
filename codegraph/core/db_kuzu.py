@@ -13,11 +13,11 @@
 from __future__ import annotations
 
 from typing import Any
-from codegraph.core.utils import checked_identifier as _ident
 
 import kuzu
 
 from codegraph.core.protocol import GraphDB, QueryResult
+from codegraph.core.utils import checked_identifier as _ident
 
 
 class KuzuQueryResult:
@@ -283,7 +283,9 @@ class KuzuGraphDB:
         while result.has_next():
             row = result.get_next()
             # Strip "n." prefix from column names so callers get clean keys
-            out.append({c.removeprefix("n."): v for c, v in zip(cols, row)})
+            out.append(
+                {c.removeprefix("n."): v for c, v in zip(cols, row, strict=False)}
+            )
         return out
 
     def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
@@ -369,7 +371,7 @@ class KuzuGraphDB:
         out: list[dict[str, Any]] = []
         while result.has_next():
             row = result.get_next()
-            out.append(dict(zip(cols, row)))
+            out.append(dict(zip(cols, row, strict=False)))
         return out
 
     def find_neighbors(
@@ -448,7 +450,7 @@ class KuzuGraphDB:
         out: list[dict[str, Any]] = []
         while result.has_next():
             row = result.get_next()
-            out.append(dict(zip(cols, row)))
+            out.append(dict(zip(cols, row, strict=False)))
         return out
 
     def reach_via_edge(
@@ -477,7 +479,7 @@ class KuzuGraphDB:
         out: list[dict[str, Any]] = []
         while result.has_next():
             row = result.get_next()
-            out.append(dict(zip(cols, row)))
+            out.append(dict(zip(cols, row, strict=False)))
         return out
 
     # Escape hatch for code that still needs raw Kuzu objects (Kuzu-specific
@@ -488,4 +490,4 @@ class KuzuGraphDB:
         return self._inner
 
 
-__all__ = ["KuzuGraphDB", "KuzuQueryResult", "GraphDB", "QueryResult"]
+__all__ = ["GraphDB", "KuzuGraphDB", "KuzuQueryResult", "QueryResult"]

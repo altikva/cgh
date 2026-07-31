@@ -19,10 +19,11 @@ pytest.importorskip("pypdf")
 pytest.importorskip("docx")
 pytest.importorskip("openpyxl")
 
-import codegraph.plugins as plugins  # noqa: E402
-from cgh_docs.docx_parser import DocxParser  # noqa: E402
-from cgh_docs.pdf_parser import PdfParser  # noqa: E402
-from cgh_docs.xlsx_parser import XlsxParser  # noqa: E402
+from cgh_docs.docx_parser import DocxParser
+from cgh_docs.pdf_parser import PdfParser
+from cgh_docs.xlsx_parser import XlsxParser
+
+import codegraph.plugins as plugins
 
 
 def _mini_pdf() -> bytes:
@@ -140,6 +141,7 @@ class TestEndToEnd:
 
     def test_indexed_docx_is_searchable(self, tmp_path):
         import cgh_docs
+
         from codegraph.plugin_api import PluginAPI
 
         api = PluginAPI("docs", tmp_path, {}, plugins._registries)

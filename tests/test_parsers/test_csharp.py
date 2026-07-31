@@ -17,9 +17,9 @@ import pytest
 # way tests/test_core/test_kuzu_optional.py guards the kuzu extra.
 pytest.importorskip("tree_sitter_c_sharp")
 
-from codegraph.core.db import get_connection, reset_connection  # noqa: E402
-from codegraph.indexer import index_file  # noqa: E402
-from codegraph.parsers.csharp import CSharpParser  # noqa: E402
+from codegraph.core.db import get_connection, reset_connection
+from codegraph.indexer import index_file
+from codegraph.parsers.csharp import CSharpParser
 
 
 @pytest.fixture

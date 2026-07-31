@@ -84,8 +84,7 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
 
     # run
     scanner = SummarizeScanner(config, root, extras_fn=extras_fn)
-    from codegraph.plugin_api import record_findings
-    from codegraph.plugin_api import git_hash_object
+    from codegraph.plugin_api import git_hash_object, record_findings
 
     files = _tracked_supported_files(root)
     if args.limit:

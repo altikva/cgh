@@ -281,7 +281,7 @@ def write_report(rows: list[dict]) -> None:
             lines.append(f"| {model} | errors: {errs} | | | | | | |")
             continue
 
-        def avg(key: str) -> float:
+        def avg(key: str, ok: list = ok) -> float:
             return sum(r[key] for r in ok) / len(ok)
 
         lines.append(

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from codegraph.viz.graphviews import (  # noqa: F401
+from codegraph.viz.graphviews import (
     viz_call_graph,
     viz_class_hierarchy,
     viz_doc_structure,

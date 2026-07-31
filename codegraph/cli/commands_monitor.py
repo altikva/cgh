@@ -8,8 +8,6 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import argparse
 import json
 import os
@@ -25,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, console
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # ---------------------------------------------------------------------------
 # cmd_stats
@@ -987,11 +986,12 @@ def cmd_reset(args: argparse.Namespace) -> None:
             targets.append(p)
     # Kuzu also writes .wal / .tmp / shm files
     for p in cg_dir.iterdir():
-        if p.is_file() and (
-            p.name.startswith("graph.db") or p.name.startswith("fts.db")
+        if (
+            p.is_file()
+            and (p.name.startswith("graph.db") or p.name.startswith("fts.db"))
+            and p not in targets
         ):
-            if p not in targets:
-                targets.append(p)
+            targets.append(p)
     # Workers dir + port + pid files (leftovers)
     for name in ("server.pid", "server.port", "owner.pid", "workers"):
         p = cg_dir / name

@@ -93,7 +93,9 @@ def scan_memory_dir(repo_root: str | Path, verbose: bool = False) -> dict:
     conn = get_fts_conn(repo_root)
 
     # Build mtime map from DB for skip logic
-    existing: dict[str, float] = dict(conn.execute("SELECT path, mtime FROM memory_entries").fetchall())
+    existing: dict[str, float] = dict(
+        conn.execute("SELECT path, mtime FROM memory_entries").fetchall()
+    )
 
     seen: set[str] = set()
     for path in sorted(mem_dir.glob("*.md")):

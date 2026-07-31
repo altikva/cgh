@@ -1129,6 +1129,22 @@ MdSection --MD_REFS_CLASS-----> Class        (code references in docs)
 
 ---
 
+## Embedding (SDK)
+
+`codegraph.sdk` is the documented surface for using cgh's bricks
+inside your own agent, pipeline or API, without the CLI, the owner
+process, MCP or a `.codegraph/` repo: `scan_text`, `egress_decision`,
+`pseudonymize`, `summarize`, the `image_*` functions (once cgh-vision
+ships) and an in-memory finding store. Code exercised solely through
+this surface may be used under the MIT license alone, including
+commercially (the SDK embedding exception in LICENSE); the graph
+index, MCP server, federation and shared memory are not exposed by it
+and remain under the dual license. See
+[docs/EMBEDDING.md](docs/EMBEDDING.md) for recipes and the stability
+contract.
+
+---
+
 ## Security
 
 ### MCP Auth Key

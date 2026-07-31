@@ -9,6 +9,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Embedding SDK** (`codegraph.sdk`): the documented surface for
+  using cgh's bricks inside third-party code, without CLI, owner, MCP
+  or a `.codegraph/` repo: `scan_text` over installed scanners, the
+  egress gate as a pure function (secure allowlist by default),
+  caller-keyed pseudonymization, `summarize` through the cgh-summarize
+  backends (local-only by default), vision entry points raising a
+  clear error until cgh-vision ships, and an in-memory finding store.
+  `SDK_API = 1`, SemVer on the surface, everything else stays
+  internal. Recipes in docs/EMBEDDING.md.
+- **SDK embedding exception** (LICENSE): code exercised solely through
+  `codegraph.sdk` may be used under MIT alone, including commercially;
+  the graph index, MCP server, federation and shared memory stay under
+  the dual license. cgh-pii, cgh-classify and cgh-summarize move to
+  plain MIT so the grant is real end to end.
+
+### Added
 - **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
   and `secret.*` finding values are replaced at write time by stable
   one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),

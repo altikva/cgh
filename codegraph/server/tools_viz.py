@@ -64,24 +64,28 @@ def register(mcp) -> None:
         conn = _get_conn()
         diagram = ""
 
-        if scope == "file_imports":
-            diagram = viz_file_imports(conn, _srv._root, file_path, max_nodes, format)
-        elif scope == "call_graph":
-            diagram = viz_call_graph(conn, _srv._root, symbol_name, max_nodes, format)
-        elif scope == "class_hierarchy":
-            diagram = viz_class_hierarchy(
-                conn, _srv._root, symbol_name, max_nodes, format
-            )
-        elif scope == "file_symbols":
-            diagram = viz_file_symbols(conn, _srv._root, file_path, format)
-        elif scope == "doc_structure":
-            diagram = viz_doc_structure(conn, _srv._root, file_path, max_nodes, format)
-        elif scope == "full_overview":
-            diagram = viz_full_overview(conn, _srv._root, max_nodes, format)
-        elif scope == "layers":
-            diagram = viz_layers(conn, _srv._root, format)
-        else:
+        root = _srv._root
+        generators = {
+            "file_imports": lambda: viz_file_imports(
+                conn, root, file_path, max_nodes, format
+            ),
+            "call_graph": lambda: viz_call_graph(
+                conn, root, symbol_name, max_nodes, format
+            ),
+            "class_hierarchy": lambda: viz_class_hierarchy(
+                conn, root, symbol_name, max_nodes, format
+            ),
+            "file_symbols": lambda: viz_file_symbols(conn, root, file_path, format),
+            "doc_structure": lambda: viz_doc_structure(
+                conn, root, file_path, max_nodes, format
+            ),
+            "full_overview": lambda: viz_full_overview(conn, root, max_nodes, format),
+            "layers": lambda: viz_layers(conn, root, format),
+        }
+        generator = generators.get(scope)
+        if generator is None:
             return json.dumps({"error": f"Unknown scope: {scope}"})
+        diagram = generator()
 
         return json.dumps(
             {

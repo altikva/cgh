@@ -22,6 +22,7 @@ from pathlib import Path
 from codegraph.core.db import get_connection
 from codegraph.core.fts import commit as fts_commit
 from codegraph.core.fts import delete_file_symbols, get_fts_conn, upsert_symbol
+from codegraph.core.protocol import GraphDB
 from codegraph.core.utils import quiet_subprocess_kwargs
 
 from .parsers import get_parser, is_supported
@@ -143,7 +144,7 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
 
 
 def _upsert_file(
-    conn,
+    conn: GraphDB,
     path: str,
     lang: str,
     mtime: float,
@@ -168,7 +169,7 @@ def _upsert_file(
     )
 
 
-def _purge_file(conn, path: str, fts_conn=None) -> None:
+def _purge_file(conn: GraphDB, path: str, fts_conn=None) -> None:
     """Delete all nodes + edges associated with a file before re-indexing it.
 
     Delegates the graph cleanup to the backend's purge_file_data helper,
@@ -300,7 +301,7 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn, functions: list, lang: str = "") -> None:
+def _resolve_calls(conn: GraphDB, functions: list, lang: str = "") -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
     names to known function names. Best-effort: unresolved names are skipped.
@@ -333,7 +334,7 @@ def _resolve_calls(conn, functions: list, lang: str = "") -> None:
                 conn.ensure_edge("CALLS", fn.id, callee_id)
 
 
-def _resolve_inherits(conn, classes: list) -> None:
+def _resolve_inherits(conn: GraphDB, classes: list) -> None:
     """Create INHERITS edges between Class nodes using base class names."""
     for cls in classes:
         for base_name in cls.bases:
@@ -355,7 +356,7 @@ def _precise_calls_enabled(cfg, lang: str) -> bool:
     return jedi_available()
 
 
-def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
+def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bool:
     """Create CALLS edges for one Python file using the jedi-backed resolver.
 
     Returns True when it ran (even with zero edges), False when it could not
@@ -387,7 +388,9 @@ def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
     return True
 
 
-def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) -> None:
+def _ingest_code(
+    conn: GraphDB, idx: FileIndex, cfg=None, repo_root: Path | None = None
+) -> None:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
     for fn in idx.functions:
         conn.upsert_node(
@@ -435,7 +438,7 @@ def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) 
     _resolve_inherits(conn, idx.classes)
 
 
-def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
+def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
     """
     Wire IMPORTS edges from idx.imports into Kuzu.
 
@@ -482,7 +485,7 @@ def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
             conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
 
 
-def _ingest_terraform(conn, idx: FileIndex) -> None:
+def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
     """Ingest terraform resources and variables from unified FileIndex."""
     for res in idx.resources:
         if res.kind in ("variable", "output"):
@@ -514,7 +517,7 @@ def _ingest_terraform(conn, idx: FileIndex) -> None:
             conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
 
 
-def _ingest_endpoints(conn, path: Path) -> int:
+def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
     """Extract and persist HTTP endpoints from a file. Returns count."""
     from codegraph.analysis.endpoints import extract as _extract_endpoints
 
@@ -556,7 +559,7 @@ def _ingest_endpoints(conn, path: Path) -> int:
     return len(eps)
 
 
-def _ingest_markdown(conn, idx: FileIndex) -> None:
+def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
     # Sections
     for sec in idx.sections:
         conn.upsert_node(

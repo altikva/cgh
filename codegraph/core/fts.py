@@ -121,7 +121,9 @@ def upsert_symbol(
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (sym_id, kind, name, file_path, start_line, end_line, docstring),
         )
-        rowid = conn.execute("SELECT rowid FROM symbols WHERE sym_id = ?", (sym_id,)).fetchone()
+        rowid = conn.execute(
+            "SELECT rowid FROM symbols WHERE sym_id = ?", (sym_id,)
+        ).fetchone()
         if rowid:
             conn.execute(
                 "INSERT OR REPLACE INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
@@ -132,7 +134,9 @@ def upsert_symbol(
 def delete_file_symbols(conn: sqlite3.Connection, file_path: str) -> None:
     """Remove all symbols for a file from both tables."""
     with _FTS_LOCK:
-        rows = conn.execute("SELECT rowid FROM symbols WHERE file_path = ?", (file_path,)).fetchall()
+        rows = conn.execute(
+            "SELECT rowid FROM symbols WHERE file_path = ?", (file_path,)
+        ).fetchall()
         for (rowid,) in rows:
             conn.execute(
                 "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) VALUES('delete', ?, '', '')",
@@ -190,8 +194,10 @@ def fts_search(
                     score=abs(row[6]) if row[6] else 0.0,
                 )
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # A broken FTS index degrading to LIKE must not be silent: LIKE
+        # results look plausible while ranking and prefix logic are gone.
+        print(f"[codegraph] warning: FTS MATCH failed, falling back to LIKE: {exc}")
 
     # Fallback: LIKE search if FTS returned nothing
     if not results:
@@ -262,7 +268,9 @@ def upsert_memory_entry(
             "INSERT OR REPLACE INTO memory_entries(path, kind, title, body, mtime) VALUES (?, ?, ?, ?, ?)",
             (path, kind or "other", title or "", body or "", mtime),
         )
-        rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+        rowid = conn.execute(
+            "SELECT rowid FROM memory_entries WHERE path = ?", (path,)
+        ).fetchone()
         if rowid:
             conn.execute(
                 "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
@@ -272,7 +280,9 @@ def upsert_memory_entry(
 
 def delete_memory_entry(conn: sqlite3.Connection, path: str) -> None:
     with _FTS_LOCK:
-        rowid = conn.execute("SELECT rowid FROM memory_entries WHERE path = ?", (path,)).fetchone()
+        rowid = conn.execute(
+            "SELECT rowid FROM memory_entries WHERE path = ?", (path,)
+        ).fetchone()
         if rowid:
             conn.execute(
                 "INSERT INTO memory_fts(memory_fts, rowid, title, body, kind) VALUES('delete', ?, '', '', '')",
@@ -338,7 +348,9 @@ def memory_search(
     return out
 
 
-def list_memory_entries(conn: sqlite3.Connection, kind: str | None = None) -> list[MemoryHit]:
+def list_memory_entries(
+    conn: sqlite3.Connection, kind: str | None = None
+) -> list[MemoryHit]:
     """All memory entries, newest first, cheap index read."""
     sql = "SELECT path, kind, title, body, mtime FROM memory_entries"
     params: list = []
@@ -349,7 +361,14 @@ def list_memory_entries(conn: sqlite3.Connection, kind: str | None = None) -> li
     with _FTS_LOCK:
         rows = conn.execute(sql, params).fetchall()
     return [
-        MemoryHit(path=row[0], kind=row[1], title=row[2], snippet=(row[3] or "")[:240], score=row[4]) for row in rows
+        MemoryHit(
+            path=row[0],
+            kind=row[1],
+            title=row[2],
+            snippet=(row[3] or "")[:240],
+            score=row[4],
+        )
+        for row in rows
     ]
 
 
@@ -367,7 +386,9 @@ def upsert_plan_entry(
             "INSERT OR REPLACE INTO plan_entries(path, slug, agent_id, title, body, mtime) VALUES (?, ?, ?, ?, ?, ?)",
             (path, slug or "", agent_id or "", title or "", body or "", mtime),
         )
-        rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+        rowid = conn.execute(
+            "SELECT rowid FROM plan_entries WHERE path = ?", (path,)
+        ).fetchone()
         if rowid:
             conn.execute(
                 "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
@@ -377,7 +398,9 @@ def upsert_plan_entry(
 
 def delete_plan_entry(conn: sqlite3.Connection, path: str) -> None:
     with _FTS_LOCK:
-        rowid = conn.execute("SELECT rowid FROM plan_entries WHERE path = ?", (path,)).fetchone()
+        rowid = conn.execute(
+            "SELECT rowid FROM plan_entries WHERE path = ?", (path,)
+        ).fetchone()
         if rowid:
             conn.execute(
                 "INSERT INTO plan_fts(plan_fts, rowid, title, body, slug, agent_id) "
@@ -430,7 +453,9 @@ def plan_search(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[P
     return out
 
 
-def list_plan_entries(conn: sqlite3.Connection, agent_only: bool = False, limit: int = 50) -> list[PlanHit]:
+def list_plan_entries(
+    conn: sqlite3.Connection, agent_only: bool = False, limit: int = 50
+) -> list[PlanHit]:
     sql = "SELECT path, slug, agent_id, title, body, mtime FROM plan_entries"
     params: list = []
     if agent_only:

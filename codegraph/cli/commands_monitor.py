@@ -1311,6 +1311,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
     try:
         result = subprocess.run(
             ["git", "diff", "--name-only", since],
+            timeout=30,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1319,14 +1320,15 @@ def cmd_diff(args: argparse.Namespace) -> None:
             **quiet_subprocess_kwargs(),
         )
         changed_files = [f for f in result.stdout.strip().splitlines() if f]
-    except FileNotFoundError:
-        console.print("[red]git not found in PATH.[/red]")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        console.print("[red]git unavailable or timed out.[/red]")
         return
 
     # Untracked files
     try:
         result_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
+            timeout=30,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1335,7 +1337,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
             **quiet_subprocess_kwargs(),
         )
         untracked_files = [f for f in result_untracked.stdout.strip().splitlines() if f]
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         untracked_files = []
 
     # Categorize changed files

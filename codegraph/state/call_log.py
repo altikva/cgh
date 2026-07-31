@@ -20,7 +20,10 @@ from pathlib import Path
 _DB_DIR = ".codegraph"
 _LOG_FILE = "call_log.db"
 
-_conn: sqlite3.Connection | None = None
+# Keyed by resolved repo root: one process can serve several repos
+# (federation, SDK, tests); a first-caller-wins global handed repo A's
+# knowledge DB to repo B. Same pattern as state/findings.py.
+_conns: dict[str, sqlite3.Connection] = {}
 
 # This connection is shared across asyncio MCP tool threads, watcher threads,
 # and the main owner thread. Sqlite3 in Python forbids cross-thread reuse
@@ -41,21 +44,38 @@ def _locked(fn):
     return wrapper
 
 
+def _cache_key(repo_root: str | Path | None) -> str:
+    return str((Path(repo_root) if repo_root else Path.cwd()).resolve())
+
+
 def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
-    global _conn
-    if _conn is not None:
-        return _conn
+    key = _cache_key(repo_root)
+    conn = _conns.get(key)
+    if conn is not None:
+        return conn
 
     # Schema bootstrap below races if two threads first-touch concurrently.
     with _LOG_LOCK:
-        if _conn is not None:
-            return _conn
+        conn = _conns.get(key)
+        if conn is not None:
+            return conn
         return _init_conn(repo_root)
 
 
+def reset_for_tests() -> None:
+    # Close every cached connection. Test helper, mirrors findings.py.
+    with _LOG_LOCK:
+        for conn in _conns.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _conns.clear()
+
+
 def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
-    global _conn
-    root = Path(repo_root) if repo_root else Path.cwd()
+    key = _cache_key(repo_root)
+    root = Path(key)
     db_dir = root / _DB_DIR
     db_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,6 +186,7 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             _conn.commit()
         except sqlite3.DatabaseError:
             pass
+    _conns[key] = _conn
     return _conn
 
 

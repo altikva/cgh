@@ -107,15 +107,14 @@ def _fetch_mermaid_via_owner(
 def cmd_graph(args: argparse.Namespace) -> None:
     """Generate and display a graph visualization."""
     from codegraph.core.db import get_readonly_connection
-    from codegraph.viz import (
-        generate_html,
-        mermaid_calls,
-        mermaid_classes,
-        mermaid_docs,
-        mermaid_imports,
-        mermaid_layers,
-        mermaid_overview,
-        open_in_browser,
+    from codegraph.viz import generate_html, open_in_browser
+    from codegraph.viz.graphviews import (
+        viz_call_graph,
+        viz_class_hierarchy,
+        viz_doc_structure,
+        viz_file_imports,
+        viz_full_overview,
+        viz_layers,
     )
 
     root = os.path.abspath(args.root)
@@ -126,13 +125,13 @@ def cmd_graph(args: argparse.Namespace) -> None:
     max_nodes = args.max_nodes
 
     # Try the owner's HTTP endpoint first, it works even when the
-    # Kuzu lock is held (which blocks readonly connections from CLI).
+    # graph DB write lock is held (which blocks readonly CLI opens).
     mermaid_code: str | None = _fetch_mermaid_via_owner(
         root, scope, symbol, file, max_nodes
     )
 
     if mermaid_code is None:
-        # Owner not running, open Kuzu directly.
+        # Owner not running, open the graph DB directly.
         conn = get_readonly_connection(root)
         if conn is None:
             console.print(
@@ -143,12 +142,14 @@ def cmd_graph(args: argparse.Namespace) -> None:
             return
 
         generators = {
-            "imports": lambda: mermaid_imports(conn, root, file, max_nodes),
-            "calls": lambda: mermaid_calls(conn, root, symbol, max_nodes),
-            "classes": lambda: mermaid_classes(conn, root, symbol, max_nodes),
-            "docs": lambda: mermaid_docs(conn, root, file, max_nodes),
-            "overview": lambda: mermaid_overview(conn, root, max_nodes),
-            "layers": lambda: mermaid_layers(conn, root, max_nodes),
+            "imports": lambda: viz_file_imports(conn, root, file, max_nodes, "mermaid"),
+            "calls": lambda: viz_call_graph(conn, root, symbol, max_nodes, "mermaid"),
+            "classes": lambda: viz_class_hierarchy(
+                conn, root, symbol, max_nodes, "mermaid"
+            ),
+            "docs": lambda: viz_doc_structure(conn, root, file, max_nodes, "mermaid"),
+            "overview": lambda: viz_full_overview(conn, root, max_nodes, "mermaid"),
+            "layers": lambda: viz_layers(conn, root, "mermaid"),
         }
         mermaid_code = generators[scope]()
 

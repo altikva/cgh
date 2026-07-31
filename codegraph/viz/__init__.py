@@ -19,6 +19,9 @@ from codegraph.viz.html import generate_html, open_in_browser
 from codegraph.viz.mermaid import mermaid_layers
 
 __all__ = [
+    "generate_html",
+    "mermaid_layers",
+    "open_in_browser",
     "viz_call_graph",
     "viz_class_hierarchy",
     "viz_doc_structure",
@@ -26,7 +29,4 @@ __all__ = [
     "viz_file_symbols",
     "viz_full_overview",
     "viz_layers",
-    "mermaid_layers",
-    "generate_html",
-    "open_in_browser",
 ]

@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from codegraph.plugin_api import ScanFinding
 
@@ -33,26 +33,25 @@ SDK_API = 1
 
 __all__ = [
     "SDK_API",
+    "CapabilityMissing",
+    "CodegraphError",
+    "InMemoryFindingStore",
     "ScanFinding",
     "Verdict",
-    "CodegraphError",
-    "CapabilityMissing",
-    "InMemoryFindingStore",
-    "scan_text",
     "egress_decision",
-    "pseudonymize",
-    "summarize",
-    "image_inventory",
+    "extract_chart",
     "extract_diagram",
     "extract_table",
-    "extract_chart",
+    "image_inventory",
+    "pseudonymize",
+    "scan_text",
+    "summarize",
 ]
 
 
 # The SDK's errors are the public hierarchy: catch CodegraphError to
 # handle everything cgh raises on purpose.
 from codegraph.errors import CapabilityMissing, CodegraphError  # noqa: E402
-
 
 # -- text scanning ----------------------------------------------------------
 

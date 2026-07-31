@@ -16,9 +16,13 @@ import pytest
 # tests/test_core/test_db_duckdb.py runs unconditionally.
 pytest.importorskip("kuzu")
 
-from codegraph.core.db import get_connection, get_readonly_connection, reset_connection  # noqa: E402
-from codegraph.core.db_kuzu import KuzuGraphDB, KuzuQueryResult  # noqa: E402
-from codegraph.core.protocol import GraphDB, QueryResult  # noqa: E402
+from codegraph.core.db import (
+    get_connection,
+    get_readonly_connection,
+    reset_connection,
+)
+from codegraph.core.db_kuzu import KuzuGraphDB, KuzuQueryResult
+from codegraph.core.protocol import GraphDB, QueryResult
 
 
 @pytest.fixture(autouse=True)

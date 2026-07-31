@@ -19,11 +19,12 @@ import pytest
 
 pytest.importorskip("cgh_summarize")
 
-from cgh_summarize.backends import StructuralBackend, pick_backend  # noqa: E402
-from cgh_summarize.gate import cloud_allowed, egress_posture  # noqa: E402
-from cgh_summarize.scanner import SummarizeScanner  # noqa: E402
-from codegraph.plugin_api import ScanFinding  # noqa: E402
-from codegraph.state import findings as store  # noqa: E402
+from cgh_summarize.backends import StructuralBackend, pick_backend
+from cgh_summarize.gate import cloud_allowed, egress_posture
+from cgh_summarize.scanner import SummarizeScanner
+
+from codegraph.plugin_api import ScanFinding
+from codegraph.state import findings as store
 
 
 @pytest.fixture(autouse=True)
@@ -219,8 +220,8 @@ class TestInsights:
 
 class TestCliCommandShapes:
     def _argv(self, tool: str, monkeypatch) -> list[str]:
-        from cgh_summarize.backends import CliBackend
         import cgh_summarize.backends as backends
+        from cgh_summarize.backends import CliBackend
 
         monkeypatch.setattr(backends.shutil, "which", lambda t: f"/usr/bin/{t}")
         return CliBackend(tool)._command("hello", {})

@@ -38,7 +38,7 @@ class NaiveBayesModel:
     # -- training ----------------------------------------------------------
 
     @classmethod
-    def train(cls, docs: list[tuple[str, bool]]) -> "NaiveBayesModel":
+    def train(cls, docs: list[tuple[str, bool]]) -> NaiveBayesModel:
         """docs: [(text, is_confidential), ...] with both classes present."""
         model = cls()
         counts: dict[str, dict[str, float]] = {"yes": {}, "no": {}}
@@ -117,7 +117,7 @@ class NaiveBayesModel:
         )
 
     @classmethod
-    def load(cls, path: Path) -> "NaiveBayesModel | None":
+    def load(cls, path: Path) -> NaiveBayesModel | None:
         if not path.exists():
             return None
         try:

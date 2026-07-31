@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-
 from codegraph.state import ensurepath as ep
 
 

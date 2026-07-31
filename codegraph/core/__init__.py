@@ -12,6 +12,7 @@ from codegraph.core.db import (
     get_readonly_connection,
     reset_connection,
 )
+
 from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
 # init_schema lives in codegraph.core.schema (Kuzu) or codegraph.core.schema_duckdb
@@ -21,12 +22,12 @@ from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
 __all__ = [
     "get_connection",
-    "get_readonly_connection",
     "get_db_path",
-    "reset_connection",
-    "rows",
-    "short_path",
-    "safe_id",
+    "get_readonly_connection",
     "lang_color",
     "normalize_identifier",
+    "reset_connection",
+    "rows",
+    "safe_id",
+    "short_path",
 ]

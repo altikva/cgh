@@ -10,14 +10,14 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Match codegraph's IGNORE_DIRS to stay consistent with indexer behavior.
 _IGNORE_DIR_NAMES = {

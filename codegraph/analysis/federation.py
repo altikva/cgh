@@ -542,10 +542,7 @@ def add_subrepo(
     """
     parent = Path(repo_root).resolve()
     child = Path(child_path).expanduser()
-    if not child.is_absolute():
-        child = (parent / child).resolve()
-    else:
-        child = child.resolve()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
 
     if not child.exists():
         raise ValueError(f"subrepo path does not exist: {child}")
@@ -580,10 +577,7 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
     """Remove a subrepo from config.toml. Returns True if removed."""
     parent = Path(repo_root).resolve()
     child = Path(child_path).expanduser()
-    if not child.is_absolute():
-        child = (parent / child).resolve()
-    else:
-        child = child.resolve()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
 
     cfg_path = parent / _DB_DIR / "config.toml"
     if not cfg_path.exists():
@@ -597,10 +591,7 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
     removed = False
     for entry in subs:
         p = Path(entry).expanduser()
-        if not p.is_absolute():
-            p = (parent / p).resolve()
-        else:
-            p = p.resolve()
+        p = (parent / p).resolve() if not p.is_absolute() else p.resolve()
         if p == child:
             removed = True
             continue

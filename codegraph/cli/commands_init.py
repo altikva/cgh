@@ -8,8 +8,6 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import argparse
 import os
 import sys
@@ -20,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, console
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Wildcards that cover every codegraph MCP tool (current + future). The
 # two-form shape matches what both older and current Claude Code builds
@@ -937,7 +936,7 @@ def cmd_init(args: argparse.Namespace) -> None:
                 ).ask()
             )
             if inject:
-                for tool_key, label in inject_targets:
+                for tool_key, _label in inject_targets:
                     written = install_usage_guidelines(root, tool_key)
                     if written:
                         rel = written.replace(str(root) + "/", "")

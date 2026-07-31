@@ -84,7 +84,7 @@ def _parse_yaml_packages(text: str) -> list[str]:
         if stripped.startswith("- "):
             item = stripped[2:].strip()
             # Strip trailing `# comment` if outside a quoted string
-            if not item.startswith(("\"", "'")):
+            if not item.startswith(('"', "'")):
                 hash_pos = item.find("#")
                 if hash_pos >= 0:
                     item = item[:hash_pos].strip()

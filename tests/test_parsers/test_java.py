@@ -60,11 +60,15 @@ class TestJavaParser:
     def test_constructor_attached_to_class(self, sample_java):
         idx = JavaParser().parse(sample_java)
         constructors = [f for f in idx.functions if f.kind == "constructor"]
-        assert any(c.name == "Greeter" and c.class_name == "Greeter" for c in constructors)
+        assert any(
+            c.name == "Greeter" and c.class_name == "Greeter" for c in constructors
+        )
 
     def test_methods_attached_to_class(self, sample_java):
         idx = JavaParser().parse(sample_java)
-        hello = next(f for f in idx.functions if f.name == "hello" and f.class_name == "Greeter")
+        hello = next(
+            f for f in idx.functions if f.name == "hello" and f.class_name == "Greeter"
+        )
         assert hello.kind == "method"
 
     def test_implements_recorded(self, sample_java):

@@ -363,9 +363,12 @@ def _is_endpoint(label: str, edges: list) -> bool:
                 or norm(str(e.get("target", ""))) == k
             ):
                 return True
-        elif isinstance(e, (list, tuple)) and len(e) == 2:
-            if norm(str(e[0])) == k or norm(str(e[1])) == k:
-                return True
+        elif (
+            isinstance(e, (list, tuple))
+            and len(e) == 2
+            and (norm(str(e[0])) == k or norm(str(e[1])) == k)
+        ):
+            return True
     return False
 
 

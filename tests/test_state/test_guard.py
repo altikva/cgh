@@ -205,9 +205,7 @@ class TestStaticRules:
         added, removed = sync_static_rules(root)
         assert (added, removed) == (0, 1)
         deny = json.loads(settings.read_text())["permissions"]["deny"]
-        assert sorted(deny) == sorted(
-            ["Read(/user/own.txt)", "Read(.codegraph/**)"]
-        )
+        assert sorted(deny) == sorted(["Read(/user/own.txt)", "Read(.codegraph/**)"])
 
     def test_sync_is_a_noop_in_assist(self, tmp_path):
         root = _repo(tmp_path, mode="assist")

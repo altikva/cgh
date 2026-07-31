@@ -20,7 +20,7 @@ import sys
 import threading
 from pathlib import Path
 
-_QUEUE: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
+_QUEUE: queue.Queue[tuple[str, str, str]] = queue.Queue()
 _WORKER_STARTED = threading.Event()
 _LOCK = threading.Lock()
 

@@ -65,7 +65,9 @@ def scan_plan_dir(repo_root: str | Path, verbose: bool = False) -> dict:
         return stats
 
     conn = get_fts_conn(repo_root)
-    existing: dict[str, float] = dict(conn.execute("SELECT path, mtime FROM plan_entries").fetchall())
+    existing: dict[str, float] = dict(
+        conn.execute("SELECT path, mtime FROM plan_entries").fetchall()
+    )
 
     seen: set[str] = set()
     for path in sorted(pdir.glob("*.md")):

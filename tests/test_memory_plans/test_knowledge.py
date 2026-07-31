@@ -97,7 +97,11 @@ class TestGlossary:
 
 class TestForget:
     def test_forget_removes(self, _fresh_call_log):
-        from codegraph.state.call_log import knowledge_forget, knowledge_list, knowledge_record
+        from codegraph.state.call_log import (
+            knowledge_forget,
+            knowledge_list,
+            knowledge_record,
+        )
 
         eid = knowledge_record("X", "y")
         assert len(knowledge_list()) == 1

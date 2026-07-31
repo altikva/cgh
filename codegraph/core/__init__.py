@@ -6,7 +6,12 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Core utilities: single source of truth for shared helpers.
 
-from codegraph.core.db import get_connection, get_db_path, get_readonly_connection, reset_connection
+from codegraph.core.db import (
+    get_connection,
+    get_db_path,
+    get_readonly_connection,
+    reset_connection,
+)
 from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
 # init_schema lives in codegraph.core.schema (Kuzu) or codegraph.core.schema_duckdb

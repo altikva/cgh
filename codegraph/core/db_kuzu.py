@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from typing import Any
+from codegraph.core.utils import checked_identifier as _ident
 
 import kuzu
 
@@ -43,11 +44,23 @@ class KuzuGraphDB:
 
     def execute(self, query: str, params: dict | None = None) -> QueryResult:
         # Kuzu accepts an optional dict of parameters.
-        result = self._inner.execute(query, params) if params is not None else self._inner.execute(query)
+        result = (
+            self._inner.execute(query, params)
+            if params is not None
+            else self._inner.execute(query)
+        )
         return KuzuQueryResult(result)
 
     def close(self) -> None:
         self._inner.close()
+        # A factory-opened connection carries its Database handle so one
+        # close() releases the OS file lock too.
+        db = getattr(self, "_db_handle", None)
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
     # --- Write helpers --------------------------------------------------
 
@@ -113,7 +126,7 @@ class KuzuGraphDB:
             prop_kvs = []
             for i, (k, v) in enumerate(edge_props.items()):
                 bind = f"_e{i}"
-                prop_kvs.append(f"{k}: ${bind}")
+                prop_kvs.append(f"{_ident(k)}: ${bind}")
                 params[bind] = v
             merge_clause = f"MERGE (a)-[:{edge_type} {{{', '.join(prop_kvs)}}}]->(b)"
         else:
@@ -189,7 +202,7 @@ class KuzuGraphDB:
 
         if label not in NODES:
             raise ValueError(f"Unknown node label: {label!r}")
-        select = ", ".join(f"n.{f}" for f in return_fields)
+        select = ", ".join(f"n.{_ident(f)}" for f in return_fields)
         result = self._inner.execute(f"MATCH (n:{label}) RETURN {select}")
         out: list[list[Any]] = []
         while result.has_next():
@@ -228,14 +241,14 @@ class KuzuGraphDB:
         if where:
             for i, (field, value) in enumerate(where.items()):
                 bind = f"_w{i}"
-                clauses.append(f"n.{field} = ${bind}")
+                clauses.append(f"n.{_ident(field)} = ${bind}")
                 params[bind] = value
 
         if contains:
             sub_clauses: list[str] = []
             for i, (field, value) in enumerate(contains.items()):
                 bind = f"_c{i}"
-                sub_clauses.append(f"n.{field} CONTAINS ${bind}")
+                sub_clauses.append(f"n.{_ident(field)} CONTAINS ${bind}")
                 params[bind] = value
             if sub_clauses:
                 clauses.append("(" + " OR ".join(sub_clauses) + ")")
@@ -246,11 +259,13 @@ class KuzuGraphDB:
         if return_fields == ["*"]:
             return_clause = "n.*"
         else:
-            return_clause = ", ".join(f"n.{f} AS {f}" for f in return_fields)
+            return_clause = ", ".join(f"n.{_ident(f)} AS {f}" for f in return_fields)
 
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
         order_clause = (
-            "ORDER BY " + ", ".join(f"n.{f}" for f in order_by) if order_by else ""
+            "ORDER BY " + ", ".join(f"n.{_ident(f)}" for f in order_by)
+            if order_by
+            else ""
         )
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
         cypher = (
@@ -258,7 +273,11 @@ class KuzuGraphDB:
             f"RETURN {return_clause} {order_clause} {limit_clause}"
         )
 
-        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        result = (
+            self._inner.execute(cypher, params)
+            if params
+            else self._inner.execute(cypher)
+        )
         cols = result.get_column_names()
         out: list[dict[str, Any]] = []
         while result.has_next():
@@ -277,11 +296,15 @@ class KuzuGraphDB:
         if where:
             for i, (field, value) in enumerate(where.items()):
                 bind = f"_w{i}"
-                clauses.append(f"n.{field} = ${bind}")
+                clauses.append(f"n.{_ident(field)} = ${bind}")
                 params[bind] = value
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
         cypher = f"MATCH (n:{label}) {where_clause} RETURN count(n) AS c"
-        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        result = (
+            self._inner.execute(cypher, params)
+            if params
+            else self._inner.execute(cypher)
+        )
         if result.has_next():
             return int(result.get_next()[0])
         return 0
@@ -326,12 +349,22 @@ class KuzuGraphDB:
                 params[bind] = value
 
         if not return_fields:
-            return_fields = [spec.key_field, "name", "file_path", "start_line", "end_line"]
-        return_clause = ", ".join(f"n.{f} AS {f}" for f in return_fields)
+            return_fields = [
+                spec.key_field,
+                "name",
+                "file_path",
+                "start_line",
+                "end_line",
+            ]
+        return_clause = ", ".join(f"n.{_ident(f)} AS {f}" for f in return_fields)
         cypher = (
             f"MATCH (n:{label}) WHERE {' AND '.join(clauses)} RETURN {return_clause}"
         )
-        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        result = (
+            self._inner.execute(cypher, params)
+            if params
+            else self._inner.execute(cypher)
+        )
         cols = result.get_column_names()
         out: list[dict[str, Any]] = []
         while result.has_next():
@@ -378,20 +411,20 @@ class KuzuGraphDB:
         if src_where:
             for i, (field, value) in enumerate(src_where.items()):
                 bind = f"_sw{i}"
-                clauses.append(f"a.{field} = ${bind}")
+                clauses.append(f"a.{_ident(field)} = ${bind}")
                 params[bind] = value
         if dst_where:
             for i, (field, value) in enumerate(dst_where.items()):
                 bind = f"_dw{i}"
-                clauses.append(f"b.{field} = ${bind}")
+                clauses.append(f"b.{_ident(field)} = ${bind}")
                 params[bind] = value
 
         # Build the RETURN list with prefixed aliases.
         return_parts: list[str] = []
         for f in return_src or []:
-            return_parts.append(f"a.{f} AS src_{f}")
+            return_parts.append(f"a.{_ident(f)} AS src_{f}")
         for f in return_dst or []:
-            return_parts.append(f"b.{f} AS dst_{f}")
+            return_parts.append(f"b.{_ident(f)} AS dst_{f}")
         for f in return_edge or []:
             return_parts.append(f"r.{f} AS edge_{f}")
         if not return_parts:
@@ -403,11 +436,14 @@ class KuzuGraphDB:
         return_clause = ", ".join(return_parts)
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
         cypher = (
-            f"MATCH {match_clause} {where_clause} "
-            f"RETURN {return_clause} {limit_clause}"
+            f"MATCH {match_clause} {where_clause} RETURN {return_clause} {limit_clause}"
         )
 
-        result = self._inner.execute(cypher, params) if params else self._inner.execute(cypher)
+        result = (
+            self._inner.execute(cypher, params)
+            if params
+            else self._inner.execute(cypher)
+        )
         cols = result.get_column_names()
         out: list[dict[str, Any]] = []
         while result.has_next():
@@ -430,7 +466,7 @@ class KuzuGraphDB:
         src = NODES[edge.src_label]
         dst = NODES[edge.dst_label]
         return_fields = return_fields or [dst.key_field]
-        return_clause = ", ".join(f"dst.{f} AS {f}" for f in return_fields)
+        return_clause = ", ".join(f"dst.{_ident(f)} AS {f}" for f in return_fields)
         cypher = (
             f"MATCH (src:{src.label} {{{src.key_field}: $_k}})"
             f"-[:{edge_type}*1..{int(max_depth)}]->(dst:{dst.label}) "

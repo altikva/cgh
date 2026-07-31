@@ -1,6 +1,7 @@
 # Proposal 007: embedding cgh in third-party code (the SDK surface)
 
-Status: draft. Depends on proposal 001 (plugin types and loader);
+Status: accepted 2026-07-31 (all recommendations; license regime 4,
+the SDK-scoped MIT grant). Depends on proposal 001 (plugin types and loader);
 reuses the bricks of 002 (egress gate), 003 (mode semantics), 006
 (vision pipeline) and the secure-at-rest pseudonymization.
 

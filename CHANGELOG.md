@@ -17,6 +17,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Fixed
+- **Connection caches keyed by repo root**: the graph connection cache
+  and the knowledge/call-log connection were first-caller-wins process
+  globals, so a second repo touched in the same process (federation,
+  SDK embedding, tests) silently received the first repo's database.
+  Both now follow the findings-store pattern: a dict keyed by resolved
+  root, per-root or global reset, and call_log gains the
+  reset_for_tests hook it lacked.
 - **`cgh graph` works on DuckDB**: the CLI visualization went through
   raw-Cypher generators that only Kuzu understood, so every scope
   silently rendered "No edges found" on the default backend. The

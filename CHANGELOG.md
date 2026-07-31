@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Parser dataclasses use `slots=True`**: the eight `FileIndex`
+  building blocks (`SymbolDef`, `ClassDef`, `ImportRef`, ...) are the
+  highest-volume allocations during indexing; slots cut their peak
+  memory by a measured 13% on 100k instances with no API change. (An
+  FTS write-batching change was prototyped alongside, benchmarked at
+  exactly zero gain, and dropped.)
+
 ### Fixed
 - **Silent failures on write paths now log**: a failed node deletion in
   the incremental reindex (previously a ghost-node source reporting

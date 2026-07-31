@@ -17,6 +17,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Changed
+- **Background processes use real logging**: the owner, the MCP proxy,
+  the watcher and the deferred-scan worker emit through per-module
+  loggers behind one `[codegraph]`-prefixed stderr handler (configured
+  at the two daemon entrypoints, never on the root logger, so an
+  embedding application keeps control). Twenty stderr prints converted
+  with levels; owner.log now carries levels and module names, and
+  unconfigured library use still surfaces warnings through logging's
+  last-resort handler. CLI user output stays print/rich.
 - **CI proves the floors and the artifact**: a new advisory job
   resolves every direct dependency to its declared minimum
   (`--resolution lowest-direct`) and runs the suite, so a lower bound

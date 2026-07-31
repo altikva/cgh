@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
+  the benchmarked image pipeline as a deferred scanner and a `cgh
+  vision` CLI verb. A content inventory decides what each image
+  contains (never assuming a diagram), then only the warranted
+  extractors run: diagrams to markdown + Mermaid (qwen nodes, gemma
+  arrows constrained to the found labels), tables and charts to data,
+  dense text to a summary. Identities read off diagrams (IPs, FQDNs,
+  hostnames) are split out of labels and recorded as
+  `pii.image_identity` findings, so the secure-at-rest layer
+  pseudonymizes them. Local Ollama only; the SDK `image_*` functions
+  now resolve. Joins the `plugins` and `full` extras.
 - **Embedding SDK** (`codegraph.sdk`): the documented surface for
   using cgh's bricks inside third-party code, without CLI, owner, MCP
   or a `.codegraph/` repo: `scan_text` over installed scanners, the

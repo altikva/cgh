@@ -26,3 +26,6 @@ pii = "cgh_pii"
 
 [tool.setuptools.packages.find]
 include = ["cgh_pii*"]
+
+[tool.setuptools.package-data]
+cgh_pii = ["py.typed"]

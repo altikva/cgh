@@ -22,3 +22,6 @@ bugreport = "cgh_bugreport"
 
 [tool.setuptools.packages.find]
 include = ["cgh_bugreport*"]
+
+[tool.setuptools.package-data]
+cgh_bugreport = ["py.typed"]

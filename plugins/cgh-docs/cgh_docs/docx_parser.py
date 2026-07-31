@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from codegraph.parsers.base import BaseParser, FileIndex, SectionDef
+from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _PREVIEW_CHARS = 400
 _HEADING_RE = re.compile(r"heading\s*(\d)", re.IGNORECASE)

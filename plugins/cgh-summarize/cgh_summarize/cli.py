@@ -39,7 +39,7 @@ def make_cli_registrar(config: dict, extras_fn):
 
 
 def _tracked_supported_files(root: Path) -> list[Path]:
-    from codegraph.parsers import is_supported
+    from codegraph.plugin_api import is_supported
 
     try:
         out = subprocess.run(
@@ -61,7 +61,7 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
     root = Path(os.path.abspath(args.root))
 
     if args.action == "status":
-        from codegraph.state.findings import query_findings
+        from codegraph.plugin_api import query_findings
 
         posture = egress_posture(root, config)
         console.print(f"[bold]egress posture:[/bold] {posture}")
@@ -84,8 +84,8 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
 
     # run
     scanner = SummarizeScanner(config, root, extras_fn=extras_fn)
-    from codegraph.state.findings import record_findings
-    from codegraph.state.scan_meta import git_hash_object
+    from codegraph.plugin_api import record_findings
+    from codegraph.plugin_api import git_hash_object
 
     files = _tracked_supported_files(root)
     if args.limit:

@@ -66,7 +66,7 @@ def _dispatch(args, config: dict) -> None:
 def _refresh_finding(root: Path, path: Path, config: dict) -> None:
     """Re-run the classify scanner on one file so the finding matches the
     labels right now, not at the next reindex."""
-    from codegraph.state.findings import record_findings
+    from codegraph.plugin_api import record_findings
 
     from .scanner import ClassifyScanner
 
@@ -107,7 +107,7 @@ def _cmd_unlabel(console, root: Path, files: list[str]):
 
 
 def _cmd_train(console, root: Path, config: dict):
-    from codegraph.state.findings import record_findings
+    from codegraph.plugin_api import record_findings
 
     from .labels import load_labels
     from .model import NaiveBayesModel, model_path
@@ -158,7 +158,7 @@ def _cmd_train(console, root: Path, config: dict):
     # Secure mode: mirror the fresh flags into Claude Code's static deny
     # rules right away (older cgh without the guard: silently skip).
     try:
-        from codegraph.state.guard import sync_static_rules
+        from codegraph.plugin_api import sync_static_rules
 
         added, removed = sync_static_rules(root)
         if added or removed:
@@ -171,7 +171,7 @@ def _cmd_train(console, root: Path, config: dict):
 
 
 def _cmd_review(console, root: Path):
-    from codegraph.state.findings import query_findings
+    from codegraph.plugin_api import query_findings
 
     rows = query_findings(root, key_prefix="confidential.uncertain", limit=100)
     if not rows:
@@ -205,7 +205,7 @@ def _cmd_status(console, root: Path):
 
 
 def _tracked_files(root: Path) -> list[Path]:
-    from codegraph.parsers import is_supported
+    from codegraph.plugin_api import is_supported
 
     try:
         out = subprocess.run(

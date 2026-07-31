@@ -408,12 +408,231 @@ def to_markdown(ex: dict) -> str:
     return "\n".join(parts)
 
 
+# -- pass 0: content inventory ----------------------------------------------
+# Non-directive on purpose: the extraction prompts presuppose a diagram,
+# which makes small VLMs invent one when shown a logo or a text page.
+# The inventory asks what the image contains and the router decides
+# which extractors (if any) are worth running.
+
+CONTENT_TYPES = (
+    "architecture_diagram",
+    "flowchart",
+    "chart",
+    "table",
+    "dense_text",
+    "code",
+    "ui_screenshot",
+    "logo",
+    "photo",
+    "handwriting",
+    "other",
+)
+
+INVENTORY_PROMPT = (
+    "Look at this image and inventory what it contains. Do not assume "
+    "it is a technical image.\n"
+    "Return ONLY a JSON object, no prose, no markdown fence, with exactly:\n"
+    '{"summary": "one sentence describing what the image shows",\n'
+    ' "content": ["' + '" | "'.join(CONTENT_TYPES) + '", ...],\n'
+    ' "text_density": "none" | "sparse" | "dense"}\n'
+    "List every content type present; an image can contain several. "
+    'Use ["other"] when nothing fits.'
+)
+
+TABLE_PROMPT = """This image contains one or more data tables.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"tables": [{"title": "table title or empty string",
+             "columns": ["header", ...],
+             "rows": [["cell", ...], ...]}]}
+Copy cell text exactly as written. One entry per table.
+"""
+
+CHART_PROMPT = """This image contains one or more charts.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"charts": [{"type": "bar|line|pie|scatter|area|other",
+             "title": "chart title or empty string",
+             "x_axis": "x axis label or empty",
+             "y_axis": "y axis label or empty",
+             "values": [["category or x", "value"], ...],
+             "insight": "one sentence stating what the chart shows"}]}
+Read data points from the chart as precisely as the image allows.
+"""
+
+TEXT_PROMPT = """This image is mostly text.
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{"title": "document title or empty string",
+ "summary": "3 to 5 sentences summarizing the text",
+ "key_points": ["short bullet", ...]}
+Base everything strictly on the text visible in the image.
+"""
+
+
+def inventory(image_path: Path, profile_name: str = "default") -> dict:
+    profile = PROFILES[profile_name]
+    timeout = int(profile.get("timeout_s", 120))
+    raw, _ = ask(
+        profile["nodes_model"], image_path, prompt=INVENTORY_PROMPT, timeout_s=timeout
+    )
+    parsed = parse_json(raw) or {}
+    content = [
+        str(c) for c in (parsed.get("content") or []) if str(c) in CONTENT_TYPES
+    ] or ["other"]
+    return {
+        "summary": str(parsed.get("summary", "")),
+        "content": content,
+        "text_density": str(parsed.get("text_density", "none")),
+    }
+
+
+def extract_tables(image_path: Path, profile: dict) -> list[dict]:
+    raw, _ = ask(
+        profile["nodes_model"],
+        image_path,
+        prompt=TABLE_PROMPT,
+        timeout_s=int(profile.get("timeout_s", 120)),
+    )
+    parsed = parse_json(raw) or {}
+    out = []
+    for tb in parsed.get("tables") or []:
+        if not isinstance(tb, dict):
+            continue
+        cols = [str(c) for c in (tb.get("columns") or [])]
+        rows = [
+            [str(c) for c in r] for r in (tb.get("rows") or []) if isinstance(r, list)
+        ]
+        if cols and rows:
+            out.append(
+                {"title": str(tb.get("title", "")), "columns": cols, "rows": rows}
+            )
+    return out
+
+
+def extract_charts(image_path: Path, profile: dict) -> list[dict]:
+    raw, _ = ask(
+        profile["nodes_model"],
+        image_path,
+        prompt=CHART_PROMPT,
+        timeout_s=int(profile.get("timeout_s", 120)),
+    )
+    parsed = parse_json(raw) or {}
+    out = []
+    for ch in parsed.get("charts") or []:
+        if not isinstance(ch, dict):
+            continue
+        values = [
+            [str(a), str(b)]
+            for item in (ch.get("values") or [])
+            if isinstance(item, (list, tuple)) and len(item) == 2
+            for a, b in [item]
+        ]
+        out.append(
+            {
+                "type": str(ch.get("type", "other")),
+                "title": str(ch.get("title", "")),
+                "x_axis": str(ch.get("x_axis", "")),
+                "y_axis": str(ch.get("y_axis", "")),
+                "values": values,
+                "insight": str(ch.get("insight", "")),
+            }
+        )
+    return out
+
+
+def extract_text(image_path: Path, profile: dict) -> dict:
+    raw, _ = ask(
+        profile["nodes_model"],
+        image_path,
+        prompt=TEXT_PROMPT,
+        timeout_s=int(profile.get("timeout_s", 120)),
+    )
+    parsed = parse_json(raw) or {}
+    return {
+        "title": str(parsed.get("title", "")),
+        "summary": str(parsed.get("summary", "")),
+        "key_points": [
+            str(k).lstrip("-* ").strip()
+            for k in (parsed.get("key_points") or [])
+            if str(k).strip()
+        ],
+    }
+
+
+def tables_to_markdown(tables: list[dict]) -> str:
+    parts = []
+    for tb in tables:
+        if tb["title"]:
+            parts.append(f"### {tb['title']}")
+        parts.append("| " + " | ".join(tb["columns"]) + " |")
+        parts.append("|" + "---|" * len(tb["columns"]))
+        for row in tb["rows"]:
+            parts.append("| " + " | ".join(row) + " |")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def charts_to_markdown(charts: list[dict]) -> str:
+    parts = []
+    for ch in charts:
+        title = ch["title"] or f"{ch['type']} chart"
+        parts.append(f"### {title}")
+        if ch["insight"]:
+            parts.append(f"_{ch['insight']}_")
+        axis = " / ".join(x for x in (ch["x_axis"], ch["y_axis"]) if x)
+        if axis:
+            parts.append(f"Axes: {axis}")
+        if ch["values"]:
+            parts.append("")
+            parts.append(
+                "| " + (ch["x_axis"] or "x") + " | " + (ch["y_axis"] or "value") + " |"
+            )
+            parts.append("|---|---|")
+            for a, b in ch["values"]:
+                parts.append(f"| {a} | {b} |")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def route(image_path: Path, profile_name: str = "default") -> str:
+    """The full pipeline: inventory first, then only the extractors the
+    content warrants. Returns markdown; an image with nothing technical
+    costs exactly one model call and one summary line."""
+    profile = PROFILES[profile_name]
+    inv = inventory(image_path, profile_name)
+    parts = [f"# {image_path.name}", "", f"_{inv['summary']}_", ""]
+    parts.append(f"Detected content: {', '.join(inv['content'])}")
+    parts.append("")
+
+    if {"architecture_diagram", "flowchart"} & set(inv["content"]):
+        ex = extract(image_path, profile_name)
+        parts.append(to_markdown(ex))
+    if "table" in inv["content"]:
+        tables = extract_tables(image_path, profile)
+        if tables:
+            parts.append("## Tables")
+            parts.append(tables_to_markdown(tables))
+    if "chart" in inv["content"]:
+        charts = extract_charts(image_path, profile)
+        if charts:
+            parts.append("## Charts")
+            parts.append(charts_to_markdown(charts))
+    if "dense_text" in inv["content"] or (
+        inv["text_density"] == "dense"
+        and not ({"architecture_diagram", "flowchart", "table"} & set(inv["content"]))
+    ):
+        txt = extract_text(image_path, profile)
+        if txt["summary"]:
+            parts.append("## Text")
+            if txt["title"]:
+                parts.append(f"### {txt['title']}")
+            parts.append(txt["summary"])
+            parts.extend(f"- {k}" for k in txt["key_points"])
+            parts.append("")
+    return "\n".join(parts)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit("usage: extract.py <image> [profile]")
     image = Path(sys.argv[1])
     profile = sys.argv[2] if len(sys.argv) > 2 else "default"
-    result = extract(image, profile)
-    print(to_markdown(result))
-    print("<!-- raw extraction -->")
-    print(json.dumps(result, indent=2))
+    print(route(image, profile))

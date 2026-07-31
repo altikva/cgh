@@ -17,6 +17,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Changed
+- **The three longest functions are split into their jobs**: the CLI's
+  500-line `main()` becomes four grouped command registrars plus a
+  module-level parser class; `cmd_init` extracts the AI-tool setup and
+  the federation offer into named steps; `index_repo` separates
+  discovery, filtering, deletion handling and extra_dirs indexing from
+  the shared index loop. Same behavior, tested; each piece now reads
+  and diffs on its own.
 - **Background processes use real logging**: the owner, the MCP proxy,
   the watcher and the deferred-scan worker emit through per-module
   loggers behind one `[codegraph]`-prefixed stderr handler (configured

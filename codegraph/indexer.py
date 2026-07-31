@@ -1022,6 +1022,147 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
         return [], []
 
 
+def _discover_candidates(
+    repo_root: Path, method: str
+) -> tuple[list[Path], list[Path], str]:
+    """Run the requested discovery strategy with its documented
+    fallbacks. Returns (candidates, deletions, actual_method)."""
+    actual_method = method
+    candidates: list[Path] = []
+    deletions: list[Path] = []
+
+    if method in ("auto", "git_ls_files"):
+        git_files = _git_tracked_files(repo_root)
+        if git_files is None:
+            if method == "git_ls_files":
+                raise RuntimeError(
+                    "git_ls_files requested but git is unavailable or repo not initialised"
+                )
+            # auto -> fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
+        else:
+            actual_method = "git_ls_files"
+            candidates = list(git_files)
+
+    elif method == "os_walk":
+        candidates = _discover_os_walk(repo_root)
+
+    elif method == "find":
+        candidates = _discover_find(repo_root)
+        if not candidates:
+            # Tool missing or errored, fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
+
+    elif method == "git_diff":
+        candidates, deletions = _discover_git_diff(repo_root)
+        if not candidates and not deletions:
+            # No prior scan meta -> do a full scan instead
+            actual_method = "git_ls_files"
+            git_files = _git_tracked_files(repo_root)
+            candidates = (
+                list(git_files)
+                if git_files is not None
+                else _discover_os_walk(repo_root)
+            )
+            if git_files is None:
+                actual_method = "os_walk"
+
+    return candidates, deletions, actual_method
+
+
+def _filter_parseable(candidates: list[Path], scan_cfg, stats: dict) -> list[Path]:
+    """Keep supported, existing, non-ignored files under the size cap;
+    every rejection counts as skipped."""
+    import fnmatch as _fnmatch
+
+    size_cap = scan_cfg.max_file_size_kb * 1024
+    parseable: list[Path] = []
+    for p in candidates:
+        if not is_supported(p):
+            stats["skipped"] += 1
+            continue
+        if any(part in _IGNORE_DIRS for part in p.parts):
+            stats["skipped"] += 1
+            continue
+        if not p.exists():
+            stats["skipped"] += 1
+            continue
+        if any(_fnmatch.fnmatch(p.name, pat) for pat in scan_cfg.ignore_patterns):
+            stats["skipped"] += 1
+            continue
+        try:
+            if p.stat().st_size > size_cap:
+                stats["skipped"] += 1
+                continue
+        except OSError:
+            pass
+        parseable.append(p)
+    return parseable
+
+
+def _delete_gone(repo_root: Path, deletions: list[Path], activity_log) -> None:
+    """Purge files git_diff reported as deleted; a failed delete is a
+    ghost file and is logged, never swallowed."""
+    fts_conn = _get_fts(repo_root)
+    conn = get_connection(repo_root)
+    for gone in deletions:
+        try:
+            conn.delete_file_completely(str(gone))
+            if fts_conn is not None:
+                delete_file_symbols(fts_conn, str(gone))
+            from codegraph.state.findings import purge_file_findings
+
+            purge_file_findings(repo_root, str(gone))
+        except Exception as exc:
+            activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
+
+
+def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
+    """Index the sibling directories declared in config.toml. A
+    malformed config must not silently shrink coverage."""
+    extra_dirs: list[str] = []
+    try:
+        import tomllib
+
+        cfg = repo_root / ".codegraph" / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                cfg_data = tomllib.load(f)
+            extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
+    except Exception as exc:
+        print(f"  ! config.toml unreadable, extra_dirs skipped: {exc}")
+        activity_log(
+            repo_root,
+            "scan_error",
+            f"config.toml unreadable, extra_dirs skipped: {exc}",
+        )
+
+    for rel in extra_dirs:
+        extra_root = (repo_root / rel).resolve()
+        if not extra_root.exists() or not extra_root.is_dir():
+            continue
+        activity_log(repo_root, "extra_dir_scan", str(extra_root))
+        for dirpath, dirnames, filenames in os.walk(extra_root):
+            dirnames[:] = [
+                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
+            ]
+            for filename in filenames:
+                full_path = Path(dirpath) / filename
+                if not is_supported(full_path):
+                    continue
+                try:
+                    ok = index_file(full_path, repo_root)
+                    if ok:
+                        stats["indexed"] += 1
+                    else:
+                        stats["skipped"] += 1
+                except Exception:
+                    stats["errors"] += 1
+    return extra_dirs
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,
@@ -1080,50 +1221,7 @@ def index_repo(
         blob_shas = {}
     from codegraph.state.scan_meta import git_hash_object as _git_hash
 
-    # ------------------------------------------------------------------
-    # File discovery, each method returns (files_to_index, actual_method)
-    # ------------------------------------------------------------------
-    actual_method = method
-    candidates: list[Path] = []
-    deletions: list[Path] = []
-
-    if method in ("auto", "git_ls_files"):
-        git_files = _git_tracked_files(repo_root)
-        if git_files is None:
-            if method == "git_ls_files":
-                raise RuntimeError(
-                    "git_ls_files requested but git is unavailable or repo not initialised"
-                )
-            # auto → fall back
-            actual_method = "os_walk"
-            candidates = _discover_os_walk(repo_root)
-        else:
-            actual_method = "git_ls_files"
-            candidates = list(git_files)
-
-    elif method == "os_walk":
-        candidates = _discover_os_walk(repo_root)
-
-    elif method == "find":
-        candidates = _discover_find(repo_root)
-        if not candidates:
-            # Tool missing or errored, fall back
-            actual_method = "os_walk"
-            candidates = _discover_os_walk(repo_root)
-
-    elif method == "git_diff":
-        candidates, deletions = _discover_git_diff(repo_root)
-        if not candidates and not deletions:
-            # No prior scan meta → do a full scan instead
-            actual_method = "git_ls_files"
-            git_files = _git_tracked_files(repo_root)
-            candidates = (
-                list(git_files)
-                if git_files is not None
-                else _discover_os_walk(repo_root)
-            )
-            if git_files is None:
-                actual_method = "os_walk"
+    candidates, deletions, actual_method = _discover_candidates(repo_root, method)
 
     # Load config once for the whole scan (size cap + ignore patterns), then
     # thread it into every index_file call so config.toml is read a single
@@ -1131,31 +1229,7 @@ def index_repo(
     from codegraph.core.config import load_config as _load_config
 
     scan_cfg = _load_config(repo_root)
-    _size_cap = scan_cfg.max_file_size_kb * 1024
-    import fnmatch as _fnmatch
-
-    # Filter to parseable, existing files
-    parseable: list[Path] = []
-    for p in candidates:
-        if not is_supported(p):
-            stats["skipped"] += 1
-            continue
-        if any(part in _IGNORE_DIRS for part in p.parts):
-            stats["skipped"] += 1
-            continue
-        if not p.exists():
-            stats["skipped"] += 1
-            continue
-        if any(_fnmatch.fnmatch(p.name, pat) for pat in scan_cfg.ignore_patterns):
-            stats["skipped"] += 1
-            continue
-        try:
-            if p.stat().st_size > _size_cap:
-                stats["skipped"] += 1
-                continue
-        except OSError:
-            pass
-        parseable.append(p)
+    parseable = _filter_parseable(candidates, scan_cfg, stats)
 
     if on_discovery:
         on_discovery(len(parseable), actual_method)
@@ -1164,20 +1238,7 @@ def index_repo(
 
     # Handle deletions first (git_diff only)
     if deletions:
-        fts_conn = _get_fts(repo_root)
-        conn = get_connection(repo_root)
-        for gone in deletions:
-            try:
-                conn.delete_file_completely(str(gone))
-                if fts_conn is not None:
-                    delete_file_symbols(fts_conn, str(gone))
-                from codegraph.state.findings import purge_file_findings
-
-                purge_file_findings(repo_root, str(gone))
-            except Exception as exc:
-                # A failed delete leaves a ghost file in the graph; record it
-                # rather than silently reporting a clean scan.
-                _activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
+        _delete_gone(repo_root, deletions, _activity_log)
 
     # ------------------------------------------------------------------
     # Index loop (shared across all methods)
@@ -1209,47 +1270,7 @@ def index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    # Also index extra_dirs from config.toml. A malformed config must
-    # not silently shrink coverage: the user configured those dirs and
-    # deserves to know they were skipped.
-    extra_dirs: list[str] = []
-    try:
-        import tomllib
-
-        cfg = repo_root / ".codegraph" / "config.toml"
-        if cfg.exists():
-            with open(cfg, "rb") as f:
-                cfg_data = tomllib.load(f)
-            extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
-    except Exception as exc:
-        print(f"  ! config.toml unreadable, extra_dirs skipped: {exc}")
-        _activity_log(
-            repo_root,
-            "scan_error",
-            f"config.toml unreadable, extra_dirs skipped: {exc}",
-        )
-
-    for rel in extra_dirs:
-        extra_root = (repo_root / rel).resolve()
-        if not extra_root.exists() or not extra_root.is_dir():
-            continue
-        _activity_log(repo_root, "extra_dir_scan", str(extra_root))
-        for dirpath, dirnames, filenames in os.walk(extra_root):
-            dirnames[:] = [
-                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
-            ]
-            for filename in filenames:
-                full_path = Path(dirpath) / filename
-                if not is_supported(full_path):
-                    continue
-                try:
-                    ok = index_file(full_path, repo_root)
-                    if ok:
-                        stats["indexed"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["method"] = actual_method

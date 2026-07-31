@@ -17,6 +17,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Changed
+- **Explicit ruff configuration, whole-tree formatting, format gate in
+  CI**: the linter ran on its narrow defaults (E4/E7/E9/F), leaving
+  bugbear, security, simplify and modernize off. `[tool.ruff.lint]`
+  now selects E/F/B/I/S/SIM/UP/RUF with documented, deliberate
+  ignores (formatter owns line length; audited subprocess posture;
+  triaged except-pass discipline) and per-file test allowances; ~180
+  findings were auto-fixed or corrected (including a real
+  loop-variable closure bug in the bench report), the long-deferred
+  `ruff format` debt is settled (40 files), and CI now gates
+  formatting alongside linting.
 - **The plugin API covers what plugins actually need**: the finding
   store, activity log, knowledge record, config resolution, parser
   lookup, federation children, subprocess hygiene and a `server_root()`

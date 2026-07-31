@@ -15,10 +15,10 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import subprocess
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # How many commits back we walk by default. git log is slow on large repos,
 # so we bound the history. Callers see this cap in the tool `note`.

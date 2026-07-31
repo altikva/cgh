@@ -21,8 +21,8 @@ import pytest
 # before verifying the migration. Skip on DuckDB-only installs.
 pytest.importorskip("kuzu")
 
-from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb  # noqa: E402
-from codegraph.core.db import reset_connection  # noqa: E402
+from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
+from codegraph.core.db import reset_connection
 
 
 def _seed_kuzu(repo_root: Path) -> None:
@@ -49,20 +49,24 @@ def repo(tmp_path):
     import subprocess
 
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / "a.py").write_text(textwrap.dedent("""\
+    (tmp_path / "a.py").write_text(
+        textwrap.dedent("""\
         def helper():
             return 1
 
         def caller():
             helper()
-    """))
-    (tmp_path / "b.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "b.py").write_text(
+        textwrap.dedent("""\
         from .a import helper
 
         class Service:
             def run(self):
                 helper()
-    """))
+    """)
+    )
     _seed_kuzu(tmp_path)
     yield tmp_path
     # Cleanup: drop the env var and reset cached conn between tests
@@ -138,16 +142,23 @@ class TestStaleKuzuPath:
                 inflated = 99
                 return {
                     "nodes": {
-                        "File": inflated, "Function": inflated, "Class": inflated,
-                        "TFResource": inflated, "TFVar": inflated,
+                        "File": inflated,
+                        "Function": inflated,
+                        "Class": inflated,
+                        "TFResource": inflated,
+                        "TFVar": inflated,
                         "MdSection": inflated,
                     },
                     "edges": {
                         "IMPORTS": 0,  # post-fix gain
-                        "CALLS": inflated, "DEFINES_FN": inflated,
-                        "DEFINES_CLASS": inflated, "INHERITS": inflated,
-                        "HAS_METHOD": inflated, "DEFINES_SECTION": inflated,
-                        "MD_REFS_SYMBOL": inflated, "MD_REFS_CLASS": inflated,
+                        "CALLS": inflated,
+                        "DEFINES_FN": inflated,
+                        "DEFINES_CLASS": inflated,
+                        "INHERITS": inflated,
+                        "HAS_METHOD": inflated,
+                        "DEFINES_SECTION": inflated,
+                        "MD_REFS_SYMBOL": inflated,
+                        "MD_REFS_CLASS": inflated,
                         "CONTAINS_SECTION": inflated,
                     },
                 }

@@ -26,7 +26,7 @@ ROOT_FILES = ["README.md", "CHANGELOG.md"]
 TEXT_SUFFIXES = {".py", ".md", ".txt", ".toml"}
 
 
-def iter_files() -> "list[pathlib.Path]":
+def iter_files() -> list[pathlib.Path]:
     seen: list[pathlib.Path] = []
     for name in ROOT_FILES:
         p = pathlib.Path(name)

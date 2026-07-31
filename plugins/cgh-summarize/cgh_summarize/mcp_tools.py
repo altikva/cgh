@@ -28,11 +28,11 @@ def make_mcp_registrar(config: dict, extras_fn):
             its gist. Federated: children's summaries come back with a
             scope tag.
             """
-            from codegraph.plugin_api import resolve_children
             from codegraph.plugin_api import (
                 findings_db_path,
                 query_findings,
                 query_findings_ro,
+                resolve_children,
             )
 
             if file_path and not os.path.isabs(file_path) and server_root():

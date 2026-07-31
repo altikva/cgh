@@ -27,10 +27,27 @@ def _write(path: Path, kind: str, title: str, body: str) -> None:
 
 class TestScanMemoryDir:
     def test_indexes_files_by_kind(self, tmp_memory_env, tmp_path):
-        _write(tmp_memory_env / "user_prefs.md", "user", "User preferences", "prefers pnpm")
-        _write(tmp_memory_env / "feedback_commits.md", "feedback", "Commits", "use /commit skill")
-        _write(tmp_memory_env / "project_domain.md", "project", "Domain", "donations platform")
-        _write(tmp_memory_env / "reference_api.md", "reference", "API Ref", "see openapi.json")
+        _write(
+            tmp_memory_env / "user_prefs.md", "user", "User preferences", "prefers pnpm"
+        )
+        _write(
+            tmp_memory_env / "feedback_commits.md",
+            "feedback",
+            "Commits",
+            "use /commit skill",
+        )
+        _write(
+            tmp_memory_env / "project_domain.md",
+            "project",
+            "Domain",
+            "donations platform",
+        )
+        _write(
+            tmp_memory_env / "reference_api.md",
+            "reference",
+            "API Ref",
+            "see openapi.json",
+        )
 
         from codegraph.claude_state.memory import scan_memory_dir
 
@@ -41,7 +58,9 @@ class TestScanMemoryDir:
 
     def test_classify_from_filename_fallback(self, tmp_memory_env, tmp_path):
         # No frontmatter — kind should come from filename prefix
-        (tmp_memory_env / "feedback_no_fm.md").write_text("# Title\n\nbody", encoding="utf-8")
+        (tmp_memory_env / "feedback_no_fm.md").write_text(
+            "# Title\n\nbody", encoding="utf-8"
+        )
         from codegraph.claude_state.memory import classify
 
         kind, title = classify(tmp_memory_env / "feedback_no_fm.md")
@@ -74,10 +93,12 @@ class TestScanMemoryDir:
             "Donations",
             "prefer mobile money over stripe when currency is XAF",
         )
-        _write(tmp_memory_env / "project_stack.md", "project", "Stack", "FastAPI + Nuxt 4")
+        _write(
+            tmp_memory_env / "project_stack.md", "project", "Stack", "FastAPI + Nuxt 4"
+        )
 
-        from codegraph.core.fts import get_fts_conn, memory_search
         from codegraph.claude_state.memory import scan_memory_dir
+        from codegraph.core.fts import get_fts_conn, memory_search
 
         scan_memory_dir(tmp_path)
         conn = get_fts_conn(tmp_path)

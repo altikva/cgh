@@ -154,7 +154,9 @@ def list_bundled_skills() -> list[str]:
     src = _skills_source_dir()
     if not src.exists():
         return []
-    return sorted([d.name for d in src.iterdir() if d.is_dir() and (d / "SKILL.md").exists()])
+    return sorted(
+        [d.name for d in src.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+    )
 
 
 def _parse_skill(path: Path) -> tuple[dict, str]:
@@ -197,7 +199,9 @@ def _iter_skills() -> list[tuple[str, dict, str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def install_claude(project_root: str | Path, overwrite_modified: bool = True) -> list[str]:
+def install_claude(
+    project_root: str | Path, overwrite_modified: bool = True
+) -> list[str]:
     """
     Copy skills verbatim to <project>/.claude/skills/<name>/.
 
@@ -220,7 +224,11 @@ def install_claude(project_root: str | Path, overwrite_modified: bool = True) ->
             rel = f.relative_to(skill_dir)
             dest = target_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if not overwrite_modified and dest.exists() and _file_content_differs(f, dest):
+            if (
+                not overwrite_modified
+                and dest.exists()
+                and _file_content_differs(f, dest)
+            ):
                 # Local customization, leave it alone.
                 continue
             shutil.copy2(f, dest)
@@ -369,7 +377,11 @@ def _install_agents_md(target: Path) -> list[str]:
         if pattern.search(existing):
             new = pattern.sub(block, existing)
         else:
-            sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+            sep = (
+                ""
+                if existing.endswith("\n\n")
+                else ("\n" if existing.endswith("\n") else "\n\n")
+            )
             new = existing + sep + block
         target.write_text(new, encoding="utf-8")
     else:
@@ -434,12 +446,22 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     else:
         return None
 
-    block = _USAGE_BLOCK_START + "\n\n" + _USAGE_BODY.rstrip() + "\n\n" + _USAGE_BLOCK_END + "\n"
+    block = (
+        _USAGE_BLOCK_START
+        + "\n\n"
+        + _USAGE_BODY.rstrip()
+        + "\n\n"
+        + _USAGE_BLOCK_END
+        + "\n"
+    )
 
     if target.exists():
         existing = target.read_text(encoding="utf-8")
         pattern = re.compile(
-            re.escape(_USAGE_BLOCK_START) + r".*?" + re.escape(_USAGE_BLOCK_END) + r"\n?",
+            re.escape(_USAGE_BLOCK_START)
+            + r".*?"
+            + re.escape(_USAGE_BLOCK_END)
+            + r"\n?",
             re.DOTALL,
         )
         if pattern.search(existing):

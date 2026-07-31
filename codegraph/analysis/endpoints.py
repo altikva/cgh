@@ -139,13 +139,9 @@ def extract_django(path: str | Path, src: str) -> list[EndpointDef]:
         norm = "/" + norm
 
         view = m.group("view").strip()
-        handler = view
         as_view = re.search(r"([A-Za-z_]\w*)\s*\.as_view\s*\(", view)
-        if as_view:
-            handler = as_view.group(1)
-        else:
-            # views.detail -> detail, app.views.detail -> detail
-            handler = view.split(".")[-1]
+        # views.detail -> detail, app.views.detail -> detail
+        handler = as_view.group(1) if as_view else view.split(".")[-1]
 
         out.append(
             EndpointDef(

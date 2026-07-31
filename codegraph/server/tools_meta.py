@@ -191,9 +191,9 @@ def register(mcp) -> None:
 
         Returns structured markdown context + hit counts.
         """
-        from codegraph.state.call_log import filter_unseen, record_mentions
         from codegraph.analysis.context_builder import context_for_task as _ctx
         from codegraph.analysis.context_builder import render_context_markdown
+        from codegraph.state.call_log import filter_unseen, record_mentions
 
         ctx = _ctx(
             task=task,

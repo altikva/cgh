@@ -147,7 +147,11 @@ class PythonParser(BaseParser):
                                 module = prefix
                             break
 
-                symbols = [_text(c, src) for c in node.children if c.type == "dotted_name" and c != mod_node]
+                symbols = [
+                    _text(c, src)
+                    for c in node.children
+                    if c.type == "dotted_name" and c != mod_node
+                ]
 
                 # When the import is purely relative + dotted names
                 # (`from . import x, y`), treat each symbol as a sibling
@@ -158,7 +162,9 @@ class PythonParser(BaseParser):
                             ImportRef(source_module=module + sym, symbols=[])
                         )
                 else:
-                    index.imports.append(ImportRef(source_module=module, symbols=symbols))
+                    index.imports.append(
+                        ImportRef(source_module=module, symbols=symbols)
+                    )
 
             # --- class ---
             elif node.type == "class_definition":
@@ -194,7 +200,9 @@ class PythonParser(BaseParser):
             # --- function / method ---
             elif node.type in ("function_definition", "decorated_definition"):
                 fn_node = (
-                    node if node.type == "function_definition" else _first_child_of_type(node, "function_definition")
+                    node
+                    if node.type == "function_definition"
+                    else _first_child_of_type(node, "function_definition")
                 )
                 if fn_node is None:
                     for child in node.children:
@@ -206,7 +214,11 @@ class PythonParser(BaseParser):
                 name = _ident(name_node, src) if name_node else "?"
                 doc = _extract_docstring(body_node, src) if body_node else ""
                 calls = _collect_calls(fn_node, src)
-                fn_id = f"{path_str}::{current_class}.{name}" if current_class else f"{path_str}::{name}"
+                fn_id = (
+                    f"{path_str}::{current_class}.{name}"
+                    if current_class
+                    else f"{path_str}::{name}"
+                )
                 kind = "method" if current_class else "function"
 
                 index.functions.append(

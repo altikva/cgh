@@ -58,7 +58,9 @@ class TestIncludeDirsSubrepoSkip:
         (inc / "subrepo" / "private.py").write_text("# private")
 
         cfg = parent / ".codegraph" / "config.toml"
-        cfg.write_text('[codegraph]\ninclude_dirs = ["./shared"]\nsubrepos = ["./shared/subrepo"]\n')
+        cfg.write_text(
+            '[codegraph]\ninclude_dirs = ["./shared"]\nsubrepos = ["./shared/subrepo"]\n'
+        )
 
         files = _walk_include_dirs(parent)
         names = {f.name for f in files}

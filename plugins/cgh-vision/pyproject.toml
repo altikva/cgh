@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cgh-vision"
+version = "0.1.0"
+description = "Image understanding for cgh: content inventory, architecture diagram extraction to markdown and Mermaid, table and chart reading, dense text summaries, local vision models via Ollama"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+# cgh itself is a peer dependency, deliberately not declared: the plugin
+# only ever loads through cgh's entry point group, so it is inert without
+# cgh installed, and declaring it makes resolvers overlay a second cgh on
+# top of a dev checkout. Requires cgh >= 0.8 at runtime. Pure standard
+# library: the vision models are reached over the local Ollama HTTP API.
+dependencies = []
+
+[project.entry-points.cgh]
+vision = "cgh_vision"
+
+[tool.setuptools.packages.find]
+include = ["cgh_vision*"]

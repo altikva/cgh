@@ -110,8 +110,20 @@ class TestSummarize:
         assert "cgh-summarize" in str(exc.value)
 
 
-class TestVisionStubs:
-    def test_inventory_raises_until_vision_ships(self):
+class TestVisionCapability:
+    def test_missing_package_raises_named_capability(self, monkeypatch):
+        import builtins
+        import sys
+
+        monkeypatch.delitem(sys.modules, "cgh_vision", raising=False)
+        real_import = builtins.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cgh_vision"):
+                raise ImportError(name)
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", fake)
         with pytest.raises(sdk.CapabilityMissing) as exc:
             sdk.image_inventory("x.png")
         assert "cgh-vision" in str(exc.value)

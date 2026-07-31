@@ -80,11 +80,9 @@ def _backend(repo_root: str | Path | None = None) -> str:
         return env_value
 
     if repo_root is not None:
-        cg = Path(repo_root) / _DB_DIR
-        if (cg / _DUCKDB_FILE).exists():
-            return "duckdb"
-        if (cg / _DB_FILE).exists():
-            return "kuzu"
+        detected = detect_backend_file(repo_root)
+        if detected is not None:
+            return detected[0]
 
     return "duckdb"
 
@@ -107,6 +105,51 @@ def _cache_key(repo_root: str | Path | None) -> str:
 
 
 _atexit_registered = False
+
+
+def detect_backend_file(repo_root: str | Path) -> "tuple[str, Path] | None":
+    """('duckdb' | 'kuzu', db_file) for whichever graph DB exists in
+    ``repo_root/.codegraph/``. DuckDB wins when both are present so a
+    half-migrated repo (Kuzu cached + new DuckDB) reads the new one.
+    None when no graph DB is present. The single tie-break authority:
+    federation, the status commands and the connection cache all call
+    this instead of re-implementing the rule."""
+    cg = Path(repo_root) / _DB_DIR
+    duck = cg / _DUCKDB_FILE
+    if duck.exists():
+        return ("duckdb", duck)
+    kz = cg / _DB_FILE
+    if kz.exists():
+        return ("kuzu", kz)
+    return None
+
+
+def open_graphdb_file_ro(backend: str, db_file: str | Path) -> GraphDB | None:
+    """Open one graph DB file read-only, uncached, degrading to None
+    (locked, corrupt, kuzu not installed). The shared low-level factory:
+    federation uses it on child repos, the status commands on their own
+    repo; the cached per-repo path is get_readonly_connection. The
+    caller owns close()."""
+    if backend == "duckdb":
+        from codegraph.core.db_duckdb import DuckDBGraphDB
+
+        try:
+            return DuckDBGraphDB(str(db_file), read_only=True)
+        except Exception:
+            return None
+    try:
+        kuzu = _import_kuzu()
+    except KuzuNotInstalled:
+        return None
+    from codegraph.core.db_kuzu import KuzuGraphDB
+
+    try:
+        db = kuzu.Database(str(db_file), read_only=True)
+        conn = KuzuGraphDB(kuzu.Connection(db))
+        conn._db_handle = db  # close() releases the file lock too
+        return conn
+    except RuntimeError:
+        return None
 
 
 def get_db_path(repo_root: str | Path) -> Path:

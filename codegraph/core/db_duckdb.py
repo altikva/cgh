@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from typing import Any
+from codegraph.core.utils import checked_identifier as _ident
 
 import duckdb
 
@@ -30,7 +31,9 @@ class DuckDBQueryResult:
     iterator interface mirrors Kuzu's exactly.
     """
 
-    def __init__(self, cursor: duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation) -> None:
+    def __init__(
+        self, cursor: duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
+    ) -> None:
         # description: list of (name, type, ...) per stdlib DB-API
         desc = cursor.description or []
         self._columns: list[str] = [d[0] for d in desc]
@@ -251,7 +254,7 @@ class DuckDBGraphDB:
         if label not in NODES:
             raise ValueError(f"Unknown node label: {label!r}")
         spec = NODES[label]
-        cols = ", ".join(return_fields)
+        cols = ", ".join(_ident(f) for f in return_fields)
         rows = self._conn.execute(f"SELECT {cols} FROM {spec.table}").fetchall()
         return [list(r) for r in rows]
 
@@ -280,21 +283,27 @@ class DuckDBGraphDB:
         clauses: list[str] = []
         if where:
             for field, value in where.items():
-                clauses.append(f"{field} = ?")
+                clauses.append(f"{_ident(field)} = ?")
                 params.append(value)
         if contains:
             sub_clauses = []
             for field, value in contains.items():
                 # Wrap value with % for DuckDB's LIKE, case-sensitive.
                 # Cypher CONTAINS is case-sensitive too, so this matches.
-                sub_clauses.append(f"{field} LIKE ?")
+                sub_clauses.append(f"{_ident(field)} LIKE ?")
                 params.append(f"%{value}%")
             if sub_clauses:
                 clauses.append("(" + " OR ".join(sub_clauses) + ")")
 
-        select_clause = ", ".join(return_fields) if return_fields and return_fields != ["*"] else "*"
+        select_clause = (
+            ", ".join(_ident(f) for f in return_fields)
+            if return_fields and return_fields != ["*"]
+            else "*"
+        )
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
-        order_clause = "ORDER BY " + ", ".join(order_by) if order_by else ""
+        order_clause = (
+            "ORDER BY " + ", ".join(_ident(f) for f in order_by) if order_by else ""
+        )
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
         sql = (
             f"SELECT {select_clause} FROM {spec.table} "
@@ -315,7 +324,7 @@ class DuckDBGraphDB:
         clauses: list[str] = []
         if where:
             for field, value in where.items():
-                clauses.append(f"{field} = ?")
+                clauses.append(f"{_ident(field)} = ?")
                 params.append(value)
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
         sql = f"SELECT count(*) FROM {spec.table} {where_clause}"
@@ -349,7 +358,13 @@ class DuckDBGraphDB:
         edge = EDGES[edge_type]
 
         if not return_fields:
-            return_fields = [spec.key_field, "name", "file_path", "start_line", "end_line"]
+            return_fields = [
+                spec.key_field,
+                "name",
+                "file_path",
+                "start_line",
+                "end_line",
+            ]
 
         params: list[Any] = []
         clauses: list[str] = []
@@ -366,10 +381,10 @@ class DuckDBGraphDB:
             params.append(exclude_name_prefix)
         if contains:
             for field, value in contains.items():
-                clauses.append(f"n.{field} LIKE ?")
+                clauses.append(f"n.{_ident(field)} LIKE ?")
                 params.append(f"%{value}%")
 
-        select_clause = ", ".join(f"n.{f}" for f in return_fields)
+        select_clause = ", ".join(f"n.{_ident(f)}" for f in return_fields)
         sql = (
             f"SELECT {select_clause} FROM {spec.table} n WHERE {' AND '.join(clauses)}"
         )
@@ -399,11 +414,11 @@ class DuckDBGraphDB:
 
         select_parts: list[str] = []
         for f in return_src or []:
-            select_parts.append(f"a.{f} AS src_{f}")
+            select_parts.append(f"a.{_ident(f)} AS src_{f}")
         for f in return_dst or []:
-            select_parts.append(f"b.{f} AS dst_{f}")
+            select_parts.append(f"b.{_ident(f)} AS dst_{f}")
         for f in return_edge or []:
-            select_parts.append(f"e.{f} AS edge_{f}")
+            select_parts.append(f"e.{_ident(f)} AS edge_{f}")
         if not select_parts:
             select_parts = [f"b.{dst.key_field} AS dst_{dst.key_field}"]
 
@@ -419,11 +434,11 @@ class DuckDBGraphDB:
             params.append(dst_key)
         if src_where:
             for field, value in src_where.items():
-                clauses.append(f"a.{field} = ?")
+                clauses.append(f"a.{_ident(field)} = ?")
                 params.append(value)
         if dst_where:
             for field, value in dst_where.items():
-                clauses.append(f"b.{field} = ?")
+                clauses.append(f"b.{_ident(field)} = ?")
                 params.append(value)
 
         select_clause = ", ".join(select_parts)

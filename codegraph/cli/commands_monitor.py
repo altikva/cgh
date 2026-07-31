@@ -668,13 +668,10 @@ def _backend_info(root: str) -> dict:
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
     env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
 
-    if not on_disk:
-        active = None
-    elif len(on_disk) == 1:
-        active = on_disk[0]
-    else:
-        # Tie-break matches _detect_backend_file in federation.py.
-        active = "duckdb"
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    active = detected[0] if detected else None
 
     return {
         "on_disk": on_disk,

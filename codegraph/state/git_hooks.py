@@ -34,6 +34,7 @@ def _git_dir(repo_root: Path) -> Path | None:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
+            timeout=30,
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -42,7 +43,11 @@ def _git_dir(repo_root: Path) -> Path | None:
             check=True,
             **quiet_subprocess_kwargs(),
         ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return None
     if not out:
         return None
@@ -63,6 +68,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
     try:
         configured = subprocess.run(
             ["git", "config", "--get", "core.hooksPath"],
+            timeout=30,
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -70,7 +76,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
             errors="replace",
             **quiet_subprocess_kwargs(),
         ).stdout.strip()
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if configured:
         p = Path(configured)

@@ -155,8 +155,7 @@ class TestImportsEdgesIndexed:
             return_edge=["symbol"],
         )
         assert any(
-            "main.py" in e["src_path"] and "helpers.py" in e["dst_path"]
-            for e in edges
+            "main.py" in e["src_path"] and "helpers.py" in e["dst_path"] for e in edges
         ), f"expected main.py → helpers.py IMPORTS edge, got {edges}"
 
     def test_typescript_imports_edge_created(self, tmp_path):
@@ -168,12 +167,9 @@ class TestImportsEdgesIndexed:
         index_file(main, tmp_path)
 
         conn = get_connection(tmp_path)
-        edges = conn.find_neighbors(
-            "IMPORTS", return_src=["path"], return_dst=["path"]
-        )
+        edges = conn.find_neighbors("IMPORTS", return_src=["path"], return_dst=["path"])
         assert any(
-            "main.ts" in e["src_path"] and "utils.ts" in e["dst_path"]
-            for e in edges
+            "main.ts" in e["src_path"] and "utils.ts" in e["dst_path"] for e in edges
         ), f"expected main.ts → utils.ts IMPORTS edge, got {edges}"
 
     def test_third_party_import_skipped(self, tmp_path):
@@ -208,7 +204,8 @@ class TestImportsEdgesIndexed:
         # Now index the target — same node should be upserted with full data
         index_file(target, tmp_path)
         files_with_lang = [
-            f for f in conn.find_nodes("File", return_fields=["path", "lang"])
+            f
+            for f in conn.find_nodes("File", return_fields=["path", "lang"])
             if f["path"].endswith("utils.ts")
         ]
         assert len(files_with_lang) == 1
@@ -227,6 +224,7 @@ class TestImportsEdgesIndexed:
         # Now main only imports a
         main.write_text("import { a } from './utils';\n")
         import time as _t
+
         _t.sleep(0.05)  # ensure mtime change
         index_file(main, tmp_path)
 
@@ -240,4 +238,6 @@ class TestImportsEdgesIndexed:
             e["edge_symbol"] for e in edges if e["src_path"].endswith("main.ts")
         )
         assert "a" in symbols
-        assert "b" not in symbols, f"stale 'b' edge should have been purged, got {symbols}"
+        assert "b" not in symbols, (
+            f"stale 'b' edge should have been purged, got {symbols}"
+        )

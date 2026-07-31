@@ -96,25 +96,26 @@ def _read_tsconfig(tsconfig: Path, seen: set[Path] | None = None) -> dict:
 
     merged: dict = {}
     extends = data.get("extends")
-    if isinstance(extends, str):
-        # `extends` resolves like a bare import would, supports relative
-        # path or a path-aliased / node_modules-style ref. We only handle
-        # relative for now (the common case).
-        if extends.startswith(".") or extends.startswith("/"):
-            # `extends` can be:
-            #   - "./tsconfig.base"      → ./tsconfig.base.json
-            #   - "./tsconfig.base.json" → use as-is
-            #   - "./configs/base"       → ./configs/base/tsconfig.json (dir case)
-            if extends.endswith(".json"):
-                ext_path = tsconfig.parent / extends
+    # `extends` resolves like a bare import would, supports relative
+    # path or a path-aliased / node_modules-style ref. We only handle
+    # relative for now (the common case).
+    if isinstance(extends, str) and (
+        extends.startswith(".") or extends.startswith("/")
+    ):
+        # `extends` can be:
+        #   - "./tsconfig.base"      → ./tsconfig.base.json
+        #   - "./tsconfig.base.json" → use as-is
+        #   - "./configs/base"       → ./configs/base/tsconfig.json (dir case)
+        if extends.endswith(".json"):
+            ext_path = tsconfig.parent / extends
+        else:
+            cand = tsconfig.parent / (extends + ".json")
+            if cand.is_file():
+                ext_path = cand
             else:
-                cand = tsconfig.parent / (extends + ".json")
-                if cand.is_file():
-                    ext_path = cand
-                else:
-                    ext_path = tsconfig.parent / extends / "tsconfig.json"
-            parent = _read_tsconfig(ext_path, seen)
-            merged.update(parent)
+                ext_path = tsconfig.parent / extends / "tsconfig.json"
+        parent = _read_tsconfig(ext_path, seen)
+        merged.update(parent)
 
     co = data.get("compilerOptions") or {}
     if isinstance(co, dict):

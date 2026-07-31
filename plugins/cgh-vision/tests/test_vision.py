@@ -17,12 +17,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import cgh_vision.pipeline as pipeline
+import pytest
 from cgh_vision.pipeline import (
-    inventory,
     extract_diagram,
+    inventory,
     postprocess,
     route,
     split_identities,
@@ -73,7 +72,7 @@ class TestRouter:
             monkeypatch,
             ['{"summary": "a logo", "content": ["logo"], "text_density": "none"}'],
         )
-        inv, md = route(IMG, {})
+        _inv, md = route(IMG, {})
         assert len(backend.prompts) == 1
         assert "a logo" in md and "Components" not in md
 

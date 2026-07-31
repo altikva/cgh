@@ -107,7 +107,7 @@ def _cache_key(repo_root: str | Path | None) -> str:
 _atexit_registered = False
 
 
-def detect_backend_file(repo_root: str | Path) -> "tuple[str, Path] | None":
+def detect_backend_file(repo_root: str | Path) -> tuple[str, Path] | None:
     """('duckdb' | 'kuzu', db_file) for whichever graph DB exists in
     ``repo_root/.codegraph/``. DuckDB wins when both are present so a
     half-migrated repo (Kuzu cached + new DuckDB) reads the new one.

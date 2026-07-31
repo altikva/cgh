@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.plugin_api import ScanFinding
-
 # Import at module load so registration fails fast (and cleanly) when the
 # ner extra is not installed; see the register() guard in __init__.
 from presidio_analyzer import AnalyzerEngine
+
+from codegraph.plugin_api import ScanFinding
 
 _ENTITY_KEYS = {
     "PERSON": "pii.person",

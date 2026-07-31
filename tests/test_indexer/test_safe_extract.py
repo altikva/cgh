@@ -139,7 +139,9 @@ class TestParseErrorHandling:
         conn = get_connection(tmp_path)
         names = [
             f["name"]
-            for f in conn.find_nodes("Function", return_fields=["name"], order_by=["name"])
+            for f in conn.find_nodes(
+                "Function", return_fields=["name"], order_by=["name"]
+            )
         ]
         assert "a_func" in names
         assert "c_func" in names

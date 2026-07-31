@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 
 def _git_changed_files(repo_root: Path, since: str = "HEAD~1") -> list[str]:
@@ -74,9 +74,8 @@ def _reindex_codegraph(repo_root: Path, files: list[str]) -> int:
         indexed = 0
         for rel_path in files:
             full = repo_root / rel_path
-            if full.exists():
-                if index_file(full, repo_root):
-                    indexed += 1
+            if full.exists() and index_file(full, repo_root):
+                indexed += 1
         return indexed
     except Exception as exc:
         print(f"[post-commit] codegraph index error: {exc}", file=sys.stderr)

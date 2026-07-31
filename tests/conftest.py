@@ -154,7 +154,9 @@ def sample_markdown(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def sample_repo(tmp_path: Path, sample_python, sample_typescript, sample_terraform, sample_markdown) -> Path:
+def sample_repo(
+    tmp_path: Path, sample_python, sample_typescript, sample_terraform, sample_markdown
+) -> Path:
     """Create a minimal repo with all supported file types."""
     # Files are already in tmp_path from the fixtures
     return tmp_path

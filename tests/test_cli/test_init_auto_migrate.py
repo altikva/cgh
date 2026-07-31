@@ -20,8 +20,8 @@ import pytest
 # kuzu extra).
 pytest.importorskip("kuzu")
 
-from codegraph.cli.commands_init import _auto_migrate_kuzu_to_duckdb  # noqa: E402
-from codegraph.core.db import reset_connection  # noqa: E402
+from codegraph.cli.commands_init import _auto_migrate_kuzu_to_duckdb
+from codegraph.core.db import reset_connection
 
 
 def _seed_kuzu(repo_root: Path) -> None:
@@ -39,10 +39,12 @@ def _seed_kuzu(repo_root: Path) -> None:
 @pytest.fixture
 def kuzu_repo(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / "a.py").write_text(textwrap.dedent("""\
+    (tmp_path / "a.py").write_text(
+        textwrap.dedent("""\
         def helper(): return 1
         def caller(): helper()
-    """))
+    """)
+    )
     _seed_kuzu(tmp_path)
     yield tmp_path
     os.environ.pop("CGH_DB", None)

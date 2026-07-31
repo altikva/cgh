@@ -26,7 +26,7 @@ def rows(result) -> list[dict]:
         col_names = result.get_column_names()
         while result.has_next():
             row = result.get_next()
-            out.append(dict(zip(col_names, row)))
+            out.append(dict(zip(col_names, row, strict=False)))
     except Exception as exc:
         print(f"[codegraph] warning: rows() failed: {exc}", file=sys.stderr)
     return out
@@ -90,7 +90,7 @@ def lang_color(suffix: str) -> str:
     }.get(suffix, "white")
 
 
-def ro_sqlite_uri(db_path: "str | Path") -> str:
+def ro_sqlite_uri(db_path: str | Path) -> str:
     """Build a read-only SQLite ``file:`` URI that is valid on every platform.
 
     A naive ``f"file:{path}?mode=ro"`` breaks on Windows: backslashes are

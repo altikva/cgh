@@ -39,12 +39,12 @@ PROFILES: dict[str, dict] = {
         "read_notes": True,
         "timeout_s": 120,
     },
-    # Single fast model, structure only: for large batches.
+    # Single model, single call, structure only: for large batches.
     "fast": {
         "nodes_model": "qwen2.5vl:3b",
         "edges_model": None,
         "read_legend": False,
-        "read_title": True,
+        "read_title": False,
         "read_notes": False,
         "timeout_s": 60,
     },

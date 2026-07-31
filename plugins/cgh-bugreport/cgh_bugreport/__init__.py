@@ -48,7 +48,7 @@ def _capture(exc_type, exc_value, tb) -> None:
     try:
         if exc_type is KeyboardInterrupt:
             return
-        from codegraph.core.config import find_codegraph_root
+        from codegraph.plugin_api import find_codegraph_root
 
         root = find_codegraph_root(os.getcwd())
         if root is None:

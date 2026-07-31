@@ -11,7 +11,13 @@
 #              extension registry that lets a plugin extend another
 #              plugin (e.g. summarizer backends, agent integrations).
 #              This module is public, stability-guarded API: breaking
-#              changes here bump API_VERSION.
+#              changes here bump API_VERSION. It also re-exports (lazily,
+#              PEP 562) the core helpers plugins are allowed to depend
+#              on: the finding store, activity log, knowledge record,
+#              config resolution, parser lookup, federation children and
+#              subprocess hygiene. Anything NOT importable from here is
+#              internal and may change without notice; the first-party
+#              plugins import exclusively from this module.
 
 from __future__ import annotations
 
@@ -158,3 +164,66 @@ class _Registries:
     mcp_registrars: list[tuple[str, Callable]] = field(default_factory=list)
     cli_registrars: list[tuple[str, Callable]] = field(default_factory=list)
     extensions: dict[str, list[tuple[str, object]]] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Stable re-exports (lazy, PEP 562)
+# ---------------------------------------------------------------------------
+# The finding store is the real core<->plugin integration point, and the
+# audit showed plugins reaching into codegraph.state/* for it, which made
+# API_VERSION a false promise. These names are the supported surface;
+# they resolve lazily so importing plugin_api stays light (no parser
+# grammars, no sqlite) until a helper is actually used.
+
+_REEXPORTS: dict[str, tuple[str, str]] = {
+    # finding store
+    "record_findings": ("codegraph.state.findings", "record_findings"),
+    "query_findings": ("codegraph.state.findings", "query_findings"),
+    "query_findings_ro": ("codegraph.state.findings", "query_findings_ro"),
+    "findings_for_file": ("codegraph.state.findings", "findings_for_file"),
+    "findings_db_path": ("codegraph.state.findings", "findings_db_path"),
+    # audit trail + knowledge
+    "activity_log": ("codegraph.state.activity", "log"),
+    "knowledge_record": ("codegraph.state.call_log", "knowledge_record"),
+    # config + repo resolution
+    "load_config": ("codegraph.core.config", "load_config"),
+    "find_codegraph_root": ("codegraph.core.config", "find_codegraph_root"),
+    # parser lookup (triggers grammar loading on first use, by design)
+    "is_supported": ("codegraph.parsers", "is_supported"),
+    "get_parser_for_path": ("codegraph.parsers", "get_parser_for_path"),
+    # misc supported helpers
+    "git_hash_object": ("codegraph.state.scan_meta", "git_hash_object"),
+    "quiet_subprocess_kwargs": ("codegraph.core.utils", "quiet_subprocess_kwargs"),
+    "resolve_children": ("codegraph.analysis.federation", "resolve_children"),
+    "sync_static_rules": ("codegraph.state.guard", "sync_static_rules"),
+    "loaded_plugins": ("codegraph.plugins", "loaded_plugins"),
+    # parser building blocks (BaseParser subclassing per the docs)
+    "BaseParser": ("codegraph.parsers.base", "BaseParser"),
+    "FileIndex": ("codegraph.parsers.base", "FileIndex"),
+    "SectionDef": ("codegraph.parsers.base", "SectionDef"),
+}
+
+
+def server_root() -> "Path | None":
+    """The owner process's repo root, read at call time (the module
+    global is None at import and set in owner_main; capturing it at
+    register time is the classic footgun). MCP tools registered by
+    plugins call this instead of reaching into codegraph.server."""
+    import codegraph.server as _srv
+
+    return _srv._root
+
+
+def __getattr__(name: str):
+    target = _REEXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(target[0]), target[1])
+    globals()[name] = value  # cache for subsequent lookups
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals()) + list(_REEXPORTS))

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Human-trainable confidentiality classification for cgh: label files, a lightweight local model generalizes, the egress gate enforces"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT AND CC-BY-NC-SA-4.0"
+license = "MIT"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 # cgh itself is a peer dependency, deliberately not declared: the plugin
 # only ever loads through cgh's entry point group, so it is inert without

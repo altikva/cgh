@@ -284,7 +284,6 @@ def register(mcp) -> None:
                 }
             )
 
-        # Persist to config
         config_path, data = _load_config_toml(root)
         if not config_path.exists():
             return json.dumps(
@@ -294,6 +293,47 @@ def register(mcp) -> None:
                 }
             )
         extra_dirs = data.get("codegraph", {}).get("extra_dirs", [])
+
+        # Containment: inside the repo root is always fine. Outside it,
+        # only directories a human already declared in extra_dirs may be
+        # indexed: without this, the tool is an arbitrary-filesystem-read
+        # primitive for any prompt-injected MCP client (walk + index makes
+        # the content queryable). Declaring a sibling repo is a human
+        # decision, made via `cgh add-dir add` or config.toml.
+        root_resolved = root.resolve()
+        inside_root = resolved == root_resolved or str(resolved).startswith(
+            str(root_resolved) + os.sep
+        )
+        if not inside_root:
+            declared: set[str] = set()
+            for entry in extra_dirs:
+                entry_path = Path(entry)
+                if not entry_path.is_absolute():
+                    entry_path = root / entry
+                try:
+                    declared.add(str(entry_path.resolve()))
+                except OSError:
+                    continue
+            if str(resolved) not in declared:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"{resolved} is outside the repo root and not "
+                            "declared in [codegraph] extra_dirs. Declare it "
+                            "first (a human decision): `cgh add-dir add "
+                            f"{path}` or add it to .codegraph/config.toml."
+                        ),
+                    }
+                )
+            try:
+                from codegraph.state.activity import log as _activity
+
+                _activity(
+                    root, "index", f"add_directory outside root (declared): {resolved}"
+                )
+            except Exception:
+                pass
         try:
             rel = os.path.relpath(resolved, root)
         except ValueError:

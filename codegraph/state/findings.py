@@ -128,13 +128,25 @@ def record_findings(
     how ``already_scanned`` knows a clean file was scanned at this SHA.
     """
     now = time.time()
-    secure = False
+    # Fail CLOSED: if the mode probe breaks (unreadable config, import
+    # error), pseudonymize anyway. A superfluous pseudonym costs nothing;
+    # a silent fallback to raw values voids the secure-at-rest guarantee.
+    secure = True
     try:
         from codegraph.state.guard import guard_mode
 
         secure = guard_mode(repo_root) == "secure"
-    except Exception:
-        pass
+    except Exception as exc:
+        try:
+            from codegraph.state.activity import log as _activity
+
+            _activity(
+                repo_root,
+                "findings",
+                f"guard_mode probe failed, failing closed (pseudonymizing): {exc}",
+            )
+        except Exception:
+            pass
     with _LOCK:
         conn = _get_conn(repo_root)
         conn.execute(

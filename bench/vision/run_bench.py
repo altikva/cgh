@@ -66,7 +66,9 @@ PII_BAIT = re.compile(
 )
 
 
-def ask(model: str, image_path: Path, prompt: str = PROMPT) -> tuple[str, float]:
+def ask(
+    model: str, image_path: Path, prompt: str = PROMPT, timeout_s: int = 600
+) -> tuple[str, float]:
     payload = json.dumps(
         {
             "model": model,
@@ -82,7 +84,7 @@ def ask(model: str, image_path: Path, prompt: str = PROMPT) -> tuple[str, float]
         headers={"Content-Type": "application/json"},
     )
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=600) as resp:
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         out = json.loads(resp.read().decode())
     return out.get("response", ""), time.time() - t0
 

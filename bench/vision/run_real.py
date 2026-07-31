@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-from run_bench import MODELS, ask, parse_json
+from run_bench import MODELS, ask, ask_ensemble, parse_json
 
 REAL = Path(__file__).parent / "real"
 OUT = Path(__file__).parent / "real_out"
@@ -36,11 +36,14 @@ def main() -> None:
         for img in images:
             t0 = time.time()
             try:
-                raw, dt = ask(model, img)
+                if model == "ensemble":
+                    raw, dt, parsed = ask_ensemble(img)
+                else:
+                    raw, dt = ask(model, img)
+                    parsed = parse_json(raw)
             except Exception as exc:
                 print(f"{model:20s} {img.stem:24s} ERROR {str(exc)[:60]}", flush=True)
                 continue
-            parsed = parse_json(raw)
             stem = f"{model.replace(':', '_').replace('/', '_')}__{img.stem}"
             (OUT / f"{stem}.raw.txt").write_text(raw, encoding="utf-8")
             if parsed is not None:

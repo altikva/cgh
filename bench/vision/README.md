@@ -18,3 +18,26 @@ spec the image was drawn from: node precision/recall with fuzzy label
 matching, edge recall (either direction), zone recall, JSON
 compliance, seconds per image. Results land in `RESULTS.md` and
 `results.json`.
+
+## Real corpus pass
+
+Drop any images into `real/` (gitignored, nothing leaves the machine)
+and run `python run_real.py [models...]` ("ensemble" is accepted).
+Latest pass, 40 real diagrams (drawio exports, GKE/GCP architectures,
+CI/CD, monitoring, plus screen photos): 100% valid JSON, zero empty
+extractions across qwen2.5vl:3b, gemma3:4b and the ensemble; the
+ensemble averaged 9.4 nodes and 19.5 edges per diagram at ~12 s/image.
+
+## Enriched pipeline (extract.py)
+
+`python extract.py <image> [default|fast|photo]` runs the pipeline the
+cgh-vision plugin will ship and prints markdown with a Mermaid block.
+Three passes, each shaped by the bench evidence: structure with the
+plain contract (best node recall), enrichment over the found labels
+(title, kinds, tech, legend, notes; keyed joins are normalized and a
+legend may only be reported when actually drawn, echo entries are
+filtered), then the constrained edge reading. Post-processing merges
+fuzzy-duplicate nodes, drops arrow annotations mistaken for boxes,
+dedups reversed edges, and splits identities (IPs, CIDRs, FQDNs,
+emails, server names) out of labels into attributes so the anonymize
+stage has a clean target.

@@ -30,19 +30,11 @@ _FTS_FILE = "fts.db"
 
 
 def _detect_backend_file(repo_root: Path) -> tuple[str, Path] | None:
-    """Return ('duckdb' | 'kuzu', file_path) for whichever graph DB exists
-    in ``repo_root/.codegraph/``. DuckDB wins when both are present so a
-    half-migrated repo (Kuzu cached + new DuckDB) reads the new one.
-    Returns None when no graph DB is present.
-    """
-    cg = repo_root / _DB_DIR
-    duck_path = cg / _DUCKDB_FILE
-    kuzu_path = cg / _KUZU_FILE
-    if duck_path.exists():
-        return ("duckdb", duck_path)
-    if kuzu_path.exists():
-        return ("kuzu", kuzu_path)
-    return None
+    """Single tie-break authority lives in core.db; kept as a thin alias
+    for existing callers and tests."""
+    from codegraph.core.db import detect_backend_file
+
+    return detect_backend_file(repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -191,60 +183,17 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
     if detected is None:
         yield None
         return
-    backend, _ = detected
+    backend, db_path = detected
 
-    if backend == "duckdb":
-        from codegraph.core.db_duckdb import DuckDBGraphDB
+    from codegraph.core.db import open_graphdb_file_ro
 
-        db_path = repo_root / _DB_DIR / _DUCKDB_FILE
-        conn: GraphDB | None = None
-        try:
-            try:
-                conn = DuckDBGraphDB(str(db_path), read_only=True)
-            except Exception:
-                yield None
-                return
-            yield conn
-        finally:
-            try:
-                if conn is not None:
-                    conn.close()
-            except Exception:
-                pass
-        return
-
-    # Kuzu path. Kuzu is an optional extra since v0.4.2, a subrepo can
-    # be on Kuzu while this (parent) install has no kuzu package. Degrade
-    # to None rather than crashing the whole federated query.
+    conn = open_graphdb_file_ro(backend, db_path)
     try:
-        import kuzu
-    except ImportError:
-        yield None
-        return
-
-    from codegraph.core.db_kuzu import KuzuGraphDB
-
-    db_path = repo_root / _DB_DIR / _KUZU_FILE
-    db = None
-    raw = None
-    try:
-        try:
-            db = kuzu.Database(str(db_path), read_only=True)
-            raw = kuzu.Connection(db)
-        except RuntimeError:
-            # Locked or schema mismatch, caller should treat as "skipped"
-            yield None
-            return
-        yield KuzuGraphDB(raw)
+        yield conn
     finally:
         try:
-            if raw is not None:
-                raw.close()
-        except Exception:
-            pass
-        try:
-            if db is not None:
-                db.close()
+            if conn is not None:
+                conn.close()
         except Exception:
             pass
 

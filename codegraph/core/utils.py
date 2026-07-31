@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -115,3 +116,19 @@ def quiet_subprocess_kwargs() -> dict:
 
         return {"creationflags": getattr(_sp, "CREATE_NO_WINDOW", 0)}
     return {}
+
+
+_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def checked_identifier(name: str) -> str:
+    """Allow-list gate for identifiers interpolated into SQL/Cypher
+    (field names, order_by entries). Values are always parameterized;
+    identifiers cannot be, so anything not identifier-shaped raises
+    before it reaches a query string, even though today's callers pass
+    constants (defense in depth, per the audit)."""
+    if not isinstance(name, str) or not _SQL_IDENT_RE.match(name):
+        from codegraph.errors import BackendError
+
+        raise BackendError(f"invalid identifier in query: {name!r}")
+    return name

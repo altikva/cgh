@@ -77,8 +77,12 @@ EDGES: dict[str, EdgeSpec] = {
     "DEFINES_CLASS": EdgeSpec(
         "DEFINES_CLASS", "edge_defines_class", "File", "Class", "from_path", "to_id"
     ),
-    "CALLS": EdgeSpec("CALLS", "edge_calls", "Function", "Function", "from_id", "to_id"),
-    "INHERITS": EdgeSpec("INHERITS", "edge_inherits", "Class", "Class", "from_id", "to_id"),
+    "CALLS": EdgeSpec(
+        "CALLS", "edge_calls", "Function", "Function", "from_id", "to_id"
+    ),
+    "INHERITS": EdgeSpec(
+        "INHERITS", "edge_inherits", "Class", "Class", "from_id", "to_id"
+    ),
     "HAS_METHOD": EdgeSpec(
         "HAS_METHOD", "edge_has_method", "Class", "Function", "from_id", "to_id"
     ),

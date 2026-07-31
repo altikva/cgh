@@ -47,7 +47,7 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
-def find_codegraph_root(start: "str | Path") -> "Path | None":
+def find_codegraph_root(start: str | Path) -> Path | None:
     """Walk up from ``start`` to the nearest ancestor that has a .codegraph/
     directory, the way git finds its repo root via .git. Returns that
     directory, or None if none is found up to the filesystem root.

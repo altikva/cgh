@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import argparse
-
 import os
 from pathlib import Path
 
@@ -223,7 +222,7 @@ def _render_status_table(
     table.add_column("git")
     table.add_column("path")
 
-    for child, status in zip(children, statuses):
+    for child, status in zip(children, statuses, strict=False):
         try:
             display = "./" + str(child.relative_to(root))
         except ValueError:

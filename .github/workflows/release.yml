@@ -61,7 +61,9 @@ jobs:
 
       - name: Lint with ruff
         # Pinned to match ci.yml, a new ruff release must not block a tag.
-        run: uvx ruff@0.15.9 check .
+        run: |
+          uvx ruff@0.15.9 check .
+          uvx ruff@0.15.9 format --check .
 
       - name: Run pytest
         # Validate on the default Python with the kuzu extra so both backends

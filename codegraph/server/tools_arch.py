@@ -86,8 +86,9 @@ def register(mcp) -> None:
                 for role_name, files in layer_dict.items():
                     files.sort(key=lambda e: e["path"])
                     if len(files) > max_files_per_role:
-                        layer_dict[role_name] = files[:max_files_per_role] + [
-                            {"path": f"... {len(files) - max_files_per_role} more"}
+                        layer_dict[role_name] = [
+                            *files[:max_files_per_role],
+                            {"path": f"... {len(files) - max_files_per_role} more"},
                         ]
             ordered = {
                 lyr: dict(by_layer[lyr]) for lyr in LAYER_ORDER if lyr in by_layer
@@ -152,8 +153,9 @@ def register(mcp) -> None:
         for role_name, files in hits_by_role.items():
             files.sort(key=lambda e: e["path"])
             if len(files) > limit_per_role:
-                hits_by_role[role_name] = files[:limit_per_role] + [
-                    {"path": f"... {len(files) - limit_per_role} more"}
+                hits_by_role[role_name] = [
+                    *files[:limit_per_role],
+                    {"path": f"... {len(files) - limit_per_role} more"},
                 ]
 
         total = sum(

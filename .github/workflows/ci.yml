@@ -68,7 +68,9 @@ jobs:
         # deserves its own chore PR). The format check is not enabled yet
         # (69 files would reformat); same story, dedicated chore/ruff-format
         # PR, then add `uvx ruff@0.15.9 format --check .`.
-        run: uvx ruff@0.15.9 check .
+        run: |
+          uvx ruff@0.15.9 check .
+          uvx ruff@0.15.9 format --check .
 
       - name: Run pytest
         # First-party plugins from plugins/ join the test env so their

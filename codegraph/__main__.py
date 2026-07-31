@@ -19,11 +19,21 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
-from codegraph.core.db import KuzuNotInstalled
-from codegraph.cli.commands_federate import cmd_federate
-from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
+from codegraph.cli.commands_federate import cmd_federate
+from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_githooks import cmd_githooks
+from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
+from codegraph.cli.commands_guard import (
+    cmd_guard,
+    cmd_hook_guard,
+    cmd_hook_guard_codex,
+)
+
+# ---------------------------------------------------------------------------
+# Commands (imported from cli subpackage)
+# ---------------------------------------------------------------------------
+from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_impact import cmd_impact
 from codegraph.cli.commands_index import (
     cmd_force_index,
@@ -34,25 +44,8 @@ from codegraph.cli.commands_index import (
     cmd_serve,
     cmd_watch,
 )
-
-# ---------------------------------------------------------------------------
-# Commands (imported from cli subpackage)
-# ---------------------------------------------------------------------------
-from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
-from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
-from codegraph.cli.commands_findings import cmd_findings
-from codegraph.cli.commands_guard import (
-    cmd_guard,
-    cmd_hook_guard,
-    cmd_hook_guard_codex,
-)
-from codegraph.cli.commands_session import (
-    cmd_hook_checkpoint,
-    cmd_hook_resume_header,
-    cmd_memory,
-)
-from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
+from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_monitor import (
     cmd_compact,
     cmd_diff,
@@ -64,6 +57,7 @@ from codegraph.cli.commands_monitor import (
     cmd_status,
     cmd_tail,
 )
+from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
@@ -72,6 +66,12 @@ from codegraph.cli.commands_query import (
     cmd_outline,
     cmd_search,
 )
+from codegraph.cli.commands_session import (
+    cmd_hook_checkpoint,
+    cmd_hook_resume_header,
+    cmd_memory,
+)
+from codegraph.core.db import KuzuNotInstalled
 
 
 def _cmd_serve_owner(args: argparse.Namespace) -> None:

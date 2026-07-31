@@ -91,8 +91,7 @@ def run_insights(
     if not text:
         return {"error": f"backend {backend.name} returned nothing"}
 
-    from codegraph.plugin_api import activity_log
-    from codegraph.plugin_api import knowledge_record
+    from codegraph.plugin_api import activity_log, knowledge_record
 
     try:
         activity_log(

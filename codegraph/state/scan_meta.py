@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 _META_FILE = "scan_meta.json"
 

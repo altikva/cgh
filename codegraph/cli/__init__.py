@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from codegraph import __version__ as VERSION  # noqa: N811, N812
+from codegraph import __version__ as VERSION
 from codegraph.core.utils import lang_color as _lang_color
 from codegraph.core.utils import rows as _rows
 from codegraph.core.utils import short_path as _short_path
@@ -42,11 +42,11 @@ def _get_conn(root, readonly=False):
 
 
 __all__ = [
-    "console",
     "LOGO",
     "VERSION",
     "_get_conn",
+    "_lang_color",
     "_rows",
     "_short_path",
-    "_lang_color",
+    "console",
 ]

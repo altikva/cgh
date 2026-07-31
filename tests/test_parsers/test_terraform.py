@@ -41,7 +41,9 @@ class TestTerraformParser:
         parser = get_parser(".tf")
         idx = parser.parse(sample_terraform)
 
-        bucket = next(r for r in idx.resources if r.name == "main" and r.kind == "resource")
+        bucket = next(
+            r for r in idx.resources if r.name == "main" and r.kind == "resource"
+        )
         assert bucket.type == "google_storage_bucket"
 
     def test_line_numbers(self, sample_terraform):

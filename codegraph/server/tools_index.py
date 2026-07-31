@@ -8,11 +8,11 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import json
 import os
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 
 def _within_repo(target: Path, root: Path) -> bool:

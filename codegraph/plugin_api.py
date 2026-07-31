@@ -21,9 +21,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from codegraph.parsers.base import FileIndex
@@ -84,7 +85,7 @@ class PluginAPI:
         plugin_name: str,
         repo_root: Path | None,
         config: dict[str, Any],
-        registries: "_Registries",
+        registries: _Registries,
     ) -> None:
         self.plugin_name = plugin_name
         self.repo_root = repo_root
@@ -204,7 +205,7 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
 }
 
 
-def server_root() -> "Path | None":
+def server_root() -> Path | None:
     """The owner process's repo root, read at call time (the module
     global is None at import and set in owner_main; capturing it at
     register time is the classic footgun). MCP tools registered by

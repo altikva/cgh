@@ -21,8 +21,8 @@ import pytest
 
 pytest.importorskip("cgh_bugreport")
 
-from cgh_bugreport.payload import build_report, fingerprint  # noqa: E402
-from cgh_bugreport.spool import (  # noqa: E402
+from cgh_bugreport.payload import build_report, fingerprint
+from cgh_bugreport.spool import (
     list_reports,
     load_report,
     purge,
@@ -212,7 +212,7 @@ class TestSend:
         from cgh_bugreport.cli import _dispatch
 
         self._spooled(tmp_path)
-        calls, fake = self._gh_script({"repo view": (1, "")})
+        _calls, fake = self._gh_script({"repo view": (1, "")})
         monkeypatch.setattr("subprocess.run", fake)
         with pytest.raises(SystemExit):
             _dispatch(

@@ -35,7 +35,9 @@ def is_on_path(target: str, path_env: str | None = None) -> bool:
     """True if ``target`` is already one of the PATH entries."""
     path_env = os.environ.get("PATH", "") if path_env is None else path_env
     want = os.path.normcase(os.path.normpath(target))
-    return any(os.path.normcase(os.path.normpath(p)) == want for p in _split_path(path_env))
+    return any(
+        os.path.normcase(os.path.normpath(p)) == want for p in _split_path(path_env)
+    )
 
 
 def to_msys_path(win_path: str) -> str:
@@ -47,7 +49,7 @@ def to_msys_path(win_path: str) -> str:
     return f"/{drive}/{rest}"
 
 
-def detect_env(environ: "dict | None" = None) -> str:
+def detect_env(environ: dict | None = None) -> str:
     """Classify the runtime: gitbash | windows | wsl | macos | linux."""
     environ = os.environ if environ is None else environ
     if environ.get("MSYSTEM"):
@@ -64,7 +66,7 @@ def detect_env(environ: "dict | None" = None) -> str:
     return "linux"
 
 
-def shell_profile(environ: "dict | None" = None, home: "Path | str | None" = None) -> Path:
+def shell_profile(environ: dict | None = None, home: Path | str | None = None) -> Path:
     """The shell rc file to edit, based on $SHELL. Falls back to ~/.profile."""
     environ = os.environ if environ is None else environ
     home = Path.home() if home is None else Path(home)

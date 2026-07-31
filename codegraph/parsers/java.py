@@ -122,14 +122,22 @@ class JavaParser(BaseParser):
             if superclass:
                 # superclass node like `extends Foo`
                 for child in superclass.children:
-                    if child.type in ("identifier", "type_identifier", "scoped_type_identifier"):
+                    if child.type in (
+                        "identifier",
+                        "type_identifier",
+                        "scoped_type_identifier",
+                    ):
                         bases.append(_ident(child, src))
             interfaces = decl.child_by_field_name("interfaces")
             if interfaces:
                 for child in interfaces.children:
                     if child.type == "type_list":
                         for t in child.children:
-                            if t.type in ("identifier", "type_identifier", "scoped_type_identifier"):
+                            if t.type in (
+                                "identifier",
+                                "type_identifier",
+                                "scoped_type_identifier",
+                            ):
                                 bases.append(_ident(t, src))
             index.classes.append(
                 ClassDef(

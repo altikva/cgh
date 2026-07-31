@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-
 from codegraph.analysis.roles import LAYER_ORDER as _LAYER_ORDER
 from codegraph.core.utils import safe_id as _safe_id
 

@@ -76,7 +76,11 @@ def _py_doc(src: str) -> str:
     lines = src.splitlines()
     i = 0
     n = len(lines)
-    while i < n and (lines[i].startswith("#") or lines[i].strip() == "" or lines[i].startswith("from __future__")):
+    while i < n and (
+        lines[i].startswith("#")
+        or lines[i].strip() == ""
+        or lines[i].startswith("from __future__")
+    ):
         i += 1
     if i >= n:
         return _header_comment(src, prefix="#")  # fallback: read banner comments

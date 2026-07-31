@@ -118,6 +118,58 @@ include = ["codegraph", "codegraph.*", "cgh"]
 [tool.setuptools.package-data]
 codegraph = ["py.typed", "skills/*/SKILL.md", "skills/*/*.md"]
 
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Explicit selection: the defaults are only E4/E7/E9/F, which leaves
+# bugbear, security, simplify and modernize OFF. Every ignore below is
+# a conscious decision, not a leftover.
+select = ["E", "F", "B", "I", "S", "SIM", "UP", "RUF"]
+ignore = [
+    # The formatter is the line-length authority; long literals stay.
+    "E501",
+    # Audited posture: argv lists only, timeouts everywhere, `--`
+    # separators for agent input (see the 2026-07-31 audit). S603 flags
+    # every subprocess call and S607 the deliberate PATH resolution of
+    # git/gh/agent CLIs.
+    "S603", "S607",
+    # try/except-pass and -continue were triaged by the audit: write
+    # paths log or propagate, the remainder is deliberate best-effort
+    # (probes, cleanup, display). The review rule, not a lint, guards
+    # new ones.
+    "S110", "S112",
+    # contextlib.suppress is not house style; explicit except blocks
+    # carry the triage comments the rules require.
+    "SIM105",
+    # Mutable class defaults: mostly ClassVar-style tables in parsers;
+    # adopt progressively, not as one sweep.
+    "RUF012",
+    # French prose in user-facing strings trips the ambiguous-unicode
+    # detectors (apostrophes, NBSP).
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is the test idiom.
+"tests/**" = ["S101", "S105", "S108", "S608"]
+"plugins/*/tests/**" = ["S101", "S105", "S108"]
+"bench/**" = ["S101", "S310"]
+"examples/**" = ["S101"]
+# The two adapters interpolate identifiers behind checked_identifier
+# (allow-list gate); the sidecar SQLite modules build clause lists from
+# constants. S608 cannot see the gate.
+"codegraph/core/db_duckdb.py" = ["S608"]
+"codegraph/core/db_kuzu.py" = ["S608"]
+"codegraph/core/fts.py" = ["S608"]
+"codegraph/state/*.py" = ["S608"]
+"codegraph/claude_state/*.py" = ["S608"]
+# Loopback-only HTTP (owner bridge, Ollama daemon), audited: no
+# user-controlled URLs.
+"codegraph/**" = ["S310"]
+"plugins/cgh-vision/**" = ["S310"]
+"plugins/cgh-summarize/**" = ["S310"]
+
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]

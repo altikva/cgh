@@ -55,15 +55,28 @@ class TestQueryResult:
 class TestSchemaInit:
     def test_node_tables_created(self, duckdb_db):
         # Each node table should be queryable (returns 0 rows on a fresh DB).
-        for table in ("file", "function", "class", "endpoint",
-                      "tf_resource", "tf_var", "md_section"):
+        for table in (
+            "file",
+            "function",
+            "class",
+            "endpoint",
+            "tf_resource",
+            "tf_var",
+            "md_section",
+        ):
             result = duckdb_db.execute(f"SELECT count(*) FROM {table}")
             assert result.has_next()
             assert result.get_next() == [0]
 
     def test_edge_tables_created(self, duckdb_db):
-        for table in ("edge_imports", "edge_calls", "edge_inherits",
-                      "edge_has_method", "edge_defines_fn", "edge_defines_class"):
+        for table in (
+            "edge_imports",
+            "edge_calls",
+            "edge_inherits",
+            "edge_has_method",
+            "edge_defines_fn",
+            "edge_defines_class",
+        ):
             result = duckdb_db.execute(f"SELECT count(*) FROM {table}")
             assert result.has_next()
             assert result.get_next() == [0]

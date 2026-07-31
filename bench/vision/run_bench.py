@@ -32,7 +32,24 @@ MODELS = sys.argv[1:] or [
     "granite3.2-vision",
     "qwen2.5vl:3b",
     "gemma3:4b",
+    "ensemble",
 ]
+
+# The ensemble plays each model to its measured strength: qwen owns
+# nodes and zones (best precision, best JSON discipline), then gemma
+# reads the arrows constrained to qwen's node list, and the edge sets
+# are unioned. Same total locality, roughly the sum of both latencies.
+ENSEMBLE_NODES = "qwen2.5vl:3b"
+ENSEMBLE_EDGES = "gemma3:4b"
+
+EDGE_PROMPT = """You are reading a technical architecture diagram.
+The boxes in this diagram are exactly these labels:
+{nodes}
+Return ONLY a JSON object, no prose, no markdown fence, with exactly:
+{{"edges": [["source label", "target label"], ...]}}
+listing every drawn arrow between two of these boxes, directed from
+source to target, using exactly the labels above.
+"""
 
 PROMPT = """You are reading a technical architecture diagram.
 Return ONLY a JSON object, no prose, no markdown fence, with exactly:
@@ -49,11 +66,11 @@ PII_BAIT = re.compile(
 )
 
 
-def ask(model: str, image_path: Path) -> tuple[str, float]:
+def ask(model: str, image_path: Path, prompt: str = PROMPT) -> tuple[str, float]:
     payload = json.dumps(
         {
             "model": model,
-            "prompt": PROMPT,
+            "prompt": prompt,
             "images": [base64.b64encode(image_path.read_bytes()).decode()],
             "stream": False,
             "options": {"temperature": 0},
@@ -68,6 +85,26 @@ def ask(model: str, image_path: Path) -> tuple[str, float]:
     with urllib.request.urlopen(req, timeout=600) as resp:
         out = json.loads(resp.read().decode())
     return out.get("response", ""), time.time() - t0
+
+
+def ask_ensemble(image_path: Path) -> tuple[str, float, dict | None]:
+    """Two-pass extraction: nodes/zones from ENSEMBLE_NODES, then
+    ENSEMBLE_EDGES reads the arrows constrained to that node list; the
+    two edge sets are unioned. Returns (raw concat, total secs, pred)."""
+    raw_n, dt_n = ask(ENSEMBLE_NODES, image_path)
+    base = parse_json(raw_n) or {}
+    nodes = [_label(n) for n in (base.get("nodes") or []) if _label(n).strip()]
+    if not nodes:
+        return raw_n, dt_n, None
+    prompt = EDGE_PROMPT.format(nodes="\n".join(f"- {n}" for n in nodes))
+    raw_e, dt_e = ask(ENSEMBLE_EDGES, image_path, prompt=prompt)
+    extra = parse_json(raw_e) or {}
+    pred = {
+        "nodes": nodes,
+        "edges": list(base.get("edges") or []) + list(extra.get("edges") or []),
+        "zones": base.get("zones") or [],
+    }
+    return raw_n + "\n" + raw_e, dt_n + dt_e, pred
 
 
 def parse_json(text: str) -> dict | None:
@@ -132,6 +169,7 @@ def score(pred: dict | None, truth: dict) -> dict:
             "json_ok": 0,
             "node_p": 0.0,
             "node_r": 0.0,
+            "edge_p": 0.0,
             "edge_r": 0.0,
             "zone_r": 0.0,
         }
@@ -147,17 +185,18 @@ def score(pred: dict | None, truth: dict) -> dict:
     node_r = len(matched) / len(truth["nodes"])
 
     truth_edges = {(a, b) for a, b in truth["edges"]}
-    hit = 0
-    for e in pred.get("edges") or []:
-        pair = _edge_pair(e)
-        if pair is None:
-            continue
-        a, b = mapping.get(norm(pair[0])), mapping.get(norm(pair[1]))
+    pred_pairs = [p for e in (pred.get("edges") or []) if (p := _edge_pair(e))]
+    matched_truth: set[frozenset] = set()
+    good_preds = 0
+    for a_raw, b_raw in pred_pairs:
+        a, b = mapping.get(norm(a_raw)), mapping.get(norm(b_raw))
         # Direction is the hardest part for small VLMs; count either way
         # but track it, extraction without direction still builds a graph.
         if a and b and ((a, b) in truth_edges or (b, a) in truth_edges):
-            hit += 1
-    edge_r = hit / len(truth_edges) if truth_edges else 1.0
+            good_preds += 1
+            matched_truth.add(frozenset((a, b)))
+    edge_r = len(matched_truth) / len(truth_edges) if truth_edges else 1.0
+    edge_p = good_preds / len(pred_pairs) if pred_pairs else 0.0
 
     zones = truth.get("zones") or []
     zhit = (
@@ -170,6 +209,7 @@ def score(pred: dict | None, truth: dict) -> dict:
         "json_ok": 1,
         "node_p": node_p,
         "node_r": node_r,
+        "edge_p": edge_p,
         "edge_r": edge_r,
         "zone_r": zone_r,
     }
@@ -186,11 +226,15 @@ def main() -> None:
                 img.with_suffix("").with_suffix(".truth.json").read_text()
             )
             try:
-                raw, dt = ask(model, img)
+                if model == "ensemble":
+                    raw, dt, pred = ask_ensemble(img)
+                else:
+                    raw, dt = ask(model, img)
+                    pred = parse_json(raw)
             except Exception as exc:
                 rows.append({"model": model, "img": img.stem, "error": str(exc)[:80]})
                 continue
-            s = score(parse_json(raw), truth)
+            s = score(pred, truth)
             s.update(
                 model=model,
                 img=img.stem,
@@ -201,7 +245,8 @@ def main() -> None:
             print(
                 f"{model:20s} {img.stem:16s} json={s['json_ok']} "
                 f"nodes P={s['node_p']:.2f} R={s['node_r']:.2f} "
-                f"edges R={s['edge_r']:.2f} zones R={s['zone_r']:.2f} "
+                f"edges P={s['edge_p']:.2f} R={s['edge_r']:.2f} "
+                f"zones R={s['zone_r']:.2f} "
                 f"{s['secs']}s pii={s['pii_echo']}",
                 flush=True,
             )
@@ -224,8 +269,8 @@ def write_report(rows: list[dict]) -> None:
         "where the raw answer echoed the planted emails/IPs/project ids",
         "(expected: extraction copies labels; anonymization must catch).",
         "",
-        "| model | json ok | node P | node R | edge R | zone R | avg s/img | pii echo |",
-        "|---|---|---|---|---|---|---|---|",
+        "| model | json ok | node P | node R | edge P | edge R | zone R | avg s/img | pii echo |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for model, rs in by_model.items():
         ok = [r for r in rs if "error" not in r]
@@ -240,7 +285,8 @@ def write_report(rows: list[dict]) -> None:
         lines.append(
             f"| {model} | {sum(r['json_ok'] for r in ok)}/{len(ok)}"
             + (f" ({errs} err)" if errs else "")
-            + f" | {avg('node_p'):.2f} | {avg('node_r'):.2f} | {avg('edge_r'):.2f}"
+            + f" | {avg('node_p'):.2f} | {avg('node_r'):.2f} | {avg('edge_p'):.2f}"
+            f" | {avg('edge_r'):.2f}"
             f" | {avg('zone_r'):.2f} | {avg('secs'):.0f} | "
             f"{sum(r.get('pii_echo', 0) for r in ok)}/{len(ok)} |"
         )

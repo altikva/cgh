@@ -17,6 +17,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   exactly zero gain, and dropped.)
 
 ### Fixed
+- **One backend factory, identifier allow-list in both backends**:
+  which graph backend a repo uses (and which file) was decided by
+  copies of the same if/else in the connection cache, federation and
+  the status commands; `detect_backend_file` in `core.db` is now the
+  single tie-break authority and `open_graphdb_file_ro` the shared
+  read-only opener (federation and status consume them; a
+  factory-opened Kuzu connection closes its Database handle with the
+  connection). And every SQL/Cypher identifier interpolation in the
+  two adapters (26 sites: where/contains field names, return_fields,
+  order_by, edge property keys) now passes an allow-list gate that
+  raises `BackendError` on anything not identifier-shaped, closing
+  the latent injection the audit flagged even though current callers
+  pass constants.
 - **Connection caches keyed by repo root**: the graph connection cache
   and the knowledge/call-log connection were first-caller-wins process
   globals, so a second repo touched in the same process (federation,

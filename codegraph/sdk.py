@@ -173,17 +173,34 @@ def summarize(
         from cgh_summarize.backends import pick_backend
     except ImportError as exc:
         raise CapabilityMissing("summarize", "cgh-summarize") from exc
+    from cgh_summarize.backends import StructuralBackend
+
     cfg = dict(config or {})
     backend = pick_backend(cfg, cloud_allowed=cloud_allowed)
     if backend is None:
         return ""
+    # The structural backend summarizes parser outlines, which plain
+    # text does not have; its SDK equivalent is an honest excerpt.
+    if isinstance(backend, StructuralBackend):
+        return _excerpt(text)
     language = str(cfg.get("language", "en"))
     prompt = (
         f"Summarize the following content for a software engineer, in "
         f"{language}, 5 sentences at most, plain prose, no preamble.\n"
         "OUTLINE:\n\nEXCERPT:\n" + text[:4000]
     )
-    return (backend.summarize(prompt, cfg) or "").strip()
+    try:
+        return (backend.summarize(prompt, cfg) or "").strip()
+    except Exception:
+        # A picked backend can still fail (daemon up but model not
+        # pulled, CLI auth expired); the excerpt keeps the contract:
+        # some summary, never an exception mid-pipeline.
+        return _excerpt(text)
+
+
+def _excerpt(text: str, limit: int = 300) -> str:
+    collapsed = " ".join(text.split())
+    return collapsed[:limit] + ("..." if len(collapsed) > limit else "")
 
 
 # -- vision (cgh-vision) ----------------------------------------------------

@@ -8,6 +8,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Security
+- **The secure-mode probe fails closed**: if `record_findings` cannot
+  determine the guard mode (unreadable config, transient error), it
+  now pseudonymizes sensitive values instead of silently falling back
+  to raw storage, and logs the failed probe. A broken probe can no
+  longer void the secure-at-rest guarantee.
+- **`add_directory` is confined**: the MCP tool indexes paths inside
+  the repo root freely, but a path outside the root is only accepted
+  when a human already declared it in `[codegraph] extra_dirs` (via
+  `cgh add-dir add` or config.toml), and the acceptance is logged.
+  Without this, any prompt-injected MCP client could walk and index
+  arbitrary readable directories, making their content queryable.
+
 ### Added
 - **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
   the benchmarked image pipeline as a deferred scanner and a `cgh

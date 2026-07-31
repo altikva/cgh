@@ -432,6 +432,7 @@ def register(mcp) -> None:
         try:
             result = subprocess.run(
                 cmd,
+                timeout=60,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

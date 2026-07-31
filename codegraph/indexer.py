@@ -369,11 +369,21 @@ def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
     except Exception:
         return False
 
+    dropped = 0
     for caller_id, _target_file, callee_id in edges:
         try:
             conn.ensure_edge("CALLS", caller_id, callee_id)
         except Exception:
-            continue
+            dropped += 1
+    if dropped and repo_root is not None:
+        # An incomplete call graph served as authoritative is worse than
+        # a noisy log line: downstream tools (find_callers, impact_of,
+        # dead code) trust these edges.
+        from codegraph.state.activity import log as _act_log
+
+        _act_log(
+            repo_root, "scan_error", f"{dropped} CALLS edge(s) dropped for {idx.path}"
+        )
     return True
 
 
@@ -1195,7 +1205,9 @@ def index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    # Also index extra_dirs from config.toml
+    # Also index extra_dirs from config.toml. A malformed config must
+    # not silently shrink coverage: the user configured those dirs and
+    # deserves to know they were skipped.
     extra_dirs: list[str] = []
     try:
         import tomllib
@@ -1205,8 +1217,13 @@ def index_repo(
             with open(cfg, "rb") as f:
                 cfg_data = tomllib.load(f)
             extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"  ! config.toml unreadable, extra_dirs skipped: {exc}")
+        _activity_log(
+            repo_root,
+            "scan_error",
+            f"config.toml unreadable, extra_dirs skipped: {exc}",
+        )
 
     for rel in extra_dirs:
         extra_root = (repo_root / rel).resolve()
@@ -1359,8 +1376,13 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
     fts_conn = _get_fts(repo_root) if repo_root else None
 
-    # Delete stale File nodes + attached graph nodes
+    # Delete stale File nodes + attached graph nodes. A failed delete
+    # leaves ghost nodes and stale FTS rows behind, so it is logged
+    # (same as the full-scan path), never swallowed.
+    from codegraph.state.activity import log as _act_log
+
     deleted_count = 0
+    delete_errors = 0
     for path in to_delete:
         try:
             conn.delete_file_completely(path)
@@ -1370,8 +1392,9 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
             purge_file_findings(repo_root, path)
             deleted_count += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            delete_errors += 1
+            _act_log(repo_root, "scan_error", f"delete failed for {path}: {exc}")
 
     # Re-index changed/new files
     reindexed: list[str] = []

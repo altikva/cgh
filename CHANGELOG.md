@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Silent failures on write paths now log**: a failed node deletion in
+  the incremental reindex (previously a ghost-node source reporting
+  success), dropped CALLS edges from the precise resolver, a malformed
+  config skipping `extra_dirs`, a failed read-only close before a
+  write open, and the FTS MATCH falling back to LIKE all leave a trace
+  in the activity log or on stderr instead of being swallowed.
+- **Timeouts on every git subprocess**: seven call sites (post-commit
+  hook, git hooks setup, changed-files MCP tool, `cgh changes`) ran
+  git with no deadline; a wedged git froze the caller. All now time
+  out (30-60 s) and their callers handle the expiry.
+
 ### Security
 - **The secure-mode probe fails closed**: if `record_findings` cannot
   determine the guard mode (unreadable config, transient error), it

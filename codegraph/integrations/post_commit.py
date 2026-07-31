@@ -24,29 +24,37 @@ from pathlib import Path
 
 def _git_changed_files(repo_root: Path, since: str = "HEAD~1") -> list[str]:
     """Get files changed since a git ref."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", since],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(repo_root),
-        **quiet_subprocess_kwargs(),
-    )
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", since],
+            timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            **quiet_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return []
     return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
 
 
 def _git_commit_info(repo_root: Path) -> dict:
     """Get latest commit info."""
-    result = subprocess.run(
-        ["git", "log", "-1", "--format=%H%n%s%n%an%n%ai"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(repo_root),
-        **quiet_subprocess_kwargs(),
-    )
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%H%n%s%n%an%n%ai"],
+            timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            **quiet_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return {}
     lines = result.stdout.strip().splitlines()
     if len(lines) >= 4:
         return {

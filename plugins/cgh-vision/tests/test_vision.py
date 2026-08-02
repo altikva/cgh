@@ -26,7 +26,9 @@ from cgh_vision.pipeline import (
     extract_diagram,
     inventory,
     postprocess,
+    render_markdown,
     route,
+    route_structured,
     split_identities,
 )
 
@@ -131,6 +133,118 @@ class TestSplitIdentities:
             ["ldap.acme.internal"],
         )
         assert split_identities("Cloud Run") == ("Cloud Run", [])
+
+
+class TestRouteStructured:
+    _REPLIES = [
+        '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
+        '{"nodes": ["API", "DB"], "edges": [["API", "DB"]], "zones": []}',
+        '{"title": "Archi", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+
+    def test_structured_shape(self, monkeypatch):
+        _script(monkeypatch, list(self._REPLIES))
+        result = route_structured(IMG, {})
+        assert result["image"] == "x.png"
+        assert result["inventory"]["content"] == ["architecture_diagram"]
+        assert [n["label"] for n in result["diagram"]["nodes"]] == ["API", "DB"]
+        assert result["tables"] == [] and result["charts"] == []
+        assert result["text"] is None
+
+    def test_markdown_projection_matches_route(self, monkeypatch):
+        _script(monkeypatch, list(self._REPLIES))
+        result = route_structured(IMG, {})
+        _script(monkeypatch, list(self._REPLIES))
+        _inv, md = route(IMG, {})
+        assert render_markdown(result) == md
+
+
+class TestPostprocessZones:
+    def test_nested_list_zone_becomes_a_label(self):
+        out = postprocess({"nodes": ["A"], "edges": [], "zones": [["Cluster GKE"], []]})
+        assert [z["label"] for z in out["zones"]] == ["Cluster GKE"]
+
+    def test_dict_zone_keeps_members(self):
+        out = postprocess(
+            {"nodes": ["A"], "edges": [], "zones": [{"label": "Z", "members": ["A"]}]}
+        )
+        assert out["zones"] == [{"label": "Z", "members": ["A"]}]
+
+
+class TestProgress:
+    def test_route_announces_each_model_pass(self, monkeypatch):
+        _script(
+            monkeypatch,
+            [
+                '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
+                '{"nodes": ["API", "DB"], "edges": [], "zones": []}',
+                '{"title": "", "kinds": {}, "tech": {}}',
+                '{"edges": []}',
+            ],
+        )
+        steps: list[str] = []
+        route(IMG, {}, progress=steps.append)
+        assert len(steps) == 4  # inventory, structure, enrich, arrows
+        assert "inventory" in steps[0] and "arrows" in steps[-1]
+
+    def test_sdk_stays_silent_without_observer(self, monkeypatch):
+        _script(
+            monkeypatch,
+            ['{"summary": "a logo", "content": ["logo"], "text_density": "none"}'],
+        )
+        inv, _md = route(IMG, {})  # no progress kwarg: must not raise
+        assert inv["content"] == ["logo"]
+
+
+class TestPrescale:
+    def _png(self, tmp_path, size: int):
+        from PIL import Image
+
+        p = tmp_path / f"img{size}.png"
+        Image.new("RGB", (size, size), "white").save(p)
+        return p
+
+    def test_small_image_upscaled_2x_and_cleaned_up(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+        from PIL import Image
+
+        p = self._png(tmp_path, 300)
+        out, cleanup = prescaled(p, {})
+        try:
+            assert out != p
+            with Image.open(out) as im:
+                assert (im.width, im.height) == (600, 600)
+        finally:
+            cleanup()
+        assert not out.exists()
+
+    def test_large_image_untouched(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+
+        p = self._png(tmp_path, 1200)
+        out, _cleanup = prescaled(p, {})
+        assert out == p
+
+    def test_disabled_by_config(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+
+        p = self._png(tmp_path, 300)
+        out, _cleanup = prescaled(p, {"prescale": False})
+        assert out == p
+
+    def test_extraction_reads_the_scaled_copy(self, tmp_path, monkeypatch):
+        seen: list = []
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append(Path(path))
+            return '{"nodes": [], "edges": [], "zones": []}'
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        src = self._png(tmp_path, 300)
+        extract_diagram(src, {})
+        assert seen and seen[0] != src  # the model saw the upscaled copy
+        assert not seen[0].exists()  # and it was cleaned up after
 
 
 class TestPostprocessLegend:

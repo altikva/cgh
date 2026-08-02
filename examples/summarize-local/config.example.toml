@@ -1,0 +1,33 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-08-02
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "MIT"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Every cgh-summarize backend knob with its default. Load
+#              it yourself (tomllib) and pass the dict to
+#              sdk.summarize(text, config). In a cgh repo the same keys
+#              live under [plugin.summarize] in .codegraph/config.toml.
+
+# Force one backend instead of the auto order (agent CLIs, then local
+# daemon, then configured endpoint, then the model-free structural
+# fallback). Names: cli:claude, cli:gemini, cli:codex, cli:bob,
+# ollama, openai, structural.
+backend = "auto"
+
+# Local daemon. Only a loopback URL counts as a local backend; any
+# other host classifies as cloud and needs cloud_allowed=True.
+ollama_url = "http://127.0.0.1:11434"
+#ollama_model = "qwen2.5:1.5b"
+
+# Agent CLI models (the CLI's own auth and billing apply).
+#claude_model = "haiku"
+#gemini_model = "gemini-2.5-flash"
+
+# Any OpenAI-compatible endpoint: vLLM, LM Studio, watsonx, hosted.
+#openai_base_url = "http://127.0.0.1:8000/v1"
+#openai_model = "my-model"
+#openai_api_key_env = "OPENAI_API_KEY"
+
+# Output language of the summaries.
+#language = "en"

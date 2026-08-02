@@ -8,6 +8,45 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-03
+
+### Added
+- **A shared `--out PATH` option for artifact-emitting verbs**: the
+  result still prints on stdout (pipeable), `--out` also writes it to
+  a file with a stderr confirmation, and interactive sessions without
+  it get a one-line tip advertising the flag. Wired on `cgh vision`
+  and `cgh impact`; plugins reach the same contract through the
+  plugin API (`add_out_option`, `emit_result`).
+- **A shared `--format md|json` option**: same convention as `--out`
+  (one helper, plugin API re-export). `cgh vision --format json`
+  emits the structured extraction exactly as the SDK returns it
+  (inventory, diagram nodes/edges/zones/identities, mermaid, tables,
+  charts) instead of the markdown projection, and composes with
+  `--out report.json`. `cgh impact --format` and `cgh findings
+  --json` already spoke JSON and are unchanged.
+- **`cgh vision` shows its progress**: the pipeline announces each
+  model pass (inventory, structure, enrichment, arrows, tables) to an
+  optional observer and the CLI renders it as a transient spinner
+  with elapsed time on stderr, so the 30 seconds of model time no
+  longer look like a hang. The SDK surface stays silent by default.
+
+### Changed
+- **cgh-vision pre-scales small images before extraction**: images
+  whose smaller dimension is under 1000 px are upscaled 2x (Lanczos)
+  for the diagram passes, which the benchmark showed rescues
+  thin-line drawio exports (2 nodes / 1 edge becoming 6 / 7) and
+  never hurts the others; 3x was measured worse than 2x. Tunable via
+  `prescale` / `prescale_min_px` under `[plugin.vision]` (documented
+  in the default config template), and the plugin now depends on
+  pillow.
+
+### Fixed
+- **Zones emitted as nested lists render correctly**: some models
+  return `zones: [["Cluster GKE"], []]`; the labels came out as
+  stringified Python lists in the markdown and the Mermaid subgraphs,
+  and empty zones survived. Nested lists now flatten to their label
+  and empty zones are dropped.
+
 ## [0.9.0] - 2026-08-02
 
 ### Added
@@ -761,7 +800,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3

@@ -7,6 +7,15 @@ README (install steps included), the code, a sample config when there
 is something to customize, and a pytest suite showing how to test
 that case without any daemon or network.
 
+Every capability shown here has **three access paths**, and each
+case's README covers all three: the **SDK** (these scripts, for your
+own code), the **cgh CLI** (the same feature as a verb inside an
+indexed repo, `cgh vision`, `cgh summarize run`, `cgh findings`, no
+code at all), and **MCP through your agent** (Claude Code, Cursor or
+Codex connected to `cgh serve` reads the same results with tools like
+`findings`, `summaries` or `corpus_insights`, so the models ran at
+indexing time, not at question time).
+
 | Case | Shows | Needs |
 |---|---|---|
 | [scan-and-gate](scan-and-gate/) | scan text for PII, decide egress before calling a cloud model | cgh-pii |

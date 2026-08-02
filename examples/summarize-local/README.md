@@ -42,6 +42,23 @@ python summarize_local.py
 `config.example.toml` lists every backend knob (forcing a backend,
 models, endpoints).
 
+## Same result without writing code
+
+**cgh CLI**, inside an indexed repo (`cgh init`):
+
+```bash
+cgh summarize status        # backends, egress posture, coverage
+cgh summarize run           # summarize the tracked files, gate applied
+cgh insights                # cross-file patterns from the summaries
+cgh insights --question "where is the payment flow duplicated?"
+```
+
+**MCP through your agent**: once summaries exist, the agent calls the
+`summaries` tool (per file or corpus-wide) and `corpus_insights`
+(question answering over the gate-cleared summaries). The egress gate
+applied at summarize time, so what the agent reads never included
+content a cloud backend was not allowed to see.
+
 ## Tests
 
 `test_summarize_local.py` pins the deterministic `structural` backend

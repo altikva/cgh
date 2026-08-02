@@ -170,6 +170,56 @@ class TestProgress:
         assert inv["content"] == ["logo"]
 
 
+class TestPrescale:
+    def _png(self, tmp_path, size: int):
+        from PIL import Image
+
+        p = tmp_path / f"img{size}.png"
+        Image.new("RGB", (size, size), "white").save(p)
+        return p
+
+    def test_small_image_upscaled_2x_and_cleaned_up(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+        from PIL import Image
+
+        p = self._png(tmp_path, 300)
+        out, cleanup = prescaled(p, {})
+        try:
+            assert out != p
+            with Image.open(out) as im:
+                assert (im.width, im.height) == (600, 600)
+        finally:
+            cleanup()
+        assert not out.exists()
+
+    def test_large_image_untouched(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+
+        p = self._png(tmp_path, 1200)
+        out, _cleanup = prescaled(p, {})
+        assert out == p
+
+    def test_disabled_by_config(self, tmp_path):
+        from cgh_vision.pipeline import prescaled
+
+        p = self._png(tmp_path, 300)
+        out, _cleanup = prescaled(p, {"prescale": False})
+        assert out == p
+
+    def test_extraction_reads_the_scaled_copy(self, tmp_path, monkeypatch):
+        seen: list = []
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append(Path(path))
+            return '{"nodes": [], "edges": [], "zones": []}'
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        src = self._png(tmp_path, 300)
+        extract_diagram(src, {})
+        assert seen and seen[0] != src  # the model saw the upscaled copy
+        assert not seen[0].exists()  # and it was cleaned up after
+
+
 class TestPostprocessLegend:
     def test_schema_echo_filtered(self):
         out = postprocess(

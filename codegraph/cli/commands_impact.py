@@ -263,11 +263,14 @@ def cmd_impact(args: argparse.Namespace) -> None:
     report = _build_report(conn, root, changed)
     report["since"] = since
 
+    from codegraph.cli.output import emit_result
+
+    out = getattr(args, "out", "")
     if want_json:
         # Clean machine-parseable stdout.
-        print(json.dumps(report, indent=2))
+        emit_result(json.dumps(report, indent=2), out=out, hint="impact.json")
     else:
-        print(_render_markdown(report, since))
+        emit_result(_render_markdown(report, since), out=out, hint="impact.md")
 
 
 def _fail(want_json: bool, message: str) -> None:

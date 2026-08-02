@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from .backends import ask
@@ -324,10 +326,16 @@ def postprocess(pred: dict) -> dict:
 
     zones = []
     for z in pred.get("zones") or []:
-        label = _label(z)
+        if isinstance(z, list):
+            # Some models emit zones as nested lists (["Cluster GKE"]);
+            # without this the label becomes the stringified list.
+            label = ", ".join(s for i in z if (s := str(i).strip()))
+            raw_members = []
+        else:
+            label = _label(z)
+            raw_members = z.get("members") or [] if isinstance(z, dict) else []
         if not label.strip():
             continue
-        raw_members = z.get("members") or [] if isinstance(z, dict) else []
         members = [r for m in raw_members if (r := _resolve(str(m)))]
         zones.append({"label": label, "members": members})
 
@@ -396,13 +404,65 @@ def inventory(path: Path, config: dict) -> dict:
     }
 
 
-def extract_diagram(path: Path, config: dict) -> dict:
+def _tick(progress, message: str) -> None:
+    """Announce a pipeline step to an optional observer (the CLI's
+    progress bar). None, the default, keeps the SDK surface silent."""
+    if progress is not None:
+        progress(message)
+
+
+_PRESCALE_MIN_PX = 1000
+_PRESCALE_FACTOR = 2
+
+
+def prescaled(path: Path, config: dict) -> tuple[Path, Callable[[], None]]:
+    """2x Lanczos upscale for small images, benchmarked to rescue
+    thin-line exports (drawio) that 3-4B models cannot read at native
+    resolution, while never hurting the others. Applies when the
+    smaller dimension is under prescale_min_px (default 1000) and
+    `prescale` is not disabled. Returns (path_to_use, cleanup)."""
+    if not config.get("prescale", True):
+        return path, lambda: None
+    try:
+        from PIL import Image
+    except ImportError:  # pillow missing: extract at native resolution
+        return path, lambda: None
+    try:
+        with Image.open(path) as im:
+            if min(im.width, im.height) >= int(
+                config.get("prescale_min_px", _PRESCALE_MIN_PX)
+            ):
+                return path, lambda: None
+            scaled = im.convert("RGB").resize(
+                (im.width * _PRESCALE_FACTOR, im.height * _PRESCALE_FACTOR),
+                Image.Resampling.LANCZOS,
+            )
+    except OSError:  # unreadable/corrupt image: let the pipeline decide
+        return path, lambda: None
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        target = Path(tmp.name)
+    scaled.save(target)
+    return target, lambda: target.unlink(missing_ok=True)
+
+
+def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     """Diagram extraction: structure, optional enrichment, constrained
     edges, post-processing. Returns the extraction dict plus rendered
     `markdown` and `mermaid` keys."""
     profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
     prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    path, cleanup = prescaled(path, config)
+    try:
+        return _extract_diagram_inner(path, config, profile, timeout, prompt, progress)
+    finally:
+        cleanup()
+
+
+def _extract_diagram_inner(
+    path: Path, config: dict, profile: dict, timeout: int, prompt: str, progress
+) -> dict:
+    _tick(progress, f"reading structure ({profile['nodes_model']})")
     raw = ask(profile["nodes_model"], path, prompt, config, timeout)
     pred = parse_json(raw) or {}
     labels = [_label(n) for n in (pred.get("nodes") or []) if _label(n).strip()]
@@ -412,6 +472,7 @@ def extract_diagram(path: Path, config: dict) -> dict:
         or profile.get("read_legend")
         or profile.get("read_notes")
     ):
+        _tick(progress, f"enriching {len(labels)} label(s) ({profile['nodes_model']})")
         raw_meta = ask(
             profile["nodes_model"],
             path,
@@ -435,6 +496,7 @@ def extract_diagram(path: Path, config: dict) -> dict:
         pred["notes"] = meta.get("notes") or []
 
     if profile.get("edges_model") and labels:
+        _tick(progress, f"reading arrows ({profile['edges_model']})")
         raw_e = ask(
             profile["edges_model"],
             path,
@@ -630,37 +692,66 @@ def charts_to_markdown(charts: list[dict]) -> str:
 DIAGRAM_KINDS = {"architecture_diagram", "flowchart"}
 
 
-def route(path: Path, config: dict) -> tuple[dict, str]:
-    """The full pipeline: inventory, then only the extractors the
-    content warrants. Returns (inventory, markdown)."""
+def route_structured(path: Path, config: dict, progress=None) -> dict:
+    """The full pipeline, structured: inventory, then only the
+    extractors the content warrants. Returns {image, inventory,
+    diagram, tables, charts, text}; unrun extractors stay None/empty.
+    ``progress`` is an optional callable receiving one human-readable
+    step description per model call."""
+    _tick(progress, f"content inventory ({profile_for(config)['nodes_model']})")
     inv = inventory(path, config)
-    parts = [f"# {path.name}", "", f"_{inv['summary']}_", ""]
-    parts.append(f"Detected content: {', '.join(inv['content'])}")
-    parts.append("")
-
+    result: dict = {
+        "image": path.name,
+        "inventory": inv,
+        "diagram": None,
+        "tables": [],
+        "charts": [],
+        "text": None,
+    }
     if DIAGRAM_KINDS & set(inv["content"]):
-        ex = extract_diagram(path, config)
-        parts.append(ex["markdown"])
+        result["diagram"] = extract_diagram(path, config, progress=progress)
     if "table" in inv["content"]:
-        tables = extract_tables(path, config)
-        if tables:
-            parts.append("## Tables")
-            parts.append(tables_to_markdown(tables))
+        _tick(progress, "reading tables")
+        result["tables"] = extract_tables(path, config)
     if "chart" in inv["content"]:
-        charts = extract_charts(path, config)
-        if charts:
-            parts.append("## Charts")
-            parts.append(charts_to_markdown(charts))
+        _tick(progress, "reading charts")
+        result["charts"] = extract_charts(path, config)
     if "dense_text" in inv["content"] or (
         inv["text_density"] == "dense"
         and not ({"table", *DIAGRAM_KINDS} & set(inv["content"]))
     ):
-        txt = extract_text(path, config)
-        if txt["summary"]:
-            parts.append("## Text")
-            if txt["title"]:
-                parts.append(f"### {txt['title']}")
-            parts.append(txt["summary"])
-            parts.extend(f"- {k}" for k in txt["key_points"])
-            parts.append("")
-    return inv, "\n".join(parts)
+        _tick(progress, "summarizing text")
+        result["text"] = extract_text(path, config)
+    return result
+
+
+def render_markdown(result: dict) -> str:
+    """The markdown projection of a route_structured() result."""
+    inv = result["inventory"]
+    parts = [f"# {result['image']}", "", f"_{inv['summary']}_", ""]
+    parts.append(f"Detected content: {', '.join(inv['content'])}")
+    parts.append("")
+    if result["diagram"] is not None:
+        parts.append(result["diagram"]["markdown"])
+    if result["tables"]:
+        parts.append("## Tables")
+        parts.append(tables_to_markdown(result["tables"]))
+    if result["charts"]:
+        parts.append("## Charts")
+        parts.append(charts_to_markdown(result["charts"]))
+    txt = result["text"]
+    if txt and txt["summary"]:
+        parts.append("## Text")
+        if txt["title"]:
+            parts.append(f"### {txt['title']}")
+        parts.append(txt["summary"])
+        parts.extend(f"- {k}" for k in txt["key_points"])
+        parts.append("")
+    return "\n".join(parts)
+
+
+def route(path: Path, config: dict, progress=None) -> tuple[dict, str]:
+    """Compatibility facade over route_structured: returns
+    (inventory, markdown)."""
+    result = route_structured(path, config, progress=progress)
+    return result["inventory"], render_markdown(result)

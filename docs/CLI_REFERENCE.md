@@ -1,11 +1,23 @@
-# codegraph CLI Reference
+# cgh CLI Reference
 
-Complete reference for all 20 CLI commands. Both `codegraph` and `cgh` (short alias) work identically.
+Reference for the core CLI verbs. The single entry point is `cgh`;
+plugin verbs (`vision`, `summarize`, `insights`, `classify`, `bug`)
+are documented in their plugin's README.
 
 Global flag available on all commands:
 
 ```
 --root <DIR>    Target a different project root (default: current directory)
+```
+
+Shared options on artifact-emitting verbs (`vision`, `impact`, more
+adopting over time):
+
+```
+--out <PATH>         Also write the result to a file (stdout keeps it too);
+                     without it, interactive runs print a one-line tip.
+--format md|json     md is the human default; json is the machine shape,
+                     the same dicts the SDK returns.
 ```
 
 ---

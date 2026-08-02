@@ -2,25 +2,42 @@
 
 Runnable demonstrations of the embedding surface (`codegraph.sdk`),
 the MIT-licensed way to use cgh's bricks inside your own agent,
-pipeline or API. Each script is self-contained:
+pipeline or API. One directory per case; each holds a comprehensive
+README (install steps included), the code, a sample config when there
+is something to customize, and a pytest suite showing how to test
+that case without any daemon or network.
+
+Every capability shown here has **three access paths**, and each
+case's README covers all three: the **SDK** (these scripts, for your
+own code), the **cgh CLI** (the same feature as a verb inside an
+indexed repo, `cgh vision`, `cgh summarize run`, `cgh findings`, no
+code at all), and **MCP through your agent** (Claude Code, Cursor or
+Codex connected to `cgh serve` reads the same results with tools like
+`findings`, `summaries` or `corpus_insights`, so the models ran at
+indexing time, not at question time).
+
+| Case | Shows | Needs |
+|---|---|---|
+| [scan-and-gate](scan-and-gate/) | scan text for PII, decide egress before calling a cloud model | cgh-pii |
+| [pseudonymize-logs](pseudonymize-logs/) | log findings without ever writing the sensitive value | cgh-pii |
+| [summarize-local](summarize-local/) | summarize with the local-only default, cloud behind your gate | cgh-summarize |
+| [vision-pipeline](vision-pipeline/) | inventory an image, extract diagram/table/chart as routed | cgh-vision + Ollama |
+| [document-diagrams](document-diagrams/) | pull embedded images out of pdf/docx/pptx, extract the schemas | cgh-vision + Ollama |
+
+Quick start, all cases:
 
 ```bash
-pip install cgh cgh-pii            # scan_and_gate, pseudonymize_logs
-pip install cgh-summarize          # summarize_local
-pip install cgh-vision             # vision_pipeline (needs Ollama)
-
-python examples/scan_and_gate.py
-python examples/pseudonymize_logs.py
-python examples/summarize_local.py
-python examples/vision_pipeline.py path/to/diagram.png
+pip install cgh cgh-pii cgh-summarize cgh-vision
+python examples/scan-and-gate/scan_and_gate.py
 ```
 
-| Script | Shows |
-|---|---|
-| `scan_and_gate.py` | scan text for PII, decide egress before calling a cloud model |
-| `pseudonymize_logs.py` | log findings without ever writing the sensitive value |
-| `summarize_local.py` | summarize text with the local-only default |
-| `vision_pipeline.py` | inventory an image, extract diagram/table/chart as routed |
+The two vision cases talk to a **local Ollama daemon**, which cgh
+does not install for you; their READMEs walk through the one-time
+setup (`ollama pull qwen2.5vl:3b gemma3:4b`), pointing at an existing
+server, and why confidential images should stay on a loopback URL.
 
-The full contract (stability, what the SDK does not expose, licensing)
-lives in [docs/EMBEDDING.md](../docs/EMBEDDING.md).
+Run every example's tests offline:
+
+```bash
+pytest examples -q
+```

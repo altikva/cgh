@@ -1,0 +1,33 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-08-02
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "MIT"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Every cgh-vision knob with its default. In an embedding
+#              application, load this file yourself (tomllib) and pass
+#              the dict to the sdk.image_* functions. In a cgh repo the
+#              same keys live under [plugin.vision] in
+#              .codegraph/config.toml.
+
+# Where the Ollama daemon listens. Keep it loopback for confidential
+# images: a remote URL means the raw image bytes travel to that host.
+ollama_url = "http://127.0.0.1:11434"
+
+# Extraction profile: "default" (three passes, best quality),
+# "fast" (single pass), "photo" (screen photos: moire, low contrast).
+profile = "default"
+
+# Override the profile's models with any Ollama vision model you
+# pulled. Defaults come from the benchmark: qwen reads nodes and
+# zones, gemma reads arrows constrained to the found labels.
+#nodes_model = "qwen2.5vl:3b"
+#edges_model = "gemma3:4b"
+
+# Per model call, seconds. Raise it for large images on CPU-only.
+#timeout_s = 120
+
+# Scanner-only bounds (ignored by direct SDK calls): images outside
+# this size window are skipped during repo indexing.
+#min_bytes = 5120
+#max_bytes = 20971520

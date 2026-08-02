@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Install and remove git hooks that keep the cgh code graph fresh
 #              after content-changing git operations. The file watcher catches
@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import subprocess
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # post-merge   fires after `git pull` and `git merge`.
 # post-checkout fires after `git checkout <branch>` / `git switch` (and file
@@ -34,6 +34,7 @@ def _git_dir(repo_root: Path) -> Path | None:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
+            timeout=30,
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -42,7 +43,11 @@ def _git_dir(repo_root: Path) -> Path | None:
             check=True,
             **quiet_subprocess_kwargs(),
         ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return None
     if not out:
         return None
@@ -63,6 +68,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
     try:
         configured = subprocess.run(
             ["git", "config", "--get", "core.hooksPath"],
+            timeout=30,
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -70,7 +76,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
             errors="replace",
             **quiet_subprocess_kwargs(),
         ).stdout.strip()
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if configured:
         p = Path(configured)
@@ -78,7 +84,7 @@ def _hooks_dir(repo_root: Path) -> Path | None:
     return git_dir / "hooks"
 
 
-def hooks_target_info(repo_root: Path | str) -> "tuple[Path | None, bool]":
+def hooks_target_info(repo_root: Path | str) -> tuple[Path | None, bool]:
     """Return (hooks_dir, is_shared).
 
     hooks_dir is None when this is not a git repo. is_shared is True when

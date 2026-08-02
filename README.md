@@ -7,7 +7,7 @@
 
 **Local code graph, shared memory and guardrails for AI coding assistants.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, and Gemini can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
+Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
 
 **Result:** 60-90% fewer tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
 
@@ -80,7 +80,7 @@ Quote the package spec (`"cgh[...]"`) so zsh and bash do not try to glob the bra
 ```bash
 cgh --version
 cgh init           # initialize in any project
-cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini
+cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini / Bob
 ```
 
 ### If `cgh` is not found after install
@@ -124,7 +124,7 @@ cgh serve --watch --reindex
 ## How It Works
 
 ```
-AI Assistant (Claude / Cursor / Codex / Gemini)
+AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
     |  symbol_lookup("process_data")
     |  search_docs("reconciliation")
     |  context_for_task("fix auth bug")
@@ -188,6 +188,7 @@ cgh init --yes    # accept all defaults (non-interactive)
     > Cursor          detected
     - Codex CLI       not found
     - Gemini CLI      not found
+    - IBM Bob         not found
 
   ? Install MCP server for: (space to toggle, enter to confirm)
     [x] Claude Code  (MCP server + hooks)
@@ -915,7 +916,8 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | `cgh-docs` | pdf, docx and xlsx files become searchable sections |
 | `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
 | `cgh-classify` | human-trainable confidentiality labels + a local classifier |
-| `cgh-summarize` | file summaries via your agent CLIs, Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
+| `cgh-summarize` | file summaries via your agent CLIs (Claude, Gemini, Codex, IBM Bob), Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
+| `cgh-vision` | image understanding: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models via Ollama |
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
 
 ---
@@ -945,9 +947,11 @@ What the findings feed:
   your agents, so the agent's own Read, Grep and shell calls are denied
   on flagged files, with a named reason. `cgh guard status` shows the
   honest per-agent map: Claude Code and Gemini CLI enforce (read and
-  shell veto), Codex CLI is partial (shell veto only), agents without a
-  veto surface are listed unprotected. In `secure` mode the guard fails
-  closed and flagged paths also sync into static Claude deny rules.
+  shell veto), Codex CLI is partial (shell veto only), IBM Bob is
+  partial (static `.bobignore` denies), agents without a veto surface
+  are listed unprotected. In `secure` mode the guard fails closed and
+  flagged paths also sync into static deny lists (Claude settings,
+  `.bobignore`).
 
 This is policy enforcement inside cooperating agent frameworks, not a
 sandbox: an agent free to run arbitrary code can read what the OS
@@ -1074,6 +1078,14 @@ See `integrations/codex.md` for `AGENTS.md` instructions.
 
 See `integrations/gemini.md` for `GEMINI.md` instructions.
 
+### IBM Bob
+
+`cgh setup bob` registers the MCP server in `.bob/mcp.json`, installs
+the bundled skills under `.bob/skills/` (Bob speaks the same Agent
+Skills standard as Claude Code), and drops the usage guidelines in
+`.bob/rules/`. The `cli:bob` summarize backend uses BobShell headless
+(`bob -p`).
+
 ### Automatic Setup
 
 ```bash
@@ -1118,6 +1130,22 @@ MdSection --MD_REFS_CLASS-----> Class        (code references in docs)
 
 ---
 
+## Embedding (SDK)
+
+`codegraph.sdk` is the documented surface for using cgh's bricks
+inside your own agent, pipeline or API, without the CLI, the owner
+process, MCP or a `.codegraph/` repo: `scan_text`, `egress_decision`,
+`pseudonymize`, `summarize`, the `image_*` functions (once cgh-vision
+ships) and an in-memory finding store. Code exercised solely through
+this surface may be used under the MIT license alone, including
+commercially (the SDK embedding exception in LICENSE); the graph
+index, MCP server, federation and shared memory are not exposed by it
+and remain under the dual license. See
+[docs/EMBEDDING.md](docs/EMBEDDING.md) for recipes and the stability
+contract.
+
+---
+
 ## Security
 
 ### MCP Auth Key
@@ -1130,6 +1158,25 @@ cgh init          # generates the key and the .codegraph/ index dir
 ```
 
 The key file has `600` permissions and the `.codegraph/` directory is `700` (owner-only). Never commit either to git.
+
+### Sensitive data at rest (secure mode)
+
+In `mode = "secure"`, the index never stores the sensitive datum
+itself. Every `pii.*` and `secret.*` finding value is replaced at
+write time by a keyed one-way pseudonym (`<pii.email:3fa2c1b4d5>`),
+computed with a per-repo HMAC key (`.codegraph/pseudo.key`, `600`).
+Pseudonyms are stable, so dedup and cross-file search keep working,
+but irreversible: reading the SQLite files directly, even with the
+key, yields nothing recoverable, because HMAC does not decode and
+the raw value was never written.
+
+The guard closes the direct path too: in secure mode an agent's Read,
+Grep or shell call touching `.codegraph/` is denied with a reason
+pointing at the MCP tools, and the static deny lists (Claude settings,
+`.bobignore`) carry a standing index entry. This is policy inside
+cooperating agent frameworks, not a sandbox; the pseudonymization is
+what protects against a process that reads the files anyway: there is
+nothing sensitive in them to find.
 
 ---
 

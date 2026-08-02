@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Federation config.toml must stay valid on Windows. Subrepo paths
 #              are stored with forward slashes, and the writer escapes
@@ -43,7 +43,9 @@ class TestWriterRoundTrip:
         parsed = tomllib.loads(cfg.read_text(encoding="utf-8"))
         assert parsed["codegraph"]["subrepos"] == ["./edf-sa\\services-backup"]
         # And our own resilient reader agrees.
-        assert _read_config_toml(cfg)["codegraph"]["subrepos"] == ["./edf-sa\\services-backup"]
+        assert _read_config_toml(cfg)["codegraph"]["subrepos"] == [
+            "./edf-sa\\services-backup"
+        ]
 
 
 class TestAddSubrepoForwardSlash:

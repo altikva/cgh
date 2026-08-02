@@ -10,11 +10,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from codegraph.parsers.base import BaseParser, FileIndex, SectionDef
+from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _MAX_HEADER_CELLS = 30
+_log = logging.getLogger(__name__)
 
 
 class XlsxParser(BaseParser):
@@ -60,6 +62,7 @@ class XlsxParser(BaseParser):
                     )
                 )
         except Exception:
+            _log.warning("xlsx parse failed, indexed empty: %s", path)
             return idx
         finally:
             try:

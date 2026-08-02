@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The deferred summarize scanner. Skips small files, asks
 #              the gate whether cloud backends may see the content, picks
@@ -36,7 +36,7 @@ def build_prompt(path: Path, text: str, language: str) -> str:
     outline_lines: list[str] = []
     section_previews: list[str] = []
     try:
-        from codegraph.parsers import get_parser_for_path
+        from codegraph.plugin_api import get_parser_for_path
 
         parser = get_parser_for_path(path)
         if parser is not None:
@@ -135,7 +135,7 @@ class SummarizeScanner:
     def _carry_forward(self, path: Path, text: str) -> list[ScanFinding] | None:
         """Keep the previous summary while the content drift stays under
         the threshold and fewer than _MAX_CARRIES changes accumulated."""
-        from codegraph.state.findings import findings_for_file
+        from codegraph.plugin_api import findings_for_file
 
         rows = {
             r["key"]: r["value"]
@@ -169,7 +169,7 @@ class SummarizeScanner:
 
     def _audit(self, message: str) -> None:
         try:
-            from codegraph.state.activity import log as activity_log
+            from codegraph.plugin_api import activity_log
 
             activity_log(self.repo_root, "summarize", message)
         except Exception:

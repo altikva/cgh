@@ -8,6 +8,208 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-02
+
+### Added
+- **Public exception hierarchy** (`codegraph.errors`): `CodegraphError`
+  base with `ConfigurationError`, `BackendError`, `IndexingError`;
+  `CapabilityMissing` now inherits it (RuntimeError kept for
+  compatibility) and the SDK exports the base, so embedders catch one
+  type for everything cgh raises on purpose.
+- **PEP 561 markers everywhere**: `py.typed` ships in the core package
+  and all six plugins; SDK consumers finally get type checking from
+  the annotations that were already there.
+- **Strict pytest configuration**: `--strict-config --strict-markers`,
+  declared `kuzu`/`network` markers and testpaths in pyproject; a
+  typo'd marker is now an error instead of a silently empty filter.
+- **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
+  the benchmarked image pipeline as a deferred scanner and a `cgh
+  vision` CLI verb. A content inventory decides what each image
+  contains (never assuming a diagram), then only the warranted
+  extractors run: diagrams to markdown + Mermaid (qwen nodes, gemma
+  arrows constrained to the found labels), tables and charts to data,
+  dense text to a summary. Identities read off diagrams (IPs, FQDNs,
+  hostnames) are split out of labels and recorded as
+  `pii.image_identity` findings, so the secure-at-rest layer
+  pseudonymizes them. Local Ollama only; the SDK `image_*` functions
+  now resolve. Joins the `plugins` and `full` extras.
+- **Embedding SDK** (`codegraph.sdk`): the documented surface for
+  using cgh's bricks inside third-party code, without CLI, owner, MCP
+  or a `.codegraph/` repo: `scan_text` over installed scanners, the
+  egress gate as a pure function (secure allowlist by default),
+  caller-keyed pseudonymization, `summarize` through the cgh-summarize
+  backends (local-only by default), vision entry points raising a
+  clear error until cgh-vision ships, and an in-memory finding store.
+  `SDK_API = 1`, SemVer on the surface, everything else stays
+  internal. Recipes in docs/EMBEDDING.md.
+- **SDK embedding exception** (LICENSE): code exercised solely through
+  `codegraph.sdk` may be used under MIT alone, including commercially;
+  the graph index, MCP server, federation and shared memory stay under
+  the dual license. cgh-pii, cgh-classify and cgh-summarize move to
+  plain MIT so the grant is real end to end.
+- **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
+  and `secret.*` finding values are replaced at write time by stable
+  one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),
+  so the raw datum never reaches disk and reading the SQLite files
+  directly, bypassing MCP, yields nothing recoverable. Dedup and
+  cross-file search keep working on the pseudonyms.
+- **The index is guard-protected in secure mode**: agent Read/Grep and
+  any shell command touching `.codegraph/` are denied with a reason
+  pointing at the MCP tools, and the static deny lists (Claude
+  settings, `.bobignore`) carry a standing index entry.
+
+### Changed
+- **Claude usage guidelines install as a native rule**: when the
+  installed Claude Code supports the `.claude/rules/` directory
+  (probed via `claude --version`), `cgh init`/`cgh setup claude` write
+  `.claude/rules/cgh-usage.md`, a file cgh owns outright
+  (auto-discovered, versioned with the repo, overwritten on update),
+  and migrate away the legacy marker block from CLAUDE.md so the
+  guidance is not paid twice. Older or undetectable Claude versions
+  keep the legacy CLAUDE.md block unchanged. The design proposals, the
+  benchmark harness and the maintainer release runbook also leave the
+  public tree for a gitignored internal/ directory.
+- **Parser dataclasses use `slots=True`**: the eight `FileIndex`
+  building blocks (`SymbolDef`, `ClassDef`, `ImportRef`, ...) are the
+  highest-volume allocations during indexing; slots cut their peak
+  memory by a measured 13% on 100k instances with no API change. (An
+  FTS write-batching change was prototyped alongside, benchmarked at
+  exactly zero gain, and dropped.)
+- **The three longest functions are split into their jobs**: the CLI's
+  500-line `main()` becomes four grouped command registrars plus a
+  module-level parser class; `cmd_init` extracts the AI-tool setup and
+  the federation offer into named steps; `index_repo` separates
+  discovery, filtering, deletion handling and extra_dirs indexing from
+  the shared index loop. Same behavior, tested; each piece now reads
+  and diffs on its own.
+- **Background processes use real logging**: the owner, the MCP proxy,
+  the watcher and the deferred-scan worker emit through per-module
+  loggers behind one `[codegraph]`-prefixed stderr handler (configured
+  at the two daemon entrypoints, never on the root logger, so an
+  embedding application keeps control). Twenty stderr prints converted
+  with levels; owner.log now carries levels and module names, and
+  unconfigured library use still surfaces warnings through logging's
+  last-resort handler. CLI user output stays print/rich.
+- **CI proves the floors and the artifact**: a new advisory job
+  resolves every direct dependency to its declared minimum
+  (`--resolution lowest-direct`) and runs the suite, so a lower bound
+  nobody tests can no longer pretend to be a compatibility statement;
+  every PR now also builds the wheel and passes `twine check` instead
+  of discovering packaging breakage at release time; and the dev
+  toolchain is declared in `[dependency-groups]`.
+- **Explicit ruff configuration, whole-tree formatting, format gate in
+  CI**: the linter ran on its narrow defaults (E4/E7/E9/F), leaving
+  bugbear, security, simplify and modernize off. `[tool.ruff.lint]`
+  now selects E/F/B/I/S/SIM/UP/RUF with documented, deliberate
+  ignores (formatter owns line length; audited subprocess posture;
+  triaged except-pass discipline) and per-file test allowances; ~180
+  findings were auto-fixed or corrected (including a real
+  loop-variable closure bug in the bench report), the long-deferred
+  `ruff format` debt is settled (40 files), and CI now gates
+  formatting alongside linting.
+- **The plugin API covers what plugins actually need**: the finding
+  store, activity log, knowledge record, config resolution, parser
+  lookup, federation children, subprocess hygiene and a `server_root()`
+  accessor are re-exported (lazily) from `codegraph.plugin_api`, the
+  one import path with a stability promise. All six first-party
+  plugins migrated off `codegraph.state/*` and friends, and a boundary
+  test now fails any plugin import that reaches into internals, which
+  is what keeps `API_VERSION` honest.
+- **Plugin floors in the install extras track plugin releases**: a
+  stale floor let `uv tool install --force` keep an already-resolved
+  older plugin, so the extras now pin the floors to what this release
+  ships. The five published plugins get patch releases carrying the
+  MIT relicense and the audit fixes (`cgh-docs`, `cgh-pii`,
+  `cgh-classify`, `cgh-bugreport` 0.1.1; `cgh-summarize` 0.2.1) and
+  `cgh[plugins]`/`cgh[full]` require them; cgh-vision 0.1.0 publishes
+  for the first time.
+
+### Fixed
+- **One backend factory, identifier allow-list in both backends**:
+  which graph backend a repo uses (and which file) was decided by
+  copies of the same if/else in the connection cache, federation and
+  the status commands; `detect_backend_file` in `core.db` is now the
+  single tie-break authority and `open_graphdb_file_ro` the shared
+  read-only opener (federation and status consume them; a
+  factory-opened Kuzu connection closes its Database handle with the
+  connection). And every SQL/Cypher identifier interpolation in the
+  two adapters (26 sites: where/contains field names, return_fields,
+  order_by, edge property keys) now passes an allow-list gate that
+  raises `BackendError` on anything not identifier-shaped, closing
+  the latent injection the audit flagged even though current callers
+  pass constants.
+- **The plugin test suites actually run**: pytest only collected
+  `tests/`, so the six plugins' own suites (~95 tests) never executed,
+  locally or in CI. They are collected now (self-skipping when a
+  plugin is not installed), the lowest-resolution advisory job
+  installs the plugins so their dependency floors (pypdf, python-docx,
+  openpyxl) are proven too, and the plugins gained module loggers: a
+  corrupt pdf/docx/xlsx that indexes empty now leaves a warning
+  instead of looking like success, and raised errors use named
+  exception types (`SummarizeError`, `VisionError`).
+- **The declared dependency floors are now real** (first catches of the
+  lowest-resolution CI job): the `duckdb` floor rises to 1.2 because
+  1.0 and 1.1 reject the node upsert (their binder refuses
+  `ON CONFLICT DO UPDATE` touching a constrained column); `pyyaml` is
+  declared as the direct dependency it always was (the YAML section
+  parser imported it, but only a transitive install made it appear);
+  and the init wizard's instruction style uses a literal gray instead
+  of the `dim` attribute that only the newest prompt_toolkit parses,
+  which made `cgh init` crash outright on older resolutions. The full
+  suite now passes with every direct dependency at its floor.
+- **Connection caches keyed by repo root**: the graph connection cache
+  and the knowledge/call-log connection were first-caller-wins process
+  globals, so a second repo touched in the same process (federation,
+  SDK embedding, tests) silently received the first repo's database.
+  Both now follow the findings-store pattern: a dict keyed by resolved
+  root, per-root or global reset, and call_log gains the
+  reset_for_tests hook it lacked.
+- **`cgh graph` works on DuckDB**: the CLI visualization went through
+  raw-Cypher generators that only Kuzu understood, so every scope
+  silently rendered "No edges found" on the default backend. The
+  generators now live once in `codegraph.viz.graphviews`, speak the
+  GraphDB protocol only, and serve both entry points (the
+  `visualize_graph` MCP tool and the CLI); the Kuzu-only ancestors are
+  retired, and the init wizard's file count uses the protocol too.
+- **Silent failures on write paths now log**: a failed node deletion in
+  the incremental reindex (previously a ghost-node source reporting
+  success), dropped CALLS edges from the precise resolver, a malformed
+  config skipping `extra_dirs`, a failed read-only close before a
+  write open, and the FTS MATCH falling back to LIKE all leave a trace
+  in the activity log or on stderr instead of being swallowed.
+- **Timeouts on every git subprocess**: seven call sites (post-commit
+  hook, git hooks setup, changed-files MCP tool, `cgh changes`) ran
+  git with no deadline; a wedged git froze the caller. All now time
+  out (30-60 s) and their callers handle the expiry.
+
+### Security
+- **A "local" backend claim is now earned by the URL, not declared**:
+  the Ollama backends of cgh-summarize and cgh-vision labeled
+  themselves local while `ollama_url` accepted any host, so in secure
+  mode file content and raw image bytes could reach a non-loopback
+  daemon without ever meeting the egress gate. A shared
+  `is_loopback_url` helper (exposed through the plugin API) now
+  classifies the backend from the configured host: summarize treats a
+  remote Ollama as cloud (gated), vision refuses it outright in secure
+  mode and audit-logs the departure in assist mode. Malformed URLs
+  read as unavailable instead of crashing the probe.
+- **cgh-bugreport's mode probe fails closed**: an unreadable config
+  made the pre-send secure-mode confirmation silently skip; unknown
+  mode now behaves as secure. The report spool directory is also
+  created 0700, and the plugins' `git ls-files` calls carry the
+  timeout every other subprocess in the tree already had.
+- **The secure-mode probe fails closed**: if `record_findings` cannot
+  determine the guard mode (unreadable config, transient error), it
+  now pseudonymizes sensitive values instead of silently falling back
+  to raw storage, and logs the failed probe. A broken probe can no
+  longer void the secure-at-rest guarantee.
+- **`add_directory` is confined**: the MCP tool indexes paths inside
+  the repo root freely, but a path outside the root is only accepted
+  when a human already declared it in `[codegraph] extra_dirs` (via
+  `cgh add-dir add` or config.toml), and the acceptance is logged.
+  Without this, any prompt-injected MCP client could walk and index
+  arbitrary readable directories, making their content queryable.
+
 ## [0.8.0] - 2026-07-29
 
 ### Added
@@ -234,7 +436,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the public plugin API) are not treated as derivative works and may be
   licensed under any terms, including commercial ones. Using cgh itself
   remains governed by the MIT + CC BY-NC-SA dual license. Groundwork for
-  the plugin architecture proposal (docs/proposals/001).
+  the plugin architecture design.
 
 ### Fixed
 - **Federated children no longer starve the parent's fan-out.** An
@@ -559,7 +761,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/altikva/cgh/compare/v0.7.1...v0.7.2

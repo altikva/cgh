@@ -2,7 +2,7 @@
 # __creation__ = 2026-05-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Resolve JS / TS workspace packages (npm, pnpm, yarn) so the
 # indexer can wire IMPORTS edges across monorepo boundaries.
@@ -84,7 +84,7 @@ def _parse_yaml_packages(text: str) -> list[str]:
         if stripped.startswith("- "):
             item = stripped[2:].strip()
             # Strip trailing `# comment` if outside a quoted string
-            if not item.startswith(("\"", "'")):
+            if not item.startswith(('"', "'")):
                 hash_pos = item.find("#")
                 if hash_pos >= 0:
                     item = item[:hash_pos].strip()

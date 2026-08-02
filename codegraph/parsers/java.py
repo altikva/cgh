@@ -2,7 +2,7 @@
 # __creation__ = 2026-05-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Java parser plugin. Extracts classes, interfaces, methods,
 # imports, and call references using tree-sitter-java.
@@ -122,14 +122,22 @@ class JavaParser(BaseParser):
             if superclass:
                 # superclass node like `extends Foo`
                 for child in superclass.children:
-                    if child.type in ("identifier", "type_identifier", "scoped_type_identifier"):
+                    if child.type in (
+                        "identifier",
+                        "type_identifier",
+                        "scoped_type_identifier",
+                    ):
                         bases.append(_ident(child, src))
             interfaces = decl.child_by_field_name("interfaces")
             if interfaces:
                 for child in interfaces.children:
                     if child.type == "type_list":
                         for t in child.children:
-                            if t.type in ("identifier", "type_identifier", "scoped_type_identifier"):
+                            if t.type in (
+                                "identifier",
+                                "type_identifier",
+                                "scoped_type_identifier",
+                            ):
                                 bases.append(_ident(t, src))
             index.classes.append(
                 ClassDef(

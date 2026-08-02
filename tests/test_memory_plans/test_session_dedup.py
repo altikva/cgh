@@ -33,7 +33,11 @@ class TestSessionDedup:
         assert filter_unseen("sess-a", entities) == []
 
     def test_clear_session_resets(self, _reset_call_log):
-        from codegraph.state.call_log import clear_session, filter_unseen, record_mentions
+        from codegraph.state.call_log import (
+            clear_session,
+            filter_unseen,
+            record_mentions,
+        )
 
         e = [("memory", "/m/2")]
         record_mentions("sess-b", e)

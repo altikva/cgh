@@ -5,7 +5,10 @@ from codegraph.core.utils import lang_color, rows, safe_id, short_path
 
 class TestShortPath:
     def test_relative_path(self):
-        assert short_path("/home/user/project/src/main.py", "/home/user/project") == "src/main.py"
+        assert (
+            short_path("/home/user/project/src/main.py", "/home/user/project")
+            == "src/main.py"
+        )
 
     def test_same_path(self):
         assert short_path("/home/user/project", "/home/user/project") == "."

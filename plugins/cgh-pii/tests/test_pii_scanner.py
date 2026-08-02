@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex PII scanner tests: every pattern, Luhn and mod-97
 #              validation rejecting random digit runs, counts instead of
@@ -18,8 +18,9 @@ import pytest
 
 pytest.importorskip("cgh_pii")
 
-import codegraph.plugins as plugins  # noqa: E402
-from cgh_pii.regex_scanner import RegexPiiScanner  # noqa: E402
+from cgh_pii.regex_scanner import RegexPiiScanner
+
+import codegraph.plugins as plugins
 
 
 def _scan(text: str, disabled=None):
@@ -90,6 +91,7 @@ class TestEndToEnd:
 
     def test_indexed_repo_records_pii_findings(self, tmp_path):
         import cgh_pii
+
         from codegraph.plugin_api import PluginAPI
 
         api = PluginAPI("pii", tmp_path, {}, plugins._registries)
@@ -120,6 +122,7 @@ class TestEndToEnd:
 
     def test_ner_absent_is_a_clean_skip(self, tmp_path, capsys):
         import cgh_pii
+
         from codegraph.plugin_api import PluginAPI
 
         api = PluginAPI("pii", tmp_path, {"ner": True}, plugins._registries)

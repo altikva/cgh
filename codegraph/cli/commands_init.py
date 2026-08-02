@@ -2,13 +2,11 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI commands: init, setup, parsers.
 
 from __future__ import annotations
-
-from codegraph.core.utils import quiet_subprocess_kwargs
 
 import argparse
 import os
@@ -20,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, console
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Wildcards that cover every codegraph MCP tool (current + future). The
 # two-form shape matches what both older and current Claude Code builds
@@ -296,8 +295,7 @@ def _detect_existing_state(root: Path) -> dict:
         conn = get_readonly_connection(root)
         if conn is not None:
             try:
-                r = conn.execute("MATCH (f:File) RETURN count(f) AS c")
-                state["indexed_files"] = int(r.get_next()[0])
+                state["indexed_files"] = int(conn.count_nodes("File"))
             except Exception:
                 pass
     except Exception:
@@ -807,51 +805,11 @@ def _print_init_summary() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_init(args: argparse.Namespace) -> None:
+def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
+    """Init steps 2 to 3c: detect the installed AI tools, install the
+    selected integrations (preserving locally edited skills), offer the
+    Claude auto-accept and the usage-guidelines injection."""
     import questionary
-    from questionary import Style
-
-    from codegraph.core.config import init_project
-
-    root = Path(os.path.abspath(args.root))
-    console.print(LOGO)
-    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
-
-    cg_style = Style(
-        [
-            ("qmark", "fg:cyan bold"),
-            ("question", "fg:white bold"),
-            ("answer", "fg:green bold"),
-            ("pointer", "fg:cyan bold"),
-            ("highlighted", "fg:cyan bold"),
-            ("selected", "fg:green"),
-            ("separator", "fg:cyan"),
-            ("instruction", "fg:white dim"),
-            ("text", "fg:white"),
-        ]
-    )
-
-    # -- Step 0: Probe existing state (before anything mutates disk) --
-    prior_state = _detect_existing_state(root)
-    _print_prior_state(prior_state)
-
-    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
-    _auto_migrate_kuzu_to_duckdb(root)
-
-    # -- Step 1: Create .codegraph/ --
-    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
-        result = init_project(root)
-
-    if result["created"]:
-        for f in result["created"]:
-            console.print(f"  [green]+[/green] {f}")
-    else:
-        console.print("  [dim].codegraph/ already exists[/dim]")
-
-    console.print()
-
-    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
-    _install_git_reindex_hooks(root)
 
     # -- Step 2: Detect AI tools --
     all_tools = _detect_ai_tools(root)
@@ -938,7 +896,7 @@ def cmd_init(args: argparse.Namespace) -> None:
                 ).ask()
             )
             if inject:
-                for tool_key, label in inject_targets:
+                for tool_key, _label in inject_targets:
                     written = install_usage_guidelines(root, tool_key)
                     if written:
                         rel = written.replace(str(root) + "/", "")
@@ -947,8 +905,11 @@ def cmd_init(args: argparse.Namespace) -> None:
                         )
                 console.print()
 
-    # -- Step 3d: guard posture (assist stays the default) --
-    _maybe_enable_secure_mode(root, args, cg_style)
+
+def _offer_federation(root: Path, args: argparse.Namespace, cg_style) -> None:
+    """Init step 3e: detect nested repos with their own .codegraph and
+    offer to federate them (parent skips indexing, fans out reads)."""
+    import questionary
 
     # -- Step 3e: Detect already-initialized subrepos --
     # Look for nested directories that already have their own .codegraph/.
@@ -995,6 +956,63 @@ def cmd_init(args: argparse.Namespace) -> None:
             console.print(
                 "  [dim]Skipped. To federate later: [cyan]cgh federate add <path>[/cyan][/dim]\n"
             )
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    import questionary
+    from questionary import Style
+
+    from codegraph.core.config import init_project
+
+    root = Path(os.path.abspath(args.root))
+    console.print(LOGO)
+    console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
+
+    cg_style = Style(
+        [
+            ("qmark", "fg:cyan bold"),
+            ("question", "fg:white bold"),
+            ("answer", "fg:green bold"),
+            ("pointer", "fg:cyan bold"),
+            ("highlighted", "fg:cyan bold"),
+            ("selected", "fg:green"),
+            ("separator", "fg:cyan"),
+            # A literal gray, not "white dim": the dim attribute only
+            # parses on prompt_toolkit >= 3.0.52 and this must render
+            # on every resolvable floor.
+            ("instruction", "fg:#808080"),
+            ("text", "fg:white"),
+        ]
+    )
+
+    # -- Step 0: Probe existing state (before anything mutates disk) --
+    prior_state = _detect_existing_state(root)
+    _print_prior_state(prior_state)
+
+    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
+    _auto_migrate_kuzu_to_duckdb(root)
+
+    # -- Step 1: Create .codegraph/ --
+    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
+        result = init_project(root)
+
+    if result["created"]:
+        for f in result["created"]:
+            console.print(f"  [green]+[/green] {f}")
+    else:
+        console.print("  [dim].codegraph/ already exists[/dim]")
+
+    console.print()
+
+    # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
+    _install_git_reindex_hooks(root)
+
+    _setup_ai_tools(root, args, cg_style)
+
+    # -- Step 3d: guard posture (assist stays the default) --
+    _maybe_enable_secure_mode(root, args, cg_style)
+
+    _offer_federation(root, args, cg_style)
 
     # -- Step 4: Detect parseable files --
     file_counts = _count_parseable_files(root)
@@ -1557,10 +1575,14 @@ def audit_claude_integration(root: Path) -> dict:
             has_block = "<!-- codegraph-usage:start -->" in text
         except OSError:
             has_block = False
-    report["usage_block"] = {
-        "status": "ok" if has_block else "missing",
-        "path": "CLAUDE.md",
-    }
+    rules_file = root / ".claude" / "rules" / "cgh-usage.md"
+    if rules_file.exists():
+        report["usage_block"] = {"status": "ok", "path": ".claude/rules/cgh-usage.md"}
+    else:
+        report["usage_block"] = {
+            "status": "ok" if has_block else "missing",
+            "path": "CLAUDE.md",
+        }
 
     report["overall"] = (
         "ok"

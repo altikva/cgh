@@ -192,17 +192,20 @@ class TestStaticRules:
         )
 
         added, removed = sync_static_rules(root)
-        assert (added, removed) == (1, 0)
+        # The barred file plus the standing .codegraph/** index rule.
+        assert (added, removed) == (2, 0)
         deny = json.loads(settings.read_text())["permissions"]["deny"]
         assert f"Read({barred})" in deny
+        assert "Read(.codegraph/**)" in deny
         assert "Read(/user/own.txt)" in deny
 
-        # The file is cleared: our rule goes, the user's stays.
+        # The file is cleared: our rule goes, the user's and the
+        # standing index rule stay.
         store.record_findings(root, barred, "test", [])
         added, removed = sync_static_rules(root)
         assert (added, removed) == (0, 1)
         deny = json.loads(settings.read_text())["permissions"]["deny"]
-        assert deny == ["Read(/user/own.txt)"]
+        assert sorted(deny) == sorted(["Read(/user/own.txt)", "Read(.codegraph/**)"])
 
     def test_sync_is_a_noop_in_assist(self, tmp_path):
         root = _repo(tmp_path, mode="assist")

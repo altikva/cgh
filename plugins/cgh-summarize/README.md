@@ -43,12 +43,14 @@ leaves the machine. Every cloud call is logged to
 
 ```toml
 [plugin.summarize]
-# backend = "auto"          # or cli:claude, ollama, openai, structural...
+# backend = "auto"          # or cli:claude, cli:gemini, cli:codex,
+#                           # cli:bob, ollama, openai, structural
 # min_kb = 4                # skip files smaller than this
 # allow_pii = false
 # language = "en"
 # claude_model = "haiku"
 # gemini_model = "gemini-2.5-flash"
+#                           # no bob_model: BobShell routes the model itself
 # ollama_model = "qwen2.5:1.5b"
 # ollama_url = "http://127.0.0.1:11434"
 # openai_base_url = ""      # e.g. http://localhost:8000/v1

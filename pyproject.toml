@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.8.0"
+version = "0.9.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 30+ MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -34,7 +34,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "duckdb>=1.0",
+    # 1.2 is the real minimum: older binders reject the upsert's
+    # ON CONFLICT DO UPDATE against a constrained column.
+    "duckdb>=1.2",
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
     "tree-sitter-typescript>=0.23",
@@ -46,6 +48,9 @@ dependencies = [
     "rank-bm25>=0.2",
     "rich>=13.0",
     "questionary>=2.0",
+    # Used directly by the YAML section parser; declared so the nested
+    # sections it tests for do not depend on a transitive install.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -55,26 +60,28 @@ dependencies = [
 # 3.14 you'll either need a source build (CMake + a C++17 compiler) or
 # you can skip the extra entirely and use the default DuckDB backend.
 kuzu = ["kuzu>=0.7"]
-# The five first-party plugins in one install:
+# The six first-party plugins in one install:
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 plugins = [
-    "cgh-docs>=0.1",
-    "cgh-pii>=0.1",
-    "cgh-summarize>=0.1",
-    "cgh-classify>=0.1",
-    "cgh-bugreport>=0.1",
+    "cgh-docs>=0.1.1",
+    "cgh-pii>=0.1.1",
+    "cgh-summarize>=0.2.1",
+    "cgh-classify>=0.1.1",
+    "cgh-bugreport>=0.1.1",
+    "cgh-vision>=0.1",
 ]
-# Everything except the legacy kuzu backend: the five plugins plus the
+# Everything except the legacy kuzu backend: the six plugins plus the
 # langs and lsp extras. The tree-sitter grammars ship abi3 wheels
 # (cp310-abi3, so any Python cgh supports) and jedi is pure Python,
 # which is what makes this superset safe to offer.
 #   pip install "cgh[full]"
 full = [
-    "cgh-docs>=0.1",
-    "cgh-pii>=0.1",
-    "cgh-summarize>=0.1",
-    "cgh-classify>=0.1",
-    "cgh-bugreport>=0.1",
+    "cgh-docs>=0.1.1",
+    "cgh-pii>=0.1.1",
+    "cgh-summarize>=0.2.1",
+    "cgh-classify>=0.1.1",
+    "cgh-bugreport>=0.1.1",
+    "cgh-vision>=0.1",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
     "jedi>=0.19",
@@ -114,4 +121,87 @@ where = ["."]
 include = ["codegraph", "codegraph.*", "cgh"]
 
 [tool.setuptools.package-data]
-codegraph = ["skills/*/SKILL.md", "skills/*/*.md"]
+codegraph = ["py.typed", "skills/*/SKILL.md", "skills/*/*.md"]
+
+[dependency-groups]
+# The declared dev toolchain: local and CI run the same artifact
+# instead of ad hoc --with flags (ruff stays pinned via uvx in the
+# workflows so a release cannot be blocked by a linter release).
+dev = [
+    "pytest>=8",
+]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Explicit selection: the defaults are only E4/E7/E9/F, which leaves
+# bugbear, security, simplify and modernize OFF. Every ignore below is
+# a conscious decision, not a leftover.
+select = ["E", "F", "B", "I", "S", "SIM", "UP", "RUF"]
+ignore = [
+    # The formatter is the line-length authority; long literals stay.
+    "E501",
+    # Audited posture: argv lists only, timeouts everywhere, `--`
+    # separators for agent input (see the 2026-07-31 audit). S603 flags
+    # every subprocess call and S607 the deliberate PATH resolution of
+    # git/gh/agent CLIs.
+    "S603", "S607",
+    # try/except-pass and -continue were triaged by the audit: write
+    # paths log or propagate, the remainder is deliberate best-effort
+    # (probes, cleanup, display). The review rule, not a lint, guards
+    # new ones.
+    "S110", "S112",
+    # contextlib.suppress is not house style; explicit except blocks
+    # carry the triage comments the rules require.
+    "SIM105",
+    # Mutable class defaults: mostly ClassVar-style tables in parsers;
+    # adopt progressively, not as one sweep.
+    "RUF012",
+    # French prose in user-facing strings trips the ambiguous-unicode
+    # detectors (apostrophes, NBSP).
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is the test idiom.
+"tests/**" = ["S101", "S105", "S108", "S608"]
+# E402: the importorskip(<plugin>) guard legitimately precedes imports.
+"plugins/*/tests/**" = ["S101", "S105", "S108", "E402"]
+"internal/bench/**" = ["S101", "S310"]
+"examples/**" = ["S101"]
+# The two adapters interpolate identifiers behind checked_identifier
+# (allow-list gate); the sidecar SQLite modules build clause lists from
+# constants. S608 cannot see the gate.
+"codegraph/core/db_duckdb.py" = ["S608"]
+"codegraph/core/db_kuzu.py" = ["S608"]
+"codegraph/core/fts.py" = ["S608"]
+"codegraph/state/*.py" = ["S608"]
+"codegraph/claude_state/*.py" = ["S608"]
+# Loopback-only HTTP (owner bridge, Ollama daemon), audited: no
+# user-controlled URLs.
+"codegraph/**" = ["S310"]
+"plugins/cgh-vision/**" = ["S310"]
+"plugins/cgh-summarize/**" = ["S310"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+# The plugin suites self-skip (importorskip) when their package is not
+# installed, so collecting them here costs nothing locally and runs
+# them for real in CI, where every plugin is installed.
+testpaths = ["tests", "plugins"]
+markers = [
+    "kuzu: needs the optional kuzu backend installed",
+    "network: talks to a local daemon or the network",
+]
+
+[tool.uv.sources]
+# Versions not yet on PyPI: resolved from the workspace until the
+# release publishes them (the release workflow ships core and plugins
+# together). Remove each entry once its version is on PyPI.
+cgh-vision = { path = "plugins/cgh-vision" }
+cgh-docs = { path = "plugins/cgh-docs" }
+cgh-pii = { path = "plugins/cgh-pii" }
+cgh-summarize = { path = "plugins/cgh-summarize" }
+cgh-classify = { path = "plugins/cgh-classify" }
+cgh-bugreport = { path = "plugins/cgh-bugreport" }

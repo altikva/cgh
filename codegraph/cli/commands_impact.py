@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-07
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh impact --since <ref>` CI command for PR bots. Diffs the
 #              working tree against a git ref, then reads the graph read-only
@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import argparse
 import json
 import os
@@ -26,6 +24,7 @@ from pathlib import Path
 from rich.console import Console
 
 from codegraph.cli import LOGO
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Banner + notes go to stderr so stdout stays a clean JSON / markdown stream
 # that a PR bot can pipe and parse.
@@ -90,10 +89,10 @@ def _build_report(conn, root: str, changed_files: list[str]) -> dict:
             return p
 
     # Changed files resolve to absolute File-node keys for graph lookups.
-    abs_changed = [str((root_path / f)) for f in changed_files]
+    abs_changed = [str(root_path / f) for f in changed_files]
 
     changed_symbols: list[dict] = []
-    for abs_f, rel_f in zip(abs_changed, changed_files):
+    for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
         for sym in _impact.symbols_in_file(conn, abs_f):
             changed_symbols.append({"file": rel_f, **sym})
 

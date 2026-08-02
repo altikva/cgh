@@ -77,7 +77,9 @@ class TestRustParser:
 
     def test_calls_strip_path_separator(self, sample_rust):
         idx = RustParser().parse(sample_rust)
-        main = next(f for f in idx.functions if f.name == "main" and f.class_name is None)
+        main = next(
+            f for f in idx.functions if f.name == "main" and f.class_name is None
+        )
         # User::new -> "new", String::from -> "from", u.greet() -> "greet"
         assert "new" in main.calls
         assert "from" in main.calls

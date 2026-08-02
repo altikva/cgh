@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -80,27 +80,76 @@ def _backend(repo_root: str | Path | None = None) -> str:
         return env_value
 
     if repo_root is not None:
-        cg = Path(repo_root) / _DB_DIR
-        if (cg / _DUCKDB_FILE).exists():
-            return "duckdb"
-        if (cg / _DB_FILE).exists():
-            return "kuzu"
+        detected = detect_backend_file(repo_root)
+        if detected is not None:
+            return detected[0]
 
     return "duckdb"
 
-# Module-level singletons, one DB + connection per process.
-# _db / _ro_db stay as raw kuzu.Database refs so reset_connection() can
-# close them explicitly (Kuzu's file lock outlives the GC otherwise).
-# _conn / _ro_conn are the GraphDB-typed adapters callers see.
-# _db / _ro_db hold raw kuzu.Database refs (typed as Any so the module
-# can import without kuzu installed). DuckDB doesn't need a separate
-# "db" handle, its connection is self-contained.
-_db: Any | None = None
-_conn: GraphDB | None = None
-_ro_db: Any | None = None
-_ro_conn: GraphDB | None = None
+
+# Connection caches, keyed by resolved repo root: one process can
+# touch several repos (federation, tests, SDK embedding), and a single
+# first-caller-wins global handed repo A's connection to repo B.
+# _dbs / _ro_dbs hold raw kuzu.Database refs so the reset can close
+# them explicitly (Kuzu's file lock outlives the GC otherwise; typed
+# Any so the module imports without kuzu). DuckDB's connection is
+# self-contained.
+_conns: dict[str, GraphDB] = {}
+_dbs: dict[str, Any] = {}
+_ro_conns: dict[str, GraphDB] = {}
+_ro_dbs: dict[str, Any] = {}
+
+
+def _cache_key(repo_root: str | Path | None) -> str:
+    return str((Path(repo_root) if repo_root else Path.cwd()).resolve())
+
 
 _atexit_registered = False
+
+
+def detect_backend_file(repo_root: str | Path) -> tuple[str, Path] | None:
+    """('duckdb' | 'kuzu', db_file) for whichever graph DB exists in
+    ``repo_root/.codegraph/``. DuckDB wins when both are present so a
+    half-migrated repo (Kuzu cached + new DuckDB) reads the new one.
+    None when no graph DB is present. The single tie-break authority:
+    federation, the status commands and the connection cache all call
+    this instead of re-implementing the rule."""
+    cg = Path(repo_root) / _DB_DIR
+    duck = cg / _DUCKDB_FILE
+    if duck.exists():
+        return ("duckdb", duck)
+    kz = cg / _DB_FILE
+    if kz.exists():
+        return ("kuzu", kz)
+    return None
+
+
+def open_graphdb_file_ro(backend: str, db_file: str | Path) -> GraphDB | None:
+    """Open one graph DB file read-only, uncached, degrading to None
+    (locked, corrupt, kuzu not installed). The shared low-level factory:
+    federation uses it on child repos, the status commands on their own
+    repo; the cached per-repo path is get_readonly_connection. The
+    caller owns close()."""
+    if backend == "duckdb":
+        from codegraph.core.db_duckdb import DuckDBGraphDB
+
+        try:
+            return DuckDBGraphDB(str(db_file), read_only=True)
+        except Exception:
+            return None
+    try:
+        kuzu = _import_kuzu()
+    except KuzuNotInstalled:
+        return None
+    from codegraph.core.db_kuzu import KuzuGraphDB
+
+    try:
+        db = kuzu.Database(str(db_file), read_only=True)
+        conn = KuzuGraphDB(kuzu.Connection(db))
+        conn._db_handle = db  # close() releases the file lock too
+        return conn
+    except RuntimeError:
+        return None
 
 
 def get_db_path(repo_root: str | Path) -> Path:
@@ -118,34 +167,37 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     The backend is chosen by the CGH_DB env var: "duckdb" for the new
     backend (work in progress), anything else for Kuzu (default).
     """
-    global _db, _conn, _ro_db, _ro_conn, _atexit_registered
+    global _atexit_registered
 
-    if _conn is not None:
-        return _conn
+    key = _cache_key(repo_root)
+    cached = _conns.get(key)
+    if cached is not None:
+        return cached
 
     # DuckDB refuses to open a RW connection in a process that already
     # holds a RO connection to the same file ("Can't open a connection
     # to same database file with a different configuration"). cgh init
     # hits this: it opens RO for the existing-state probe, then asks
-    # for RW to index. Close any cached RO conn before opening RW so
-    # both backends behave consistently.
-    if _ro_conn is not None or _ro_db is not None:
-        for obj in (_ro_conn, _ro_db):
-            if obj is None:
-                continue
-            try:
-                obj.close()
-            except Exception:
-                pass
-        _ro_conn = None
-        _ro_db = None
+    # for RW to index. Close any cached RO conn for THIS repo before
+    # opening RW so both backends behave consistently.
+    for cache in (_ro_conns, _ro_dbs):
+        obj = cache.pop(key, None)
+        if obj is None:
+            continue
+        try:
+            obj.close()
+        except Exception as exc:
+            # A failed close here resurfaces later as a confusing
+            # same-process open conflict; name the real cause now
+            # (reset_connection logs the same way).
+            print(f"[codegraph] warning: RO close before RW open failed: {exc}")
 
     # Ensure we release the lock on process exit (SIGTERM, etc.)
     if not _atexit_registered:
         atexit.register(reset_connection)
         _atexit_registered = True
 
-    root = Path(repo_root) if repo_root else Path.cwd()
+    root = Path(key)
     db_dir = root / _DB_DIR
     db_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,8 +205,9 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
         from codegraph.core.db_duckdb import DuckDBGraphDB
 
         db_path = db_dir / _DUCKDB_FILE
-        _conn = DuckDBGraphDB(str(db_path), read_only=False)
-        return _conn
+        conn = DuckDBGraphDB(str(db_path), read_only=False)
+        _conns[key] = conn
+        return conn
 
     db_path = db_dir / _DB_FILE
 
@@ -165,11 +218,13 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     retries = 3
     for attempt in range(retries):
         try:
-            _db = kuzu.Database(str(db_path))
-            raw_conn = kuzu.Connection(_db)
+            db = kuzu.Database(str(db_path))
+            raw_conn = kuzu.Connection(db)
             init_schema(raw_conn)
-            _conn = KuzuGraphDB(raw_conn)
-            return _conn
+            conn = KuzuGraphDB(raw_conn)
+            _dbs[key] = db
+            _conns[key] = conn
+            return conn
         except RuntimeError as exc:
             if "Could not set lock" in str(exc) and attempt < retries - 1:
                 wait = 1.0 * (attempt + 1)
@@ -194,19 +249,20 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
     Try to open a read-only GraphDB connection.
     Returns None if the DB is locked or absent, caller should handle gracefully.
     """
-    global _ro_db, _ro_conn
-
-    if _ro_conn is not None:
-        return _ro_conn
+    key = _cache_key(repo_root)
+    cached = _ro_conns.get(key)
+    if cached is not None:
+        return cached
 
     # Same-process RO+RW on the same file is rejected by DuckDB. If a
-    # RW connection is already cached, hand it back, every GraphDB
-    # method we call from "readonly" callers is a pure read, so this is
-    # safe and avoids the connection conflict.
-    if _conn is not None:
-        return _conn
+    # RW connection is already cached for this repo, hand it back:
+    # every GraphDB method "readonly" callers use is a pure read, so
+    # this is safe and avoids the connection conflict.
+    rw = _conns.get(key)
+    if rw is not None:
+        return rw
 
-    root = Path(repo_root) if repo_root else Path.cwd()
+    root = Path(key)
 
     if _backend(root) == "duckdb":
         from codegraph.core.db_duckdb import DuckDBGraphDB
@@ -215,8 +271,9 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
         if not db_path.exists():
             return None
         try:
-            _ro_conn = DuckDBGraphDB(str(db_path), read_only=True)
-            return _ro_conn
+            conn = DuckDBGraphDB(str(db_path), read_only=True)
+            _ro_conns[key] = conn
+            return conn
         except Exception:
             # DuckDB raises a few different exception classes depending on
             # what's wrong (locked, corrupt, version mismatch). Treat all
@@ -239,18 +296,22 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
     from codegraph.core.db_kuzu import KuzuGraphDB
 
     try:
-        _ro_db = kuzu.Database(str(db_path), read_only=True)
-        raw_conn = kuzu.Connection(_ro_db)
-        _ro_conn = KuzuGraphDB(raw_conn)
-        return _ro_conn
+        db = kuzu.Database(str(db_path), read_only=True)
+        raw_conn = kuzu.Connection(db)
+        conn = KuzuGraphDB(raw_conn)
+        _ro_dbs[key] = db
+        _ro_conns[key] = conn
+        return conn
     except RuntimeError:
         # Kuzu locks even in read_only mode, return None so caller can degrade
         return None
 
 
-def reset_connection() -> None:
+def reset_connection(repo_root: str | Path | None = None) -> None:
     """
-    Release the underlying DB file lock and force re-open on next call.
+    Release the underlying DB file locks and force re-open on next call.
+    With ``repo_root``, only that repo's connections close; without it,
+    every cached connection closes (atexit, owner shutdown).
 
     Kuzu holds an OS-level write lock for the lifetime of the Database
     object. Dropping Python references alone is not enough, CPython's
@@ -258,20 +319,18 @@ def reset_connection() -> None:
     exits. We explicitly close the Connection + Database here so the
     lock is released immediately.
     """
-    global _db, _conn, _ro_db, _ro_conn
-    for obj in (_conn, _db, _ro_conn, _ro_db):
-        if obj is None:
-            continue
-        try:
-            obj.close()
-        except Exception as exc:
-            # A close that fails on the owner's shutdown path can leave the
-            # file lock lingering; surface it instead of swallowing silently.
-            print(
-                f"[codegraph] warning: failed to close {type(obj).__name__}: {exc}",
-                file=sys.stderr,
-            )
-    _conn = None
-    _db = None
-    _ro_conn = None
-    _ro_db = None
+    keys = [_cache_key(repo_root)] if repo_root else None
+    for cache in (_conns, _dbs, _ro_conns, _ro_dbs):
+        for key in keys if keys is not None else list(cache):
+            obj = cache.pop(key, None)
+            if obj is None:
+                continue
+            try:
+                obj.close()
+            except Exception as exc:
+                # A close that fails on the owner's shutdown path can leave
+                # the file lock lingering; surface it instead of swallowing.
+                print(
+                    f"[codegraph] warning: failed to close {type(obj).__name__}: {exc}",
+                    file=sys.stderr,
+                )

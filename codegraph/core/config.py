@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Configuration system for codegraph.
 #
@@ -47,7 +47,7 @@ GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
-def find_codegraph_root(start: "str | Path") -> "Path | None":
+def find_codegraph_root(start: str | Path) -> Path | None:
     """Walk up from ``start`` to the nearest ancestor that has a .codegraph/
     directory, the way git finds its repo root via .git. Returns that
     directory, or None if none is found up to the filesystem root.

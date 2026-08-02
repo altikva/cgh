@@ -272,9 +272,11 @@ class TestBobAdapter:
         _bar(root, "secrets.env")
 
         added, removed = sync_bobignore(root)
-        assert (added, removed) == (1, 0)
+        # The barred file plus the standing .codegraph/ index entry.
+        assert (added, removed) == (2, 0)
         content = (root / ".bobignore").read_text(encoding="utf-8")
         assert "secrets.env" in content
+        assert ".codegraph/" in content
         assert "cgh guard" in content
 
         # Idempotent: second sync changes nothing.

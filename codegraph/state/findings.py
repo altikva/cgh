@@ -15,6 +15,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -66,6 +70,51 @@ def _get_conn(repo_root: str | Path) -> sqlite3.Connection:
         return conn
 
 
+# Finding keys whose value is the sensitive datum itself. In secure
+# mode the raw value never reaches disk: it is replaced at write time
+# by a keyed one-way pseudonym, so reading the SQLite file directly
+# (bypassing MCP) yields nothing recoverable.
+_PSEUDO_PREFIXES = ("pii.", "secret.")
+_PSEUDO_SHAPE = re.compile(r"^<[\w.]+:[0-9a-f]{10}>$")
+_KEY_FILE = "pseudo.key"
+
+
+def _pseudo_key(repo_root: str | Path) -> bytes:
+    """Per-repo pseudonymization key, created lazily, never leaves the
+    repo. The key only provides stable linkage (same value, same
+    pseudonym); HMAC is one-way, so even the key does not decode a
+    pseudonym back to the value."""
+    path = Path(repo_root) / _DB_DIR / _KEY_FILE
+    if path.exists():
+        return bytes.fromhex(path.read_text(encoding="utf-8").strip())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_bytes(32)
+    path.write_text(key.hex(), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return key
+
+
+def pseudonymize(repo_root: str | Path, key: str, value: str) -> str:
+    """Stable one-way pseudonym for a sensitive finding value:
+    <pii.email:3fa2...>. Same value, same pseudonym, so dedup and
+    cross-file search still work on the pseudonyms."""
+    digest = hmac.new(
+        _pseudo_key(repo_root), str(value).encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:10]
+    return f"<{key}:{digest}>"
+
+
+def _protect_value(repo_root: str | Path, key: str, value: str) -> str:
+    if not key.startswith(_PSEUDO_PREFIXES):
+        return value
+    if _PSEUDO_SHAPE.match(value):
+        return value  # already a pseudonym (carried forward), idempotent
+    return pseudonymize(repo_root, key, value)
+
+
 def record_findings(
     repo_root: str | Path,
     file_path: str,
@@ -79,6 +128,25 @@ def record_findings(
     how ``already_scanned`` knows a clean file was scanned at this SHA.
     """
     now = time.time()
+    # Fail CLOSED: if the mode probe breaks (unreadable config, import
+    # error), pseudonymize anyway. A superfluous pseudonym costs nothing;
+    # a silent fallback to raw values voids the secure-at-rest guarantee.
+    secure = True
+    try:
+        from codegraph.state.guard import guard_mode
+
+        secure = guard_mode(repo_root) == "secure"
+    except Exception as exc:
+        try:
+            from codegraph.state.activity import log as _activity
+
+            _activity(
+                repo_root,
+                "findings",
+                f"guard_mode probe failed, failing closed (pseudonymizing): {exc}",
+            )
+        except Exception:
+            pass
     with _LOCK:
         conn = _get_conn(repo_root)
         conn.execute(
@@ -90,7 +158,9 @@ def record_findings(
                 file_path,
                 scanner,
                 f.key,
-                str(f.value),
+                _protect_value(repo_root, f.key, str(f.value))
+                if secure
+                else str(f.value),
                 int(getattr(f, "line", 0) or 0),
                 getattr(f, "severity", "info") or "info",
                 blob_sha,

@@ -24,6 +24,16 @@ secret is the identity of your pseudonym space: persist it once in
 your vault (32 random bytes; the SDK refuses fewer than 16) and reuse
 it, otherwise pseudonyms stop correlating across restarts.
 
+## Same result without writing code
+
+Inside a cgh repo in **secure mode** (`cgh init --secure`), this is
+automatic: every `pii.*` and `secret.*` finding value is stored as a
+keyed one-way pseudonym at write time (`.codegraph/pseudo.key`, per
+repo). `cgh findings` and the MCP `findings` tool both show the
+pseudonyms, never the raw values, and reading the SQLite files
+directly yields nothing recoverable. The SDK function in this example
+is the same mechanism with a key you own.
+
 ## Tests
 
 ```bash

@@ -126,6 +126,39 @@ class TestBackendSelection:
         assert pick_backend({"backend": "structural"}, cloud_allowed=False) is not None
 
 
+class TestOllamaEgressClass:
+    """The "local" label is earned by the URL, not declared: a remote
+    ollama_url reclassifies the backend as cloud so the gate applies."""
+
+    def _ollama(self):
+        from cgh_summarize.backends import OllamaBackend
+
+        return OllamaBackend()
+
+    def test_loopback_url_is_local(self):
+        assert self._ollama().egress_class({}) == "local"
+        assert (
+            self._ollama().egress_class({"ollama_url": "http://localhost:11434"})
+            == "local"
+        )
+
+    def test_remote_url_is_cloud(self):
+        cfg = {"ollama_url": "http://192.168.1.20:11434"}
+        assert self._ollama().egress_class(cfg) == "cloud"
+
+    def test_gate_now_reaches_a_remote_ollama(self, monkeypatch):
+        """cloud_allowed=False must exclude an ollama on a remote host,
+        even though its static egress attribute still reads "local"."""
+        remote = {"backend": "ollama", "ollama_url": "http://192.168.1.20:11434"}
+        ollama = self._ollama()
+        monkeypatch.setattr(type(ollama), "available", lambda self, config: True)
+        picked = pick_backend(remote, extras=[], cloud_allowed=False)
+        assert picked is None
+
+    def test_unparsable_url_probe_says_unavailable(self):
+        assert self._ollama().available({"ollama_url": "http://"}) is False
+
+
 class TestScanner:
     def test_small_file_skipped(self, tmp_path):
         root = _repo(tmp_path)
@@ -203,9 +236,13 @@ class TestInsights:
             recorded.update(title=title, body=body, kind=kind, tags=tags)
             return 42
 
-        import codegraph.state.call_log as call_log
+        # Patch the plugin_api facade, not codegraph.state.call_log:
+        # the facade caches its lazy re-exports on first resolution, so
+        # a patch on the source module is invisible once any earlier
+        # test resolved the name through plugin_api.
+        import codegraph.plugin_api as api
 
-        monkeypatch.setattr(call_log, "knowledge_record", fake_knowledge_record)
+        monkeypatch.setattr(api, "knowledge_record", fake_knowledge_record)
 
         cloud = FakeCloud(reply="the donation flow is duplicated")
         result = run_insights(root, {}, extras_fn=lambda: [cloud])

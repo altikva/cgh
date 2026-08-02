@@ -8,6 +8,56 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-02
+
+### Added
+- **Public exception hierarchy** (`codegraph.errors`): `CodegraphError`
+  base with `ConfigurationError`, `BackendError`, `IndexingError`;
+  `CapabilityMissing` now inherits it (RuntimeError kept for
+  compatibility) and the SDK exports the base, so embedders catch one
+  type for everything cgh raises on purpose.
+- **PEP 561 markers everywhere**: `py.typed` ships in the core package
+  and all six plugins; SDK consumers finally get type checking from
+  the annotations that were already there.
+- **Strict pytest configuration**: `--strict-config --strict-markers`,
+  declared `kuzu`/`network` markers and testpaths in pyproject; a
+  typo'd marker is now an error instead of a silently empty filter.
+- **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
+  the benchmarked image pipeline as a deferred scanner and a `cgh
+  vision` CLI verb. A content inventory decides what each image
+  contains (never assuming a diagram), then only the warranted
+  extractors run: diagrams to markdown + Mermaid (qwen nodes, gemma
+  arrows constrained to the found labels), tables and charts to data,
+  dense text to a summary. Identities read off diagrams (IPs, FQDNs,
+  hostnames) are split out of labels and recorded as
+  `pii.image_identity` findings, so the secure-at-rest layer
+  pseudonymizes them. Local Ollama only; the SDK `image_*` functions
+  now resolve. Joins the `plugins` and `full` extras.
+- **Embedding SDK** (`codegraph.sdk`): the documented surface for
+  using cgh's bricks inside third-party code, without CLI, owner, MCP
+  or a `.codegraph/` repo: `scan_text` over installed scanners, the
+  egress gate as a pure function (secure allowlist by default),
+  caller-keyed pseudonymization, `summarize` through the cgh-summarize
+  backends (local-only by default), vision entry points raising a
+  clear error until cgh-vision ships, and an in-memory finding store.
+  `SDK_API = 1`, SemVer on the surface, everything else stays
+  internal. Recipes in docs/EMBEDDING.md.
+- **SDK embedding exception** (LICENSE): code exercised solely through
+  `codegraph.sdk` may be used under MIT alone, including commercially;
+  the graph index, MCP server, federation and shared memory stay under
+  the dual license. cgh-pii, cgh-classify and cgh-summarize move to
+  plain MIT so the grant is real end to end.
+- **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
+  and `secret.*` finding values are replaced at write time by stable
+  one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),
+  so the raw datum never reaches disk and reading the SQLite files
+  directly, bypassing MCP, yields nothing recoverable. Dedup and
+  cross-file search keep working on the pseudonyms.
+- **The index is guard-protected in secure mode**: agent Read/Grep and
+  any shell command touching `.codegraph/` are denied with a reason
+  pointing at the MCP tools, and the static deny lists (Claude
+  settings, `.bobignore`) carry a standing index entry.
+
 ### Changed
 - **Claude usage guidelines install as a native rule**: when the
   installed Claude Code supports the `.claude/rules/` directory
@@ -19,16 +69,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   keep the legacy CLAUDE.md block unchanged. The design proposals, the
   benchmark harness and the maintainer release runbook also leave the
   public tree for a gitignored internal/ directory.
-
-### Changed
 - **Parser dataclasses use `slots=True`**: the eight `FileIndex`
   building blocks (`SymbolDef`, `ClassDef`, `ImportRef`, ...) are the
   highest-volume allocations during indexing; slots cut their peak
   memory by a measured 13% on 100k instances with no API change. (An
   FTS write-batching change was prototyped alongside, benchmarked at
   exactly zero gain, and dropped.)
-
-### Changed
 - **The three longest functions are split into their jobs**: the CLI's
   500-line `main()` becomes four grouped command registrars plus a
   module-level parser class; `cmd_init` extracts the AI-tool setup and
@@ -69,6 +115,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   plugins migrated off `codegraph.state/*` and friends, and a boundary
   test now fails any plugin import that reaches into internals, which
   is what keeps `API_VERSION` honest.
+- **Plugin floors in the install extras track plugin releases**: a
+  stale floor let `uv tool install --force` keep an already-resolved
+  older plugin, so the extras now pin the floors to what this release
+  ships. The five published plugins get patch releases carrying the
+  MIT relicense and the audit fixes (`cgh-docs`, `cgh-pii`,
+  `cgh-classify`, `cgh-bugreport` 0.1.1; `cgh-summarize` 0.2.1) and
+  `cgh[plugins]`/`cgh[full]` require them; cgh-vision 0.1.0 publishes
+  for the first time.
 
 ### Fixed
 - **One backend factory, identifier allow-list in both backends**:
@@ -155,63 +209,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `cgh add-dir add` or config.toml), and the acceptance is logged.
   Without this, any prompt-injected MCP client could walk and index
   arbitrary readable directories, making their content queryable.
-
-### Added
-- **Public exception hierarchy** (`codegraph.errors`): `CodegraphError`
-  base with `ConfigurationError`, `BackendError`, `IndexingError`;
-  `CapabilityMissing` now inherits it (RuntimeError kept for
-  compatibility) and the SDK exports the base, so embedders catch one
-  type for everything cgh raises on purpose.
-- **PEP 561 markers everywhere**: `py.typed` ships in the core package
-  and all six plugins; SDK consumers finally get type checking from
-  the annotations that were already there.
-- **Strict pytest configuration**: `--strict-config --strict-markers`,
-  declared `kuzu`/`network` markers and testpaths in pyproject; a
-  typo'd marker is now an error instead of a silently empty filter.
-- **cgh-vision plugin** (in `plugins/cgh-vision`, published separately):
-  the benchmarked image pipeline as a deferred scanner and a `cgh
-  vision` CLI verb. A content inventory decides what each image
-  contains (never assuming a diagram), then only the warranted
-  extractors run: diagrams to markdown + Mermaid (qwen nodes, gemma
-  arrows constrained to the found labels), tables and charts to data,
-  dense text to a summary. Identities read off diagrams (IPs, FQDNs,
-  hostnames) are split out of labels and recorded as
-  `pii.image_identity` findings, so the secure-at-rest layer
-  pseudonymizes them. Local Ollama only; the SDK `image_*` functions
-  now resolve. Joins the `plugins` and `full` extras.
-- **Embedding SDK** (`codegraph.sdk`): the documented surface for
-  using cgh's bricks inside third-party code, without CLI, owner, MCP
-  or a `.codegraph/` repo: `scan_text` over installed scanners, the
-  egress gate as a pure function (secure allowlist by default),
-  caller-keyed pseudonymization, `summarize` through the cgh-summarize
-  backends (local-only by default), vision entry points raising a
-  clear error until cgh-vision ships, and an in-memory finding store.
-  `SDK_API = 1`, SemVer on the surface, everything else stays
-  internal. Recipes in docs/EMBEDDING.md.
-- **SDK embedding exception** (LICENSE): code exercised solely through
-  `codegraph.sdk` may be used under MIT alone, including commercially;
-  the graph index, MCP server, federation and shared memory stay under
-  the dual license. cgh-pii, cgh-classify and cgh-summarize move to
-  plain MIT so the grant is real end to end.
-
-### Added
-- **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
-  and `secret.*` finding values are replaced at write time by stable
-  one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),
-  so the raw datum never reaches disk and reading the SQLite files
-  directly, bypassing MCP, yields nothing recoverable. Dedup and
-  cross-file search keep working on the pseudonyms.
-- **The index is guard-protected in secure mode**: agent Read/Grep and
-  any shell command touching `.codegraph/` are denied with a reason
-  pointing at the MCP tools, and the static deny lists (Claude
-  settings, `.bobignore`) carry a standing index entry.
-
-### Changed
-- **Plugin floors in the install extras track plugin releases**:
-  `cgh[plugins]` and `cgh[full]` now require `cgh-summarize>=0.2`, so
-  upgrading cgh forces the plugin upgrade too. A stale `>=0.1` floor
-  let `uv tool install --force` keep an already-resolved 0.1.0, the
-  release runbook now includes the floor bump.
 
 ## [0.8.0] - 2026-07-29
 
@@ -764,7 +761,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/altikva/cgh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/altikva/cgh/compare/v0.7.1...v0.7.2

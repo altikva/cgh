@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-bugreport"
-version = "0.1.0"
+version = "0.1.1"
 description = "Crash reports for cgh, built by allowlist and sent only by hand: local spool, exact-payload preview, private GitHub issues with fingerprint dedup"
 readme = "README.md"
 requires-python = ">=3.11"

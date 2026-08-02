@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from .backends import ask
@@ -409,6 +411,40 @@ def _tick(progress, message: str) -> None:
         progress(message)
 
 
+_PRESCALE_MIN_PX = 1000
+_PRESCALE_FACTOR = 2
+
+
+def prescaled(path: Path, config: dict) -> tuple[Path, Callable[[], None]]:
+    """2x Lanczos upscale for small images, benchmarked to rescue
+    thin-line exports (drawio) that 3-4B models cannot read at native
+    resolution, while never hurting the others. Applies when the
+    smaller dimension is under prescale_min_px (default 1000) and
+    `prescale` is not disabled. Returns (path_to_use, cleanup)."""
+    if not config.get("prescale", True):
+        return path, lambda: None
+    try:
+        from PIL import Image
+    except ImportError:  # pillow missing: extract at native resolution
+        return path, lambda: None
+    try:
+        with Image.open(path) as im:
+            if min(im.width, im.height) >= int(
+                config.get("prescale_min_px", _PRESCALE_MIN_PX)
+            ):
+                return path, lambda: None
+            scaled = im.convert("RGB").resize(
+                (im.width * _PRESCALE_FACTOR, im.height * _PRESCALE_FACTOR),
+                Image.Resampling.LANCZOS,
+            )
+    except OSError:  # unreadable/corrupt image: let the pipeline decide
+        return path, lambda: None
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        target = Path(tmp.name)
+    scaled.save(target)
+    return target, lambda: target.unlink(missing_ok=True)
+
+
 def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     """Diagram extraction: structure, optional enrichment, constrained
     edges, post-processing. Returns the extraction dict plus rendered
@@ -416,6 +452,16 @@ def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
     prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    path, cleanup = prescaled(path, config)
+    try:
+        return _extract_diagram_inner(path, config, profile, timeout, prompt, progress)
+    finally:
+        cleanup()
+
+
+def _extract_diagram_inner(
+    path: Path, config: dict, profile: dict, timeout: int, prompt: str, progress
+) -> dict:
     _tick(progress, f"reading structure ({profile['nodes_model']})")
     raw = ask(profile["nodes_model"], path, prompt, config, timeout)
     pred = parse_json(raw) or {}

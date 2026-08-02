@@ -21,6 +21,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   with elapsed time on stderr, so the 30 seconds of model time no
   longer look like a hang. The SDK surface stays silent by default.
 
+### Changed
+- **cgh-vision pre-scales small images before extraction**: images
+  whose smaller dimension is under 1000 px are upscaled 2x (Lanczos)
+  for the diagram passes, which the benchmark showed rescues
+  thin-line drawio exports (2 nodes / 1 edge becoming 6 / 7) and
+  never hurts the others; 3x was measured worse than 2x. Tunable via
+  `prescale` / `prescale_min_px` under `[plugin.vision]` (documented
+  in the default config template), and the plugin now depends on
+  pillow.
+
 ### Fixed
 - **Zones emitted as nested lists render correctly**: some models
   return `zones: [["Cluster GKE"], []]`; the labels came out as

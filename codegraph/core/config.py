@@ -434,6 +434,15 @@ reindex_on_start = true
 # openai_model = ""
 # openai_api_key_env = "OPENAI_API_KEY"
 
+# [plugin.vision]
+# profile = "default"    # or fast (single pass), photo (screen photos)
+# nodes_model = "qwen2.5vl:3b"
+# edges_model = "gemma3:4b"
+# ollama_url = "http://127.0.0.1:11434"  # loopback only in secure mode
+# timeout_s = 120        # per model call
+# prescale = true        # 2x upscale of small images before extraction
+# prescale_min_px = 1000 # apply when the smaller dimension is under this
+
 [ruflo]
 # Ruflo integration (auto-detected if not set)
 # enabled = true

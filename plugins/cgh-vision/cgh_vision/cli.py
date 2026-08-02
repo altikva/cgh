@@ -26,9 +26,10 @@ def make_cli_registrar(config: dict):
             choices=["default", "fast", "photo"],
             help="Pipeline profile (default from [plugin.vision])",
         )
-        from codegraph.plugin_api import add_out_option
+        from codegraph.plugin_api import add_format_option, add_out_option
 
-        add_out_option(p, what="the markdown report")
+        add_out_option(p, what="the report")
+        add_format_option(p)  # md (human) or json (the SDK dicts)
         p.set_defaults(func=lambda args: _run(args, dict(config)))
 
     return register_cli
@@ -36,7 +37,7 @@ def make_cli_registrar(config: dict):
 
 def _run(args, config: dict) -> None:
     from .backends import available
-    from .pipeline import route
+    from .pipeline import render_markdown, route_structured
 
     if args.profile:
         config["profile"] = args.profile
@@ -58,11 +59,22 @@ def _run(args, config: dict) -> None:
         transient=True,
     ) as bar:
         task = bar.add_task("warming up", total=None)
-        _inv, markdown = route(
+        result = route_structured(
             Path(args.image),
             config,
             progress=lambda step: bar.update(task, description=step),
         )
     from codegraph.plugin_api import emit_result
 
-    emit_result(markdown, out=getattr(args, "out", ""), hint="report.md")
+    if getattr(args, "format", "md") == "json":
+        import json
+
+        payload = dict(result)
+        if payload["diagram"] is not None:
+            # The markdown projection is the other format; mermaid stays.
+            payload["diagram"] = {
+                k: v for k, v in payload["diagram"].items() if k != "markdown"
+            }
+        emit_result(json.dumps(payload, indent=2), out=args.out, hint="report.json")
+    else:
+        emit_result(render_markdown(result), out=args.out, hint="report.md")

@@ -9,6 +9,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Changed
+- **Claude usage guidelines install as a native rule**: when the
+  installed Claude Code supports the `.claude/rules/` directory
+  (probed via `claude --version`), `cgh init`/`cgh setup claude` write
+  `.claude/rules/cgh-usage.md`, a file cgh owns outright
+  (auto-discovered, versioned with the repo, overwritten on update),
+  and migrate away the legacy marker block from CLAUDE.md so the
+  guidance is not paid twice. Older or undetectable Claude versions
+  keep the legacy CLAUDE.md block unchanged. The design proposals and
+  benchmark harness also leave the public tree for a gitignored
+  internal/ directory.
+
+### Changed
 - **Parser dataclasses use `slots=True`**: the eight `FileIndex`
   building blocks (`SymbolDef`, `ClassDef`, `ImportRef`, ...) are the
   highest-volume allocations during indexing; slots cut their peak

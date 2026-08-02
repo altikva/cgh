@@ -17,8 +17,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import cgh_vision.pipeline as pipeline
 import pytest
+
+pytest.importorskip("cgh_vision")
+
+import cgh_vision.pipeline as pipeline
 from cgh_vision.pipeline import (
     extract_diagram,
     inventory,
@@ -198,6 +201,68 @@ class TestScanner:
         monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: False)
         with pytest.raises(RuntimeError, match="Ollama"):
             VisionScanner({}, tmp_path).scan(img, "", None)
+
+
+class TestEgressPosture:
+    """Image bytes only ever reach a loopback daemon in secure mode; a
+    remote ollama_url is refused there and audited elsewhere."""
+
+    def _image(self, tmp_path):
+        img = tmp_path / "d.png"
+        img.write_bytes(b"\x89PNG" + b"0" * 6000)
+        return img
+
+    def _mode(self, monkeypatch, mode):
+        import codegraph.plugin_api as api
+
+        class _Cfg:
+            pass
+
+        cfg = _Cfg()
+        cfg.mode = mode
+        monkeypatch.setattr(api, "load_config", lambda root: cfg)
+
+    def test_secure_refuses_remote_url(self, tmp_path, monkeypatch):
+        from cgh_vision.backends import VisionError
+        from cgh_vision.scanner import VisionScanner
+
+        self._mode(monkeypatch, "secure")
+        scanner = VisionScanner({"ollama_url": "http://192.168.1.20:11434"}, tmp_path)
+        with pytest.raises(VisionError, match="non-loopback"):
+            scanner.scan(self._image(tmp_path), "", None)
+
+    def test_mode_probe_failure_refuses(self, tmp_path, monkeypatch):
+        """Unknown mode is secure mode: the probe fails closed."""
+        from cgh_vision.backends import VisionError
+        from cgh_vision.scanner import VisionScanner
+
+        import codegraph.plugin_api as api
+
+        def boom(root):
+            raise OSError("unreadable config")
+
+        monkeypatch.setattr(api, "load_config", boom)
+        scanner = VisionScanner({"ollama_url": "http://192.168.1.20:11434"}, tmp_path)
+        with pytest.raises(VisionError, match="non-loopback"):
+            scanner.scan(self._image(tmp_path), "", None)
+
+    def test_assist_proceeds_and_audits(self, tmp_path, monkeypatch):
+        from cgh_vision.scanner import VisionScanner
+
+        self._mode(monkeypatch, "assist")
+        audited = []
+        monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
+        _script(
+            monkeypatch,
+            ['{"summary": "a photo", "content": ["photo"], "text_density": "none"}'],
+        )
+        scanner = VisionScanner({"ollama_url": "http://192.168.1.20:11434"}, tmp_path)
+        monkeypatch.setattr(
+            type(scanner), "_audit", lambda self, message: audited.append(message)
+        )
+        found = scanner.scan(self._image(tmp_path), "", None)
+        assert {f.key for f in found} == {"image.content", "image.summary"}
+        assert audited and "non-loopback" in audited[0]
 
 
 class TestSdkWiring:

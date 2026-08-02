@@ -43,9 +43,18 @@ def _tracked_supported_files(root: Path) -> list[Path]:
 
     try:
         out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+            ["git", "ls-files"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
         return []
     return [root / line for line in out.splitlines() if line and is_supported(line)]
 
@@ -53,7 +62,7 @@ def _tracked_supported_files(root: Path) -> list[Path]:
 def _cmd_summarize(args, config: dict, extras_fn) -> None:
     from rich.console import Console
 
-    from .backends import resolve_backends
+    from .backends import egress_of, resolve_backends
     from .gate import egress_posture
     from .scanner import SummarizeScanner
 
@@ -72,7 +81,8 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
                 ok = False
             state = "[green]available[/green]" if ok else "[dim]unavailable[/dim]"
             console.print(
-                f"  {backend.name:<14} {state}  [dim]egress: {backend.egress}[/dim]"
+                f"  {backend.name:<14} {state}  "
+                f"[dim]egress: {egress_of(backend, config)}[/dim]"
             )
         done = {
             r["file"]

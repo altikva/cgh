@@ -201,7 +201,10 @@ def _mode(root: Path) -> str:
 
         return load_config(root).mode
     except Exception:
-        return "assist"
+        # Fail CLOSED: this answer gates the secure-mode confirmation
+        # before a send, so an unreadable config must behave as secure,
+        # never as the permissive default.
+        return "secure"
 
 
 def _audit(root: Path, message: str) -> None:

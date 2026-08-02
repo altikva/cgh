@@ -219,3 +219,18 @@ class TestSend:
                 Namespace(action="send", report="last", root=str(tmp_path), yes=True),
                 {"github_repo": "org/reports"},
             )
+
+
+class TestModeProbe:
+    def test_probe_failure_reads_as_secure(self, monkeypatch, tmp_path):
+        """The mode gates the pre-send confirmation, so an unreadable
+        config must land on the strict branch, never the permissive."""
+        from cgh_bugreport.cli import _mode
+
+        import codegraph.plugin_api as api
+
+        def boom(root):
+            raise OSError("unreadable config")
+
+        monkeypatch.setattr(api, "load_config", boom)
+        assert _mode(tmp_path) == "secure"

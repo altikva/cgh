@@ -209,8 +209,17 @@ def _tracked_files(root: Path) -> list[Path]:
 
     try:
         out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+            ["git", "ls-files"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
         return []
     return [root / line for line in out.splitlines() if line and is_supported(line)]

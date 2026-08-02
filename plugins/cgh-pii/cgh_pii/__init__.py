@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-import sys
+import logging
 
 CGH_PLUGIN_API = 1
 
@@ -27,8 +27,10 @@ def register(api) -> None:
 
             api.register_scanner(NerScanner())
         except ImportError:
-            print(
-                "[cgh-pii] ner = true but presidio is not installed; "
-                'run pip install "cgh-pii[ner]". NER tier skipped.',
-                file=sys.stderr,
+            # register() runs inside the owner: a logger gives the
+            # message a level and a module name in owner.log, where a
+            # bare stderr print arrived unlabeled.
+            logging.getLogger(__name__).warning(
+                "ner = true but presidio is not installed; "
+                'run pip install "cgh-pii[ner]". NER tier skipped.'
             )

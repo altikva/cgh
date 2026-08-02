@@ -1572,10 +1572,14 @@ def audit_claude_integration(root: Path) -> dict:
             has_block = "<!-- codegraph-usage:start -->" in text
         except OSError:
             has_block = False
-    report["usage_block"] = {
-        "status": "ok" if has_block else "missing",
-        "path": "CLAUDE.md",
-    }
+    rules_file = root / ".claude" / "rules" / "cgh-usage.md"
+    if rules_file.exists():
+        report["usage_block"] = {"status": "ok", "path": ".claude/rules/cgh-usage.md"}
+    else:
+        report["usage_block"] = {
+            "status": "ok" if has_block else "missing",
+            "path": "CLAUDE.md",
+        }
 
     report["overall"] = (
         "ok"

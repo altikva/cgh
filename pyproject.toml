@@ -34,7 +34,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "duckdb>=1.0",
+    # 1.2 is the real minimum: older binders reject the upsert's
+    # ON CONFLICT DO UPDATE against a constrained column.
+    "duckdb>=1.2",
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
     "tree-sitter-typescript>=0.23",
@@ -46,6 +48,9 @@ dependencies = [
     "rank-bm25>=0.2",
     "rich>=13.0",
     "questionary>=2.0",
+    # Used directly by the YAML section parser; declared so the nested
+    # sections it tests for do not depend on a transitive install.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

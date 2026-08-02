@@ -81,6 +81,31 @@ sdk.extract_diagram(img, {"profile": "fast"})
 sdk.extract_diagram(img, {"nodes_model": "qwen2.5vl:7b", "timeout_s": 180})
 ```
 
+## Same result without writing code
+
+**cgh CLI**, one-off on any image:
+
+```bash
+cgh vision path/to/diagram.png            # default profile
+cgh vision photo.jpg --profile photo
+```
+
+Inside an **indexed repo** (`cgh init`), the deferred scanner runs the
+same pipeline on every committed image during indexing; the results
+are findings:
+
+```bash
+cgh findings                              # image.content, diagram.mermaid, ...
+```
+
+**MCP through your agent** (Claude Code, Cursor, Codex with the cgh
+MCP server connected): the extractions are already in the finding
+store, so the agent does not run models at question time. Ask
+something like "what does the architecture diagram in docs/ show?"
+and the agent calls the `findings` tool (key `diagram.mermaid` or
+`diagram.entities`) or `fts_search` to pull the extracted structure.
+In secure mode the identities it sees are pseudonyms.
+
 ## Tests
 
 `test_vision_pipeline.py` runs without Ollama: it fakes the model

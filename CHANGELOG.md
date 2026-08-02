@@ -84,6 +84,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   raises `BackendError` on anything not identifier-shaped, closing
   the latent injection the audit flagged even though current callers
   pass constants.
+- **The plugin test suites actually run**: pytest only collected
+  `tests/`, so the six plugins' own suites (~95 tests) never executed,
+  locally or in CI. They are collected now (self-skipping when a
+  plugin is not installed), the lowest-resolution advisory job
+  installs the plugins so their dependency floors (pypdf, python-docx,
+  openpyxl) are proven too, and the plugins gained module loggers: a
+  corrupt pdf/docx/xlsx that indexes empty now leaves a warning
+  instead of looking like success, and raised errors use named
+  exception types (`SummarizeError`, `VisionError`).
 - **The declared dependency floors are now real** (first catches of the
   lowest-resolution CI job): the `duckdb` floor rises to 1.2 because
   1.0 and 1.1 reject the node upsert (their binder refuses
@@ -120,6 +129,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   out (30-60 s) and their callers handle the expiry.
 
 ### Security
+- **A "local" backend claim is now earned by the URL, not declared**:
+  the Ollama backends of cgh-summarize and cgh-vision labeled
+  themselves local while `ollama_url` accepted any host, so in secure
+  mode file content and raw image bytes could reach a non-loopback
+  daemon without ever meeting the egress gate. A shared
+  `is_loopback_url` helper (exposed through the plugin API) now
+  classifies the backend from the configured host: summarize treats a
+  remote Ollama as cloud (gated), vision refuses it outright in secure
+  mode and audit-logs the departure in assist mode. Malformed URLs
+  read as unavailable instead of crashing the probe.
+- **cgh-bugreport's mode probe fails closed**: an unreadable config
+  made the pre-send secure-mode confirmation silently skip; unknown
+  mode now behaves as secure. The report spool directory is also
+  created 0700, and the plugins' `git ls-files` calls carry the
+  timeout every other subprocess in the tree already had.
 - **The secure-mode probe fails closed**: if `record_findings` cannot
   determine the guard mode (unreadable config, transient error), it
   now pseudonymizes sensitive values instead of silently falling back

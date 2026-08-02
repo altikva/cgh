@@ -21,16 +21,36 @@ import urllib.request
 from pathlib import Path
 
 
+class VisionError(RuntimeError):
+    """The vision backend cannot run or refused to (egress policy)."""
+
+
 def ollama_url(config: dict) -> str:
     return str(config.get("ollama_url", "http://127.0.0.1:11434")).rstrip("/")
 
 
+def is_local(config: dict) -> bool:
+    """Does the configured daemon live on this machine? The docstring
+    promise "nothing leaves the machine" is only true for loopback URLs,
+    so the secure posture checks this, not the backend's word."""
+    from codegraph.plugin_api import is_loopback_url
+
+    return is_loopback_url(ollama_url(config))
+
+
 def available(config: dict) -> bool:
     """Fast probe: is the Ollama daemon reachable?"""
+    from urllib.parse import urlsplit
+
+    url = ollama_url(config)
     try:
-        host_port = ollama_url(config).split("//", 1)[1]
-        host, _, port = host_port.partition(":")
-        with socket.create_connection((host, int(port or 80)), timeout=0.3):
+        parts = urlsplit(url if "//" in url else f"//{url}")
+    except ValueError:
+        return False
+    if not parts.hostname:
+        return False
+    try:
+        with socket.create_connection((parts.hostname, parts.port or 80), timeout=0.3):
             return True
     except OSError:
         return False

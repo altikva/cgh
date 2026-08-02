@@ -118,6 +118,28 @@ def quiet_subprocess_kwargs() -> dict:
     return {}
 
 
+def is_loopback_url(url: str) -> bool:
+    """True only when the URL's host is unambiguously this machine:
+    ``localhost``, 127.0.0.0/8 or ``::1``. Egress classification builds
+    on this ("local backend" claims must be earned by the URL, not by a
+    class attribute), so anything unparsable is NOT loopback: the
+    decision fails closed."""
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(url if "//" in url else f"//{url}").hostname or ""
+    except ValueError:
+        return False
+    if host.lower() == "localhost":
+        return True
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 _SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 

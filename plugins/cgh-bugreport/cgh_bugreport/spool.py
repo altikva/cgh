@@ -27,7 +27,9 @@ def spool_dir(repo_root: str | Path) -> Path:
 
 def write_report(repo_root: str | Path, payload: dict) -> Path:
     d = spool_dir(repo_root)
-    d.mkdir(parents=True, exist_ok=True)
+    # 0700: reports are non-PII by construction, but crash frames are
+    # nobody else's business either. Defense in depth, cost zero.
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = d / f"{payload['report_id']}.json"
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     _enforce_cap(repo_root)

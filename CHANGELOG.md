@@ -393,7 +393,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the public plugin API) are not treated as derivative works and may be
   licensed under any terms, including commercial ones. Using cgh itself
   remains governed by the MIT + CC BY-NC-SA dual license. Groundwork for
-  the plugin architecture proposal (docs/proposals/001).
+  the plugin architecture design.
 
 ### Fixed
 - **Federated children no longer starve the parent's fan-out.** An

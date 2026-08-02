@@ -26,7 +26,9 @@ from cgh_vision.pipeline import (
     extract_diagram,
     inventory,
     postprocess,
+    render_markdown,
     route,
+    route_structured,
     split_identities,
 )
 
@@ -131,6 +133,31 @@ class TestSplitIdentities:
             ["ldap.acme.internal"],
         )
         assert split_identities("Cloud Run") == ("Cloud Run", [])
+
+
+class TestRouteStructured:
+    _REPLIES = [
+        '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
+        '{"nodes": ["API", "DB"], "edges": [["API", "DB"]], "zones": []}',
+        '{"title": "Archi", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+
+    def test_structured_shape(self, monkeypatch):
+        _script(monkeypatch, list(self._REPLIES))
+        result = route_structured(IMG, {})
+        assert result["image"] == "x.png"
+        assert result["inventory"]["content"] == ["architecture_diagram"]
+        assert [n["label"] for n in result["diagram"]["nodes"]] == ["API", "DB"]
+        assert result["tables"] == [] and result["charts"] == []
+        assert result["text"] is None
+
+    def test_markdown_projection_matches_route(self, monkeypatch):
+        _script(monkeypatch, list(self._REPLIES))
+        result = route_structured(IMG, {})
+        _script(monkeypatch, list(self._REPLIES))
+        _inv, md = route(IMG, {})
+        assert render_markdown(result) == md
 
 
 class TestPostprocessZones:

@@ -324,10 +324,16 @@ def postprocess(pred: dict) -> dict:
 
     zones = []
     for z in pred.get("zones") or []:
-        label = _label(z)
+        if isinstance(z, list):
+            # Some models emit zones as nested lists (["Cluster GKE"]);
+            # without this the label becomes the stringified list.
+            label = ", ".join(s for i in z if (s := str(i).strip()))
+            raw_members = []
+        else:
+            label = _label(z)
+            raw_members = z.get("members") or [] if isinstance(z, dict) else []
         if not label.strip():
             continue
-        raw_members = z.get("members") or [] if isinstance(z, dict) else []
         members = [r for m in raw_members if (r := _resolve(str(m)))]
         zones.append({"label": label, "members": members})
 
@@ -396,13 +402,21 @@ def inventory(path: Path, config: dict) -> dict:
     }
 
 
-def extract_diagram(path: Path, config: dict) -> dict:
+def _tick(progress, message: str) -> None:
+    """Announce a pipeline step to an optional observer (the CLI's
+    progress bar). None, the default, keeps the SDK surface silent."""
+    if progress is not None:
+        progress(message)
+
+
+def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     """Diagram extraction: structure, optional enrichment, constrained
     edges, post-processing. Returns the extraction dict plus rendered
     `markdown` and `mermaid` keys."""
     profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
     prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    _tick(progress, f"reading structure ({profile['nodes_model']})")
     raw = ask(profile["nodes_model"], path, prompt, config, timeout)
     pred = parse_json(raw) or {}
     labels = [_label(n) for n in (pred.get("nodes") or []) if _label(n).strip()]
@@ -412,6 +426,7 @@ def extract_diagram(path: Path, config: dict) -> dict:
         or profile.get("read_legend")
         or profile.get("read_notes")
     ):
+        _tick(progress, f"enriching {len(labels)} label(s) ({profile['nodes_model']})")
         raw_meta = ask(
             profile["nodes_model"],
             path,
@@ -435,6 +450,7 @@ def extract_diagram(path: Path, config: dict) -> dict:
         pred["notes"] = meta.get("notes") or []
 
     if profile.get("edges_model") and labels:
+        _tick(progress, f"reading arrows ({profile['edges_model']})")
         raw_e = ask(
             profile["edges_model"],
             path,
@@ -630,23 +646,28 @@ def charts_to_markdown(charts: list[dict]) -> str:
 DIAGRAM_KINDS = {"architecture_diagram", "flowchart"}
 
 
-def route(path: Path, config: dict) -> tuple[dict, str]:
+def route(path: Path, config: dict, progress=None) -> tuple[dict, str]:
     """The full pipeline: inventory, then only the extractors the
-    content warrants. Returns (inventory, markdown)."""
+    content warrants. Returns (inventory, markdown). ``progress`` is an
+    optional callable receiving one human-readable step description
+    per model call (the CLI feeds its progress bar with it)."""
+    _tick(progress, f"content inventory ({profile_for(config)['nodes_model']})")
     inv = inventory(path, config)
     parts = [f"# {path.name}", "", f"_{inv['summary']}_", ""]
     parts.append(f"Detected content: {', '.join(inv['content'])}")
     parts.append("")
 
     if DIAGRAM_KINDS & set(inv["content"]):
-        ex = extract_diagram(path, config)
+        ex = extract_diagram(path, config, progress=progress)
         parts.append(ex["markdown"])
     if "table" in inv["content"]:
+        _tick(progress, "reading tables")
         tables = extract_tables(path, config)
         if tables:
             parts.append("## Tables")
             parts.append(tables_to_markdown(tables))
     if "chart" in inv["content"]:
+        _tick(progress, "reading charts")
         charts = extract_charts(path, config)
         if charts:
             parts.append("## Charts")
@@ -655,6 +676,7 @@ def route(path: Path, config: dict) -> tuple[dict, str]:
         inv["text_density"] == "dense"
         and not ({"table", *DIAGRAM_KINDS} & set(inv["content"]))
     ):
+        _tick(progress, "summarizing text")
         txt = extract_text(path, config)
         if txt["summary"]:
             parts.append("## Text")

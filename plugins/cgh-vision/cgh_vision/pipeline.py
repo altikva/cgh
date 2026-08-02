@@ -692,43 +692,66 @@ def charts_to_markdown(charts: list[dict]) -> str:
 DIAGRAM_KINDS = {"architecture_diagram", "flowchart"}
 
 
-def route(path: Path, config: dict, progress=None) -> tuple[dict, str]:
-    """The full pipeline: inventory, then only the extractors the
-    content warrants. Returns (inventory, markdown). ``progress`` is an
-    optional callable receiving one human-readable step description
-    per model call (the CLI feeds its progress bar with it)."""
+def route_structured(path: Path, config: dict, progress=None) -> dict:
+    """The full pipeline, structured: inventory, then only the
+    extractors the content warrants. Returns {image, inventory,
+    diagram, tables, charts, text}; unrun extractors stay None/empty.
+    ``progress`` is an optional callable receiving one human-readable
+    step description per model call."""
     _tick(progress, f"content inventory ({profile_for(config)['nodes_model']})")
     inv = inventory(path, config)
-    parts = [f"# {path.name}", "", f"_{inv['summary']}_", ""]
-    parts.append(f"Detected content: {', '.join(inv['content'])}")
-    parts.append("")
-
+    result: dict = {
+        "image": path.name,
+        "inventory": inv,
+        "diagram": None,
+        "tables": [],
+        "charts": [],
+        "text": None,
+    }
     if DIAGRAM_KINDS & set(inv["content"]):
-        ex = extract_diagram(path, config, progress=progress)
-        parts.append(ex["markdown"])
+        result["diagram"] = extract_diagram(path, config, progress=progress)
     if "table" in inv["content"]:
         _tick(progress, "reading tables")
-        tables = extract_tables(path, config)
-        if tables:
-            parts.append("## Tables")
-            parts.append(tables_to_markdown(tables))
+        result["tables"] = extract_tables(path, config)
     if "chart" in inv["content"]:
         _tick(progress, "reading charts")
-        charts = extract_charts(path, config)
-        if charts:
-            parts.append("## Charts")
-            parts.append(charts_to_markdown(charts))
+        result["charts"] = extract_charts(path, config)
     if "dense_text" in inv["content"] or (
         inv["text_density"] == "dense"
         and not ({"table", *DIAGRAM_KINDS} & set(inv["content"]))
     ):
         _tick(progress, "summarizing text")
-        txt = extract_text(path, config)
-        if txt["summary"]:
-            parts.append("## Text")
-            if txt["title"]:
-                parts.append(f"### {txt['title']}")
-            parts.append(txt["summary"])
-            parts.extend(f"- {k}" for k in txt["key_points"])
-            parts.append("")
-    return inv, "\n".join(parts)
+        result["text"] = extract_text(path, config)
+    return result
+
+
+def render_markdown(result: dict) -> str:
+    """The markdown projection of a route_structured() result."""
+    inv = result["inventory"]
+    parts = [f"# {result['image']}", "", f"_{inv['summary']}_", ""]
+    parts.append(f"Detected content: {', '.join(inv['content'])}")
+    parts.append("")
+    if result["diagram"] is not None:
+        parts.append(result["diagram"]["markdown"])
+    if result["tables"]:
+        parts.append("## Tables")
+        parts.append(tables_to_markdown(result["tables"]))
+    if result["charts"]:
+        parts.append("## Charts")
+        parts.append(charts_to_markdown(result["charts"]))
+    txt = result["text"]
+    if txt and txt["summary"]:
+        parts.append("## Text")
+        if txt["title"]:
+            parts.append(f"### {txt['title']}")
+        parts.append(txt["summary"])
+        parts.extend(f"- {k}" for k in txt["key_points"])
+        parts.append("")
+    return "\n".join(parts)
+
+
+def route(path: Path, config: dict, progress=None) -> tuple[dict, str]:
+    """Compatibility facade over route_structured: returns
+    (inventory, markdown)."""
+    result = route_structured(path, config, progress=progress)
+    return result["inventory"], render_markdown(result)

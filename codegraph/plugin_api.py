@@ -198,6 +198,7 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
     "is_loopback_url": ("codegraph.core.utils", "is_loopback_url"),
     # shared CLI output contract (--out) for plugin verbs
     "add_out_option": ("codegraph.cli.output", "add_out_option"),
+    "add_format_option": ("codegraph.cli.output", "add_format_option"),
     "emit_result": ("codegraph.cli.output", "emit_result"),
     "resolve_children": ("codegraph.analysis.federation", "resolve_children"),
     "sync_static_rules": ("codegraph.state.guard", "sync_static_rules"),

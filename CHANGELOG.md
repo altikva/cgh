@@ -15,6 +15,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   it get a one-line tip advertising the flag. Wired on `cgh vision`
   and `cgh impact`; plugins reach the same contract through the
   plugin API (`add_out_option`, `emit_result`).
+- **A shared `--format md|json` option**: same convention as `--out`
+  (one helper, plugin API re-export). `cgh vision --format json`
+  emits the structured extraction exactly as the SDK returns it
+  (inventory, diagram nodes/edges/zones/identities, mermaid, tables,
+  charts) instead of the markdown projection, and composes with
+  `--out report.json`. `cgh impact --format` and `cgh findings
+  --json` already spoke JSON and are unchanged.
 - **`cgh vision` shows its progress**: the pipeline announces each
   model pass (inventory, structure, enrichment, arrows, tables) to an
   optional observer and the CLI renders it as a transient spinner

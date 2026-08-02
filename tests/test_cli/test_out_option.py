@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from codegraph.cli.output import add_out_option, emit_result
+from codegraph.cli.output import add_format_option, add_out_option, emit_result
 
 
 def test_option_registers_with_default_empty():
@@ -31,6 +31,13 @@ def test_emit_writes_file_and_confirms(tmp_path, capsys):
     assert captured.out == "# hello\n"
     assert target.read_text(encoding="utf-8") == "# hello\n"
     assert "saved to" in captured.err
+
+
+def test_format_option_defaults_to_first_entry():
+    p = argparse.ArgumentParser()
+    add_format_option(p)
+    assert p.parse_args([]).format == "md"
+    assert p.parse_args(["--format", "json"]).format == "json"
 
 
 def test_tip_stays_out_of_pipes(capsys):

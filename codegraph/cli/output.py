@@ -27,6 +27,18 @@ def add_out_option(parser, what: str = "the result") -> None:
     )
 
 
+def add_format_option(parser, formats: tuple[str, ...] = ("md", "json")) -> None:
+    """Attach the shared --format argument (first entry is the
+    default). md stays the human default; json is the machine shape,
+    typically the same dicts the SDK returns."""
+    parser.add_argument(
+        "--format",
+        choices=list(formats),
+        default=formats[0],
+        help=f"Output format (default: {formats[0]})",
+    )
+
+
 def emit_result(text: str, out: str = "", hint: str = "result.md") -> None:
     """Print an artifact on stdout, honoring the shared --out contract.
 

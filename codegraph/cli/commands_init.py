@@ -977,7 +977,10 @@ def cmd_init(args: argparse.Namespace) -> None:
             ("highlighted", "fg:cyan bold"),
             ("selected", "fg:green"),
             ("separator", "fg:cyan"),
-            ("instruction", "fg:white dim"),
+            # A literal gray, not "white dim": the dim attribute only
+            # parses on prompt_toolkit >= 3.0.52 and this must render
+            # on every resolvable floor.
+            ("instruction", "fg:#808080"),
             ("text", "fg:white"),
         ]
     )

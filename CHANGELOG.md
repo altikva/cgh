@@ -16,9 +16,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   (auto-discovered, versioned with the repo, overwritten on update),
   and migrate away the legacy marker block from CLAUDE.md so the
   guidance is not paid twice. Older or undetectable Claude versions
-  keep the legacy CLAUDE.md block unchanged. The design proposals and
-  benchmark harness also leave the public tree for a gitignored
-  internal/ directory.
+  keep the legacy CLAUDE.md block unchanged. The design proposals, the
+  benchmark harness and the maintainer release runbook also leave the
+  public tree for a gitignored internal/ directory.
 
 ### Changed
 - **Parser dataclasses use `slots=True`**: the eight `FileIndex`

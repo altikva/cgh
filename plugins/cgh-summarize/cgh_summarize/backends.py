@@ -25,6 +25,22 @@ import urllib.request
 _TIMEOUT = 120  # seconds per model call
 
 
+class SummarizeError(RuntimeError):
+    """A backend failed to produce a summary."""
+
+
+def _url_host_port(url: str) -> tuple[str, int] | None:
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url if "//" in url else f"//{url}")
+    except ValueError:
+        return None
+    if not parts.hostname:
+        return None
+    return parts.hostname, parts.port or 80
+
+
 class StructuralBackend:
     """No model at all: the prompt scaffold IS the summary. Free, local,
     always available; the fallback when nothing else is usable."""
@@ -88,27 +104,35 @@ class CliBackend:
             timeout=_TIMEOUT,
         )
         if proc.returncode != 0:
-            raise RuntimeError(
+            raise SummarizeError(
                 f"{self.tool} exited {proc.returncode}: {proc.stderr.strip()[:200]}"
             )
         return proc.stdout.strip()
 
 
 class OllamaBackend:
-    """A local Ollama daemon: the model is one config line away, and
-    nothing leaves the machine."""
+    """An Ollama daemon. Local only when the URL says so: the egress
+    class is computed from the configured host, because a static "local"
+    label plus a configurable ollama_url would let content leave the
+    machine without ever meeting the gate."""
 
     name = "ollama"
-    egress = "local"
+    egress = "local"  # earned only for loopback URLs, see egress_class
 
     def _url(self, config: dict) -> str:
         return str(config.get("ollama_url", "http://127.0.0.1:11434")).rstrip("/")
 
+    def egress_class(self, config: dict) -> str:
+        from codegraph.plugin_api import is_loopback_url
+
+        return "local" if is_loopback_url(self._url(config)) else "cloud"
+
     def available(self, config: dict) -> bool:
+        target = _url_host_port(self._url(config))
+        if target is None:
+            return False
         try:
-            host_port = self._url(config).split("//", 1)[1]
-            host, _, port = host_port.partition(":")
-            with socket.create_connection((host, int(port or 80)), timeout=0.3):
+            with socket.create_connection(target, timeout=0.3):
                 return True
         except OSError:
             return False
@@ -176,6 +200,15 @@ _BUILTINS = [
 ]
 
 
+def egress_of(backend, config: dict) -> str:
+    """A backend that computes its egress class from the config wins
+    over its static label (ollama is only "local" on a loopback URL);
+    unknown backends default to "cloud", failing closed."""
+    if hasattr(backend, "egress_class"):
+        return str(backend.egress_class(config))
+    return str(getattr(backend, "egress", "cloud"))
+
+
 def resolve_backends(config: dict, extras: list | None = None) -> list:
     """Built-ins plus third-party backends from the summarize.backend
     extension namespace, extras first so a dedicated backend can shadow
@@ -191,7 +224,7 @@ def pick_backend(config: dict, extras: list | None = None, cloud_allowed: bool =
     for backend in resolve_backends(config, extras):
         if wanted != "auto" and backend.name != wanted:
             continue
-        if not cloud_allowed and getattr(backend, "egress", "cloud") == "cloud":
+        if not cloud_allowed and egress_of(backend, config) == "cloud":
             continue
         try:
             if backend.available(config):

@@ -57,6 +57,7 @@ def test_plugins_import_only_the_supported_surface():
         "find_codegraph_root",
         "git_hash_object",
         "quiet_subprocess_kwargs",
+        "is_loopback_url",
         "resolve_children",
         "sync_static_rules",
         "loaded_plugins",

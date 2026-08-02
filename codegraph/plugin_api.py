@@ -195,6 +195,7 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
     # misc supported helpers
     "git_hash_object": ("codegraph.state.scan_meta", "git_hash_object"),
     "quiet_subprocess_kwargs": ("codegraph.core.utils", "quiet_subprocess_kwargs"),
+    "is_loopback_url": ("codegraph.core.utils", "is_loopback_url"),
     "resolve_children": ("codegraph.analysis.federation", "resolve_children"),
     "sync_static_rules": ("codegraph.state.guard", "sync_static_rules"),
     "loaded_plugins": ("codegraph.plugins", "loaded_plugins"),

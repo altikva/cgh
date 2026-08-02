@@ -195,13 +195,3 @@ markers = [
     "network: talks to a local daemon or the network",
 ]
 
-[tool.uv.sources]
-# Versions not yet on PyPI: resolved from the workspace until the
-# release publishes them (the release workflow ships core and plugins
-# together). Remove each entry once its version is on PyPI.
-cgh-vision = { path = "plugins/cgh-vision" }
-cgh-docs = { path = "plugins/cgh-docs" }
-cgh-pii = { path = "plugins/cgh-pii" }
-cgh-summarize = { path = "plugins/cgh-summarize" }
-cgh-classify = { path = "plugins/cgh-classify" }
-cgh-bugreport = { path = "plugins/cgh-bugreport" }

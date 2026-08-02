@@ -86,9 +86,16 @@ sdk.extract_diagram(img, {"nodes_model": "qwen2.5vl:7b", "timeout_s": 180})
 **cgh CLI**, one-off on any image:
 
 ```bash
-cgh vision path/to/diagram.png            # default profile
+cgh vision path/to/diagram.png            # default profile, progress on stderr
 cgh vision photo.jpg --profile photo
+cgh vision diagram.png --out report.md    # also save the markdown
+cgh vision diagram.png --format json      # the SDK dicts on stdout
+cgh vision diagram.png --format json | jq '.diagram.nodes[].label'
 ```
+
+Small images (under 1000 px) are upscaled 2x before extraction, the
+benchmarked fix for thin-line drawio exports; `config.example.toml`
+shows the `prescale` knobs.
 
 Inside an **indexed repo** (`cgh init`), the deferred scanner runs the
 same pipeline on every committed image during indexing; the results

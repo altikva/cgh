@@ -4,7 +4,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -19,11 +19,21 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
-from codegraph.core.db import KuzuNotInstalled
-from codegraph.cli.commands_federate import cmd_federate
-from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
+from codegraph.cli.commands_federate import cmd_federate
+from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_githooks import cmd_githooks
+from codegraph.cli.commands_graph import cmd_add_dir, cmd_graph, register_graph_parser
+from codegraph.cli.commands_guard import (
+    cmd_guard,
+    cmd_hook_guard,
+    cmd_hook_guard_codex,
+)
+
+# ---------------------------------------------------------------------------
+# Commands (imported from cli subpackage)
+# ---------------------------------------------------------------------------
+from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
 from codegraph.cli.commands_impact import cmd_impact
 from codegraph.cli.commands_index import (
     cmd_force_index,
@@ -34,25 +44,8 @@ from codegraph.cli.commands_index import (
     cmd_serve,
     cmd_watch,
 )
-
-# ---------------------------------------------------------------------------
-# Commands (imported from cli subpackage)
-# ---------------------------------------------------------------------------
-from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
-from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
-from codegraph.cli.commands_findings import cmd_findings
-from codegraph.cli.commands_guard import (
-    cmd_guard,
-    cmd_hook_guard,
-    cmd_hook_guard_codex,
-)
-from codegraph.cli.commands_session import (
-    cmd_hook_checkpoint,
-    cmd_hook_resume_header,
-    cmd_memory,
-)
-from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
+from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_monitor import (
     cmd_compact,
     cmd_diff,
@@ -64,6 +57,7 @@ from codegraph.cli.commands_monitor import (
     cmd_status,
     cmd_tail,
 )
+from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
@@ -72,6 +66,12 @@ from codegraph.cli.commands_query import (
     cmd_outline,
     cmd_search,
 )
+from codegraph.cli.commands_session import (
+    cmd_hook_checkpoint,
+    cmd_hook_resume_header,
+    cmd_memory,
+)
+from codegraph.core.db import KuzuNotInstalled
 
 
 def _cmd_serve_owner(args: argparse.Namespace) -> None:
@@ -207,44 +207,26 @@ def _print_help():
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    # Strip trailing CR/LF from every argument. On Windows a wrapper script
-    # or config saved with CRLF line endings can pass a token like "serve\r",
-    # which argparse then rejects as an invalid choice. No real argument ends
-    # in a carriage return or newline, so this is safe.
-    sys.argv[:] = [a.rstrip("\r\n") for a in sys.argv]
+class _LogoArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that prints the LOGO before any error message."""
 
-    # Show pretty help if no args
-    if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
-        _print_help()
-        return
-    if sys.argv[1] in ("--version", "-V"):
+    def error(self, message: str) -> None:  # type: ignore[override]
         console.print(LOGO)
-        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
-        return
+        console.print(f"[red]error:[/red] {message}\n")
+        console.print(
+            "[dim]Run[/dim] [cyan]cgh --help[/cyan] [dim]for the full list of commands.[/dim]"
+        )
+        sys.exit(2)
 
-    class _LogoArgumentParser(argparse.ArgumentParser):
-        """ArgumentParser that prints the LOGO before any error message."""
 
-        def error(self, message: str) -> None:  # type: ignore[override]
-            console.print(LOGO)
-            console.print(f"[red]error:[/red] {message}\n")
-            console.print(
-                "[dim]Run[/dim] [cyan]cgh --help[/cyan] [dim]for the full list of commands.[/dim]"
-            )
-            sys.exit(2)
+def _add_root(p) -> None:
+    """Attach the standard --root flag (default: cwd). Every subcommand
+    takes one; main() then resolves it up to the nearest .codegraph/."""
+    p.add_argument("--root", default=os.getcwd())
 
-    def _add_root(p) -> None:
-        """Attach the standard --root flag (default: cwd). Every subcommand
-        takes one; main() then resolves it up to the nearest .codegraph/."""
-        p.add_argument("--root", default=os.getcwd())
 
-    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
-    _add_root(ap)
-    ap.add_argument("--version", action="store_true")
-    ap.add_argument("-h", "--help", action="store_true")
-    sub = ap.add_subparsers(dest="cmd", parser_class=_LogoArgumentParser)
-
+def _register_setup_and_serve(sub) -> None:
+    """Register init, parsers, setup, index, watch, serve and the hidden precheck entry points."""
     # --- init ---
     p = sub.add_parser(
         "init", help="Initialize codegraph in current directory (interactive wizard)"
@@ -332,6 +314,9 @@ def main() -> None:
     sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
 
+
+def _register_inspect(sub) -> None:
+    """Register stats, migrate-to-duckdb, logs, search, lookup, callers, callees, outline, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -490,6 +475,9 @@ def main() -> None:
     p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
     _add_root(p)
 
+
+def _register_analysis(sub) -> None:
+    """Register diff, impact, history, compact, graph, add-dir, federate, force-index, hooks."""
     # --- diff ---
     p = sub.add_parser("diff", help="Show files changed since last index")
     _add_root(p)
@@ -576,6 +564,9 @@ def main() -> None:
     )
     _add_root(p)
 
+
+def _register_state_and_hooks(sub) -> None:
+    """Register ensurepath, the git and agent hook entry points, plugins, guard, session continuity, findings."""
     # --- ensurepath ---
     p = sub.add_parser(
         "ensurepath", help="Add the cgh command's directory to your PATH"
@@ -618,6 +609,34 @@ def main() -> None:
     p.add_argument("--severity", default="", choices=["", "info", "warn", "block"])
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--json", action="store_true")
+
+
+def main() -> None:
+    # Strip trailing CR/LF from every argument. On Windows a wrapper script
+    # or config saved with CRLF line endings can pass a token like "serve\r",
+    # which argparse then rejects as an invalid choice. No real argument ends
+    # in a carriage return or newline, so this is safe.
+    sys.argv[:] = [a.rstrip("\r\n") for a in sys.argv]
+
+    # Show pretty help if no args
+    if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
+        _print_help()
+        return
+    if sys.argv[1] in ("--version", "-V"):
+        console.print(LOGO)
+        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
+        return
+
+    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
+    _add_root(ap)
+    ap.add_argument("--version", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    sub = ap.add_subparsers(dest="cmd", parser_class=_LogoArgumentParser)
+
+    _register_setup_and_serve(sub)
+    _register_inspect(sub)
+    _register_analysis(sub)
+    _register_state_and_hooks(sub)
 
     # Load installed plugins BEFORE parse_args so their parsers register
     # and their CLI verbs exist. The repo root isn't parsed yet, so config

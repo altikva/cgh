@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Tests for the git reindex hooks (install / uninstall / status,
 #              chaining onto existing hooks, the shared-hooksPath guard).
@@ -110,12 +110,12 @@ class TestSharedHooksPath:
         assert target == shared
 
     def test_local_path_not_flagged(self, repo):
-        target, is_shared = hooks_target_info(repo)
+        _target, is_shared = hooks_target_info(repo)
         assert is_shared is False
 
 
 class TestNonGitRepo:
     def test_returns_empty_outside_git(self, tmp_path):
         assert install_git_hooks(tmp_path) == []
-        target, is_shared = hooks_target_info(tmp_path)
+        target, _is_shared = hooks_target_info(tmp_path)
         assert target is None

@@ -2,13 +2,11 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI commands: stats, logs, history, diff, doctor, compact.
 
 from __future__ import annotations
-
-from codegraph.core.utils import quiet_subprocess_kwargs
 
 import argparse
 import json
@@ -25,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from codegraph.cli import LOGO, VERSION, _get_conn, _lang_color, console
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # ---------------------------------------------------------------------------
 # cmd_stats
@@ -668,13 +667,10 @@ def _backend_info(root: str) -> dict:
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
     env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
 
-    if not on_disk:
-        active = None
-    elif len(on_disk) == 1:
-        active = on_disk[0]
-    else:
-        # Tie-break matches _detect_backend_file in federation.py.
-        active = "duckdb"
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    active = detected[0] if detected else None
 
     return {
         "on_disk": on_disk,
@@ -990,11 +986,12 @@ def cmd_reset(args: argparse.Namespace) -> None:
             targets.append(p)
     # Kuzu also writes .wal / .tmp / shm files
     for p in cg_dir.iterdir():
-        if p.is_file() and (
-            p.name.startswith("graph.db") or p.name.startswith("fts.db")
+        if (
+            p.is_file()
+            and (p.name.startswith("graph.db") or p.name.startswith("fts.db"))
+            and p not in targets
         ):
-            if p not in targets:
-                targets.append(p)
+            targets.append(p)
     # Workers dir + port + pid files (leftovers)
     for name in ("server.pid", "server.port", "owner.pid", "workers"):
         p = cg_dir / name
@@ -1311,6 +1308,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
     try:
         result = subprocess.run(
             ["git", "diff", "--name-only", since],
+            timeout=30,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1319,14 +1317,15 @@ def cmd_diff(args: argparse.Namespace) -> None:
             **quiet_subprocess_kwargs(),
         )
         changed_files = [f for f in result.stdout.strip().splitlines() if f]
-    except FileNotFoundError:
-        console.print("[red]git not found in PATH.[/red]")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        console.print("[red]git unavailable or timed out.[/red]")
         return
 
     # Untracked files
     try:
         result_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
+            timeout=30,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1335,7 +1334,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
             **quiet_subprocess_kwargs(),
         )
         untracked_files = [f for f in result_untracked.stdout.strip().splitlines() if f]
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         untracked_files = []
 
     # Categorize changed files

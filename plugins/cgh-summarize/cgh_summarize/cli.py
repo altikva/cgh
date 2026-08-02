@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI verbs: `cgh summarize status|run` and `cgh insights`.
 #              run walks the tracked, parser-supported files and invokes
@@ -39,13 +39,22 @@ def make_cli_registrar(config: dict, extras_fn):
 
 
 def _tracked_supported_files(root: Path) -> list[Path]:
-    from codegraph.parsers import is_supported
+    from codegraph.plugin_api import is_supported
 
     try:
         out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+            ["git", "ls-files"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
         return []
     return [root / line for line in out.splitlines() if line and is_supported(line)]
 
@@ -53,7 +62,7 @@ def _tracked_supported_files(root: Path) -> list[Path]:
 def _cmd_summarize(args, config: dict, extras_fn) -> None:
     from rich.console import Console
 
-    from .backends import resolve_backends
+    from .backends import egress_of, resolve_backends
     from .gate import egress_posture
     from .scanner import SummarizeScanner
 
@@ -61,7 +70,7 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
     root = Path(os.path.abspath(args.root))
 
     if args.action == "status":
-        from codegraph.state.findings import query_findings
+        from codegraph.plugin_api import query_findings
 
         posture = egress_posture(root, config)
         console.print(f"[bold]egress posture:[/bold] {posture}")
@@ -72,7 +81,8 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
                 ok = False
             state = "[green]available[/green]" if ok else "[dim]unavailable[/dim]"
             console.print(
-                f"  {backend.name:<14} {state}  [dim]egress: {backend.egress}[/dim]"
+                f"  {backend.name:<14} {state}  "
+                f"[dim]egress: {egress_of(backend, config)}[/dim]"
             )
         done = {
             r["file"]
@@ -84,8 +94,7 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
 
     # run
     scanner = SummarizeScanner(config, root, extras_fn=extras_fn)
-    from codegraph.state.findings import record_findings
-    from codegraph.state.scan_meta import git_hash_object
+    from codegraph.plugin_api import git_hash_object, record_findings
 
     files = _tracked_supported_files(root)
     if args.limit:

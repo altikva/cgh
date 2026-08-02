@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -15,8 +15,7 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
+import logging
 import subprocess
 import threading
 import time
@@ -26,8 +25,11 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+from codegraph.core.utils import quiet_subprocess_kwargs
 from codegraph.indexer import _IGNORE_DIRS, _is_cghignored, index_file
 from codegraph.parsers import is_supported
+
+_log = logging.getLogger(__name__)
 
 # Debounce window in seconds
 _DEBOUNCE = 0.3
@@ -74,10 +76,7 @@ class _CodeGraphHandler(FileSystemEventHandler):
             return True
 
         # 4. Federated subrepo, owned by its own index
-        if self._subrepos and is_under_any(p, self._subrepos):
-            return True
-
-        return False
+        return bool(self._subrepos and is_under_any(p, self._subrepos))
 
     def _git_ignored_batch(self, paths: list[str]) -> set[str]:
         """One `git check-ignore --stdin -z` for the whole batch. Returns
@@ -165,10 +164,10 @@ class _CodeGraphHandler(FileSystemEventHandler):
             ok = index_file(path, self._root)
             if ok:
                 rel = Path(path).relative_to(self._root)
-                print(f"[codegraph] + {rel}", flush=True)
+                _log.info("+ %s", rel)
                 _activity_log(self._root, "reindex", str(rel))
         except Exception as exc:
-            print(f"[codegraph] error {path}: {exc}", flush=True)
+            _log.error("error %s: %s", path, exc)
             _activity_log(self._root, "error", f"{path}: {exc}")
 
     def on_created(self, event: FileSystemEvent) -> None:
@@ -216,13 +215,14 @@ class _AuxRescanHandler(FileSystemEventHandler):
     def _rescan(self) -> None:
         try:
             stats = self._scan_fn(self._root)
-            print(
-                f"[codegraph] {self._label} rescan: "
-                f"indexed={stats.get('indexed', 0)} removed={stats.get('removed', 0)}",
-                flush=True,
+            _log.info(
+                "%s rescan: indexed=%s removed=%s",
+                self._label,
+                stats.get("indexed", 0),
+                stats.get("removed", 0),
             )
         except Exception as exc:
-            print(f"[codegraph] {self._label} rescan error: {exc}", flush=True)
+            _log.error("%s rescan error: %s", self._label, exc)
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
@@ -272,9 +272,9 @@ def start_watcher(repo_root: str | Path) -> Observer:
         pass
 
     # Memory + plans dirs (auto-discovered; env / config-overridable)
-    from codegraph.core.config import memory_dir, plans_dir
     from codegraph.claude_state.memory import scan_memory_dir
     from codegraph.claude_state.plans import scan_plan_dir
+    from codegraph.core.config import memory_dir, plans_dir
 
     aux_targets: list[tuple[Path, str, object]] = []
     try:
@@ -295,11 +295,11 @@ def start_watcher(repo_root: str | Path) -> Observer:
         observer.schedule(aux_handler, str(path), recursive=False)
 
     observer.start()
-    print(f"[codegraph] watching {root}", flush=True)
+    _log.info("watching %s", root)
     for p in extra_paths:
-        print(f"[codegraph] watching {p} (extra_dir)", flush=True)
+        _log.info("watching %s (extra_dir)", p)
     for path, label, _ in aux_targets:
-        print(f"[codegraph] watching {path} ({label})", flush=True)
+        _log.info("watching %s (%s)", path, label)
 
     _active_observer = observer
     _active_handler = handler

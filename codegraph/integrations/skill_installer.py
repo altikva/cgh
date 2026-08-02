@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Ship codegraph skills and deploy them per AI tool.
 #
@@ -154,7 +154,9 @@ def list_bundled_skills() -> list[str]:
     src = _skills_source_dir()
     if not src.exists():
         return []
-    return sorted([d.name for d in src.iterdir() if d.is_dir() and (d / "SKILL.md").exists()])
+    return sorted(
+        [d.name for d in src.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+    )
 
 
 def _parse_skill(path: Path) -> tuple[dict, str]:
@@ -197,7 +199,9 @@ def _iter_skills() -> list[tuple[str, dict, str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def install_claude(project_root: str | Path, overwrite_modified: bool = True) -> list[str]:
+def install_claude(
+    project_root: str | Path, overwrite_modified: bool = True
+) -> list[str]:
     """
     Copy skills verbatim to <project>/.claude/skills/<name>/.
 
@@ -220,7 +224,11 @@ def install_claude(project_root: str | Path, overwrite_modified: bool = True) ->
             rel = f.relative_to(skill_dir)
             dest = target_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if not overwrite_modified and dest.exists() and _file_content_differs(f, dest):
+            if (
+                not overwrite_modified
+                and dest.exists()
+                and _file_content_differs(f, dest)
+            ):
                 # Local customization, leave it alone.
                 continue
             shutil.copy2(f, dest)
@@ -369,7 +377,11 @@ def _install_agents_md(target: Path) -> list[str]:
         if pattern.search(existing):
             new = pattern.sub(block, existing)
         else:
-            sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+            sep = (
+                ""
+                if existing.endswith("\n\n")
+                else ("\n" if existing.endswith("\n") else "\n\n")
+            )
             new = existing + sep + block
         target.write_text(new, encoding="utf-8")
     else:
@@ -387,13 +399,74 @@ def _install_agents_md(target: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# .claude/rules/ auto-discovery shipped in Claude Code 2.1.x; the
+# earliest rules-dir capability the docs pin to a number is 2.1.198.
+# Below that (or when the version cannot be determined) the legacy
+# CLAUDE.md marker block keeps working.
+_RULES_MIN_VERSION = (2, 1, 198)
+
+
+def _claude_supports_rules() -> bool:
+    """Probe `claude --version`; anything unparseable or absent means
+    "assume not", which keeps the legacy mechanism."""
+    import re as _re
+    import subprocess
+
+    from codegraph.core.utils import quiet_subprocess_kwargs
+
+    try:
+        out = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            **quiet_subprocess_kwargs(),
+        ).stdout
+        m = _re.search(r"(\d+)\.(\d+)\.(\d+)", out or "")
+        if not m:
+            return False
+        return tuple(int(g) for g in m.groups()) >= _RULES_MIN_VERSION
+    except Exception:
+        return False
+
+
+def _remove_legacy_usage_block(project_root: Path) -> None:
+    """Drop the marker block from CLAUDE.md when migrating to the rules
+    dir, so the guidance is not paid twice per session."""
+    import re as _re
+
+    for candidate in (
+        project_root / "CLAUDE.md",
+        project_root / ".claude" / "CLAUDE.md",
+    ):
+        if not candidate.exists():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        pattern = _re.compile(
+            _re.escape(_USAGE_BLOCK_START)
+            + r".*?"
+            + _re.escape(_USAGE_BLOCK_END)
+            + r"\n?",
+            _re.DOTALL,
+        )
+        if pattern.search(text):
+            candidate.write_text(
+                pattern.sub("", text).rstrip() + "\n", encoding="utf-8"
+            )
+
+
 def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     """
     Inject a "when to use codegraph" block into the agent's root rules file.
     The block is marked with delimiters so repeated installs update in place.
 
     Targets:
-      claude  → ./CLAUDE.md   (or ./.claude/CLAUDE.md if the project uses that)
+      claude  → ./.claude/rules/cgh-usage.md when the installed Claude
+                Code supports the rules directory (probed via
+                `claude --version`), else the legacy CLAUDE.md block
       codex   → ./AGENTS.md
       gemini  → ./GEMINI.md
       cursor  → ./.cursor/rules/codegraph-usage.mdc
@@ -424,6 +497,18 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         )
         return str(target)
 
+    if tool == "claude" and _claude_supports_rules():
+        # Native rules dir: a file cgh owns outright, auto-discovered by
+        # Claude Code, versioned with the repo, overwritten on update.
+        target = project_root / ".claude" / "rules" / "cgh-usage.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
+            encoding="utf-8",
+        )
+        _remove_legacy_usage_block(project_root)
+        return str(target)
+
     # Pick the root file per tool
     if tool == "claude":
         target = project_root / "CLAUDE.md"
@@ -434,12 +519,22 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     else:
         return None
 
-    block = _USAGE_BLOCK_START + "\n\n" + _USAGE_BODY.rstrip() + "\n\n" + _USAGE_BLOCK_END + "\n"
+    block = (
+        _USAGE_BLOCK_START
+        + "\n\n"
+        + _USAGE_BODY.rstrip()
+        + "\n\n"
+        + _USAGE_BLOCK_END
+        + "\n"
+    )
 
     if target.exists():
         existing = target.read_text(encoding="utf-8")
         pattern = re.compile(
-            re.escape(_USAGE_BLOCK_START) + r".*?" + re.escape(_USAGE_BLOCK_END) + r"\n?",
+            re.escape(_USAGE_BLOCK_START)
+            + r".*?"
+            + re.escape(_USAGE_BLOCK_END)
+            + r"\n?",
             re.DOTALL,
         )
         if pattern.search(existing):

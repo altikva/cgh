@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Scan Claude Code plan files into the FTS index.
 #              Default location is ~/.claude/plans/, overridable via
@@ -65,7 +65,9 @@ def scan_plan_dir(repo_root: str | Path, verbose: bool = False) -> dict:
         return stats
 
     conn = get_fts_conn(repo_root)
-    existing: dict[str, float] = dict(conn.execute("SELECT path, mtime FROM plan_entries").fetchall())
+    existing: dict[str, float] = dict(
+        conn.execute("SELECT path, mtime FROM plan_entries").fetchall()
+    )
 
     seen: set[str] = set()
     for path in sorted(pdir.glob("*.md")):

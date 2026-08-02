@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP meta tools: fts_search, dead_code, context_for_task, call_stats.
 
@@ -191,9 +191,9 @@ def register(mcp) -> None:
 
         Returns structured markdown context + hit counts.
         """
-        from codegraph.state.call_log import filter_unseen, record_mentions
         from codegraph.analysis.context_builder import context_for_task as _ctx
         from codegraph.analysis.context_builder import render_context_markdown
+        from codegraph.state.call_log import filter_unseen, record_mentions
 
         ctx = _ctx(
             task=task,

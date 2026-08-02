@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Scan metadata: tags each indexing run with the git HEAD + branch.
 #              Lets tools like `cgh stats`, `scan_status` MCP tool, and skills
@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 _META_FILE = "scan_meta.json"
 

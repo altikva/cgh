@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: IPC glue for multi-client cgh serve.
 #              One "owner" process runs FastMCP HTTP on a loopback port.
@@ -297,7 +297,7 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     # parent console and die when it closes. Pass the Windows creationflags
     # instead so the owner truly survives the launching shell.
     log_path = repo_root / ".codegraph" / "owner.log"
-    logf = open(log_path, "ab", buffering=0)
+    logf = open(log_path, "ab", buffering=0)  # noqa: SIM115  # lives for the daemon's lifetime
     popen_kwargs: dict = {
         "stdin": subprocess.DEVNULL,
         "stdout": logf,

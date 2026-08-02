@@ -100,7 +100,9 @@ class TestCliCatchesKuzuMissing:
         monkeypatch.setattr(sys, "argv", argv)
         return cli.main
 
-    def test_index_without_kuzu_prints_clean_message(self, tmp_path, monkeypatch, capsys):
+    def test_index_without_kuzu_prints_clean_message(
+        self, tmp_path, monkeypatch, capsys
+    ):
         # A repo whose only graph DB is a Kuzu graph.db, with kuzu masked.
         # Needs a real source file so indexing reaches get_connection.
         cg = tmp_path / ".codegraph"

@@ -2,7 +2,7 @@
 # __creation__ = 2026-05-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Resolve ImportRef.source_module to a file path on disk so
 # the indexer can wire IMPORTS edges between File nodes. Filesystem-based
@@ -28,7 +28,9 @@ def _try_paths(candidates: list[Path]) -> Path | None:
     return None
 
 
-def resolve_python(source_module: str, importer_path: Path, repo_root: Path) -> Path | None:
+def resolve_python(
+    source_module: str, importer_path: Path, repo_root: Path
+) -> Path | None:
     """
     Resolve a Python import target to a file path.
 
@@ -86,13 +88,14 @@ def _resolve_target_with_exts(target: Path) -> Path | None:
     with_ext = [target.with_suffix(ext) for ext in _JS_TS_EXTS]
     if hit := _try_paths(with_ext):
         return hit
-    if target.is_dir():
-        if hit := _try_paths([target / idx for idx in _JS_TS_INDEX]):
-            return hit
+    if target.is_dir() and (hit := _try_paths([target / idx for idx in _JS_TS_INDEX])):
+        return hit
     return None
 
 
-def resolve_js_ts(source_module: str, importer_path: Path, repo_root: Path) -> Path | None:
+def resolve_js_ts(
+    source_module: str, importer_path: Path, repo_root: Path
+) -> Path | None:
     """
     Resolve a JavaScript / TypeScript import target to a file path.
 

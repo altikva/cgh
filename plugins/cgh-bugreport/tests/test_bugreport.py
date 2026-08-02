@@ -21,8 +21,8 @@ import pytest
 
 pytest.importorskip("cgh_bugreport")
 
-from cgh_bugreport.payload import build_report, fingerprint  # noqa: E402
-from cgh_bugreport.spool import (  # noqa: E402
+from cgh_bugreport.payload import build_report, fingerprint
+from cgh_bugreport.spool import (
     list_reports,
     load_report,
     purge,
@@ -212,10 +212,25 @@ class TestSend:
         from cgh_bugreport.cli import _dispatch
 
         self._spooled(tmp_path)
-        calls, fake = self._gh_script({"repo view": (1, "")})
+        _calls, fake = self._gh_script({"repo view": (1, "")})
         monkeypatch.setattr("subprocess.run", fake)
         with pytest.raises(SystemExit):
             _dispatch(
                 Namespace(action="send", report="last", root=str(tmp_path), yes=True),
                 {"github_repo": "org/reports"},
             )
+
+
+class TestModeProbe:
+    def test_probe_failure_reads_as_secure(self, monkeypatch, tmp_path):
+        """The mode gates the pre-send confirmation, so an unreadable
+        config must land on the strict branch, never the permissive."""
+        from cgh_bugreport.cli import _mode
+
+        import codegraph.plugin_api as api
+
+        def boom(root):
+            raise OSError("unreadable config")
+
+        monkeypatch.setattr(api, "load_config", boom)
+        assert _mode(tmp_path) == "secure"

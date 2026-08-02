@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from codegraph.parsers.base import BaseParser, FileIndex, SectionDef
+from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _PREVIEW_CHARS = 400
+_log = logging.getLogger(__name__)
 
 
 class PdfParser(BaseParser):
@@ -61,6 +63,10 @@ class PdfParser(BaseParser):
                     )
                 )
         except Exception:
+            # Robustness contract: a corrupt file never kills indexing.
+            # But an empty index that looks like success deserves a
+            # trace, per the audit on silently swallowed write paths.
+            _log.warning("pdf parse failed, indexed empty: %s", path)
             return idx
         return idx
 

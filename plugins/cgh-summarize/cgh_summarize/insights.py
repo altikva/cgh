@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Corpus insights: batch the gate-cleared summaries into one
 #              model call and ask for what no single-file view shows,
@@ -24,7 +24,7 @@ def collect_summaries(repo_root: str | Path, config: dict) -> tuple[list[dict], 
     """Gate-cleared summary findings. Returns (rows, excluded_count):
     summaries of files the gate would not send stay out of cloud-bound
     batches, and the caller reports how many were withheld."""
-    from codegraph.state.findings import query_findings
+    from codegraph.plugin_api import query_findings
 
     rows = [
         r
@@ -91,8 +91,7 @@ def run_insights(
     if not text:
         return {"error": f"backend {backend.name} returned nothing"}
 
-    from codegraph.state.activity import log as activity_log
-    from codegraph.state.call_log import knowledge_record
+    from codegraph.plugin_api import activity_log, knowledge_record
 
     try:
         activity_log(

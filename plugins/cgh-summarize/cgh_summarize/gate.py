@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The egress gate. Decides, from the finding store, whether
 #              a file's content may reach a cloud backend. Two postures
@@ -22,7 +22,7 @@ def egress_posture(repo_root: str | Path, config: dict) -> str:
     explicit = str(config.get("egress", "")).strip().lower()
     if explicit in ("open", "strict"):
         return explicit
-    from codegraph.core.config import load_config
+    from codegraph.plugin_api import load_config
 
     return "strict" if load_config(repo_root).mode == "secure" else "open"
 
@@ -35,7 +35,7 @@ def cloud_allowed(
     Returns (allowed, reason). The reason is written to the audit log on
     deny so "why was this file skipped" has an answer.
     """
-    from codegraph.state.findings import findings_for_file
+    from codegraph.plugin_api import findings_for_file
 
     rows = findings_for_file(repo_root, str(file_path))
     confidential = None

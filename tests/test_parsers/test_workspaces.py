@@ -91,11 +91,15 @@ class TestFindWorkspaceRoot:
 
 class TestWorkspaceGlobs:
     def test_pnpm(self, tmp_path):
-        (tmp_path / "pnpm-workspace.yaml").write_text("packages:\n  - apps/*\n  - libs/*\n")
+        (tmp_path / "pnpm-workspace.yaml").write_text(
+            "packages:\n  - apps/*\n  - libs/*\n"
+        )
         assert _workspace_globs(tmp_path) == ["apps/*", "libs/*"]
 
     def test_npm_list(self, tmp_path):
-        (tmp_path / "package.json").write_text('{"name": "r", "workspaces": ["apps/*"]}')
+        (tmp_path / "package.json").write_text(
+            '{"name": "r", "workspaces": ["apps/*"]}'
+        )
         assert _workspace_globs(tmp_path) == ["apps/*"]
 
     def test_yarn_object_form(self, tmp_path):
@@ -116,7 +120,9 @@ class TestLoadPackages:
         )
         shared = tmp_path / "packages" / "shared"
         shared.mkdir(parents=True)
-        (shared / "package.json").write_text('{"name": "@wb/shared", "main": "src/index.ts"}')
+        (shared / "package.json").write_text(
+            '{"name": "@wb/shared", "main": "src/index.ts"}'
+        )
 
         packages = load_packages(tmp_path)
         assert "@wb/shared" in packages
@@ -144,7 +150,9 @@ class TestLoadPackages:
         first = load_packages(tmp_path)
         # mutate after first read
         (tmp_path / "packages" / "added").mkdir(parents=True)
-        (tmp_path / "packages" / "added" / "package.json").write_text('{"name": "@a/added"}')
+        (tmp_path / "packages" / "added" / "package.json").write_text(
+            '{"name": "@a/added"}'
+        )
 
         second = load_packages(tmp_path)
         assert first == second
@@ -174,7 +182,9 @@ class TestResolveWorkspaceImport:
         )
         shared = tmp_path / "packages" / "shared"
         shared.mkdir(parents=True)
-        (shared / "package.json").write_text('{"name": "@wb/shared", "main": "dist/index.js"}')
+        (shared / "package.json").write_text(
+            '{"name": "@wb/shared", "main": "dist/index.js"}'
+        )
 
         importer = tmp_path / "apps" / "web" / "main.ts"
         importer.parent.mkdir(parents=True)

@@ -134,7 +134,7 @@ def _cgh_version() -> str:
 
 def _mode() -> str:
     try:
-        from codegraph.core.config import load_config
+        from codegraph.plugin_api import load_config
 
         return load_config(None).mode
     except Exception:
@@ -143,7 +143,7 @@ def _mode() -> str:
 
 def _plugin_versions() -> list[str]:
     try:
-        from codegraph.plugins import loaded_plugins
+        from codegraph.plugin_api import loaded_plugins
 
         return [
             f"{p.name}=={p.version or '?'}"

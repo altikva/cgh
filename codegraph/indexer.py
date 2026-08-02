@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -12,8 +12,6 @@
 #              (re-index a single changed file, purge stale nodes first).
 
 from __future__ import annotations
-
-from codegraph.core.utils import quiet_subprocess_kwargs
 
 import os
 import sys
@@ -24,6 +22,9 @@ from pathlib import Path
 from codegraph.core.db import get_connection
 from codegraph.core.fts import commit as fts_commit
 from codegraph.core.fts import delete_file_symbols, get_fts_conn, upsert_symbol
+from codegraph.core.protocol import GraphDB
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
 
@@ -143,7 +144,7 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
 
 
 def _upsert_file(
-    conn,
+    conn: GraphDB,
     path: str,
     lang: str,
     mtime: float,
@@ -168,7 +169,7 @@ def _upsert_file(
     )
 
 
-def _purge_file(conn, path: str, fts_conn=None) -> None:
+def _purge_file(conn: GraphDB, path: str, fts_conn=None) -> None:
     """Delete all nodes + edges associated with a file before re-indexing it.
 
     Delegates the graph cleanup to the backend's purge_file_data helper,
@@ -300,7 +301,7 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn, functions: list, lang: str = "") -> None:
+def _resolve_calls(conn: GraphDB, functions: list, lang: str = "") -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
     names to known function names. Best-effort: unresolved names are skipped.
@@ -333,7 +334,7 @@ def _resolve_calls(conn, functions: list, lang: str = "") -> None:
                 conn.ensure_edge("CALLS", fn.id, callee_id)
 
 
-def _resolve_inherits(conn, classes: list) -> None:
+def _resolve_inherits(conn: GraphDB, classes: list) -> None:
     """Create INHERITS edges between Class nodes using base class names."""
     for cls in classes:
         for base_name in cls.bases:
@@ -355,7 +356,7 @@ def _precise_calls_enabled(cfg, lang: str) -> bool:
     return jedi_available()
 
 
-def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
+def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bool:
     """Create CALLS edges for one Python file using the jedi-backed resolver.
 
     Returns True when it ran (even with zero edges), False when it could not
@@ -369,15 +370,27 @@ def _resolve_calls_precise(conn, idx: FileIndex, repo_root: Path) -> bool:
     except Exception:
         return False
 
+    dropped = 0
     for caller_id, _target_file, callee_id in edges:
         try:
             conn.ensure_edge("CALLS", caller_id, callee_id)
         except Exception:
-            continue
+            dropped += 1
+    if dropped and repo_root is not None:
+        # An incomplete call graph served as authoritative is worse than
+        # a noisy log line: downstream tools (find_callers, impact_of,
+        # dead code) trust these edges.
+        from codegraph.state.activity import log as _act_log
+
+        _act_log(
+            repo_root, "scan_error", f"{dropped} CALLS edge(s) dropped for {idx.path}"
+        )
     return True
 
 
-def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) -> None:
+def _ingest_code(
+    conn: GraphDB, idx: FileIndex, cfg=None, repo_root: Path | None = None
+) -> None:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
     for fn in idx.functions:
         conn.upsert_node(
@@ -425,7 +438,7 @@ def _ingest_code(conn, idx: FileIndex, cfg=None, repo_root: Path | None = None) 
     _resolve_inherits(conn, idx.classes)
 
 
-def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
+def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
     """
     Wire IMPORTS edges from idx.imports into Kuzu.
 
@@ -472,7 +485,7 @@ def _ingest_imports(conn, idx: FileIndex, repo_root: Path | None) -> None:
             conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
 
 
-def _ingest_terraform(conn, idx: FileIndex) -> None:
+def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
     """Ingest terraform resources and variables from unified FileIndex."""
     for res in idx.resources:
         if res.kind in ("variable", "output"):
@@ -504,7 +517,7 @@ def _ingest_terraform(conn, idx: FileIndex) -> None:
             conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
 
 
-def _ingest_endpoints(conn, path: Path) -> int:
+def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
     """Extract and persist HTTP endpoints from a file. Returns count."""
     from codegraph.analysis.endpoints import extract as _extract_endpoints
 
@@ -546,7 +559,7 @@ def _ingest_endpoints(conn, path: Path) -> int:
     return len(eps)
 
 
-def _ingest_markdown(conn, idx: FileIndex) -> None:
+def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
     # Sections
     for sec in idx.sections:
         conn.upsert_node(
@@ -614,9 +627,10 @@ def _find_section_for_line(sections: list, line: int):
     """Find the deepest (most specific) section containing a given line."""
     best = None
     for sec in sections:
-        if sec.start_line <= line <= sec.end_line:
-            if best is None or sec.level > best.level:
-                best = sec
+        if sec.start_line <= line <= sec.end_line and (
+            best is None or sec.level > best.level
+        ):
+            best = sec
     return best
 
 
@@ -845,8 +859,8 @@ def resolve_include_dirs_safe(repo_root: Path) -> list[Path]:
 def _walk_include_dirs(repo_root: Path, seen: set[Path] | None = None) -> list[Path]:
     """Walk configured include_dirs (config.toml) and return files not yet seen.
     Files inside any federated subrepo are skipped."""
-    from codegraph.core.config import resolve_include_dirs
     from codegraph.analysis.federation import child_paths_to_skip, is_under_any
+    from codegraph.core.config import resolve_include_dirs
 
     seen = seen or set()
     out: list[Path] = []
@@ -1008,6 +1022,147 @@ def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
         return [], []
 
 
+def _discover_candidates(
+    repo_root: Path, method: str
+) -> tuple[list[Path], list[Path], str]:
+    """Run the requested discovery strategy with its documented
+    fallbacks. Returns (candidates, deletions, actual_method)."""
+    actual_method = method
+    candidates: list[Path] = []
+    deletions: list[Path] = []
+
+    if method in ("auto", "git_ls_files"):
+        git_files = _git_tracked_files(repo_root)
+        if git_files is None:
+            if method == "git_ls_files":
+                raise RuntimeError(
+                    "git_ls_files requested but git is unavailable or repo not initialised"
+                )
+            # auto -> fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
+        else:
+            actual_method = "git_ls_files"
+            candidates = list(git_files)
+
+    elif method == "os_walk":
+        candidates = _discover_os_walk(repo_root)
+
+    elif method == "find":
+        candidates = _discover_find(repo_root)
+        if not candidates:
+            # Tool missing or errored, fall back
+            actual_method = "os_walk"
+            candidates = _discover_os_walk(repo_root)
+
+    elif method == "git_diff":
+        candidates, deletions = _discover_git_diff(repo_root)
+        if not candidates and not deletions:
+            # No prior scan meta -> do a full scan instead
+            actual_method = "git_ls_files"
+            git_files = _git_tracked_files(repo_root)
+            candidates = (
+                list(git_files)
+                if git_files is not None
+                else _discover_os_walk(repo_root)
+            )
+            if git_files is None:
+                actual_method = "os_walk"
+
+    return candidates, deletions, actual_method
+
+
+def _filter_parseable(candidates: list[Path], scan_cfg, stats: dict) -> list[Path]:
+    """Keep supported, existing, non-ignored files under the size cap;
+    every rejection counts as skipped."""
+    import fnmatch as _fnmatch
+
+    size_cap = scan_cfg.max_file_size_kb * 1024
+    parseable: list[Path] = []
+    for p in candidates:
+        if not is_supported(p):
+            stats["skipped"] += 1
+            continue
+        if any(part in _IGNORE_DIRS for part in p.parts):
+            stats["skipped"] += 1
+            continue
+        if not p.exists():
+            stats["skipped"] += 1
+            continue
+        if any(_fnmatch.fnmatch(p.name, pat) for pat in scan_cfg.ignore_patterns):
+            stats["skipped"] += 1
+            continue
+        try:
+            if p.stat().st_size > size_cap:
+                stats["skipped"] += 1
+                continue
+        except OSError:
+            pass
+        parseable.append(p)
+    return parseable
+
+
+def _delete_gone(repo_root: Path, deletions: list[Path], activity_log) -> None:
+    """Purge files git_diff reported as deleted; a failed delete is a
+    ghost file and is logged, never swallowed."""
+    fts_conn = _get_fts(repo_root)
+    conn = get_connection(repo_root)
+    for gone in deletions:
+        try:
+            conn.delete_file_completely(str(gone))
+            if fts_conn is not None:
+                delete_file_symbols(fts_conn, str(gone))
+            from codegraph.state.findings import purge_file_findings
+
+            purge_file_findings(repo_root, str(gone))
+        except Exception as exc:
+            activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
+
+
+def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
+    """Index the sibling directories declared in config.toml. A
+    malformed config must not silently shrink coverage."""
+    extra_dirs: list[str] = []
+    try:
+        import tomllib
+
+        cfg = repo_root / ".codegraph" / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                cfg_data = tomllib.load(f)
+            extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
+    except Exception as exc:
+        print(f"  ! config.toml unreadable, extra_dirs skipped: {exc}")
+        activity_log(
+            repo_root,
+            "scan_error",
+            f"config.toml unreadable, extra_dirs skipped: {exc}",
+        )
+
+    for rel in extra_dirs:
+        extra_root = (repo_root / rel).resolve()
+        if not extra_root.exists() or not extra_root.is_dir():
+            continue
+        activity_log(repo_root, "extra_dir_scan", str(extra_root))
+        for dirpath, dirnames, filenames in os.walk(extra_root):
+            dirnames[:] = [
+                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
+            ]
+            for filename in filenames:
+                full_path = Path(dirpath) / filename
+                if not is_supported(full_path):
+                    continue
+                try:
+                    ok = index_file(full_path, repo_root)
+                    if ok:
+                        stats["indexed"] += 1
+                    else:
+                        stats["skipped"] += 1
+                except Exception:
+                    stats["errors"] += 1
+    return extra_dirs
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,
@@ -1066,50 +1221,7 @@ def index_repo(
         blob_shas = {}
     from codegraph.state.scan_meta import git_hash_object as _git_hash
 
-    # ------------------------------------------------------------------
-    # File discovery, each method returns (files_to_index, actual_method)
-    # ------------------------------------------------------------------
-    actual_method = method
-    candidates: list[Path] = []
-    deletions: list[Path] = []
-
-    if method in ("auto", "git_ls_files"):
-        git_files = _git_tracked_files(repo_root)
-        if git_files is None:
-            if method == "git_ls_files":
-                raise RuntimeError(
-                    "git_ls_files requested but git is unavailable or repo not initialised"
-                )
-            # auto → fall back
-            actual_method = "os_walk"
-            candidates = _discover_os_walk(repo_root)
-        else:
-            actual_method = "git_ls_files"
-            candidates = list(git_files)
-
-    elif method == "os_walk":
-        candidates = _discover_os_walk(repo_root)
-
-    elif method == "find":
-        candidates = _discover_find(repo_root)
-        if not candidates:
-            # Tool missing or errored, fall back
-            actual_method = "os_walk"
-            candidates = _discover_os_walk(repo_root)
-
-    elif method == "git_diff":
-        candidates, deletions = _discover_git_diff(repo_root)
-        if not candidates and not deletions:
-            # No prior scan meta → do a full scan instead
-            actual_method = "git_ls_files"
-            git_files = _git_tracked_files(repo_root)
-            candidates = (
-                list(git_files)
-                if git_files is not None
-                else _discover_os_walk(repo_root)
-            )
-            if git_files is None:
-                actual_method = "os_walk"
+    candidates, deletions, actual_method = _discover_candidates(repo_root, method)
 
     # Load config once for the whole scan (size cap + ignore patterns), then
     # thread it into every index_file call so config.toml is read a single
@@ -1117,31 +1229,7 @@ def index_repo(
     from codegraph.core.config import load_config as _load_config
 
     scan_cfg = _load_config(repo_root)
-    _size_cap = scan_cfg.max_file_size_kb * 1024
-    import fnmatch as _fnmatch
-
-    # Filter to parseable, existing files
-    parseable: list[Path] = []
-    for p in candidates:
-        if not is_supported(p):
-            stats["skipped"] += 1
-            continue
-        if any(part in _IGNORE_DIRS for part in p.parts):
-            stats["skipped"] += 1
-            continue
-        if not p.exists():
-            stats["skipped"] += 1
-            continue
-        if any(_fnmatch.fnmatch(p.name, pat) for pat in scan_cfg.ignore_patterns):
-            stats["skipped"] += 1
-            continue
-        try:
-            if p.stat().st_size > _size_cap:
-                stats["skipped"] += 1
-                continue
-        except OSError:
-            pass
-        parseable.append(p)
+    parseable = _filter_parseable(candidates, scan_cfg, stats)
 
     if on_discovery:
         on_discovery(len(parseable), actual_method)
@@ -1150,20 +1238,7 @@ def index_repo(
 
     # Handle deletions first (git_diff only)
     if deletions:
-        fts_conn = _get_fts(repo_root)
-        conn = get_connection(repo_root)
-        for gone in deletions:
-            try:
-                conn.delete_file_completely(str(gone))
-                if fts_conn is not None:
-                    delete_file_symbols(fts_conn, str(gone))
-                from codegraph.state.findings import purge_file_findings
-
-                purge_file_findings(repo_root, str(gone))
-            except Exception as exc:
-                # A failed delete leaves a ghost file in the graph; record it
-                # rather than silently reporting a clean scan.
-                _activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
+        _delete_gone(repo_root, deletions, _activity_log)
 
     # ------------------------------------------------------------------
     # Index loop (shared across all methods)
@@ -1195,40 +1270,7 @@ def index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    # Also index extra_dirs from config.toml
-    extra_dirs: list[str] = []
-    try:
-        import tomllib
-
-        cfg = repo_root / ".codegraph" / "config.toml"
-        if cfg.exists():
-            with open(cfg, "rb") as f:
-                cfg_data = tomllib.load(f)
-            extra_dirs = cfg_data.get("codegraph", {}).get("extra_dirs", [])
-    except Exception:
-        pass
-
-    for rel in extra_dirs:
-        extra_root = (repo_root / rel).resolve()
-        if not extra_root.exists() or not extra_root.is_dir():
-            continue
-        _activity_log(repo_root, "extra_dir_scan", str(extra_root))
-        for dirpath, dirnames, filenames in os.walk(extra_root):
-            dirnames[:] = [
-                d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
-            ]
-            for filename in filenames:
-                full_path = Path(dirpath) / filename
-                if not is_supported(full_path):
-                    continue
-                try:
-                    ok = index_file(full_path, repo_root)
-                    if ok:
-                        stats["indexed"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["method"] = actual_method
@@ -1359,8 +1401,13 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
     fts_conn = _get_fts(repo_root) if repo_root else None
 
-    # Delete stale File nodes + attached graph nodes
+    # Delete stale File nodes + attached graph nodes. A failed delete
+    # leaves ghost nodes and stale FTS rows behind, so it is logged
+    # (same as the full-scan path), never swallowed.
+    from codegraph.state.activity import log as _act_log
+
     deleted_count = 0
+    delete_errors = 0
     for path in to_delete:
         try:
             conn.delete_file_completely(path)
@@ -1370,8 +1417,9 @@ def incremental_reindex(repo_root: str | Path) -> dict:
 
             purge_file_findings(repo_root, path)
             deleted_count += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            delete_errors += 1
+            _act_log(repo_root, "scan_error", f"delete failed for {path}: {exc}")
 
     # Re-index changed/new files
     reindexed: list[str] = []

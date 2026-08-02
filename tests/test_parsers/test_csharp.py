@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-07
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Tests for the optional C# tree-sitter parser. Skipped when the
 #              `langs` extra (tree-sitter-c-sharp) is not installed.
@@ -17,9 +17,9 @@ import pytest
 # way tests/test_core/test_kuzu_optional.py guards the kuzu extra.
 pytest.importorskip("tree_sitter_c_sharp")
 
-from codegraph.core.db import get_connection, reset_connection  # noqa: E402
-from codegraph.indexer import index_file  # noqa: E402
-from codegraph.parsers.csharp import CSharpParser  # noqa: E402
+from codegraph.core.db import get_connection, reset_connection
+from codegraph.indexer import index_file
+from codegraph.parsers.csharp import CSharpParser
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-13
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex/substring pattern search across the indexed repo.
 #              Replaces the need for Claude to call Grep / Read whole
@@ -10,14 +10,14 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Match codegraph's IGNORE_DIRS to stay consistent with indexer behavior.
 _IGNORE_DIR_NAMES = {

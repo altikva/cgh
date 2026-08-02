@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -13,12 +13,11 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import sqlite3
 from dataclasses import dataclass, field
 
 from codegraph.core.fts import fts_search
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 
 @dataclass
@@ -200,17 +199,160 @@ def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
 
 
 _STOPWORDS = frozenset(
-    """
-    a an the and or but if then else while when where why how what which who whom
-    is are was were be been being have has had do does did doing can could should
-    would will shall may might must of in on at by for with to from into onto off
-    over under above below up down out about as per via vs versus through across
-    this that these those it its they them their there here also more most less
-    some any each all every few many much no not such than too very not so only
-    just both not only either neither etc eg ie vs me my our us you your he she
-    we they them il je nous vous ils elles tu se son sa ses leur leurs aux les
-    des du la le un une de d l s t c n que qui dont
-    """.split()
+    [
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "while",
+        "when",
+        "where",
+        "why",
+        "how",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "to",
+        "from",
+        "into",
+        "onto",
+        "off",
+        "over",
+        "under",
+        "above",
+        "below",
+        "up",
+        "down",
+        "out",
+        "about",
+        "as",
+        "per",
+        "via",
+        "vs",
+        "versus",
+        "through",
+        "across",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "there",
+        "here",
+        "also",
+        "more",
+        "most",
+        "less",
+        "some",
+        "any",
+        "each",
+        "all",
+        "every",
+        "few",
+        "many",
+        "much",
+        "no",
+        "not",
+        "such",
+        "than",
+        "too",
+        "very",
+        "not",
+        "so",
+        "only",
+        "just",
+        "both",
+        "not",
+        "only",
+        "either",
+        "neither",
+        "etc",
+        "eg",
+        "ie",
+        "vs",
+        "me",
+        "my",
+        "our",
+        "us",
+        "you",
+        "your",
+        "he",
+        "she",
+        "we",
+        "they",
+        "them",
+        "il",
+        "je",
+        "nous",
+        "vous",
+        "ils",
+        "elles",
+        "tu",
+        "se",
+        "son",
+        "sa",
+        "ses",
+        "leur",
+        "leurs",
+        "aux",
+        "les",
+        "des",
+        "du",
+        "la",
+        "le",
+        "un",
+        "une",
+        "de",
+        "d",
+        "l",
+        "s",
+        "t",
+        "c",
+        "n",
+        "que",
+        "qui",
+        "dont",
+    ]
 )
 
 
@@ -288,7 +430,7 @@ def context_for_task(
     nodes: list[ContextNode] = []
     seen_ids: set[str] = set()
 
-    for i, r in enumerate(fts_results):
+    for _i, r in enumerate(fts_results):
         node_id = f"{r.file_path}:{r.start_line}"
         if node_id in seen_ids:
             continue

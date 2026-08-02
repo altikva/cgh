@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-28
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Read-only federation across a parent repo and its subrepos.
 #              The parent indexes only files outside subrepo paths; queries
@@ -30,19 +30,11 @@ _FTS_FILE = "fts.db"
 
 
 def _detect_backend_file(repo_root: Path) -> tuple[str, Path] | None:
-    """Return ('duckdb' | 'kuzu', file_path) for whichever graph DB exists
-    in ``repo_root/.codegraph/``. DuckDB wins when both are present so a
-    half-migrated repo (Kuzu cached + new DuckDB) reads the new one.
-    Returns None when no graph DB is present.
-    """
-    cg = repo_root / _DB_DIR
-    duck_path = cg / _DUCKDB_FILE
-    kuzu_path = cg / _KUZU_FILE
-    if duck_path.exists():
-        return ("duckdb", duck_path)
-    if kuzu_path.exists():
-        return ("kuzu", kuzu_path)
-    return None
+    """Single tie-break authority lives in core.db; kept as a thin alias
+    for existing callers and tests."""
+    from codegraph.core.db import detect_backend_file
+
+    return detect_backend_file(repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -191,60 +183,17 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
     if detected is None:
         yield None
         return
-    backend, _ = detected
+    backend, db_path = detected
 
-    if backend == "duckdb":
-        from codegraph.core.db_duckdb import DuckDBGraphDB
+    from codegraph.core.db import open_graphdb_file_ro
 
-        db_path = repo_root / _DB_DIR / _DUCKDB_FILE
-        conn: GraphDB | None = None
-        try:
-            try:
-                conn = DuckDBGraphDB(str(db_path), read_only=True)
-            except Exception:
-                yield None
-                return
-            yield conn
-        finally:
-            try:
-                if conn is not None:
-                    conn.close()
-            except Exception:
-                pass
-        return
-
-    # Kuzu path. Kuzu is an optional extra since v0.4.2, a subrepo can
-    # be on Kuzu while this (parent) install has no kuzu package. Degrade
-    # to None rather than crashing the whole federated query.
+    conn = open_graphdb_file_ro(backend, db_path)
     try:
-        import kuzu
-    except ImportError:
-        yield None
-        return
-
-    from codegraph.core.db_kuzu import KuzuGraphDB
-
-    db_path = repo_root / _DB_DIR / _KUZU_FILE
-    db = None
-    raw = None
-    try:
-        try:
-            db = kuzu.Database(str(db_path), read_only=True)
-            raw = kuzu.Connection(db)
-        except RuntimeError:
-            # Locked or schema mismatch, caller should treat as "skipped"
-            yield None
-            return
-        yield KuzuGraphDB(raw)
+        yield conn
     finally:
         try:
-            if raw is not None:
-                raw.close()
-        except Exception:
-            pass
-        try:
-            if db is not None:
-                db.close()
+            if conn is not None:
+                conn.close()
         except Exception:
             pass
 
@@ -593,10 +542,7 @@ def add_subrepo(
     """
     parent = Path(repo_root).resolve()
     child = Path(child_path).expanduser()
-    if not child.is_absolute():
-        child = (parent / child).resolve()
-    else:
-        child = child.resolve()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
 
     if not child.exists():
         raise ValueError(f"subrepo path does not exist: {child}")
@@ -631,10 +577,7 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
     """Remove a subrepo from config.toml. Returns True if removed."""
     parent = Path(repo_root).resolve()
     child = Path(child_path).expanduser()
-    if not child.is_absolute():
-        child = (parent / child).resolve()
-    else:
-        child = child.resolve()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
 
     cfg_path = parent / _DB_DIR / "config.toml"
     if not cfg_path.exists():
@@ -648,10 +591,7 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
     removed = False
     for entry in subs:
         p = Path(entry).expanduser()
-        if not p.is_absolute():
-            p = (parent / p).resolve()
-        else:
-            p = p.resolve()
+        p = (parent / p).resolve() if not p.is_absolute() else p.resolve()
         if p == child:
             removed = True
             continue

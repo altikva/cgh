@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Extract a 1-2 line "module docstring" from any supported file,
 #              so `architecture_overview` and `domain_map` can summarize
@@ -76,7 +76,11 @@ def _py_doc(src: str) -> str:
     lines = src.splitlines()
     i = 0
     n = len(lines)
-    while i < n and (lines[i].startswith("#") or lines[i].strip() == "" or lines[i].startswith("from __future__")):
+    while i < n and (
+        lines[i].startswith("#")
+        or lines[i].strip() == ""
+        or lines[i].startswith("from __future__")
+    ):
         i += 1
     if i >= n:
         return _header_comment(src, prefix="#")  # fallback: read banner comments

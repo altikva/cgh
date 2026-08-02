@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-01
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Single source of truth for the cgh graph model: what
 # nodes exist, what edges exist, and how each backend names them.
@@ -77,8 +77,12 @@ EDGES: dict[str, EdgeSpec] = {
     "DEFINES_CLASS": EdgeSpec(
         "DEFINES_CLASS", "edge_defines_class", "File", "Class", "from_path", "to_id"
     ),
-    "CALLS": EdgeSpec("CALLS", "edge_calls", "Function", "Function", "from_id", "to_id"),
-    "INHERITS": EdgeSpec("INHERITS", "edge_inherits", "Class", "Class", "from_id", "to_id"),
+    "CALLS": EdgeSpec(
+        "CALLS", "edge_calls", "Function", "Function", "from_id", "to_id"
+    ),
+    "INHERITS": EdgeSpec(
+        "INHERITS", "edge_inherits", "Class", "Class", "from_id", "to_id"
+    ),
     "HAS_METHOD": EdgeSpec(
         "HAS_METHOD", "edge_has_method", "Class", "Function", "from_id", "to_id"
     ),

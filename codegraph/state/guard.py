@@ -69,6 +69,23 @@ def _normalize(root: Path, candidate: str) -> str:
         return str(p)
 
 
+_INDEX_DENY = (
+    "blocked by cgh guard: the cgh index (.codegraph/) is only served "
+    "through the MCP tools; in secure mode its files hold pseudonymized "
+    "data and direct reads are denied"
+)
+
+
+def _inside_codegraph(root: Path, target: str) -> bool:
+    normalized = _normalize(root, target)
+    try:
+        return normalized == str(
+            (root / ".codegraph").resolve()
+        ) or normalized.startswith(str((root / ".codegraph").resolve()) + "/")
+    except OSError:
+        return False
+
+
 def check_path(repo_root: str | Path, target: str) -> str | None:
     """Deny reason if `target` is barred, else None."""
     root = Path(repo_root)
@@ -85,10 +102,17 @@ def check_bash(repo_root: str | Path, command: str, mode: str) -> str | None:
     argument resolving to a barred path denies, whatever the verb
     (a false positive beats a leak).
     """
+    root = Path(repo_root)
+    # In secure mode the index itself is off-limits to the shell: any
+    # command touching .codegraph (sqlite3, cat, cp, ...) is denied. A
+    # substring match over-blocks a rare legit command; a false positive
+    # beats a leak, the reason points the agent at the MCP tools.
+    if mode == "secure" and ".codegraph" in command:
+        return _INDEX_DENY
+
     barred = blocking_paths(repo_root)
     if not barred:
         return None
-    root = Path(repo_root)
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -130,10 +154,14 @@ def check_tool_call(
             command = " ".join(str(c) for c in command)
         return check_bash(repo_root, str(command), mode)
 
+    root = Path(repo_root)
+
     # Multi-file reads (Gemini's read_many_files): check every path.
     many = tool_input.get("paths")
     if isinstance(many, list):
         for candidate in many:
+            if mode == "secure" and _inside_codegraph(root, str(candidate)):
+                return _INDEX_DENY
             reason = check_path(repo_root, str(candidate))
             if reason:
                 return reason
@@ -147,6 +175,10 @@ def check_tool_call(
     )
     if not target:
         return None
+    # The index is denied before the directory shortcut: grepping inside
+    # .codegraph is a content read whatever the tool.
+    if mode == "secure" and _inside_codegraph(root, str(target)):
+        return _INDEX_DENY
     if tool_name in _DIR_OK_TOOLS:
         p = Path(str(target))
         if not p.suffix and not p.is_file():
@@ -189,6 +221,8 @@ def sync_static_rules(repo_root: str | Path) -> tuple[int, int]:
             ours_before = set()
 
     wanted = {f"Read({p})" for p in blocking_paths(root)}
+    # The index itself: pseudonymized at rest, served through MCP only.
+    wanted.add("Read(.codegraph/**)")
     permissions = settings.setdefault("permissions", {})
     deny = list(permissions.get("deny", []))
 
@@ -238,6 +272,7 @@ def sync_bobignore(repo_root: str | Path) -> tuple[int, int]:
 
     wanted: set[str] = set()
     if guard_mode(root) == "secure":
+        wanted.add(".codegraph/")
         for p in blocking_paths(root):
             try:
                 wanted.add(Path(p).resolve().relative_to(root.resolve()).as_posix())

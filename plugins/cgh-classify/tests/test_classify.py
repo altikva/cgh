@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: cgh-classify tests: the naive Bayes model separates two
 #              vocabularies and persists, labels beat predictions, the
@@ -17,10 +17,11 @@ import pytest
 
 pytest.importorskip("cgh_classify")
 
-from cgh_classify.labels import load_labels, remove_label, set_label  # noqa: E402
-from cgh_classify.model import NaiveBayesModel, model_path  # noqa: E402
-from cgh_classify.scanner import ClassifyScanner  # noqa: E402
-from codegraph.state import findings as store  # noqa: E402
+from cgh_classify.labels import load_labels, remove_label, set_label
+from cgh_classify.model import NaiveBayesModel, model_path
+from cgh_classify.scanner import ClassifyScanner
+
+from codegraph.state import findings as store
 
 CONFIDENTIAL_DOCS = [
     "salary payroll bank iban employee compensation bonus confidential",

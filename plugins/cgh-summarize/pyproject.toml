@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-summarize"
-version = "0.2.0"
+version = "0.2.1"
 description = "File summaries for cgh behind a confidentiality egress gate: agent CLIs, Ollama or any OpenAI-compatible endpoint, plus corpus-level insights"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT AND CC-BY-NC-SA-4.0"
+license = "MIT"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 # cgh itself is a peer dependency, deliberately not declared: the plugin
 # only ever loads through cgh's entry point group, so it is inert without
@@ -22,3 +22,6 @@ summarize = "cgh_summarize"
 
 [tool.setuptools.packages.find]
 include = ["cgh_summarize*"]
+
+[tool.setuptools.package-data]
+cgh_summarize = ["py.typed"]

@@ -3,13 +3,14 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: fastmcp MCP server exposing code graph query tools to Claude Code.
 #              Run with:  python -m codegraph.server --root /path/to/repo
 
+# ruff: noqa: E402  # tool modules must import after `mcp = FastMCP(...)` exists
 from __future__ import annotations
 
 import argparse
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from codegraph.core.log import configure_background_logging
 from codegraph.core.utils import short_path
 
 # ---------------------------------------------------------------------------
@@ -45,6 +47,10 @@ def _resolve_signals(*names: str) -> list:
             found.append(sig)
     return found
 
+
+import logging
+
+_log = logging.getLogger(__name__)
 
 _conn = None
 _root: Path | None = None
@@ -191,20 +197,22 @@ mcp = FastMCP(
 )
 
 # Register tools from sub-modules (must be after mcp = FastMCP)
-from codegraph.server.tools_arch import register as _register_arch  # noqa: E402
-from codegraph.server.tools_docs import register as _register_docs  # noqa: E402
-from codegraph.server.tools_findings import register as _register_findings  # noqa: E402
-from codegraph.server.tools_session import register as _register_session  # noqa: E402
-from codegraph.server.tools_history import register as _register_history  # noqa: E402
-from codegraph.server.tools_index import register as _register_index  # noqa: E402
-from codegraph.server.tools_insight import register as _register_insight  # noqa: E402
-from codegraph.server.tools_knowledge import register as _register_knowledge  # noqa: E402
-from codegraph.server.tools_memory import register as _register_memory  # noqa: E402
-from codegraph.server.tools_meta import register as _register_meta  # noqa: E402
-from codegraph.server.tools_plans import register as _register_plans  # noqa: E402
-from codegraph.server.tools_query import register as _register_query  # noqa: E402
-from codegraph.server.tools_tests import register as _register_tests  # noqa: E402
-from codegraph.server.tools_viz import register as _register_viz  # noqa: E402
+from codegraph.server.tools_arch import register as _register_arch
+from codegraph.server.tools_docs import register as _register_docs
+from codegraph.server.tools_findings import register as _register_findings
+from codegraph.server.tools_history import register as _register_history
+from codegraph.server.tools_index import register as _register_index
+from codegraph.server.tools_insight import register as _register_insight
+from codegraph.server.tools_knowledge import (
+    register as _register_knowledge,
+)
+from codegraph.server.tools_memory import register as _register_memory
+from codegraph.server.tools_meta import register as _register_meta
+from codegraph.server.tools_plans import register as _register_plans
+from codegraph.server.tools_query import register as _register_query
+from codegraph.server.tools_session import register as _register_session
+from codegraph.server.tools_tests import register as _register_tests
+from codegraph.server.tools_viz import register as _register_viz
 
 _register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)
@@ -280,23 +288,20 @@ def main() -> None:
         except (ValueError, OSError):
             pass
 
+    configure_background_logging()
+
     # Start (or reuse) the shared owner
     if is_owner_alive(_root):
         port = read_owner_port(_root)
-        print(
-            f"[codegraph] attaching to existing owner on port {port}", file=sys.stderr
-        )
+        _log.info("attaching to existing owner on port %s", port)
     else:
-        print("[codegraph] no owner running, launching one", file=sys.stderr)
+        _log.info("no owner running, launching one")
         port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
         if port is None:
-            print(
-                "[codegraph] failed to start owner (see .codegraph/owner.log)",
-                file=sys.stderr,
-            )
+            _log.error("failed to start owner (see .codegraph/owner.log)")
             unregister_worker(_root)
             sys.exit(1)
-        print(f"[codegraph] owner up on port {port}", file=sys.stderr)
+        _log.info("owner up on port %s", port)
 
     # Act as the stdio <-> HTTP bridge for this Claude session
     exit_code = proxy_stdio_to_http(port, repo_root=_root)
@@ -315,15 +320,14 @@ def owner_main(
 
     _root = Path(root or os.getcwd()).resolve()
 
+    configure_background_logging()
+
     # Single-writer guard on the owner itself
     from codegraph.state.pidfile import acquire as _pidfile_acquire
 
     acquired, other_pid = _pidfile_acquire(_root)
     if not acquired:
-        print(
-            f"[codegraph] another owner is running (pid {other_pid}); exiting.",
-            file=sys.stderr,
-        )
+        _log.error("another owner is running (pid %s); exiting.", other_pid)
         sys.exit(1)
 
     # Load / ensure the auth key for HTTP bridge security
@@ -342,41 +346,31 @@ def owner_main(
         for _rec in load_plugins(_root):
             if _rec.status != "active":
                 continue
-            print(
-                f"[codegraph owner] plugin {_rec.name}: active"
-                + (f" ({', '.join(_rec.surfaces)})" if _rec.surfaces else ""),
-                file=sys.stderr,
-                flush=True,
+            _log.info(
+                "plugin %s: active%s",
+                _rec.name,
+                f" ({', '.join(_rec.surfaces)})" if _rec.surfaces else "",
             )
         for _plugin_name, _registrar in mcp_registrars():
             try:
                 _registrar(mcp)
             except Exception as exc:
-                print(
-                    f"[codegraph owner] plugin {_plugin_name}: "
-                    f"MCP registration failed: {exc}",
-                    file=sys.stderr,
-                    flush=True,
+                _log.warning(
+                    "plugin %s: MCP registration failed: %s", _plugin_name, exc
                 )
     except Exception as exc:
-        print(
-            f"[codegraph owner] plugin loading failed: {exc}",
-            file=sys.stderr,
-            flush=True,
-        )
+        _log.warning("plugin loading failed: %s", exc)
 
     # Reindex + watcher (if requested)
     if reindex:
         from codegraph.indexer import index_repo
 
-        print(f"[codegraph owner] indexing {_root} …", file=sys.stderr, flush=True)
+        _log.info("indexing %s ...", _root)
         try:
             stats = index_repo(_root, verbose=False)
-            print(f"[codegraph owner] done: {stats}", file=sys.stderr, flush=True)
+            _log.info("done: %s", stats)
         except RuntimeError as exc:
-            print(
-                f"[codegraph owner] reindex skipped: {exc}", file=sys.stderr, flush=True
-            )
+            _log.warning("reindex skipped: %s", exc)
 
     if watch:
         from codegraph.state.watcher import start_watcher
@@ -384,11 +378,7 @@ def owner_main(
         try:
             start_watcher(_root)
         except Exception as exc:
-            print(
-                f"[codegraph owner] watcher disabled: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
+            _log.warning("watcher disabled: %s", exc)
 
     # Pick a free port + publish port file + owner pid
     from codegraph.state.ipc import free_port, owner_pidfile, port_file
@@ -458,11 +448,7 @@ def owner_main(
                 )
             return await call_next(request)
 
-    print(
-        f"[codegraph owner] listening on 127.0.0.1:{port} (auth: bearer)",
-        file=sys.stderr,
-        flush=True,
-    )
+    _log.info("listening on 127.0.0.1:%s (auth: bearer)", port)
 
     # Background thread: once at least one worker has registered, shut
     # the owner down as soon as all workers exit. Grace windows are
@@ -478,7 +464,7 @@ def owner_main(
     _idle_since: float | None = None
 
     def _shutdown(reason: str) -> None:
-        print(f"[codegraph owner] {reason}, shutting down", file=sys.stderr, flush=True)
+        _log.info("%s, shutting down", reason)
         # Run cleanup explicitly, SIGTERM + os._exit would skip atexit.
         try:
             _cleanup()
@@ -541,18 +527,14 @@ def owner_main(
                     detail = res.get("reason") or (
                         f"port {res['port']}" if "port" in res else ""
                     )
-                    print(
-                        f"[codegraph owner] child {res['name']}: {res['status']}"
-                        + (f" ({detail})" if detail else ""),
-                        file=sys.stderr,
-                        flush=True,
+                    _log.info(
+                        "child %s: %s%s",
+                        res["name"],
+                        res["status"],
+                        f" ({detail})" if detail else "",
                     )
             except Exception as exc:
-                print(
-                    f"[codegraph owner] child autostart error: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                _log.warning("child autostart error: %s", exc)
 
         _th.Thread(target=_children_up, daemon=True).start()
 

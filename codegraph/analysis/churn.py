@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-07
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Git-history churn analysis. Pure functions over `git log`, no
 #              MCP and no graph DB. file_churn aggregates per-file commit
@@ -15,10 +15,10 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import subprocess
 from pathlib import Path
+
+from codegraph.core.utils import quiet_subprocess_kwargs
 
 # How many commits back we walk by default. git log is slow on large repos,
 # so we bound the history. Callers see this cap in the tool `note`.

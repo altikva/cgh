@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -110,7 +110,11 @@ class TypeScriptParser(BaseParser):
 
         parser = _tsx_parser if suffix in (".tsx", ".jsx") else _ts_parser
         lang_label = (
-            "tsx" if suffix in (".tsx", ".jsx") else "javascript" if suffix in (".js", ".mjs", ".cjs") else "typescript"
+            "tsx"
+            if suffix in (".tsx", ".jsx")
+            else "javascript"
+            if suffix in (".js", ".mjs", ".cjs")
+            else "typescript"
         )
 
         tree = parser.parse(src)
@@ -172,8 +176,18 @@ class TypeScriptParser(BaseParser):
             ):
                 name = _fn_name(node, src)
                 calls = _collect_calls(node, src)
-                fn_id = f"{path_str}::{current_class}.{name}" if current_class else f"{path_str}::{name}"
-                kind = "method" if current_class else "arrow" if node.type == "arrow_function" else "function"
+                fn_id = (
+                    f"{path_str}::{current_class}.{name}"
+                    if current_class
+                    else f"{path_str}::{name}"
+                )
+                kind = (
+                    "method"
+                    if current_class
+                    else "arrow"
+                    if node.type == "arrow_function"
+                    else "function"
+                )
                 index.functions.append(
                     SymbolDef(
                         id=fn_id,

@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-01
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: DuckDB backend implementing the GraphDB protocol.
 #
@@ -20,6 +20,7 @@ import duckdb
 
 from codegraph.core.protocol import QueryResult
 from codegraph.core.schema_duckdb import init_schema
+from codegraph.core.utils import checked_identifier as _ident
 
 
 class DuckDBQueryResult:
@@ -30,7 +31,9 @@ class DuckDBQueryResult:
     iterator interface mirrors Kuzu's exactly.
     """
 
-    def __init__(self, cursor: duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation) -> None:
+    def __init__(
+        self, cursor: duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
+    ) -> None:
         # description: list of (name, type, ...) per stdlib DB-API
         desc = cursor.description or []
         self._columns: list[str] = [d[0] for d in desc]
@@ -128,9 +131,10 @@ class DuckDBGraphDB:
         cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
         values: list[Any] = [src_key_value, dst_key_value]
         if spec.prop_columns:
-            assert edge_props is not None, (
-                f"Edge {edge_type!r} requires props {spec.prop_columns}, got None"
-            )
+            if edge_props is None:
+                raise ValueError(
+                    f"Edge {edge_type!r} requires props {spec.prop_columns}, got None"
+                )
             for col in spec.prop_columns:
                 values.append(edge_props.get(col, ""))
         placeholders = ", ".join("?" for _ in cols)
@@ -251,7 +255,7 @@ class DuckDBGraphDB:
         if label not in NODES:
             raise ValueError(f"Unknown node label: {label!r}")
         spec = NODES[label]
-        cols = ", ".join(return_fields)
+        cols = ", ".join(_ident(f) for f in return_fields)
         rows = self._conn.execute(f"SELECT {cols} FROM {spec.table}").fetchall()
         return [list(r) for r in rows]
 
@@ -280,21 +284,27 @@ class DuckDBGraphDB:
         clauses: list[str] = []
         if where:
             for field, value in where.items():
-                clauses.append(f"{field} = ?")
+                clauses.append(f"{_ident(field)} = ?")
                 params.append(value)
         if contains:
             sub_clauses = []
             for field, value in contains.items():
                 # Wrap value with % for DuckDB's LIKE, case-sensitive.
                 # Cypher CONTAINS is case-sensitive too, so this matches.
-                sub_clauses.append(f"{field} LIKE ?")
+                sub_clauses.append(f"{_ident(field)} LIKE ?")
                 params.append(f"%{value}%")
             if sub_clauses:
                 clauses.append("(" + " OR ".join(sub_clauses) + ")")
 
-        select_clause = ", ".join(return_fields) if return_fields and return_fields != ["*"] else "*"
+        select_clause = (
+            ", ".join(_ident(f) for f in return_fields)
+            if return_fields and return_fields != ["*"]
+            else "*"
+        )
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
-        order_clause = "ORDER BY " + ", ".join(order_by) if order_by else ""
+        order_clause = (
+            "ORDER BY " + ", ".join(_ident(f) for f in order_by) if order_by else ""
+        )
         limit_clause = f"LIMIT {int(limit)}" if limit else ""
         sql = (
             f"SELECT {select_clause} FROM {spec.table} "
@@ -303,7 +313,7 @@ class DuckDBGraphDB:
 
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
         from codegraph.core.graph_model import NODES
@@ -315,7 +325,7 @@ class DuckDBGraphDB:
         clauses: list[str] = []
         if where:
             for field, value in where.items():
-                clauses.append(f"{field} = ?")
+                clauses.append(f"{_ident(field)} = ?")
                 params.append(value)
         where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
         sql = f"SELECT count(*) FROM {spec.table} {where_clause}"
@@ -349,7 +359,13 @@ class DuckDBGraphDB:
         edge = EDGES[edge_type]
 
         if not return_fields:
-            return_fields = [spec.key_field, "name", "file_path", "start_line", "end_line"]
+            return_fields = [
+                spec.key_field,
+                "name",
+                "file_path",
+                "start_line",
+                "end_line",
+            ]
 
         params: list[Any] = []
         clauses: list[str] = []
@@ -366,16 +382,16 @@ class DuckDBGraphDB:
             params.append(exclude_name_prefix)
         if contains:
             for field, value in contains.items():
-                clauses.append(f"n.{field} LIKE ?")
+                clauses.append(f"n.{_ident(field)} LIKE ?")
                 params.append(f"%{value}%")
 
-        select_clause = ", ".join(f"n.{f}" for f in return_fields)
+        select_clause = ", ".join(f"n.{_ident(f)}" for f in return_fields)
         sql = (
             f"SELECT {select_clause} FROM {spec.table} n WHERE {' AND '.join(clauses)}"
         )
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def find_neighbors(
         self,
@@ -399,11 +415,11 @@ class DuckDBGraphDB:
 
         select_parts: list[str] = []
         for f in return_src or []:
-            select_parts.append(f"a.{f} AS src_{f}")
+            select_parts.append(f"a.{_ident(f)} AS src_{f}")
         for f in return_dst or []:
-            select_parts.append(f"b.{f} AS dst_{f}")
+            select_parts.append(f"b.{_ident(f)} AS dst_{f}")
         for f in return_edge or []:
-            select_parts.append(f"e.{f} AS edge_{f}")
+            select_parts.append(f"e.{_ident(f)} AS edge_{f}")
         if not select_parts:
             select_parts = [f"b.{dst.key_field} AS dst_{dst.key_field}"]
 
@@ -419,11 +435,11 @@ class DuckDBGraphDB:
             params.append(dst_key)
         if src_where:
             for field, value in src_where.items():
-                clauses.append(f"a.{field} = ?")
+                clauses.append(f"a.{_ident(field)} = ?")
                 params.append(value)
         if dst_where:
             for field, value in dst_where.items():
-                clauses.append(f"b.{field} = ?")
+                clauses.append(f"b.{_ident(field)} = ?")
                 params.append(value)
 
         select_clause = ", ".join(select_parts)
@@ -436,7 +452,7 @@ class DuckDBGraphDB:
 
         cursor = self._conn.execute(sql, params)
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     def reach_via_edge(
         self,
@@ -471,7 +487,7 @@ class DuckDBGraphDB:
         """
         cursor = self._conn.execute(sql, [start_key, int(max_depth)])
         cols = [d[0] for d in (cursor.description or [])]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     # Escape hatch for tooling that needs the raw DuckDB connection
     # (e.g. ATTACH for federation, EXPLAIN ANALYZE). Symmetric with

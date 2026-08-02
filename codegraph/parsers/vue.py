@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Parser for Vue/Nuxt Single File Components (.vue) and Nuxt conventions.
 #              Extracts <script setup> functions, composables, components, routes,
@@ -231,7 +231,9 @@ class VueParser(BaseParser):
 
             # Imports
             for im in _IMPORT_RE.finditer(script_body):
-                named = [s.strip() for s in im.group(1).split(",")] if im.group(1) else []
+                named = (
+                    [s.strip() for s in im.group(1).split(",")] if im.group(1) else []
+                )
                 default = [im.group(2)] if im.group(2) else []
                 namespace = [im.group(3)] if im.group(3) else []
                 module = im.group(4)
@@ -339,7 +341,9 @@ class VueParser(BaseParser):
 
             # Nuxt plugin
             if _NUXT_PLUGIN_RE.search(script_body):
-                line = script_start + script_body[: _NUXT_PLUGIN_RE.search(script_body).start()].count("\n")
+                line = script_start + script_body[
+                    : _NUXT_PLUGIN_RE.search(script_body).start()
+                ].count("\n")
                 index.functions.append(
                     SymbolDef(
                         id=f"{path_str}::plugin",
@@ -371,7 +375,14 @@ class VueParser(BaseParser):
 
             for cm in _COMPONENT_TAG_RE.finditer(template_body):
                 tag = cm.group(1)
-                if tag in ("Transition", "TransitionGroup", "KeepAlive", "Teleport", "Suspense", "Slot"):
+                if tag in (
+                    "Transition",
+                    "TransitionGroup",
+                    "KeepAlive",
+                    "Teleport",
+                    "Suspense",
+                    "Slot",
+                ):
                     continue
                 line = template_start + template_body[: cm.start()].count("\n")
                 index.code_refs.append(
@@ -385,7 +396,9 @@ class VueParser(BaseParser):
         # --- Nuxt convention metadata ---
         if nuxt_convention:
             # Register the file as a "component" class node for graph navigation
-            if nuxt_convention == "component" and not any(c.name == component_name for c in index.classes):
+            if nuxt_convention == "component" and not any(
+                c.name == component_name for c in index.classes
+            ):
                 index.classes.append(
                     ClassDef(
                         id=f"{path_str}::{component_name}",

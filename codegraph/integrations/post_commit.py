@@ -3,7 +3,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Post-commit pipeline for Claude Code hook.
 #   1. Re-index changed files in codegraph
@@ -14,39 +14,47 @@
 
 from __future__ import annotations
 
-from codegraph.core.utils import quiet_subprocess_kwargs
-
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+from codegraph.core.utils import quiet_subprocess_kwargs
+
 
 def _git_changed_files(repo_root: Path, since: str = "HEAD~1") -> list[str]:
     """Get files changed since a git ref."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", since],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(repo_root),
-        **quiet_subprocess_kwargs(),
-    )
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", since],
+            timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            **quiet_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return []
     return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
 
 
 def _git_commit_info(repo_root: Path) -> dict:
     """Get latest commit info."""
-    result = subprocess.run(
-        ["git", "log", "-1", "--format=%H%n%s%n%an%n%ai"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(repo_root),
-        **quiet_subprocess_kwargs(),
-    )
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%H%n%s%n%an%n%ai"],
+            timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            **quiet_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return {}
     lines = result.stdout.strip().splitlines()
     if len(lines) >= 4:
         return {
@@ -66,9 +74,8 @@ def _reindex_codegraph(repo_root: Path, files: list[str]) -> int:
         indexed = 0
         for rel_path in files:
             full = repo_root / rel_path
-            if full.exists():
-                if index_file(full, repo_root):
-                    indexed += 1
+            if full.exists() and index_file(full, repo_root):
+                indexed += 1
         return indexed
     except Exception as exc:
         print(f"[post-commit] codegraph index error: {exc}", file=sys.stderr)

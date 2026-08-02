@@ -74,7 +74,9 @@ class TestBuiltinCallsFiltered:
 
         conn = get_connection(tmp_path)
         edges = conn.find_neighbors("CALLS", dst_where={"name": "len"})
-        assert len(edges) == 0, "expected zero CALLS edges to a builtin-shadowing function"
+        assert len(edges) == 0, (
+            "expected zero CALLS edges to a builtin-shadowing function"
+        )
 
     def test_non_builtin_calls_still_resolve(self, tmp_path):
         """Sanity: filtering must not affect legitimate user-to-user edges."""

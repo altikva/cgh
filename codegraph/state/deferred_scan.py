@@ -15,12 +15,12 @@
 
 from __future__ import annotations
 
+import logging
 import queue
-import sys
 import threading
 from pathlib import Path
 
-_QUEUE: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
+_QUEUE: queue.Queue[tuple[str, str, str]] = queue.Queue()
 _WORKER_STARTED = threading.Event()
 _LOCK = threading.Lock()
 
@@ -49,11 +49,7 @@ def _worker() -> None:
         try:
             _process(repo_root, path, blob_sha)
         except Exception as exc:
-            print(
-                f"[codegraph] deferred scan error: {path}: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
+            logging.getLogger(__name__).error("deferred scan error: %s: %s", path, exc)
         finally:
             _QUEUE.task_done()
 

@@ -2,12 +2,13 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (http://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Shared utility functions: single source of truth.
 
 from __future__ import annotations
 
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -25,7 +26,7 @@ def rows(result) -> list[dict]:
         col_names = result.get_column_names()
         while result.has_next():
             row = result.get_next()
-            out.append(dict(zip(col_names, row)))
+            out.append(dict(zip(col_names, row, strict=False)))
     except Exception as exc:
         print(f"[codegraph] warning: rows() failed: {exc}", file=sys.stderr)
     return out
@@ -89,7 +90,7 @@ def lang_color(suffix: str) -> str:
     }.get(suffix, "white")
 
 
-def ro_sqlite_uri(db_path: "str | Path") -> str:
+def ro_sqlite_uri(db_path: str | Path) -> str:
     """Build a read-only SQLite ``file:`` URI that is valid on every platform.
 
     A naive ``f"file:{path}?mode=ro"`` breaks on Windows: backslashes are
@@ -115,3 +116,41 @@ def quiet_subprocess_kwargs() -> dict:
 
         return {"creationflags": getattr(_sp, "CREATE_NO_WINDOW", 0)}
     return {}
+
+
+def is_loopback_url(url: str) -> bool:
+    """True only when the URL's host is unambiguously this machine:
+    ``localhost``, 127.0.0.0/8 or ``::1``. Egress classification builds
+    on this ("local backend" claims must be earned by the URL, not by a
+    class attribute), so anything unparsable is NOT loopback: the
+    decision fails closed."""
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(url if "//" in url else f"//{url}").hostname or ""
+    except ValueError:
+        return False
+    if host.lower() == "localhost":
+        return True
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def checked_identifier(name: str) -> str:
+    """Allow-list gate for identifiers interpolated into SQL/Cypher
+    (field names, order_by entries). Values are always parameterized;
+    identifiers cannot be, so anything not identifier-shaped raises
+    before it reaches a query string, even though today's callers pass
+    constants (defense in depth, per the audit)."""
+    if not isinstance(name, str) or not _SQL_IDENT_RE.match(name):
+        from codegraph.errors import BackendError
+
+        raise BackendError(f"invalid identifier in query: {name!r}")
+    return name

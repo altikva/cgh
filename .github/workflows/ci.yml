@@ -68,16 +68,18 @@ jobs:
         # deserves its own chore PR). The format check is not enabled yet
         # (69 files would reformat); same story, dedicated chore/ruff-format
         # PR, then add `uvx ruff@0.15.9 format --check .`.
-        run: uvx ruff@0.15.9 check .
+        run: |
+          uvx ruff@0.15.9 check .
+          uvx ruff@0.15.9 format --check .
 
       - name: Run pytest
         # First-party plugins from plugins/ join the test env so their
         # suites run end to end instead of import-skipping.
         run: |
           if [ "$PYTHON_VERSION" = "3.14" ]; then
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision pytest -q
           else
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --extra kuzu pytest -q
+            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision --extra kuzu pytest -q
           fi
 
   # Advisory early-warning job: resolve the newest deps allowed by the
@@ -110,3 +112,39 @@ jobs:
           else
             uv run --python "$PYTHON_VERSION" --upgrade --with pytest --extra kuzu pytest -q
           fi
+
+  test-oldest:
+    name: Oldest direct deps, advisory (Python 3.11)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      - name: Test on the declared floors
+        # A lower bound nobody tests is an intention, not a compatibility
+        # statement: resolve every direct dependency to its declared
+        # minimum and run the suite against that. The plugins ride along
+        # so THEIR floors (pypdf, python-docx, openpyxl, ...) are proven
+        # too, not just cgh's own.
+        run: uv run --python 3.11 --resolution lowest-direct --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision pytest -q
+
+  build-check:
+    name: Wheel builds and passes twine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Twine check
+        run: uvx twine check dist/*

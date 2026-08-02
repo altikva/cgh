@@ -133,6 +133,43 @@ class TestSplitIdentities:
         assert split_identities("Cloud Run") == ("Cloud Run", [])
 
 
+class TestPostprocessZones:
+    def test_nested_list_zone_becomes_a_label(self):
+        out = postprocess({"nodes": ["A"], "edges": [], "zones": [["Cluster GKE"], []]})
+        assert [z["label"] for z in out["zones"]] == ["Cluster GKE"]
+
+    def test_dict_zone_keeps_members(self):
+        out = postprocess(
+            {"nodes": ["A"], "edges": [], "zones": [{"label": "Z", "members": ["A"]}]}
+        )
+        assert out["zones"] == [{"label": "Z", "members": ["A"]}]
+
+
+class TestProgress:
+    def test_route_announces_each_model_pass(self, monkeypatch):
+        _script(
+            monkeypatch,
+            [
+                '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
+                '{"nodes": ["API", "DB"], "edges": [], "zones": []}',
+                '{"title": "", "kinds": {}, "tech": {}}',
+                '{"edges": []}',
+            ],
+        )
+        steps: list[str] = []
+        route(IMG, {}, progress=steps.append)
+        assert len(steps) == 4  # inventory, structure, enrich, arrows
+        assert "inventory" in steps[0] and "arrows" in steps[-1]
+
+    def test_sdk_stays_silent_without_observer(self, monkeypatch):
+        _script(
+            monkeypatch,
+            ['{"summary": "a logo", "content": ["logo"], "text_density": "none"}'],
+        )
+        inv, _md = route(IMG, {})  # no progress kwarg: must not raise
+        assert inv["content"] == ["logo"]
+
+
 class TestPostprocessLegend:
     def test_schema_echo_filtered(self):
         out = postprocess(

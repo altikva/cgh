@@ -11,10 +11,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
+
+_log = logging.getLogger(__name__)
 
 _PREVIEW_CHARS = 400
 _HEADING_RE = re.compile(r"heading\s*(\d)", re.IGNORECASE)
@@ -36,6 +39,7 @@ class DocxParser(BaseParser):
 
             document = docx.Document(str(path))
         except Exception:
+            _log.warning("docx parse failed, indexed empty: %s", path)
             return idx
 
         current: SectionDef | None = None

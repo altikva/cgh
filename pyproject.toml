@@ -166,7 +166,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # assert is the test idiom.
 "tests/**" = ["S101", "S105", "S108", "S608"]
-"plugins/*/tests/**" = ["S101", "S105", "S108"]
+# E402: the importorskip(<plugin>) guard legitimately precedes imports.
+"plugins/*/tests/**" = ["S101", "S105", "S108", "E402"]
 "internal/bench/**" = ["S101", "S310"]
 "examples/**" = ["S101"]
 # The two adapters interpolate identifiers behind checked_identifier
@@ -185,7 +186,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
-testpaths = ["tests"]
+# The plugin suites self-skip (importorskip) when their package is not
+# installed, so collecting them here costs nothing locally and runs
+# them for real in CI, where every plugin is installed.
+testpaths = ["tests", "plugins"]
 markers = [
     "kuzu: needs the optional kuzu backend installed",
     "network: talks to a local daemon or the network",

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from codegraph.plugin_api import ScanFinding
 
-from .backends import available
+from .backends import VisionError, available, is_local, ollama_url
 from .pipeline import (
     DIAGRAM_KINDS,
     charts_to_markdown,
@@ -50,6 +50,16 @@ class VisionScanner:
         self.config = dict(config or {})
         self.repo_root = repo_root
 
+    def _audit(self, message: str) -> None:
+        # Best-effort: a failed audit write must not block the scan
+        # (the egress decision itself already happened above it).
+        try:
+            from codegraph.plugin_api import activity_log
+
+            activity_log(self.repo_root, "vision", message)
+        except Exception:
+            pass
+
     def scan(self, path: Path, text: str, index) -> list[ScanFinding]:
         p = Path(path)
         if p.suffix.lower() not in IMAGE_SUFFIXES:
@@ -62,12 +72,32 @@ class VisionScanner:
             self.config.get("max_bytes", _MAX_BYTES)
         ):
             return []
+        if not is_local(self.config):
+            # A non-loopback daemon means the image bytes leave this
+            # machine. Secure mode refuses outright; assist mode
+            # proceeds but the departure lands in the audit trail.
+            # The mode probe fails CLOSED: unknown mode is secure.
+            try:
+                from codegraph.plugin_api import load_config
+
+                mode = load_config(self.repo_root).mode
+            except Exception:
+                mode = "secure"
+            if mode == "secure":
+                raise VisionError(
+                    "secure mode: refusing to send image bytes to the "
+                    f"non-loopback ollama_url {ollama_url(self.config)}"
+                )
+            self._audit(
+                f"image bytes sent to non-loopback ollama_url "
+                f"{ollama_url(self.config)}: {p}"
+            )
         if not available(self.config):
             # Raise, do not record: the deferred worker logs the reason
             # and the image is retried once a daemon is running.
-            raise RuntimeError(
+            raise VisionError(
                 "vision backend: Ollama daemon not reachable "
-                f"({self.config.get('ollama_url', 'http://127.0.0.1:11434')})"
+                f"({ollama_url(self.config)})"
             )
 
         inv = inventory(p, self.config)

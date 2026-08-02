@@ -84,6 +84,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   raises `BackendError` on anything not identifier-shaped, closing
   the latent injection the audit flagged even though current callers
   pass constants.
+- **`duckdb` floor raised to 1.2, the real minimum**: the advisory
+  lowest-resolution CI job proved that 1.0 and 1.1 reject the node
+  upsert (their binder refuses `ON CONFLICT DO UPDATE` touching a
+  constrained column), so the declared floor promised a version that
+  never worked. The full suite passes on 1.2.0.
 - **Connection caches keyed by repo root**: the graph connection cache
   and the knowledge/call-log connection were first-caller-wins process
   globals, so a second repo touched in the same process (federation,

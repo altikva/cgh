@@ -71,6 +71,7 @@ from codegraph.cli.commands_session import (
     cmd_hook_resume_header,
     cmd_memory,
 )
+from codegraph.cli.output import add_out_option
 from codegraph.core.db import KuzuNotInstalled
 
 
@@ -506,6 +507,7 @@ def _register_analysis(sub) -> None:
         help="Output format: md (PR comment) or json (default: md). "
         "The graph index should be fresh: run `cgh index` first in CI.",
     )
+    add_out_option(p, what="the report")
 
     # --- history ---
     p = sub.add_parser("history", help="Show recent indexing activity by day")

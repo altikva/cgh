@@ -8,6 +8,26 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **A shared `--out PATH` option for artifact-emitting verbs**: the
+  result still prints on stdout (pipeable), `--out` also writes it to
+  a file with a stderr confirmation, and interactive sessions without
+  it get a one-line tip advertising the flag. Wired on `cgh vision`
+  and `cgh impact`; plugins reach the same contract through the
+  plugin API (`add_out_option`, `emit_result`).
+- **`cgh vision` shows its progress**: the pipeline announces each
+  model pass (inventory, structure, enrichment, arrows, tables) to an
+  optional observer and the CLI renders it as a transient spinner
+  with elapsed time on stderr, so the 30 seconds of model time no
+  longer look like a hang. The SDK surface stays silent by default.
+
+### Fixed
+- **Zones emitted as nested lists render correctly**: some models
+  return `zones: [["Cluster GKE"], []]`; the labels came out as
+  stringified Python lists in the markdown and the Mermaid subgraphs,
+  and empty zones survived. Nested lists now flatten to their label
+  and empty zones are dropped.
+
 ## [0.9.0] - 2026-08-02
 
 ### Added

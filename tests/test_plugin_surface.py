@@ -58,6 +58,8 @@ def test_plugins_import_only_the_supported_surface():
         "git_hash_object",
         "quiet_subprocess_kwargs",
         "is_loopback_url",
+        "add_out_option",
+        "emit_result",
         "resolve_children",
         "sync_static_rules",
         "loaded_plugins",

@@ -32,3 +32,6 @@ Thumbs.db
 
 # codegraph auth key (never commit)
 .codegraph/auth.key
+
+# Internal material: design proposals and benchmarks are not published.
+internal/

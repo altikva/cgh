@@ -162,7 +162,7 @@ ignore = [
 # assert is the test idiom.
 "tests/**" = ["S101", "S105", "S108", "S608"]
 "plugins/*/tests/**" = ["S101", "S105", "S108"]
-"bench/**" = ["S101", "S310"]
+"internal/bench/**" = ["S101", "S310"]
 "examples/**" = ["S101"]
 # The two adapters interpolate identifiers behind checked_identifier
 # (allow-list gate); the sidecar SQLite modules build clause lists from

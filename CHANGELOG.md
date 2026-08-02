@@ -84,6 +84,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   raises `BackendError` on anything not identifier-shaped, closing
   the latent injection the audit flagged even though current callers
   pass constants.
+- **The declared dependency floors are now real** (first catches of the
+  lowest-resolution CI job): the `duckdb` floor rises to 1.2 because
+  1.0 and 1.1 reject the node upsert (their binder refuses
+  `ON CONFLICT DO UPDATE` touching a constrained column); `pyyaml` is
+  declared as the direct dependency it always was (the YAML section
+  parser imported it, but only a transitive install made it appear);
+  and the init wizard's instruction style uses a literal gray instead
+  of the `dim` attribute that only the newest prompt_toolkit parses,
+  which made `cgh init` crash outright on older resolutions. The full
+  suite now passes with every direct dependency at its floor.
 - **Connection caches keyed by repo root**: the graph connection cache
   and the knowledge/call-log connection were first-caller-wins process
   globals, so a second repo touched in the same process (federation,

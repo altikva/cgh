@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-docs"
-version = "0.1.1"
+version = "0.1.2"
 description = "Document parsers for cgh: pdf, docx and xlsx files become searchable sections in the code graph"
 readme = "README.md"
 requires-python = ">=3.11"

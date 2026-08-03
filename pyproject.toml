@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.10.0"
+version = "0.10.1"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -63,10 +63,10 @@ kuzu = ["kuzu>=0.7"]
 # The six first-party plugins in one install:
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 plugins = [
-    "cgh-docs>=0.1.1",
+    "cgh-docs>=0.1.2",
     "cgh-pii>=0.1.1",
-    "cgh-summarize>=0.2.1",
-    "cgh-classify>=0.1.1",
+    "cgh-summarize>=0.2.2",
+    "cgh-classify>=0.1.2",
     "cgh-bugreport>=0.1.1",
     "cgh-vision>=0.2",
 ]
@@ -76,10 +76,10 @@ plugins = [
 # which is what makes this superset safe to offer.
 #   pip install "cgh[full]"
 full = [
-    "cgh-docs>=0.1.1",
+    "cgh-docs>=0.1.2",
     "cgh-pii>=0.1.1",
-    "cgh-summarize>=0.2.1",
-    "cgh-classify>=0.1.1",
+    "cgh-summarize>=0.2.2",
+    "cgh-classify>=0.1.2",
     "cgh-bugreport>=0.1.1",
     "cgh-vision>=0.2",
     "tree-sitter-c-sharp>=0.23",
@@ -183,6 +183,13 @@ ignore = [
 "codegraph/**" = ["S310"]
 "plugins/cgh-vision/**" = ["S310"]
 "plugins/cgh-summarize/**" = ["S310"]
+
+[tool.uv.sources]
+# These patch versions are not on PyPI until this release publishes
+# them; resolved from the workspace meanwhile. Remove after publish.
+cgh-classify = { path = "plugins/cgh-classify" }
+cgh-summarize = { path = "plugins/cgh-summarize" }
+cgh-docs = { path = "plugins/cgh-docs" }
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"

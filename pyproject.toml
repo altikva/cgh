@@ -184,13 +184,6 @@ ignore = [
 "plugins/cgh-vision/**" = ["S310"]
 "plugins/cgh-summarize/**" = ["S310"]
 
-[tool.uv.sources]
-# These patch versions are not on PyPI until this release publishes
-# them; resolved from the workspace meanwhile. Remove after publish.
-cgh-classify = { path = "plugins/cgh-classify" }
-cgh-summarize = { path = "plugins/cgh-summarize" }
-cgh-docs = { path = "plugins/cgh-docs" }
-
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 # The plugin suites self-skip (importorskip) when their package is not

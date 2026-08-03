@@ -180,6 +180,17 @@ def _purge_file(conn: GraphDB, path: str, fts_conn=None) -> None:
         delete_file_symbols(fts_conn, path)
 
 
+def _bind_scanner_root(scanner, root) -> None:
+    """Late-bind the authoritative repo root onto a scanner constructed
+    rootless. The plugin registry loads once per process, and the CLI
+    loads it before --root is parsed: run from outside a repo, every
+    scanner would keep repo_root=None and crash on its first
+    Path(repo_root) (the OneDrive/Windows report). The scan sites know
+    the real root, so they repair the binding."""
+    if getattr(scanner, "repo_root", "unset") is None:
+        scanner.repo_root = root
+
+
 def _run_scanners(root, path, idx: FileIndex, blob_sha: str | None, fts_conn) -> None:
     """Run registered inline plugin scanners on a freshly indexed file and
     queue the file for the deferred ones. A scanner failure is logged and
@@ -216,6 +227,7 @@ def _run_scanners(root, path, idx: FileIndex, blob_sha: str | None, fts_conn) ->
     from codegraph.state.findings import record_findings
 
     for plugin_name, scanner in inline:
+        _bind_scanner_root(scanner, root)
         try:
             found = scanner.scan(Path(path), text, idx) or []
             record_findings(

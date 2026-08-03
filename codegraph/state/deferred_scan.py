@@ -68,6 +68,9 @@ def _process(repo_root: str, path: str, blob_sha: str) -> None:
     text: str | None = None
 
     for _plugin_name, scanner in deferred:
+        from codegraph.indexer import _bind_scanner_root
+
+        _bind_scanner_root(scanner, repo_root)
         if already_scanned(repo_root, path, scanner.name, blob_sha):
             continue
         if text is None:

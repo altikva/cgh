@@ -43,6 +43,10 @@ class ClassifyScanner:
         return self._model
 
     def scan(self, path: Path, text: str, index) -> list[ScanFinding]:
+        if not self.repo_root:
+            # Rootless load (SDK scan_text, repo-less CLI): labels and
+            # model live under .codegraph/, there is nothing to say.
+            return []
         labels = load_labels(self.repo_root)
         label = labels.get(str(Path(path).resolve()))
         if label is True:

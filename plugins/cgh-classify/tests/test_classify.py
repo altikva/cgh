@@ -91,6 +91,13 @@ class TestLabels:
 
 
 class TestScannerSemantics:
+    def test_rootless_scanner_stays_silent(self):
+        """SDK scan_text and repo-less CLI runs construct scanners with
+        repo_root=None; labels and model live under .codegraph/, so
+        there is nothing to say and nothing to crash on."""
+        found = ClassifyScanner({}, None).scan(Path("/r/a.py"), "text", None)
+        assert found == []
+
     def test_human_label_wins_over_model(self, repo):
         _trained_model().save(model_path(repo))
         f = repo / "payroll.txt"

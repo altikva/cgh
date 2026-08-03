@@ -84,6 +84,11 @@ class SummarizeScanner:
         self._extras_fn = extras_fn or (lambda: [])
 
     def scan(self, path: Path, text: str, index) -> list[ScanFinding]:
+        if not self.repo_root:
+            # Rootless load (SDK scan_text, repo-less CLI): the egress
+            # gate and the finding store need a repo. sdk.summarize is
+            # the rootless entry point instead.
+            return []
         min_kb = float(self.config.get("min_kb", 4))
         if len(text) < min_kb * 1024:
             return []

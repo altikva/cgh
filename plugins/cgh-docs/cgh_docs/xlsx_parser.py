@@ -32,9 +32,15 @@ class XlsxParser(BaseParser):
         idx = FileIndex(path=str(path), lang=self.lang)
         wb = None
         try:
+            import warnings
+
             import openpyxl
 
-            wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+            with warnings.catch_warnings():
+                # "Workbook contains no default style": cosmetic, and
+                # it lands on the owner's stderr for every such file.
+                warnings.simplefilter("ignore", UserWarning)
+                wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
             for sheet_no, ws in enumerate(wb.worksheets, start=1):
                 header: list[str] = []
                 try:

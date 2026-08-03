@@ -8,6 +8,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-03
+
+### Fixed
+- **Scanners crashed on repos indexed from outside their directory**:
+  the plugin registry loads once per process and the CLI loads it
+  before `--root` is parsed, so running `cgh index --root <repo>`
+  from elsewhere left every scanner bound to `repo_root=None` and the
+  first `Path(None)` blew up per file (`argument should be a str or
+  an os.PathLike object`, seen on Windows/OneDrive). The scan sites
+  now late-bind the authoritative root, and the classify and
+  summarize scanners answer empty instead of crashing when loaded
+  rootless (SDK `scan_text`). The xlsx parser also silences
+  openpyxl's cosmetic "no default style" warning that spammed stderr
+  on such repos.
+
 ## [0.10.0] - 2026-08-03
 
 ### Added
@@ -800,7 +815,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0

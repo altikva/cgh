@@ -160,6 +160,13 @@ class TestOllamaEgressClass:
 
 
 class TestScanner:
+    def test_rootless_scanner_stays_silent(self):
+        from cgh_summarize.scanner import SummarizeScanner
+
+        big = "x" * 8192
+        found = SummarizeScanner({}, None).scan(Path("/r/a.py"), big, None)
+        assert found == []
+
     def test_small_file_skipped(self, tmp_path):
         root = _repo(tmp_path)
         s = SummarizeScanner({}, root, extras_fn=lambda: [FakeCloud()])

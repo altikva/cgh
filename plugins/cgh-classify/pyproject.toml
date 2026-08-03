@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-classify"
-version = "0.1.1"
+version = "0.1.2"
 description = "Human-trainable confidentiality classification for cgh: label files, a lightweight local model generalizes, the egress gate enforces"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-03
+
 ### Fixed
 - **Scanners crashed on repos indexed from outside their directory**:
   the plugin registry loads once per process and the CLI loads it
@@ -813,7 +815,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/altikva/cgh/compare/v0.7.3...v0.8.0

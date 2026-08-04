@@ -14,6 +14,12 @@
 # images: a remote URL means the raw image bytes travel to that host.
 ollama_url = "http://127.0.0.1:11434"
 
+# Or skip Ollama entirely: point at any OpenAI-compatible vision
+# endpoint (llama-server on your GGUF, LM Studio, vLLM, a gateway).
+# A loopback URL stays local; a remote one is gated like any cloud.
+#openai_base_url = "http://127.0.0.1:8080/v1"
+#openai_api_key_env = "OPENAI_API_KEY"
+
 # Extraction profile: "default" (three passes, best quality),
 # "fast" (single pass), "photo" (screen photos: moire, low contrast).
 profile = "default"

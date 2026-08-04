@@ -41,7 +41,7 @@ def _warn_missing_models(config: dict) -> None:
     `ollama pull` is blocked by a corporate network."""
     from rich.console import Console
 
-    from .backends import missing_models
+    from .backends import backend_kind, missing_models
     from .pipeline import profile_for
 
     profile = profile_for(config)
@@ -51,6 +51,14 @@ def _warn_missing_models(config: dict) -> None:
         return
     err = Console(stderr=True)
     err.print(f"[yellow]missing model(s):[/yellow] {', '.join(missing)}")
+    if backend_kind(config) == "openai":
+        # An OpenAI-compatible endpoint loads its own models; naming
+        # the wrong one is a config issue, not a pull.
+        err.print(
+            "[dim]  the configured endpoint does not serve these; set "
+            "nodes_model / edges_model to a model it exposes.[/dim]"
+        )
+        return
     err.print(f"[dim]  ollama pull {' '.join(missing)}[/dim]")
     err.print(
         "[dim]  blocked by your network? register a GGUF locally instead, "

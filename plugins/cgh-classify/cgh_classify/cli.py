@@ -205,7 +205,7 @@ def _cmd_status(console, root: Path):
 
 
 def _tracked_files(root: Path) -> list[Path]:
-    from codegraph.plugin_api import is_supported
+    from codegraph.plugin_api import is_supported, quiet_subprocess_kwargs
 
     try:
         out = subprocess.run(
@@ -215,6 +215,7 @@ def _tracked_files(root: Path) -> list[Path]:
             text=True,
             check=True,
             timeout=30,
+            **quiet_subprocess_kwargs(),
         ).stdout
     except (
         subprocess.CalledProcessError,

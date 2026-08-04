@@ -1386,6 +1386,26 @@ def _append_hook(settings: dict, spec: dict) -> None:
     bucket.append(wrapper)
 
 
+def _hook_launcher(cli_prefix: str) -> str:
+    """On Windows, point the hooks at the windowless launcher.
+
+    Hooks fire on every tool call, and each one spawns a fresh process.
+    `cgh.exe` is a console application, so Windows gives it a console:
+    a cmd window flashes for every Read, Grep and Bash the agent runs,
+    and a federated workspace multiplies it. `cghw.exe` is the same
+    entry point built from the GUI subsystem, so no window is ever
+    created; stdout stays the pipe the hook protocol needs. Only
+    swapped when that launcher actually exists next to `cgh`, so an
+    older install keeps working.
+    """
+    import shutil
+
+    if os.name != "nt" or not cli_prefix.endswith("cgh"):
+        return cli_prefix
+    windowless = shutil.which("cghw")
+    return windowless if windowless else cli_prefix
+
+
 def _ensure_claude_hooks(
     settings_shared: dict, settings_local: dict, cli_prefix: str
 ) -> dict:
@@ -1670,6 +1690,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
         cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
+        cli_prefix = _hook_launcher(cli_prefix)
 
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 

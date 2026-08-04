@@ -114,6 +114,13 @@ Changelog = "https://github.com/altikva/cgh/blob/main/CHANGELOG.md"
 [project.scripts]
 cgh = "codegraph.__main__:main"
 
+[project.gui-scripts]
+# Same entry point, windowless launcher on Windows. Console apps
+# spawned by a windowless parent (the Claude Code hooks fire on
+# every tool call) each flash a conhost window; cghw.exe is built
+# from the GUI subsystem so it never does. No effect on POSIX.
+cghw = "codegraph.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 # `cgh` is a thin entry shim so `python -m cgh` works; the real code lives in

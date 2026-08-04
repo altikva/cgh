@@ -97,11 +97,17 @@ class CliBackend:
         return self._resolved() is not None
 
     def summarize(self, prompt: str, config: dict) -> str:
+        from codegraph.plugin_api import quiet_subprocess_kwargs
+
         proc = subprocess.run(
             self._command(prompt.replace("\x00", ""), config),
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,
+            # Without this every summarized file flashes a console
+            # window on Windows: the owner is detached, so each agent
+            # CLI it spawns gets a fresh conhost.
+            **quiet_subprocess_kwargs(),
         )
         if proc.returncode != 0:
             raise SummarizeError(

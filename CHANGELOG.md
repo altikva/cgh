@@ -8,6 +8,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Windows stops flashing a console window on every agent action**:
+  the Claude Code hooks fire on each tool call and `cgh.exe` is a
+  console application, so Windows created (and destroyed) a console
+  for each one, multiplied by every repo in a federated workspace.
+  cgh now also ships `cghw`, the same entry point built as a
+  windowless launcher, and the hook wiring points at it on Windows
+  when it is present, falling back to the console launcher on older
+  installs. Three plugin subprocess calls that also lacked the
+  no-window flag are fixed alongside: the summarize agent-CLI backend
+  (one spawn per summarized file, inside the detached owner) and the
+  `git ls-files` calls of classify and summarize.
+
 ### Added
 - **cgh-vision consults a second structure reader when the first comes
   back empty-handed**: an extraction with two boxes or fewer, or with

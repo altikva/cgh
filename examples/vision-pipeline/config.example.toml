@@ -27,6 +27,11 @@ profile = "default"
 # Per model call, seconds. Raise it for large images on CPU-only.
 #timeout_s = 120
 
+# Second structure reader, consulted only when the first comes back
+# skeletal. Empty disables it; a model that is not pulled degrades
+# silently to the single-reader result.
+#fallback_model = "minicpm-v:8b"
+
 # Small images are upscaled 2x (Lanczos) before extraction; the
 # benchmark showed this rescues thin-line drawio exports and never
 # hurts. Disable or tune the size threshold here.

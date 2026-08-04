@@ -46,9 +46,11 @@ PROFILES: dict[str, dict] = {
         "read_title": True,
         "read_notes": True,
         "timeout_s": 120,
-        # Second reader when the first comes back skeletal. Empty
-        # disables it; absent from the machine degrades silently.
-        "fallback_model": "minicpm-v:8b",
+        # Second reader when the first comes back skeletal. The
+        # arrow reader doubles as it: benchmarked over every local
+        # vision model, it rescues the most and costs no extra
+        # download. Empty disables it.
+        "fallback_model": "gemma3:4b",
     },
     "fast": {
         "nodes_model": "qwen2.5vl:3b",
@@ -68,7 +70,7 @@ PROFILES: dict[str, dict] = {
         "read_notes": True,
         "timeout_s": 180,
         "photo_hint": True,
-        "fallback_model": "minicpm-v:8b",
+        "fallback_model": "gemma3:4b",
     },
 }
 

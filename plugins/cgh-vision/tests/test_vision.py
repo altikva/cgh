@@ -163,6 +163,18 @@ class TestRouteStructured:
         assert render_markdown(result) == md
 
 
+def _role(prompt: str) -> str:
+    """Which pass a prompt belongs to. The three share an opening
+    sentence, so classify on what only one of them says."""
+    if '"nodes": ["label"' in prompt:
+        return "structure"
+    if '"kinds"' in prompt:
+        return "enrich"
+    if "listing every drawn arrow" in prompt:
+        return "edges"
+    return "other"
+
+
 class TestFallbackReader:
     """The default pair runs first; a second reader gets one attempt
     only when the result is skeletal, and only wins if it found more."""
@@ -185,27 +197,36 @@ class TestFallbackReader:
     ]
 
     def _models(self, monkeypatch, script):
-        """Records which model each call went to."""
-        seen: list[str] = []
+        """Records (model, role) per call. Role matters more than the
+        model name now that the fallback reader IS the arrow reader:
+        only a structure prompt sent to a model other than the primary
+        one is a fallback attempt."""
+        seen: list[tuple[str, str]] = []
         replies = list(script)
 
         def spy(model, path, prompt, config=None, timeout_s=120):
-            seen.append(model)
+            seen.append((model, _role(prompt)))
             return replies.pop(0) if replies else "{}"
 
         monkeypatch.setattr(pipeline, "ask", spy)
         return seen
 
+    @staticmethod
+    def _fallback_fired(seen) -> bool:
+        """A second structure read, by definition."""
+        return sum(1 for _m, role in seen if role == "structure") > 1
+
     def test_skeletal_triggers_the_second_reader(self, monkeypatch):
         seen = self._models(monkeypatch, self.THIN + self.RICH)
         ex = extract_diagram(IMG, {})
-        assert "minicpm-v:8b" in seen  # the fallback was consulted
+        assert self._fallback_fired(seen)
+        assert ("gemma3:4b", "structure") in seen  # by the arrow model
         assert [n["label"] for n in ex["nodes"]] == ["A", "B", "C", "D"]
 
     def test_healthy_result_never_pays_the_second_read(self, monkeypatch):
         seen = self._models(monkeypatch, self.HEALTHY)
         extract_diagram(IMG, {})
-        assert "minicpm-v:8b" not in seen
+        assert not self._fallback_fired(seen)
         assert len(seen) == 3  # structure, enrich, edges. Nothing more.
 
     def test_poorer_retry_is_discarded(self, monkeypatch):
@@ -218,27 +239,33 @@ class TestFallbackReader:
         ex = extract_diagram(IMG, {})
         assert [n["label"] for n in ex["nodes"]] == ["A", "B"]  # first kept
 
-    def test_missing_fallback_model_degrades_silently(self, monkeypatch):
+    def test_failing_second_read_degrades_silently(self, monkeypatch):
+        """The retry can only ever add: a failure keeps the first
+        result, it never propagates."""
         replies = list(self.THIN)
+        calls = {"structure": 0}
 
         def spy(model, path, prompt, config=None, timeout_s=120):
-            if model == "minicpm-v:8b":
-                raise RuntimeError("model not found")
+            if _role(prompt) == "structure":
+                calls["structure"] += 1
+                if calls["structure"] > 1:  # the fallback attempt
+                    raise RuntimeError("model not found")
             return replies.pop(0) if replies else "{}"
 
         monkeypatch.setattr(pipeline, "ask", spy)
         ex = extract_diagram(IMG, {})
         assert [n["label"] for n in ex["nodes"]] == ["A", "B"]
+        assert calls["structure"] == 2  # it was attempted
 
     def test_config_disables_it(self, monkeypatch):
         seen = self._models(monkeypatch, self.THIN)
         extract_diagram(IMG, {"fallback_model": ""})
-        assert "minicpm-v:8b" not in seen
+        assert not self._fallback_fired(seen)
 
     def test_fast_profile_never_falls_back(self, monkeypatch):
         seen = self._models(monkeypatch, ['{"nodes": ["A"], "edges": [], "zones": []}'])
         extract_diagram(IMG, {"profile": "fast"})
-        assert seen == ["qwen2.5vl:3b"]
+        assert seen == [("qwen2.5vl:3b", "structure")]
 
     def test_progress_announces_the_second_read(self, monkeypatch):
         self._models(monkeypatch, self.THIN + self.RICH)

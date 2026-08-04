@@ -545,3 +545,58 @@ class TestMissingModels:
 
         monkeypatch.setattr(backends.urllib.request, "urlopen", boom)
         assert missing_models({}, ["anything:1b"]) == []
+
+
+class TestOllamaSetup:
+    """cgh points at the publisher's own installer, never bundles or
+    obfuscates it, and never auto-runs a piped remote script."""
+
+    def test_windows_uses_winget(self):
+        from cgh_vision.setup_ollama import official_install
+
+        hint, argv = official_install("nt")
+        assert argv == ["winget", "install", "--id", "Ollama.Ollama", "-e"]
+        assert "ollama.com/install.sh" not in hint  # no pipe-to-shell on Windows
+
+    def test_macos_uses_brew(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+
+        monkeypatch.setattr(m.sys, "platform", "darwin")
+        _hint, argv = m.official_install("posix")
+        assert argv == ["brew", "install", "ollama"]
+
+    def test_linux_shows_the_script_but_never_runs_it(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+
+        monkeypatch.setattr(m.sys, "platform", "linux")
+        hint, argv = m.official_install("posix")
+        assert argv is None  # nothing auto-run
+        assert "install.sh" in hint
+
+    def test_offer_is_a_noop_without_a_tty(self, monkeypatch):
+        import io
+
+        import cgh_vision.setup_ollama as m
+        from rich.console import Console
+
+        monkeypatch.setattr(m.sys, "stdin", io.StringIO("y\n"))  # not a tty
+        ran = m.offer_to_install(Console(file=io.StringIO()))
+        assert ran is False
+
+    def test_offer_never_runs_the_linux_script(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+        from rich.console import Console
+
+        monkeypatch.setattr(m.sys, "platform", "linux")
+
+        class _TTY:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(m.sys, "stdin", _TTY())
+        called = {"run": False}
+        monkeypatch.setattr(
+            m.subprocess, "run", lambda *a, **k: called.__setitem__("run", True)
+        )
+        assert m.offer_to_install(Console()) is False
+        assert called["run"] is False

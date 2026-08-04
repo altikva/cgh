@@ -66,11 +66,15 @@ def _run(args, config: dict) -> None:
     if args.profile:
         config["profile"] = args.profile
     if not available(config):
-        raise SystemExit(
-            "vision backend: Ollama daemon not reachable at "
-            + str(config.get("ollama_url", "http://127.0.0.1:11434"))
-            + " (install: https://ollama.com, then `ollama pull qwen2.5vl:3b gemma3:4b`)"
-        )
+        from rich.console import Console
+
+        from .setup_ollama import offer_to_install, print_install_help
+
+        err = Console(stderr=True)
+        url = str(config.get("ollama_url", "http://127.0.0.1:11434"))
+        print_install_help(err, ollama_url=url)
+        offer_to_install(err)  # interactive only; official channel only
+        raise SystemExit(1)
     _warn_missing_models(config)
     # Progress rides stderr so stdout stays pure markdown (pipeable).
     from rich.console import Console

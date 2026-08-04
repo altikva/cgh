@@ -38,6 +38,30 @@ def is_local(config: dict) -> bool:
     return is_loopback_url(ollama_url(config))
 
 
+def installed_models(config: dict, timeout_s: float = 2.0) -> set[str]:
+    """Model names the daemon can serve right now. Empty when the
+    daemon answers nothing usable; callers treat that as unknown
+    rather than as absence."""
+    try:
+        with urllib.request.urlopen(
+            f"{ollama_url(config)}/api/tags", timeout=timeout_s
+        ) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return set()
+    return {str(m.get("name", "")) for m in data.get("models") or []}
+
+
+def missing_models(config: dict, wanted: list[str]) -> list[str]:
+    """Which of these the daemon does not have. A model registered
+    locally (ollama create from a GGUF) counts as present: cgh only
+    ever asks for a name, it never downloads anything."""
+    have = installed_models(config)
+    if not have:
+        return []
+    return [m for m in wanted if m and m not in have]
+
+
 def available(config: dict) -> bool:
     """Fast probe: is the Ollama daemon reachable?"""
     from urllib.parse import urlsplit

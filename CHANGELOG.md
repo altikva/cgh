@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **cgh-vision names the models it is missing, and documents the route
+  when `ollama pull` is blocked**: `cgh vision` now checks the daemon's
+  model list before starting and prints what is absent with the pull
+  command, instead of failing a minute later mid-extraction. Corporate
+  networks that block the Ollama registry have a documented
+  alternative in the plugin README: download the GGUF weights and the
+  mandatory vision projector from Hugging Face, register them with
+  `ollama create`, and point `nodes_model` at the local name. cgh only
+  ever asks the daemon for a name, so a locally registered model is
+  indistinguishable from a pulled one.
+
 ### Fixed
 - **Windows stops flashing a console window on every agent action**:
   the Claude Code hooks fire on each tool call and `cgh.exe` is a

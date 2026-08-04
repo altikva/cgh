@@ -28,9 +28,9 @@ profile = "default"
 #timeout_s = 120
 
 # Second structure reader, consulted only when the first comes back
-# skeletal. Empty disables it; a model that is not pulled degrades
-# silently to the single-reader result.
-#fallback_model = "minicpm-v:8b"
+# skeletal. Defaults to the arrow model, which needs no extra
+# download and won the comparison; empty disables it.
+#fallback_model = "gemma3:4b"
 
 # Small images are upscaled 2x (Lanczos) before extraction; the
 # benchmark showed this rescues thin-line drawio exports and never

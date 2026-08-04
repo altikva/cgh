@@ -10,7 +10,6 @@ nothing leaves the machine.
 ```bash
 pip install cgh-vision
 ollama pull qwen2.5vl:3b gemma3:4b   # the benchmark-selected pair
-ollama pull minicpm-v:8b             # optional second reader, see Pipeline
 
 cgh vision docs/architecture.png                 # markdown on stdout
 cgh vision photo.jpg --profile photo             # screen-photo tuning
@@ -83,12 +82,13 @@ ever asks Ollama for a model name, it never downloads anything itself.
    reads the arrows constrained to the found labels. Benchmarked
    ensemble: node precision 1.00, edge recall 0.80.
 4. **Fallback reader** when the structure comes back skeletal (two
-   boxes or fewer, or no arrows at all): minicpm-v:8b gets one
-   second look and wins only if it finds more. Benchmarked on the
-   real corpus: rescues the thin-line exports the primary reader
-   cannot see (2 nodes / 1 edge becoming 9 / 17), never fires on
-   images read correctly, and costs nothing when it does not fire.
-   Not pulled means no fallback, nothing breaks.
+   boxes or fewer, or no arrows at all): the arrow model reads the
+   structure a second time and wins only if it finds more. The two
+   models fail differently, which is what makes the retry worth
+   anything: benchmarked over every local vision model, gemma3:4b
+   rescues all five thin-line cases the primary reader cannot see
+   (2 nodes / 1 edge becoming 13 / 27), needs no extra download,
+   and never fires on images already read correctly.
 5. **Table / chart / text extractors** as routed.
 6. **Post-processing**: fuzzy-duplicate merge, arrow annotations
    dropped from node lists, reversed-edge dedup, and identity
@@ -117,7 +117,7 @@ ever asks Ollama for a model name, it never downloads anything itself.
 # edges_model = "gemma3:4b"  # set to "" to disable the edge pass
 # ollama_url = "http://127.0.0.1:11434"
 # timeout_s = 120
-# fallback_model = "minicpm-v:8b"  # second reader, "" disables it
+# fallback_model = "gemma3:4b"     # second reader, "" disables it
 # prescale = true            # 2x upscale of small images (see Pipeline)
 # prescale_min_px = 1000     # apply below this smaller-dimension size
 # min_bytes = 5120           # skip icons and badges

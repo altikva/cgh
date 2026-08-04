@@ -86,7 +86,10 @@ class TestRouter:
             monkeypatch,
             [
                 '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
-                '{"nodes": ["API", "DB"], "edges": [["API", "DB"]], "zones": []}',
+                # 3 nodes with an edge: a healthy read, so the fallback
+                # reader stays out of the picture (see TestFallbackReader).
+                '{"nodes": ["API", "DB", "Cache"], "edges": [["API", "DB"]],'
+                ' "zones": []}',
                 '{"title": "Archi", "kinds": {"DB": "database"}, "tech": {}}',
                 '[{"source": "API", "target": "DB", "label": "SQL"}]',
             ],
@@ -160,6 +163,90 @@ class TestRouteStructured:
         assert render_markdown(result) == md
 
 
+class TestFallbackReader:
+    """The default pair runs first; a second reader gets one attempt
+    only when the result is skeletal, and only wins if it found more."""
+
+    THIN = [
+        '{"nodes": ["A", "B"], "edges": [], "zones": []}',  # skeletal
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+    RICH = [
+        '{"nodes": ["A", "B", "C", "D"], "edges": [["A", "B"], ["C", "D"]],'
+        ' "zones": []}',
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+    HEALTHY = [
+        '{"nodes": ["A", "B", "C"], "edges": [["A", "B"]], "zones": []}',
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+
+    def _models(self, monkeypatch, script):
+        """Records which model each call went to."""
+        seen: list[str] = []
+        replies = list(script)
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append(model)
+            return replies.pop(0) if replies else "{}"
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        return seen
+
+    def test_skeletal_triggers_the_second_reader(self, monkeypatch):
+        seen = self._models(monkeypatch, self.THIN + self.RICH)
+        ex = extract_diagram(IMG, {})
+        assert "minicpm-v:8b" in seen  # the fallback was consulted
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B", "C", "D"]
+
+    def test_healthy_result_never_pays_the_second_read(self, monkeypatch):
+        seen = self._models(monkeypatch, self.HEALTHY)
+        extract_diagram(IMG, {})
+        assert "minicpm-v:8b" not in seen
+        assert len(seen) == 3  # structure, enrich, edges. Nothing more.
+
+    def test_poorer_retry_is_discarded(self, monkeypatch):
+        poorer = [
+            '{"nodes": ["Z"], "edges": [], "zones": []}',
+            '{"title": "", "kinds": {}, "tech": {}}',
+            '{"edges": []}',
+        ]
+        self._models(monkeypatch, self.THIN + poorer)
+        ex = extract_diagram(IMG, {})
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B"]  # first kept
+
+    def test_missing_fallback_model_degrades_silently(self, monkeypatch):
+        replies = list(self.THIN)
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            if model == "minicpm-v:8b":
+                raise RuntimeError("model not found")
+            return replies.pop(0) if replies else "{}"
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        ex = extract_diagram(IMG, {})
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B"]
+
+    def test_config_disables_it(self, monkeypatch):
+        seen = self._models(monkeypatch, self.THIN)
+        extract_diagram(IMG, {"fallback_model": ""})
+        assert "minicpm-v:8b" not in seen
+
+    def test_fast_profile_never_falls_back(self, monkeypatch):
+        seen = self._models(monkeypatch, ['{"nodes": ["A"], "edges": [], "zones": []}'])
+        extract_diagram(IMG, {"profile": "fast"})
+        assert seen == ["qwen2.5vl:3b"]
+
+    def test_progress_announces_the_second_read(self, monkeypatch):
+        self._models(monkeypatch, self.THIN + self.RICH)
+        steps: list[str] = []
+        extract_diagram(IMG, {}, progress=steps.append)
+        assert any("second read" in s for s in steps)
+
+
 class TestPostprocessZones:
     def test_nested_list_zone_becomes_a_label(self):
         out = postprocess({"nodes": ["A"], "edges": [], "zones": [["Cluster GKE"], []]})
@@ -178,7 +265,8 @@ class TestProgress:
             monkeypatch,
             [
                 '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
-                '{"nodes": ["API", "DB"], "edges": [], "zones": []}',
+                '{"nodes": ["API", "DB", "Cache"], "edges": [["API", "DB"]],'
+                ' "zones": []}',
                 '{"title": "", "kinds": {}, "tech": {}}',
                 '{"edges": []}',
             ],

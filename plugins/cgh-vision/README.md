@@ -21,6 +21,25 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## Installing Ollama
+
+`cgh vision` needs the Ollama daemon. It does not bundle it: when the
+daemon is unreachable, cgh points at the publisher's official channel
+for your OS and, interactively, offers to run it.
+
+| OS | Official channel |
+|---|---|
+| Windows | `winget install --id Ollama.Ollama -e` (or the signed installer from the Ollama GitHub releases) |
+| macOS | `brew install ollama` |
+| Linux | `curl -fsSL https://ollama.com/install.sh | sh` (shown, never auto-piped) |
+
+winget is chosen on Windows because managed machines commonly allow it
+where a raw `.exe` download is blocked. If your network blocks every
+official channel, that is usually a deliberate policy: ask IT to
+whitelist Ollama, or point cgh at an approved internal Ollama server
+with `ollama_url`. cgh will not mirror or obfuscate the installer to
+get it past a content filter.
+
 ## When `ollama pull` is blocked
 
 Corporate machines often block the Ollama registry (or the installer

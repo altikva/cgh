@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh vision` helps install Ollama through its official channel**:
+  when the daemon is unreachable it now prints the OS-appropriate
+  install command (winget on Windows, Homebrew on macOS, the vendor
+  script shown but never auto-piped on Linux) and, in an interactive
+  terminal, offers to run it. cgh points at the publisher's own
+  installer only: it never bundles, mirrors or obfuscates the binary.
+  A network that blocks every official channel is a policy to resolve
+  with IT or by pointing `ollama_url` at an approved internal server,
+  not something cgh works around.
+
 ### Fixed
 - **The installers survive a bad network and speak to internal
   mirrors**: `install.sh` aborted on the first failing installer

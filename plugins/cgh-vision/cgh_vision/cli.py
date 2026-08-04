@@ -35,6 +35,30 @@ def make_cli_registrar(config: dict):
     return register_cli
 
 
+def _warn_missing_models(config: dict) -> None:
+    """Name the models the daemon lacks before spending a minute
+    failing on them, and point at the route that works when
+    `ollama pull` is blocked by a corporate network."""
+    from rich.console import Console
+
+    from .backends import missing_models
+    from .pipeline import profile_for
+
+    profile = profile_for(config)
+    wanted = [profile.get("nodes_model"), profile.get("edges_model")]
+    missing = missing_models(config, [str(m) for m in wanted if m])
+    if not missing:
+        return
+    err = Console(stderr=True)
+    err.print(f"[yellow]missing model(s):[/yellow] {', '.join(missing)}")
+    err.print(f"[dim]  ollama pull {' '.join(missing)}[/dim]")
+    err.print(
+        "[dim]  blocked by your network? register a GGUF locally instead, "
+        "see the 'When ollama pull is blocked' section of the cgh-vision "
+        "README (weights + mmproj projector, then ollama create).[/dim]"
+    )
+
+
 def _run(args, config: dict) -> None:
     from .backends import available
     from .pipeline import render_markdown, route_structured
@@ -47,6 +71,7 @@ def _run(args, config: dict) -> None:
             + str(config.get("ollama_url", "http://127.0.0.1:11434"))
             + " (install: https://ollama.com, then `ollama pull qwen2.5vl:3b gemma3:4b`)"
         )
+    _warn_missing_models(config)
     # Progress rides stderr so stdout stays pure markdown (pipeable).
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn

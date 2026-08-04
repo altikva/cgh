@@ -21,6 +21,38 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## Without Ollama: any OpenAI-compatible endpoint
+
+Ollama is the default, not a requirement. Setting `openai_base_url`
+switches the transport to `/chat/completions` with a base64
+`image_url`, which unlocks three things:
+
+- **No daemon at all.** Serve the GGUF weights you downloaded from
+  Hugging Face with llama.cpp's own server, which is what Ollama wraps
+  anyway:
+  ```bash
+  llama-server -m qwen2.5-vl-7b-q4_k_m.gguf \
+    --mmproj qwen2.5-vl-7b-mmproj-f16.gguf --port 8080
+  ```
+  ```toml
+  [plugin.vision]
+  openai_base_url = "http://127.0.0.1:8080/v1"
+  nodes_model = "qwen2.5-vl"   # whatever name the server reports
+  edges_model = "qwen2.5-vl"
+  fallback_model = ""
+  ```
+  A loopback endpoint stays "local", so secure mode is satisfied and
+  nothing leaves the machine.
+
+- **LM Studio, vLLM, or an approved internal gateway**, same config,
+  just a different `openai_base_url`. A key is read from the env var
+  named by `openai_api_key_env` (default `OPENAI_API_KEY`).
+
+- **Hosted vision models** (a corporate LLM gateway serving qwen-vl,
+  GLM-4V, and such). These are non-loopback, so cgh treats them as
+  cloud: allowed in assist mode with an audit line, refused in secure
+  mode, exactly like a remote Ollama.
+
 ## Installing Ollama
 
 `cgh vision` needs the Ollama daemon. It does not bundle it: when the

@@ -22,6 +22,53 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## When `ollama pull` is blocked
+
+Corporate machines often block the Ollama registry (or the installer
+itself). Check first, in one command:
+
+```bash
+ollama pull qwen2.5vl:3b   # works? nothing else to read here
+```
+
+If it fails, the models can come from Hugging Face instead and be
+registered locally. The vision models need two files: the weights and
+the **vision projector**, which is what makes the model multimodal;
+without it Ollama loads a text-only model and every image is ignored.
+
+```bash
+pip install -U "huggingface_hub[cli]"
+mkdir -p ~/models/qwen2.5-vl-7b && cd ~/models/qwen2.5-vl-7b
+
+# weights (q4_k_m is about 5 GB, q8_0 about 8 GB for more quality)
+hf download Mungert/Qwen2.5-VL-7B-Instruct-GGUF \
+  Qwen2.5-VL-7B-Instruct-q4_k_m.gguf --local-dir .
+
+# the vision projector, mandatory
+hf download Mungert/Qwen2.5-VL-7B-Instruct-GGUF \
+  Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf --local-dir .
+
+cat > Modelfile <<'EOF'
+FROM ./Qwen2.5-VL-7B-Instruct-q4_k_m.gguf
+FROM ./Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf
+EOF
+
+ollama create qwen2.5-vl:7b -f Modelfile
+```
+
+Then point the plugin at the name you registered, since it will not
+match the registry tag:
+
+```toml
+[plugin.vision]
+nodes_model = "qwen2.5-vl:7b"
+edges_model = "qwen2.5-vl:7b"   # or another locally created model
+fallback_model = ""             # unless you registered a second one
+```
+
+`cgh vision --help` and the daemon probe behave identically: cgh only
+ever asks Ollama for a model name, it never downloads anything itself.
+
 ## Pipeline
 
 1. **Inventory** (non-directive: an image is never assumed to be a

@@ -477,3 +477,44 @@ class TestSdkWiring:
         )
         inv = sdk.image_inventory(IMG, {})
         assert inv["content"] == ["chart"]
+
+
+class TestMissingModels:
+    """Naming the absent model beats failing on it a minute later, and
+    a locally registered GGUF must count as present."""
+
+    def _tags(self, monkeypatch, names):
+        import io
+        import json as _json
+        from contextlib import contextmanager
+
+        import cgh_vision.backends as backends
+
+        @contextmanager
+        def fake_urlopen(url, timeout=2.0):
+            payload = _json.dumps({"models": [{"name": n} for n in names]}).encode()
+            yield io.BytesIO(payload)
+
+        monkeypatch.setattr(backends.urllib.request, "urlopen", fake_urlopen)
+
+    def test_reports_only_what_is_absent(self, monkeypatch):
+        from cgh_vision.backends import missing_models
+
+        self._tags(monkeypatch, ["qwen2.5vl:3b"])
+        assert missing_models({}, ["qwen2.5vl:3b", "gemma3:4b"]) == ["gemma3:4b"]
+
+    def test_locally_registered_model_counts_as_present(self, monkeypatch):
+        from cgh_vision.backends import missing_models
+
+        self._tags(monkeypatch, ["qwen2.5-vl:7b"])  # ollama create from a GGUF
+        assert missing_models({}, ["qwen2.5-vl:7b"]) == []
+
+    def test_unreachable_daemon_raises_no_false_alarm(self, monkeypatch):
+        import cgh_vision.backends as backends
+        from cgh_vision.backends import missing_models
+
+        def boom(*a, **k):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(backends.urllib.request, "urlopen", boom)
+        assert missing_models({}, ["anything:1b"]) == []

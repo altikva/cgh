@@ -8,6 +8,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **The installers survive a bad network and speak to internal
+  mirrors**: `install.sh` aborted on the first failing installer
+  instead of falling through to the next (`set -e` on the uv line),
+  and `install.ps1` was worse, reporting success after a failed
+  install because a non-zero native exit does not raise in PowerShell.
+  Both now try uv, pipx and pip in turn on their exit status, and the
+  PowerShell version also catches the terminating error that
+  PowerShell 7.4 raises instead. New knobs, honored by all three
+  installers: `CGH_INDEX_URL` for an internal PyPI mirror,
+  `CGH_TRUSTED_HOST` for its self-signed certificate, `CGH_TIMEOUT`
+  and `CGH_RETRIES` for a slow link. When everything fails the message
+  names those options rather than leaving a stack trace.
+
 ### Added
 - **cgh-vision names the models it is missing, and documents the route
   when `ollama pull` is blocked**: `cgh vision` now checks the daemon's

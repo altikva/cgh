@@ -39,7 +39,7 @@ def make_cli_registrar(config: dict, extras_fn):
 
 
 def _tracked_supported_files(root: Path) -> list[Path]:
-    from codegraph.plugin_api import is_supported
+    from codegraph.plugin_api import is_supported, quiet_subprocess_kwargs
 
     try:
         out = subprocess.run(
@@ -49,6 +49,7 @@ def _tracked_supported_files(root: Path) -> list[Path]:
             text=True,
             check=True,
             timeout=30,
+            **quiet_subprocess_kwargs(),
         ).stdout
     except (
         subprocess.CalledProcessError,

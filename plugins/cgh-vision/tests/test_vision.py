@@ -428,7 +428,7 @@ class TestScanner:
         img = tmp_path / "d.png"
         img.write_bytes(b"\x89PNG" + b"0" * 6000)
         monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: False)
-        with pytest.raises(RuntimeError, match="Ollama"):
+        with pytest.raises(RuntimeError, match="not reachable"):
             VisionScanner({}, tmp_path).scan(img, "", None)
 
 
@@ -600,3 +600,68 @@ class TestOllamaSetup:
         )
         assert m.offer_to_install(Console()) is False
         assert called["run"] is False
+
+
+class TestOpenAIBackend:
+    """openai_base_url switches the transport to /chat/completions, so
+    a local llama-server on GGUF needs no Ollama at all, and a gateway
+    is reachable through the same path (subject to the egress gate)."""
+
+    CFG = {"openai_base_url": "http://127.0.0.1:8080/v1"}
+
+    def test_backend_kind_selected_by_config(self):
+        from cgh_vision.backends import backend_kind
+
+        assert backend_kind({}) == "ollama"
+        assert backend_kind(self.CFG) == "openai"
+        assert backend_kind({"vision_backend": "ollama", **self.CFG}) == "ollama"
+
+    def test_loopback_endpoint_stays_local(self):
+        from cgh_vision.backends import is_local
+
+        assert is_local(self.CFG) is True
+        assert is_local({"openai_base_url": "https://gw.corp/v1"}) is False
+
+    def test_ask_posts_chat_completions_with_image(self, tmp_path, monkeypatch):
+        import io
+
+        import cgh_vision.backends as b
+
+        img = tmp_path / "d.png"
+        img.write_bytes(b"\x89PNG" + b"0" * 100)
+        captured = {}
+
+        def fake_urlopen(req, timeout=120):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data.decode())
+            payload = {"choices": [{"message": {"content": '{"nodes": []}'}}]}
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr(b.urllib.request, "urlopen", fake_urlopen)
+        out = b.ask("qwen2.5-vl:7b", img, "read this", self.CFG)
+        assert out == '{"nodes": []}'
+        assert captured["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+        content = captured["body"]["messages"][0]["content"]
+        assert content[0]["text"] == "read this"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        assert captured["body"]["temperature"] == 0
+
+    def test_http_error_becomes_vision_error(self, tmp_path, monkeypatch):
+        import cgh_vision.backends as b
+        from cgh_vision.backends import VisionError
+
+        img = tmp_path / "d.png"
+        img.write_bytes(b"\x89PNG" + b"0" * 100)
+
+        def boom(req, timeout=120):
+            raise b.urllib.error.HTTPError(req.full_url, 404, "no model", {}, None)
+
+        monkeypatch.setattr(b.urllib.request, "urlopen", boom)
+        with pytest.raises(VisionError, match="404"):
+            b.ask("x", img, "p", self.CFG)
+
+    def test_missing_models_unknown_never_false_alarms(self, monkeypatch):
+        import cgh_vision.backends as b
+
+        monkeypatch.setattr(b, "installed_models", lambda cfg, timeout_s=2.0: set())
+        assert b.missing_models(self.CFG, ["anything"]) == []

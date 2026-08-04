@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-vision runs without Ollama, on any OpenAI-compatible vision
+  endpoint**: set `openai_base_url` and the transport switches to
+  `/chat/completions` with a base64 image. That serves the GGUF
+  weights from Hugging Face through llama.cpp's own `llama-server`
+  (no daemon, no `ollama.exe`), or LM Studio, vLLM, or an approved
+  internal gateway. Egress is judged from the active endpoint, not the
+  backend name: a loopback llama-server stays local and secure mode is
+  satisfied, a remote gateway is gated like any cloud. Ollama stays the
+  default; nothing changes without the new key.
+
+### Added
 - **`cgh vision` helps install Ollama through its official channel**:
   when the daemon is unreachable it now prints the OS-appropriate
   install command (winget on Windows, Homebrew on macOS, the vendor

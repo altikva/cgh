@@ -440,7 +440,7 @@ reindex_on_start = true
 # edges_model = "gemma3:4b"
 # ollama_url = "http://127.0.0.1:11434"  # loopback only in secure mode
 # timeout_s = 120        # per model call
-# fallback_model = "minicpm-v:8b"  # second reader on skeletal results
+# fallback_model = "gemma3:4b"     # second reader on skeletal results
 # prescale = true        # 2x upscale of small images before extraction
 # prescale_min_px = 1000 # apply when the smaller dimension is under this
 

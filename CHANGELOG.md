@@ -36,16 +36,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ### Added
 - **cgh-vision consults a second structure reader when the first comes
   back empty-handed**: an extraction with two boxes or fewer, or with
-  no arrows at all, now gets one retry from `minicpm-v:8b` (config
+  no arrows at all, now gets one retry from the arrow model (config
   `fallback_model`, empty to disable, off on the `fast` profile), and
   the retry replaces the first result only when it found more. The
-  benchmark behind it: on the real corpus the fallback rescues the
-  thin-line exports the primary reader cannot see (2 nodes / 1 edge
-  becoming 9 / 17) including the two that pre-scaling could not save,
-  never fires on the synthetic corpus the default already reads
-  correctly, and leaves precision and zones untouched because the
-  default still runs first. The extra model is optional: not pulled
-  means no fallback and nothing else changes.
+  two models fail differently, which is the whole point: benchmarked
+  over every local vision model, the arrow reader rescues all five
+  thin-line cases the primary reader cannot see (2 nodes / 1 edge
+  becoming 13 / 27), including the two that pre-scaling could not
+  save, while needing no extra download. It never fires on the
+  synthetic corpus the default already reads correctly, so precision
+  and zones are untouched.
 
 ## [0.10.1] - 2026-08-03
 

@@ -45,6 +45,26 @@ irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 $env:CGH_PLUGINS = 1; irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 ```
 
+Both try uv, then pipx, then pip, and move on to the next one when an
+install fails instead of giving up. Behind a corporate network:
+
+| Variable | For |
+|---|---|
+| `CGH_INDEX_URL` | an internal PyPI mirror (Nexus, Artifactory) instead of pypi.org |
+| `CGH_TRUSTED_HOST` | that mirror serving a self-signed certificate |
+| `CGH_TIMEOUT`, `CGH_RETRIES` | a slow or flaky link (defaults: 120 s, 5 tries) |
+
+```bash
+curl -fsSL .../install.sh | CGH_INDEX_URL=https://nexus.corp/repository/pypi/simple bash
+```
+
+```powershell
+$env:CGH_INDEX_URL = "https://nexus.corp/repository/pypi/simple"; irm .../install.ps1 | iex
+```
+
+The variables reach uv, pipx and pip alike; an index you already
+export as `PIP_INDEX_URL` is honored and never overwritten.
+
 ### With pip, pipx, or uv
 
 ```bash

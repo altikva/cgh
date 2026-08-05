@@ -9,6 +9,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **PII redaction: `cgh pii redact` and `sdk.redact_text`**: produce an
+  anonymized copy of a text or markdown file, keeping only the
+  categories you ask for (`--only person` to anonymize just names).
+  Tokens are either numbered placeholders (`[PERSON_1]`, distinct
+  within the document) or keyed pseudonyms (`<pii.person:hex>`, stable
+  across documents with a shared `CGH_REDACT_SECRET`); the same value
+  always maps to the same token. Person and location names come from
+  the NER tier (`cgh-pii[ner]`); requesting them without it fails
+  clearly. Since NER can miss repeat mentions, a detected name is
+  propagated to all its literal occurrences, so it is redacted
+  everywhere. Text files only: binary pdf/docx are not rewritten
+  (extract their text first).
+
+### Added
 - **`cgh vision --hint`** (and the `hint` config key): a short steering
   instruction appended to the extraction prompts, for example
   `--hint "labels are in French"` or "prefer application service

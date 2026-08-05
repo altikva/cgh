@@ -149,6 +149,30 @@ def pseudonymize(key: str, value: str, secret: bytes) -> str:
     return f"<{key}:{digest}>"
 
 
+def redact_text(
+    text: str,
+    only: list[str] | None = None,
+    mode: str = "placeholder",
+    secret: bytes | None = None,
+    language: str = "en",
+) -> str:
+    """Return ``text`` with PII replaced. ``only`` limits the categories
+    (e.g. ["person"] to anonymize just names); default is all. ``mode``
+    is "placeholder" (numbered [PERSON_1], distinct within the text) or
+    "pseudonym" (keyed <pii.person:hex>; pass a fixed ``secret`` for the
+    same token across documents). person and location need the NER
+    extra (``pip install "cgh-pii[ner]"``); requesting them without it
+    raises. Requires cgh-pii."""
+    try:
+        from cgh_pii.redact import redact
+    except ImportError as exc:
+        raise CapabilityMissing("pii", "cgh-pii") from exc
+    redacted, _counts = redact(
+        text, only=only, mode=mode, secret=secret, language=language
+    )
+    return redacted
+
+
 # -- summaries (cgh-summarize) ----------------------------------------------
 
 

@@ -257,7 +257,8 @@ def sync_bobignore(repo_root: str | Path) -> tuple[int, int]:
     existing = ""
     if ignore_path.exists():
         try:
-            existing = ignore_path.read_text(encoding="utf-8")
+            # Lenient decode: a non-UTF-8 ignore file must not crash the guard.
+            existing = ignore_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return (0, 0)
 

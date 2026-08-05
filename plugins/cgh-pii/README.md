@@ -44,6 +44,7 @@ or markdown file:
 ```bash
 cgh pii redact contract.md --only person --out contract.anon.md
 cgh pii redact notes.txt --mode pseudonym --in-place
+cgh pii redact report.docx --only person --out report.anon.docx
 ```
 
 `--only` limits the categories (`person`, `location`, `email`,
@@ -61,5 +62,11 @@ Two things to know:
   `location` without NER fails with a clear message. Once a name is
   detected, every literal re-occurrence of it is redacted too, since
   NER can miss repeat mentions.
-- **Text files only.** Binary documents (pdf, docx) are not rewritten
-  in place; extract their text first (see cgh-docs) and redact that.
+- **Text, markdown and docx.** Word documents are redacted with the
+  `docx` extra (`pip install "cgh-pii[docx]"`), body paragraphs and
+  table cells, one shared token map across the whole file. Formatting
+  inside a changed paragraph is flattened (it is the only way to
+  redact PII split across runs, like a bold surname); unchanged
+  paragraphs keep their formatting. A docx needs `--out` or
+  `--in-place`. PDF is not supported: real pdf redaction needs an
+  AGPL library; extract the pdf text (see cgh-docs) and redact that.

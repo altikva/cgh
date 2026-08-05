@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh reset` now removes the DuckDB graph**: the name filter only
+  matched the Kuzu `graph.db`, so on a DuckDB repo (the default since
+  v0.4) reset left `graph.duckdb` in place and could not recover a
+  corrupt graph. It now targets `graph.*` (both backends and their
+  wal/shm sidecars), keeping `call_log.db` (knowledge) untouched.
 - **Re-indexing no longer corrupts the trigram FTS index**: the symbol,
   memory and plan upserts did `INSERT OR REPLACE` into the content table
   (which reassigns the row's rowid) and then wrote the new postings

@@ -8,6 +8,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Re-indexing no longer corrupts the trigram FTS index**: the symbol,
+  memory and plan upserts did `INSERT OR REPLACE` into the content table
+  (which reassigns the row's rowid) and then wrote the new postings
+  without removing the old rowid's, so every reindex orphaned postings
+  in the external-content trigram index until it corrupted into
+  `database disk image is malformed` and crashed `cgh init`. The upserts
+  now delete the old rowid's postings before the replace, and
+  `delete_file_symbols` rebuilds the index from its content table and
+  retries once when it meets an already-corrupt index instead of
+  crashing the reindex. Indexes corrupted by an earlier build self-heal
+  on the next index.
+
 ## [0.11.0] - 2026-08-05
 
 ### Added

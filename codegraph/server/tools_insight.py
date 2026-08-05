@@ -193,7 +193,7 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def impact_of(symbol_or_file: str, max_depth: int = 3) -> str:
+    def impact_of(symbol_or_file: str, max_depth: int = 3, focus: str = "") -> str:
         """
         Reverse blast radius: what depends on a symbol or file. If the
         argument looks like a path (or matches a File node) we walk IMPORTS
@@ -204,6 +204,10 @@ def register(mcp) -> None:
         Args:
           symbol_or_file: a function name, or a repo-relative / absolute path.
           max_depth:      how many hops of reverse reach (default 3).
+          focus:          when the blast radius overflows the cap, keep the
+                          impacted nodes matching these term(s) (matched on
+                          path, role and layer) instead of the first N, e.g.
+                          focus="router" or focus="frontend api".
 
         Returns JSON with `direction` ("callers" or "importers"), the
         `impacted` set grouped by role / layer for files, any reaching
@@ -360,8 +364,21 @@ def register(mcp) -> None:
                     {"file": fp or row["node"], "role": role, "scope": scope}
                 )
 
+        # Over the cap, keep the items relevant to `focus` (matched on
+        # node / file / role / layer) instead of the arbitrary first N,
+        # and report the drop rather than truncate silently.
+        from codegraph.server._focus import focus_filter
+
+        focus_note = None
         if len(impacted) > _IMPACT_CAP:
-            impacted = impacted[:_IMPACT_CAP]
+            impacted, focus_note = focus_filter(
+                impacted,
+                focus,
+                lambda r: " ".join(
+                    str(r.get(k, "")) for k in ("node", "file", "role", "layer")
+                ),
+                _IMPACT_CAP,
+            )
             truncated = True
 
         # Endpoints declared in any impacted file (DEFINES_ENDPOINT).
@@ -404,6 +421,8 @@ def register(mcp) -> None:
             "endpoints": endpoints,
             "truncated": truncated,
         }
+        if focus_note:
+            payload["focus_note"] = focus_note
         if not as_path:
             payload["note"] = _CALLS_NOTE
         if warnings:

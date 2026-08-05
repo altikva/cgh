@@ -64,3 +64,48 @@ def test_deleted_symbol_leaves_the_trigram_index(tmp_path):
     conn.commit()
     names = [r.name for r in fts_search(conn, "andl")]
     assert "DonationHandler" not in names
+
+
+def _seed_mp(tmp_path):
+    from codegraph.core.fts import get_fts_conn, upsert_memory_entry, upsert_plan_entry
+
+    conn = get_fts_conn(tmp_path)
+    upsert_memory_entry(
+        conn, "m1", "feedback", "Always use CommitHandler", "no raw git", 1.0
+    )
+    upsert_plan_entry(
+        conn, "p1", "refactor", "a1", "Refactor DonationParser", "split it", 1.0
+    )
+    conn.commit()
+    return conn
+
+
+def test_memory_search_word_and_fragment(tmp_path):
+    from codegraph.core.fts import memory_search
+
+    conn = _seed_mp(tmp_path)
+    assert [h.title for h in memory_search(conn, "commit")] == [
+        "Always use CommitHandler"
+    ]
+    # 'mmith' sits inside comMITHandler: the word tokenizer misses it, trigram finds it.
+    assert [h.title for h in memory_search(conn, "mmith")] == [
+        "Always use CommitHandler"
+    ]
+
+
+def test_plan_search_fragment(tmp_path):
+    from codegraph.core.fts import plan_search
+
+    conn = _seed_mp(tmp_path)
+    assert [h.title for h in plan_search(conn, "ationpars")] == [
+        "Refactor DonationParser"
+    ]
+
+
+def test_memory_delete_leaves_trigram_consistent(tmp_path):
+    from codegraph.core.fts import delete_memory_entry, memory_search
+
+    conn = _seed_mp(tmp_path)
+    delete_memory_entry(conn, "m1")
+    conn.commit()
+    assert memory_search(conn, "mmith") == []

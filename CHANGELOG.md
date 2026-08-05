@@ -51,6 +51,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   backfill the trigram table once on open; no reindex needed. Fixed
   along the way: external-content FTS deletes replayed empty strings
   instead of the indexed values, which left the index inconsistent.
+- **`memory_search` and `plan_search` now fuse the same way**: both
+  gained a parallel trigram index and RRF fusion, so a fragment inside
+  a memory title or a plan slug ("ationpars" inside "DonationParser")
+  matches where the word-tokenized index missed it. Existing indexes
+  backfill their trigram table once on open, and the deletes pass the
+  real indexed values so the external-content index stays consistent.
 
 ### Added
 - **PII redaction: `cgh pii redact` and `sdk.redact_text`**: produce an

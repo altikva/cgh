@@ -443,6 +443,7 @@ reindex_on_start = true
 # openai_api_key_env = "OPENAI_API_KEY"  # env var holding the key, if any
 # timeout_s = 120        # per model call
 # fallback_model = "gemma3:4b"     # second reader on skeletal results
+# hint = ""              # steer extraction ("labels are in French"); appended, never replaces the contract
 # prescale = true        # 2x upscale of small images before extraction
 # prescale_min_px = 1000 # apply when the smaller dimension is under this
 

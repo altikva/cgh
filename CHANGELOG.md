@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh init` self-heals a corrupt DuckDB graph**: when indexing hits
+  the DuckDB `Failed to delete all rows from index` fatal (a corrupt ART
+  index left by an earlier crash), index_repo now wipes the graph and
+  retries a full scan once instead of crashing. The graph is derived
+  from source, so only the index is rebuilt (FTS, knowledge, config
+  stay).
 - **`cgh reset` now removes the DuckDB graph**: the name filter only
   matched the Kuzu `graph.db`, so on a DuckDB repo (the default since
   v0.4) reset left `graph.duckdb` in place and could not recover a

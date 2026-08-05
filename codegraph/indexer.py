@@ -1175,7 +1175,74 @@ def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
     return extra_dirs
 
 
+def _is_graph_corrupt(exc: BaseException) -> bool:
+    """A graph-DB error that means the on-disk index is inconsistent and the
+    graph must be rebuilt, not a transient failure to retry as-is. DuckDB
+    reports a corrupt ART index as 'Failed to delete all rows from index'
+    and, once the connection is poisoned, 'database has been invalidated'."""
+    m = str(exc).lower()
+    return (
+        "failed to delete all rows from index" in m
+        or "database has been invalidated" in m
+    )
+
+
+def _recover_corrupt_graph(repo_root: Path) -> None:
+    """Drop the poisoned cached connection and delete the graph DB files so
+    the next open builds a fresh graph. The graph is fully derived from
+    source, so this loses only the index: FTS, knowledge and config stay."""
+    from codegraph.core.db import get_db_path, reset_connection
+    from codegraph.state.activity import log as _activity_log
+
+    reset_connection(repo_root)
+    try:
+        db = get_db_path(repo_root)
+        for p in db.parent.glob(db.name + "*"):  # graph.duckdb, .wal, .tmp
+            p.unlink(missing_ok=True)
+        _activity_log(repo_root, "graph_rebuilt", f"corrupt graph wiped: {db.name}")
+    except OSError:
+        pass
+
+
 def index_repo(
+    repo_root: str | Path,
+    verbose: bool = False,
+    on_file: Callable[[Path, str, dict], None] | None = None,
+    on_discovery: Callable[[int, str], None] | None = None,
+    method: str = "auto",
+) -> dict:
+    """Index the repo, and if the graph DB is found corrupt mid-index (a
+    DuckDB ART index left inconsistent by an earlier crash), rebuild it from
+    scratch once and retry a full scan instead of crashing. See _index_repo
+    for the discovery-method details."""
+    try:
+        return _index_repo(
+            repo_root,
+            verbose=verbose,
+            on_file=on_file,
+            on_discovery=on_discovery,
+            method=method,
+        )
+    except Exception as exc:
+        if not _is_graph_corrupt(exc):
+            raise
+        from codegraph.state.activity import log as _activity_log
+
+        _activity_log(Path(repo_root), "graph_corrupt_recover", str(exc)[:200])
+        _recover_corrupt_graph(Path(repo_root))
+        # One retry on a fresh graph, forced full so nothing is skipped.
+        # Calls _index_repo directly, so a second corruption propagates
+        # instead of looping.
+        return _index_repo(
+            repo_root,
+            verbose=verbose,
+            on_file=on_file,
+            on_discovery=on_discovery,
+            method="os_walk",
+        )
+
+
+def _index_repo(
     repo_root: str | Path,
     verbose: bool = False,
     on_file: Callable[[Path, str, dict], None] | None = None,

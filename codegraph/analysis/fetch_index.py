@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 import time
 import urllib.request
 from html.parser import HTMLParser
@@ -71,27 +72,80 @@ class _TextExtractor(HTMLParser):
         return "\n".join(ln for ln in lines if ln)
 
 
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Any address an agent-triggered fetch must never reach: the
+    cloud metadata endpoint, localhost, the LAN, reserved and
+    unspecified ranges. Public routable only."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _resolved_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Every IP the host resolves to. A literal is used as-is; a name
+    is sent through getaddrinfo, so a domain pointing at a private
+    address (DNS-based SSRF) is caught, not only IP literals."""
+    ips: list = []
+    try:
+        ips.append(ipaddress.ip_address(host))
+        return ips  # a literal does not need DNS
+    except ValueError:
+        pass
+    try:
+        for info in socket.getaddrinfo(host, None):
+            try:
+                ips.append(ipaddress.ip_address(info[4][0]))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return ips
+
+
 def _guard_url(url: str, repo_root) -> None:
-    """http/https only, and never a private, loopback or link-local
-    host: an agent-triggered fetch to 169.254.169.254 or 127.0.0.1 is
-    the classic SSRF path to cloud metadata or local services."""
+    """http/https only, and no request that would reach a non-public
+    address. The host is RESOLVED and every resulting IP checked, so a
+    hostname pointing at 169.254.169.254 or 10.x (DNS rebinding, or a
+    decimal/hex IP form) is refused, not only bare IP literals. A host
+    that resolves to nothing is refused too (fail closed)."""
     from codegraph.state.activity import log as _log
 
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         _log(repo_root, "fetch_refused", f"scheme {parts.scheme}: {url}")
         raise FetchError(f"only http/https URLs are fetched, not {parts.scheme!r}")
-    host = parts.hostname or ""
-    if host.lower() in ("localhost", ""):
+    host = (parts.hostname or "").lower()
+    if host in ("localhost", ""):
         _log(repo_root, "fetch_refused", f"local host: {url}")
         raise FetchError("refusing to fetch a local host (SSRF guard)")
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        ip = None
-    if ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local):
-        _log(repo_root, "fetch_refused", f"non-public ip {host}: {url}")
-        raise FetchError(f"refusing to fetch a non-public address {host} (SSRF guard)")
+    ips = _resolved_ips(host)
+    if not ips:
+        _log(repo_root, "fetch_refused", f"unresolvable host: {url}")
+        raise FetchError(f"refusing {host}: does not resolve to a public address")
+    for ip in ips:
+        if _is_blocked_ip(ip):
+            _log(repo_root, "fetch_refused", f"non-public {ip} for {host}: {url}")
+            raise FetchError(
+                f"refusing {host}: resolves to non-public {ip} (SSRF guard)"
+            )
+
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Re-guard every redirect target before following it: a public URL
+    that 302s to http://169.254.169.254/ must be refused mid-chain."""
+
+    def __init__(self, repo_root) -> None:
+        super().__init__()
+        self._repo_root = repo_root
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _guard_url(newurl, self._repo_root)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _guard_secure(url: str, config: dict, repo_root) -> None:
@@ -112,6 +166,24 @@ def _guard_secure(url: str, config: dict, repo_root) -> None:
             "secure mode refuses network fetches; set [codegraph] allow_fetch = true "
             "to permit them (each fetch is still audited)"
         )
+
+
+def _http_get(url: str, repo_root) -> bytes:
+    """The bounded GET, with an opener that re-guards each redirect hop
+    so a public URL redirecting to a private address is refused
+    mid-chain. The single seam tests replace to avoid the network."""
+    from codegraph.state.activity import log as _log
+
+    req = urllib.request.Request(url, headers={"User-Agent": "cgh-fetch/1"})
+    opener = urllib.request.build_opener(_GuardedRedirect(repo_root))
+    try:
+        with opener.open(req, timeout=_TIMEOUT) as resp:
+            return resp.read(_MAX_BYTES + 1)
+    except FetchError:
+        raise
+    except Exception as exc:
+        _log(repo_root, "fetch_failed", f"{url}: {exc}")
+        raise FetchError(f"fetch failed: {exc}") from exc
 
 
 def _fetched_table(conn) -> None:
@@ -180,13 +252,7 @@ def fetch_and_index(
         if cached:
             return {"url": url, "title": "", "chunks": cached, "cached": True}
 
-    req = urllib.request.Request(url, headers={"User-Agent": "cgh-fetch/1"})
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            raw = resp.read(_MAX_BYTES + 1)
-    except Exception as exc:
-        _log(repo_root, "fetch_failed", f"{url}: {exc}")
-        raise FetchError(f"fetch failed: {exc}") from exc
+    raw = _http_get(url, repo_root)
     if len(raw) > _MAX_BYTES:
         raise FetchError(f"response exceeds {_MAX_BYTES // (1024 * 1024)} MB, refusing")
 

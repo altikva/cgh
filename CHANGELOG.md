@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Intent-driven filtering on `impact_of`**: a large blast radius used
+  to be capped to the arbitrary first N impacted nodes. It now takes an
+  optional `focus`, and when the result overflows the cap it keeps the
+  nodes matching the focus terms (matched on path, role and layer)
+  instead, so a relevant file beyond the cap in raw order survives
+  (`impact_of("db.py", focus="router")`). The truncation is never
+  silent: the response carries a `focus_note` saying how many were kept
+  and dropped, and how to narrow. The `focus_filter` helper is shared
+  and applies to the other large-output tools as they adopt it.
+
 ### Fixed
 - **SSRF hardening on `fetch_and_index`** (found by the commit security
   review): the guard only checked bare IP literals, so three bypasses

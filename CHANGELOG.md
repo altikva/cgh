@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh vision setup --llamacpp`**: one command to run vision without
+  Ollama. It finds or installs llama.cpp through its official channel
+  (brew on macOS, the signed GitHub-release binaries on Windows, never
+  a bundled binary), writes a `[plugin.vision]` block pointing
+  cgh-vision at a local llama-server, and offers to start it. The
+  server auto-downloads our default vision model and its mmproj
+  projector on first run, and stays the user's process to keep running,
+  like the Ollama daemon; cgh starts it on request but does not
+  supervise it. Benchmarked as the best node/edge transport.
+
+### Added
 - **cgh-vision runs without Ollama, on any OpenAI-compatible vision
   endpoint**: set `openai_base_url` and the transport switches to
   `/chat/completions` with a base64 image. That serves the GGUF

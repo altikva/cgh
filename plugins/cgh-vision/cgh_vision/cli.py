@@ -19,12 +19,21 @@ def make_cli_registrar(config: dict):
         p = subparsers.add_parser(
             "vision", help="Inventory and extract one image (markdown + Mermaid)"
         )
-        p.add_argument("image", help="Path to the image file")
+        p.add_argument(
+            "image",
+            nargs="?",
+            help="Path to the image file, or 'setup' to configure a backend",
+        )
         p.add_argument(
             "--profile",
             default=None,
             choices=["default", "fast", "photo"],
             help="Pipeline profile (default from [plugin.vision])",
+        )
+        p.add_argument(
+            "--llamacpp",
+            action="store_true",
+            help="With 'setup': use a local llama.cpp server instead of Ollama",
         )
         from codegraph.plugin_api import add_format_option, add_out_option
 
@@ -70,6 +79,19 @@ def _warn_missing_models(config: dict) -> None:
 def _run(args, config: dict) -> None:
     from .backends import available
     from .pipeline import render_markdown, route_structured
+
+    if args.image == "setup":
+        if not getattr(args, "llamacpp", False):
+            raise SystemExit(
+                "usage: cgh vision setup --llamacpp   "
+                "(configure a local llama.cpp server, no Ollama)"
+            )
+        from .setup_llamacpp import setup_llamacpp
+
+        setup_llamacpp(config)
+        return
+    if not args.image:
+        raise SystemExit("usage: cgh vision <image>   |   cgh vision setup --llamacpp")
 
     if args.profile:
         config["profile"] = args.profile

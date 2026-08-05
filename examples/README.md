@@ -20,9 +20,11 @@ indexing time, not at question time).
 |---|---|---|
 | [scan-and-gate](scan-and-gate/) | scan text for PII, decide egress before calling a cloud model | cgh-pii |
 | [pseudonymize-logs](pseudonymize-logs/) | log findings without ever writing the sensitive value | cgh-pii |
+| [redact-document](redact-document/) | produce an anonymized copy of text or docx, keeping only chosen PII | cgh-pii (ner/docx extras) |
 | [summarize-local](summarize-local/) | summarize with the local-only default, cloud behind your gate | cgh-summarize |
 | [vision-pipeline](vision-pipeline/) | inventory an image, extract diagram/table/chart as routed | cgh-vision + Ollama |
 | [document-diagrams](document-diagrams/) | pull embedded images out of pdf/docx/pptx, extract the schemas | cgh-vision + Ollama |
+| [vision-no-ollama](vision-no-ollama/) | run vision on llama.cpp or any OpenAI-compatible server, no Ollama | cgh-vision |
 
 Quick start, all cases:
 

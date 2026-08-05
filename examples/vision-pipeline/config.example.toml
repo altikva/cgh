@@ -14,6 +14,12 @@
 # images: a remote URL means the raw image bytes travel to that host.
 ollama_url = "http://127.0.0.1:11434"
 
+# Or skip Ollama entirely: point at any OpenAI-compatible vision
+# endpoint (llama-server on your GGUF, LM Studio, vLLM, a gateway).
+# A loopback URL stays local; a remote one is gated like any cloud.
+#openai_base_url = "http://127.0.0.1:8080/v1"
+#openai_api_key_env = "OPENAI_API_KEY"
+
 # Extraction profile: "default" (three passes, best quality),
 # "fast" (single pass), "photo" (screen photos: moire, low contrast).
 profile = "default"
@@ -26,6 +32,11 @@ profile = "default"
 
 # Per model call, seconds. Raise it for large images on CPU-only.
 #timeout_s = 120
+
+# Second structure reader, consulted only when the first comes back
+# skeletal. Defaults to the arrow model, which needs no extra
+# download and won the comparison; empty disables it.
+#fallback_model = "gemma3:4b"
 
 # Small images are upscaled 2x (Lanczos) before extraction; the
 # benchmark showed this rescues thin-line drawio exports and never

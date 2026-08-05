@@ -22,12 +22,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 from .backends import ask
+
+_log = logging.getLogger(__name__)
+# Two nodes or fewer, or no edges at all: the benchmarked trigger.
+_FALLBACK_MIN_NODES = 2
 
 # -- profiles ---------------------------------------------------------------
 # Benchmark verdict: qwen2.5vl:3b owns nodes and zones (node P 1.00),
@@ -41,6 +46,11 @@ PROFILES: dict[str, dict] = {
         "read_title": True,
         "read_notes": True,
         "timeout_s": 120,
+        # Second reader when the first comes back skeletal. The
+        # arrow reader doubles as it: benchmarked over every local
+        # vision model, it rescues the most and costs no extra
+        # download. Empty disables it.
+        "fallback_model": "gemma3:4b",
     },
     "fast": {
         "nodes_model": "qwen2.5vl:3b",
@@ -49,6 +59,8 @@ PROFILES: dict[str, dict] = {
         "read_title": False,
         "read_notes": False,
         "timeout_s": 60,
+        # fast means one pass: no second look, by definition.
+        "fallback_model": "",
     },
     "photo": {
         "nodes_model": "qwen2.5vl:3b",
@@ -58,6 +70,7 @@ PROFILES: dict[str, dict] = {
         "read_notes": True,
         "timeout_s": 180,
         "photo_hint": True,
+        "fallback_model": "gemma3:4b",
     },
 }
 
@@ -69,7 +82,7 @@ def profile_for(config: dict) -> dict:
     base = dict(
         PROFILES.get(str(config.get("profile", "default")), PROFILES["default"])
     )
-    for key in ("nodes_model", "edges_model", "timeout_s"):
+    for key in ("nodes_model", "edges_model", "timeout_s", "fallback_model"):
         if key in config:
             base[key] = config[key]
     return base
@@ -383,13 +396,24 @@ def _is_endpoint(label: str, edges: list) -> bool:
 # -- passes -----------------------------------------------------------------
 
 
+def _with_hint(prompt: str, config: dict) -> str:
+    """Append the caller's steering hint after the format rules, so it
+    guides the model without touching the JSON contract. Empty is a
+    no-op. Kept short: a hint is a nudge ('labels are in French',
+    'prefer application service names'), not a new prompt."""
+    hint = str(config.get("hint", "")).strip()
+    if not hint:
+        return prompt
+    return f"{prompt}\nAdditional guidance (do not change the output format): {hint}"
+
+
 def inventory(path: Path, config: dict) -> dict:
     """Pass 0: what does the image contain?"""
     profile = profile_for(config)
     raw = ask(
         profile["nodes_model"],
         path,
-        INVENTORY_PROMPT,
+        _with_hint(INVENTORY_PROMPT, config),
         config,
         int(profile.get("timeout_s", 120)),
     )
@@ -445,18 +469,69 @@ def prescaled(path: Path, config: dict) -> tuple[Path, Callable[[], None]]:
     return target, lambda: target.unlink(missing_ok=True)
 
 
+def is_skeletal(ex: dict) -> bool:
+    """Too few boxes, or boxes with no arrows between them: either way
+    the structure reader did not see the diagram. The benchmarked
+    trigger for the second-reader fallback."""
+    return len(ex["nodes"]) <= int(_FALLBACK_MIN_NODES) or not ex["edges"]
+
+
+def _richer(alt: dict, ex: dict) -> bool:
+    """Keep a retry only when it actually found more structure."""
+    if len(alt["nodes"]) != len(ex["nodes"]):
+        return len(alt["nodes"]) > len(ex["nodes"])
+    return len(alt["edges"]) > len(ex["edges"])
+
+
 def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     """Diagram extraction: structure, optional enrichment, constrained
     edges, post-processing. Returns the extraction dict plus rendered
-    `markdown` and `mermaid` keys."""
+    `markdown` and `mermaid` keys.
+
+    When the result comes back skeletal and the profile declares a
+    fallback model, a second structure reader gets one attempt; its
+    result replaces the first only if it found more. Benchmarked on
+    2026-08-04: rescues the thin-line exports the primary reader
+    cannot see, never fires on images it reads correctly."""
     profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
-    prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    prompt = _with_hint(
+        STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else ""), config
+    )
     path, cleanup = prescaled(path, config)
     try:
-        return _extract_diagram_inner(path, config, profile, timeout, prompt, progress)
+        ex = _extract_diagram_inner(path, config, profile, timeout, prompt, progress)
+        fallback = str(profile.get("fallback_model") or "")
+        if fallback and fallback != profile["nodes_model"] and is_skeletal(ex):
+            ex = _retry_with(path, config, profile, timeout, prompt, progress, ex)
+        return ex
     finally:
         cleanup()
+
+
+def _retry_with(
+    path: Path,
+    config: dict,
+    profile: dict,
+    timeout: int,
+    prompt: str,
+    progress,
+    ex: dict,
+) -> dict:
+    """One second look by the fallback reader. Any failure (model not
+    pulled, timeout) leaves the first result untouched: the fallback
+    can only ever add."""
+    fallback = str(profile["fallback_model"])
+    _tick(progress, f"structure looks thin, second read ({fallback})")
+    retry_profile = dict(profile, nodes_model=fallback)
+    try:
+        alt = _extract_diagram_inner(
+            path, config, retry_profile, timeout, prompt, progress
+        )
+    except Exception as exc:
+        _log.info("fallback reader %s unavailable: %s", fallback, exc)
+        return ex
+    return alt if _richer(alt, ex) else ex
 
 
 def _extract_diagram_inner(

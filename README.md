@@ -9,7 +9,26 @@
 
 Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
 
-**Result:** 60-90% fewer tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
+**Result:** 40-60% fewer context tokens on typical navigation tasks (see [Why cgh / Measured gains](#why-cgh--measured-gains)), learnings that survive context clears, and nothing leaving the machine without a gate.
+
+---
+
+## Why cgh / Measured gains
+
+cgh's job is to keep an agent's working context small and its round-trips few. It answers code questions from the graph, returning exact `file:line`, instead of the agent reading whole files or grepping. That shows up as fewer context tokens and fewer turns, at equal correctness.
+
+The figures below come from a two-arm benchmark: the same tasks run twice against the same repo, once with cgh available and once with Read/Grep only, scored on each session's token usage, turn count, and answer correctness. Cost is compared only across tasks both arms got right, so a cheap wrong answer never reads as a saving.
+
+**On code-navigation tasks: about 40 to 60% fewer context tokens and 20 to 40% fewer turns, correctness unchanged.**
+
+The gap is widest on multi-file questions, where a graph beats text search. For "what breaks if I change `_backend`?", the agent has to follow call edges across a module:
+
+| | turns | context tokens |
+|---|---|---|
+| Read / Grep | 13 | 2607 |
+| cgh | 6 | 886 |
+
+**What this is not.** The billed cost, once the model's prompt cache is counted, is roughly a wash: the cache dominates the invoice, so fewer turns do not cut it much. cgh's gain is a smaller working context and fewer turns, not a smaller bill. On a trivial one-file edit cgh adds nothing. Run-to-run variance is real (around 20%), so read these as ratios over a task set rather than a single guaranteed number, and rerun the benchmark on your own repo to see your figures.
 
 ---
 
@@ -44,6 +63,26 @@ irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 # Core + the five first-party plugins in one shot:
 $env:CGH_PLUGINS = 1; irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 ```
+
+Both try uv, then pipx, then pip, and move on to the next one when an
+install fails instead of giving up. Behind a corporate network:
+
+| Variable | For |
+|---|---|
+| `CGH_INDEX_URL` | an internal PyPI mirror (Nexus, Artifactory) instead of pypi.org |
+| `CGH_TRUSTED_HOST` | that mirror serving a self-signed certificate |
+| `CGH_TIMEOUT`, `CGH_RETRIES` | a slow or flaky link (defaults: 120 s, 5 tries) |
+
+```bash
+curl -fsSL .../install.sh | CGH_INDEX_URL=https://nexus.corp/repository/pypi/simple bash
+```
+
+```powershell
+$env:CGH_INDEX_URL = "https://nexus.corp/repository/pypi/simple"; irm .../install.ps1 | iex
+```
+
+The variables reach uv, pipx and pip alike; an index you already
+export as `PIP_INDEX_URL` is honored and never overwritten.
 
 ### With pip, pipx, or uv
 
@@ -400,6 +439,17 @@ graph TD
   classDef layer fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
 ```
 
+#### `fetch`
+
+Fetch a URL, reduce it to text, chunk and index it, then search it back with no further network. A fetch is gated network egress: http/https only, private/loopback/link-local hosts refused (SSRF guard), refused in secure mode unless `[codegraph] allow_fetch = true`, and every fetch is written to the activity log. Results cache by URL with a TTL (default 24 h).
+
+```bash
+cgh fetch https://example.com/doc      # fetch and index
+cgh fetch --search "rate limit"        # search fetched pages
+cgh fetch https://example.com/doc --force   # bypass the cache
+cgh fetch --purge https://example.com/doc   # drop one URL (omit to purge all)
+```
+
 ### Monitor
 
 #### `stats`
@@ -753,7 +803,7 @@ Owners are independent: the parent reads child DBs directly as files, it does NO
 
 ## MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 50 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -769,7 +819,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 50 tools, plus wh
 |------|-------------|
 | `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined; optional `role` / `layer` filters |
 | `find_callers(fn_name)` | Find all functions that call `fn_name` |
-| `find_callees(fn_name)` | Find all functions that `fn_name` calls |
+| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
 | `imports_of(file_path)` | List modules imported by a file |
 | `search_symbols(query, limit?, role?, layer?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters |
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
@@ -803,6 +853,9 @@ When running as an MCP server (`cgh serve`), codegraph exposes 50 tools, plus wh
 | `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
 | `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
+| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused in secure mode unless `allow_fetch`) |
+| `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |
+| `purge_fetched(url?)` | Drop one URL's chunks, or all fetched content |
 
 ### Indexing
 
@@ -1135,9 +1188,10 @@ MdSection --MD_REFS_CLASS-----> Class        (code references in docs)
 `codegraph.sdk` is the documented surface for using cgh's bricks
 inside your own agent, pipeline or API, without the CLI, the owner
 process, MCP or a `.codegraph/` repo: `scan_text`, `egress_decision`,
-`pseudonymize`, `summarize`, the image functions (`image_inventory`,
-`extract_diagram`, `extract_table`, `extract_chart`, via cgh-vision)
-and an in-memory finding store. Code exercised solely through
+`pseudonymize`, `redact_text` (anonymize a document, via cgh-pii),
+`summarize`, the image functions (`image_inventory`, `extract_diagram`,
+`extract_table`, `extract_chart`, via cgh-vision) and an in-memory
+finding store. Code exercised solely through
 this surface may be used under the MIT license alone, including
 commercially (the SDK embedding exception in LICENSE); the graph
 index, MCP server, federation and shared memory are not exposed by it

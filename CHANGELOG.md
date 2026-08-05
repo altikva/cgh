@@ -8,6 +8,160 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-05
+
+### Added
+- **`find_callees` walks the call chain in one call**: it gained a
+  `max_depth` argument (default 1, unchanged behavior). With `max_depth>1`
+  it traverses the CALLS edges forward and returns the ordered chain, each
+  callee tagged with its `depth`, so tracing a flow no longer costs one
+  round-trip per hop. Bounded by a depth ceiling and fan-out / total caps
+  (`truncated` flag when hit), and federated per scope like the one-hop
+  form. The `cgh-usage` guidance now steers multi-hop questions to a
+  single server-side traversal (`find_callees(max_depth)`, `impact_of`,
+  `path_between`, `subgraph`) instead of chaining single-hop lookups.
+- **Intent-driven filtering on `impact_of`**: a large blast radius used
+  to be capped to the arbitrary first N impacted nodes. It now takes an
+  optional `focus`, and when the result overflows the cap it keeps the
+  nodes matching the focus terms (matched on path, role and layer)
+  instead, so a relevant file beyond the cap in raw order survives
+  (`impact_of("db.py", focus="router")`). The truncation is never
+  silent: the response carries a `focus_note` saying how many were kept
+  and dropped, and how to narrow. The `focus_filter` helper is shared
+  and applies to the other large-output tools as they adopt it.
+- **Fetch a URL into the searchable index**: `fetch_and_index` (MCP)
+  and `cgh fetch <url>` pull a page, reduce it to text, chunk and
+  index it, so `search_fetched` / `cgh fetch --search` read it back
+  with no further network. Results cache by URL with a TTL (default
+  24 h). A fetch is gated network egress: http/https only, private,
+  loopback and link-local hosts refused (SSRF), refused in secure
+  mode unless `[codegraph] allow_fetch` is set, and every fetch and
+  refusal is written to the activity log.
+- **PII redaction: `cgh pii redact` and `sdk.redact_text`**: produce an
+  anonymized copy of a text or markdown file, keeping only the
+  categories you ask for (`--only person` to anonymize just names).
+  Tokens are either numbered placeholders (`[PERSON_1]`, distinct
+  within the document) or keyed pseudonyms (`<pii.person:hex>`, stable
+  across documents with a shared `CGH_REDACT_SECRET`); the same value
+  always maps to the same token. Person and location names come from
+  the NER tier (`cgh-pii[ner]`); requesting them without it fails
+  clearly. Since NER can miss repeat mentions, a detected name is
+  propagated to all its literal occurrences, so it is redacted
+  everywhere. Word documents are redacted with the `docx` extra
+  (`pip install "cgh-pii[docx]"`): body paragraphs and table cells,
+  one shared token map across the file, formatting inside changed
+  paragraphs flattened (the only way to redact PII split across
+  runs). PDF stays unsupported (real redaction needs an AGPL
+  library); extract the pdf text and redact that.
+- **`cgh vision --hint`** (and the `hint` config key): a short steering
+  instruction appended to the extraction prompts, for example
+  `--hint "labels are in French"` or "prefer application service
+  names". It is added after the format rules and never replaces the
+  JSON contract, so it nudges the model without breaking parsing.
+- **`cgh vision setup --llamacpp`**: one command to run vision without
+  Ollama. It finds or installs llama.cpp through its official channel
+  (brew on macOS, the signed GitHub-release binaries on Windows, never
+  a bundled binary), writes a `[plugin.vision]` block pointing
+  cgh-vision at a local llama-server, and offers to start it. The
+  server auto-downloads our default vision model and its mmproj
+  projector on first run, and stays the user's process to keep running,
+  like the Ollama daemon; cgh starts it on request but does not
+  supervise it. Benchmarked as the best node/edge transport.
+- **cgh-vision runs without Ollama, on any OpenAI-compatible vision
+  endpoint**: set `openai_base_url` and the transport switches to
+  `/chat/completions` with a base64 image. That serves the GGUF
+  weights from Hugging Face through llama.cpp's own `llama-server`
+  (no daemon, no `ollama.exe`), or LM Studio, vLLM, or an approved
+  internal gateway. Egress is judged from the active endpoint, not the
+  backend name: a loopback llama-server stays local and secure mode is
+  satisfied, a remote gateway is gated like any cloud. Ollama stays the
+  default; nothing changes without the new key.
+- **`cgh vision` helps install Ollama through its official channel**:
+  when the daemon is unreachable it now prints the OS-appropriate
+  install command (winget on Windows, Homebrew on macOS, the vendor
+  script shown but never auto-piped on Linux) and, in an interactive
+  terminal, offers to run it. cgh points at the publisher's own
+  installer only: it never bundles, mirrors or obfuscates the binary.
+  A network that blocks every official channel is a policy to resolve
+  with IT or by pointing `ollama_url` at an approved internal server,
+  not something cgh works around.
+- **cgh-vision names the models it is missing, and documents the route
+  when `ollama pull` is blocked**: `cgh vision` now checks the daemon's
+  model list before starting and prints what is absent with the pull
+  command, instead of failing a minute later mid-extraction. Corporate
+  networks that block the Ollama registry have a documented
+  alternative in the plugin README: download the GGUF weights and the
+  mandatory vision projector from Hugging Face, register them with
+  `ollama create`, and point `nodes_model` at the local name. cgh only
+  ever asks the daemon for a name, so a locally registered model is
+  indistinguishable from a pulled one.
+- **cgh-vision consults a second structure reader when the first comes
+  back empty-handed**: an extraction with two boxes or fewer, or with
+  no arrows at all, now gets one retry from the arrow model (config
+  `fallback_model`, empty to disable, off on the `fast` profile), and
+  the retry replaces the first result only when it found more. The
+  two models fail differently, which is the whole point: benchmarked
+  over every local vision model, the arrow reader rescues all five
+  thin-line cases the primary reader cannot see (2 nodes / 1 edge
+  becoming 13 / 27), including the two that pre-scaling could not
+  save, while needing no extra download. It never fires on the
+  synthetic corpus the default already reads correctly, so precision
+  and zones are untouched.
+
+### Changed
+- **Symbol search fuses BM25 with a trigram substring ranking (RRF)**:
+  `search_symbols` / `fts_search` kept a word-tokenized FTS index that
+  splits identifiers ("DonationHandler" to "Donation Handler"), so a
+  fragment inside an identifier ("andl") matched nothing. A parallel
+  trigram index now catches those fragments, and the two rankings are
+  merged with Reciprocal Rank Fusion, so whole-word queries still win
+  and partial-identifier queries finally hit. Existing indexes
+  backfill the trigram table once on open; no reindex needed. Fixed
+  along the way: external-content FTS deletes replayed empty strings
+  instead of the indexed values, which left the index inconsistent.
+- **`memory_search` and `plan_search` now fuse the same way**: both
+  gained a parallel trigram index and RRF fusion, so a fragment inside
+  a memory title or a plan slug ("ationpars" inside "DonationParser")
+  matches where the word-tokenized index missed it. Existing indexes
+  backfill their trigram table once on open, and the deletes pass the
+  real indexed values so the external-content index stays consistent.
+
+### Fixed
+- **The installers survive a bad network and speak to internal
+  mirrors**: `install.sh` aborted on the first failing installer
+  instead of falling through to the next (`set -e` on the uv line),
+  and `install.ps1` was worse, reporting success after a failed
+  install because a non-zero native exit does not raise in PowerShell.
+  Both now try uv, pipx and pip in turn on their exit status, and the
+  PowerShell version also catches the terminating error that
+  PowerShell 7.4 raises instead. New knobs, honored by all three
+  installers: `CGH_INDEX_URL` for an internal PyPI mirror,
+  `CGH_TRUSTED_HOST` for its self-signed certificate, `CGH_TIMEOUT`
+  and `CGH_RETRIES` for a slow link. When everything fails the message
+  names those options rather than leaving a stack trace.
+- **Windows stops flashing a console window on every agent action**:
+  the Claude Code hooks fire on each tool call and `cgh.exe` is a
+  console application, so Windows created (and destroyed) a console
+  for each one, multiplied by every repo in a federated workspace.
+  cgh now also ships `cghw`, the same entry point built as a
+  windowless launcher, and the hook wiring points at it on Windows
+  when it is present, falling back to the console launcher on older
+  installs. Three plugin subprocess calls that also lacked the
+  no-window flag are fixed alongside: the summarize agent-CLI backend
+  (one spawn per summarized file, inside the detached owner) and the
+  `git ls-files` calls of classify and summarize.
+
+### Security
+- **SSRF hardening on `fetch_and_index`** (found by the commit security
+  review): the guard only checked bare IP literals, so three bypasses
+  slipped through: a hostname resolving to a private address
+  (DNS-based SSRF), a decimal/hex/IPv6-encoded loopback
+  (`http://2130706433/`), and a public URL redirecting to a private
+  host. The guard now resolves the host through getaddrinfo and refuses
+  if any resulting IP is private, loopback, link-local, reserved,
+  multicast or unspecified (a host that resolves to nothing is refused
+  too, fail closed), and a custom opener re-guards every redirect hop.
+
 ## [0.10.1] - 2026-08-03
 
 ### Fixed
@@ -815,7 +969,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/altikva/cgh/compare/v0.8.0...v0.9.0

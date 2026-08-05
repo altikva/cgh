@@ -35,3 +35,31 @@ Two deliberate properties:
 The optional NER tier (person names, locations) installs with
 `pip install "cgh-pii[ner]"` and activates with `ner = true` under
 `[plugin.pii]`; it runs deferred, off the indexing hot path.
+
+## Redacting a document
+
+Beyond detecting PII, cgh-pii can produce an anonymized copy of a text
+or markdown file:
+
+```bash
+cgh pii redact contract.md --only person --out contract.anon.md
+cgh pii redact notes.txt --mode pseudonym --in-place
+```
+
+`--only` limits the categories (`person`, `location`, `email`,
+`phone`, `iban`, `card`, `aws_key`, `private_key`; default: all).
+`--mode placeholder` (default) writes numbered tags `[PERSON_1]`,
+distinct within the document; `--mode pseudonym` writes a keyed
+`<pii.person:hex>`, the same token for the same value across documents
+when you export a stable `CGH_REDACT_SECRET` (16+ chars). From code:
+`codegraph.sdk.redact_text(text, only=["person"])`.
+
+Two things to know:
+
+- **Names need the NER tier** (`pip install "cgh-pii[ner]"`). The
+  regex tier does not detect person names; requesting `person` or
+  `location` without NER fails with a clear message. Once a name is
+  detected, every literal re-occurrence of it is redacted too, since
+  NER can miss repeat mentions.
+- **Text files only.** Binary documents (pdf, docx) are not rewritten
+  in place; extract their text first (see cgh-docs) and redact that.

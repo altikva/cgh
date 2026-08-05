@@ -789,7 +789,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus wh
 |------|-------------|
 | `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined; optional `role` / `layer` filters |
 | `find_callers(fn_name)` | Find all functions that call `fn_name` |
-| `find_callees(fn_name)` | Find all functions that `fn_name` calls |
+| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
 | `imports_of(file_path)` | List modules imported by a file |
 | `search_symbols(query, limit?, role?, layer?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters |
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |

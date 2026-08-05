@@ -9,6 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`find_callees` walks the call chain in one call**: it gained a
+  `max_depth` argument (default 1, unchanged behavior). With `max_depth>1`
+  it traverses the CALLS edges forward and returns the ordered chain, each
+  callee tagged with its `depth`, so tracing a flow no longer costs one
+  round-trip per hop. Bounded by a depth ceiling and fan-out / total caps
+  (`truncated` flag when hit), and federated per scope like the one-hop
+  form. The `cgh-usage` guidance now steers multi-hop questions to a
+  single server-side traversal (`find_callees(max_depth)`, `impact_of`,
+  `path_between`, `subgraph`) instead of chaining single-hop lookups.
 - **Intent-driven filtering on `impact_of`**: a large blast radius used
   to be capped to the arbitrary first N impacted nodes. It now takes an
   optional `focus`, and when the result overflows the cap it keeps the

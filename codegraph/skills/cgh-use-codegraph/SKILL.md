@@ -22,6 +22,8 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 | "Where is `X` defined?" | `mcp__codegraph__symbol_lookup(name="X")` |
 | "What calls `fn`?" / "Who uses `fn`?" | `mcp__codegraph__find_callers(fn_name="fn")` |
 | "What does `fn` call?" | `mcp__codegraph__find_callees(fn_name="fn")` |
+| "Trace the flow from `fn`" (multi-hop) | `mcp__codegraph__find_callees(fn_name="fn", max_depth=N)`: one call returns the ordered chain, don't chain single hops |
+| "What breaks if I change `X`?" | `mcp__codegraph__impact_of(symbol_or_file="X", max_depth=N)` |
 | Fuzzy / partial name | `mcp__codegraph__search_symbols(query="...")` |
 | Full-text (docstrings, names) | `mcp__codegraph__fts_search(query="...")` |
 | **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)`: INSTEAD of Grep |

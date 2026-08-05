@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Symbol search fuses BM25 with a trigram substring ranking (RRF)**:
+  `search_symbols` / `fts_search` kept a word-tokenized FTS index that
+  splits identifiers ("DonationHandler" to "Donation Handler"), so a
+  fragment inside an identifier ("andl") matched nothing. A parallel
+  trigram index now catches those fragments, and the two rankings are
+  merged with Reciprocal Rank Fusion, so whole-word queries still win
+  and partial-identifier queries finally hit. Existing indexes
+  backfill the trigram table once on open; no reindex needed. Fixed
+  along the way: external-content FTS deletes replayed empty strings
+  instead of the indexed values, which left the index inconsistent.
+
 ### Added
 - **PII redaction: `cgh pii redact` and `sdk.redact_text`**: produce an
   anonymized copy of a text or markdown file, keeping only the

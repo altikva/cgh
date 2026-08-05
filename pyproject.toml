@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.10.1"
+version = "0.11.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -64,11 +64,11 @@ kuzu = ["kuzu>=0.7"]
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 plugins = [
     "cgh-docs>=0.1.2",
-    "cgh-pii>=0.1.1",
-    "cgh-summarize>=0.2.2",
-    "cgh-classify>=0.1.2",
+    "cgh-pii>=0.2",
+    "cgh-summarize>=0.2.3",
+    "cgh-classify>=0.1.3",
     "cgh-bugreport>=0.1.1",
-    "cgh-vision>=0.2",
+    "cgh-vision>=0.3",
 ]
 # Everything except the legacy kuzu backend: the six plugins plus the
 # langs and lsp extras. The tree-sitter grammars ship abi3 wheels
@@ -77,11 +77,11 @@ plugins = [
 #   pip install "cgh[full]"
 full = [
     "cgh-docs>=0.1.2",
-    "cgh-pii>=0.1.1",
-    "cgh-summarize>=0.2.2",
-    "cgh-classify>=0.1.2",
+    "cgh-pii>=0.2",
+    "cgh-summarize>=0.2.3",
+    "cgh-classify>=0.1.3",
     "cgh-bugreport>=0.1.1",
-    "cgh-vision>=0.2",
+    "cgh-vision>=0.3",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
     "jedi>=0.19",

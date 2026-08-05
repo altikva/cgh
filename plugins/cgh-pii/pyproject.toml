@@ -20,6 +20,9 @@ dependencies = []
 # NER tier (person names, locations). Heavy: spaCy models. The regex
 # tier needs nothing beyond the standard library.
 ner = ["presidio-analyzer>=2.2"]
+# docx redaction: rewrite a Word document in place or into a new one.
+# Text/markdown redaction needs nothing beyond the standard library.
+docx = ["python-docx>=1.1"]
 
 [project.entry-points.cgh]
 pii = "cgh_pii"

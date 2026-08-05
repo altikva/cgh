@@ -16,10 +16,12 @@ CGH_PLUGIN_API = 1
 
 
 def register(api) -> None:
+    from .cli import make_cli_registrar
     from .regex_scanner import RegexPiiScanner
 
     disabled = set(api.config.get("disable_keys", []))
     api.register_scanner(RegexPiiScanner(disabled_keys=disabled))
+    api.register_cli(make_cli_registrar(api.config))
 
     if api.config.get("ner"):
         try:

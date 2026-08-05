@@ -24,6 +24,7 @@ indexing time, not at question time).
 | [summarize-local](summarize-local/) | summarize with the local-only default, cloud behind your gate | cgh-summarize |
 | [vision-pipeline](vision-pipeline/) | inventory an image, extract diagram/table/chart as routed | cgh-vision + Ollama |
 | [document-diagrams](document-diagrams/) | pull embedded images out of pdf/docx/pptx, extract the schemas | cgh-vision + Ollama |
+| [vision-no-ollama](vision-no-ollama/) | run vision on llama.cpp or any OpenAI-compatible server, no Ollama | cgh-vision |
 
 Quick start, all cases:
 

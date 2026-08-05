@@ -665,3 +665,55 @@ class TestOpenAIBackend:
 
         monkeypatch.setattr(b, "installed_models", lambda cfg, timeout_s=2.0: set())
         assert b.missing_models(self.CFG, ["anything"]) == []
+
+
+class TestSetupLlamacpp:
+    """cgh vision setup --llamacpp wires the OpenAI backend at a local
+    llama-server, installs only through the official channel, and never
+    supervises the process."""
+
+    def test_config_block_points_at_llama_server(self):
+        from cgh_vision.setup_llamacpp import _config_block
+
+        b = _config_block(8080)
+        assert 'openai_base_url = "http://127.0.0.1:8080/v1"' in b
+        assert 'nodes_model = "qwen2.5-vl"' in b
+        assert 'fallback_model = ""' in b
+
+    def test_macos_install_is_brew(self, monkeypatch):
+        import cgh_vision.setup_llamacpp as m
+
+        monkeypatch.setattr(m.sys, "platform", "darwin")
+        _hint, argv = m.llamacpp_install("posix")
+        assert argv == ["brew", "install", "llama.cpp"]
+
+    def test_windows_points_at_signed_release_no_autorun(self):
+        from cgh_vision.setup_llamacpp import llamacpp_install
+
+        hint, argv = llamacpp_install("nt")
+        assert argv is None  # no auto-run on Windows
+        assert "github.com/ggml-org/llama.cpp/releases" in hint
+
+    def test_writes_block_when_no_plugin_vision_section(self, tmp_path):
+        from cgh_vision.setup_llamacpp import _write_config
+        from rich.console import Console
+
+        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[codegraph]\nmode = 'assist'\n", encoding="utf-8")
+        _write_config(Console(quiet=True), tmp_path, 8080)
+        text = cfg.read_text()
+        assert "[plugin.vision]" in text
+        assert "http://127.0.0.1:8080/v1" in text
+        assert "[codegraph]" in text  # existing content preserved
+
+    def test_never_clobbers_existing_plugin_vision(self, tmp_path):
+        from cgh_vision.setup_llamacpp import _write_config
+        from rich.console import Console
+
+        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg.parent.mkdir(parents=True)
+        original = "[plugin.vision]\nollama_url = 'http://127.0.0.1:11434'\n"
+        cfg.write_text(original, encoding="utf-8")
+        _write_config(Console(quiet=True), tmp_path, 8080)
+        assert cfg.read_text() == original  # untouched

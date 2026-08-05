@@ -59,7 +59,7 @@ Once connected, Claude Code can use:
 - `search_symbols(query)`: fuzzy search across all symbols
 - `search_docs(query)`: search markdown documentation
 - `find_callers(fn_name)`: who calls this function?
-- `find_callees(fn_name)`: what does this function call?
+- `find_callees(fn_name, max_depth?)`: what does this function call? Pass `max_depth>1` to trace the whole forward call chain in one call instead of chaining hops.
 - `context_for_task(task)`: build ranked context for any task
 - `doc_outline(file)`: markdown heading tree
 - `doc_refs(symbol)`: find docs referencing a symbol

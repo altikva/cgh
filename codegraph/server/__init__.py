@@ -199,6 +199,7 @@ mcp = FastMCP(
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from codegraph.server.tools_arch import register as _register_arch
 from codegraph.server.tools_docs import register as _register_docs
+from codegraph.server.tools_fetch import register as _register_fetch
 from codegraph.server.tools_findings import register as _register_findings
 from codegraph.server.tools_history import register as _register_history
 from codegraph.server.tools_index import register as _register_index
@@ -227,6 +228,7 @@ _register_plans(mcp)
 _register_knowledge(mcp)
 _register_history(mcp)  # hotspots, who_knows
 _register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
+_register_fetch(mcp)  # fetch_and_index, search_fetched
 _register_session(mcp)  # checkpoint / resume session continuity
 
 

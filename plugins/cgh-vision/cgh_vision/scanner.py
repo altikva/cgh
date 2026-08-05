@@ -23,7 +23,7 @@ from pathlib import Path
 
 from codegraph.plugin_api import ScanFinding
 
-from .backends import VisionError, available, is_local, ollama_url
+from .backends import VisionError, available, endpoint_url, is_local
 from .pipeline import (
     DIAGRAM_KINDS,
     charts_to_markdown,
@@ -86,18 +86,17 @@ class VisionScanner:
             if mode == "secure":
                 raise VisionError(
                     "secure mode: refusing to send image bytes to the "
-                    f"non-loopback ollama_url {ollama_url(self.config)}"
+                    f"non-loopback endpoint {endpoint_url(self.config)}"
                 )
             self._audit(
-                f"image bytes sent to non-loopback ollama_url "
-                f"{ollama_url(self.config)}: {p}"
+                f"image bytes sent to non-loopback endpoint "
+                f"{endpoint_url(self.config)}: {p}"
             )
         if not available(self.config):
             # Raise, do not record: the deferred worker logs the reason
-            # and the image is retried once a daemon is running.
+            # and the image is retried once the backend is running.
             raise VisionError(
-                "vision backend: Ollama daemon not reachable "
-                f"({ollama_url(self.config)})"
+                f"vision backend not reachable ({endpoint_url(self.config)})"
             )
 
         inv = inventory(p, self.config)

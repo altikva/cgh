@@ -86,7 +86,10 @@ class TestRouter:
             monkeypatch,
             [
                 '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
-                '{"nodes": ["API", "DB"], "edges": [["API", "DB"]], "zones": []}',
+                # 3 nodes with an edge: a healthy read, so the fallback
+                # reader stays out of the picture (see TestFallbackReader).
+                '{"nodes": ["API", "DB", "Cache"], "edges": [["API", "DB"]],'
+                ' "zones": []}',
                 '{"title": "Archi", "kinds": {"DB": "database"}, "tech": {}}',
                 '[{"source": "API", "target": "DB", "label": "SQL"}]',
             ],
@@ -160,6 +163,117 @@ class TestRouteStructured:
         assert render_markdown(result) == md
 
 
+def _role(prompt: str) -> str:
+    """Which pass a prompt belongs to. The three share an opening
+    sentence, so classify on what only one of them says."""
+    if '"nodes": ["label"' in prompt:
+        return "structure"
+    if '"kinds"' in prompt:
+        return "enrich"
+    if "listing every drawn arrow" in prompt:
+        return "edges"
+    return "other"
+
+
+class TestFallbackReader:
+    """The default pair runs first; a second reader gets one attempt
+    only when the result is skeletal, and only wins if it found more."""
+
+    THIN = [
+        '{"nodes": ["A", "B"], "edges": [], "zones": []}',  # skeletal
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+    RICH = [
+        '{"nodes": ["A", "B", "C", "D"], "edges": [["A", "B"], ["C", "D"]],'
+        ' "zones": []}',
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+    HEALTHY = [
+        '{"nodes": ["A", "B", "C"], "edges": [["A", "B"]], "zones": []}',
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+
+    def _models(self, monkeypatch, script):
+        """Records (model, role) per call. Role matters more than the
+        model name now that the fallback reader IS the arrow reader:
+        only a structure prompt sent to a model other than the primary
+        one is a fallback attempt."""
+        seen: list[tuple[str, str]] = []
+        replies = list(script)
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append((model, _role(prompt)))
+            return replies.pop(0) if replies else "{}"
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        return seen
+
+    @staticmethod
+    def _fallback_fired(seen) -> bool:
+        """A second structure read, by definition."""
+        return sum(1 for _m, role in seen if role == "structure") > 1
+
+    def test_skeletal_triggers_the_second_reader(self, monkeypatch):
+        seen = self._models(monkeypatch, self.THIN + self.RICH)
+        ex = extract_diagram(IMG, {})
+        assert self._fallback_fired(seen)
+        assert ("gemma3:4b", "structure") in seen  # by the arrow model
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B", "C", "D"]
+
+    def test_healthy_result_never_pays_the_second_read(self, monkeypatch):
+        seen = self._models(monkeypatch, self.HEALTHY)
+        extract_diagram(IMG, {})
+        assert not self._fallback_fired(seen)
+        assert len(seen) == 3  # structure, enrich, edges. Nothing more.
+
+    def test_poorer_retry_is_discarded(self, monkeypatch):
+        poorer = [
+            '{"nodes": ["Z"], "edges": [], "zones": []}',
+            '{"title": "", "kinds": {}, "tech": {}}',
+            '{"edges": []}',
+        ]
+        self._models(monkeypatch, self.THIN + poorer)
+        ex = extract_diagram(IMG, {})
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B"]  # first kept
+
+    def test_failing_second_read_degrades_silently(self, monkeypatch):
+        """The retry can only ever add: a failure keeps the first
+        result, it never propagates."""
+        replies = list(self.THIN)
+        calls = {"structure": 0}
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            if _role(prompt) == "structure":
+                calls["structure"] += 1
+                if calls["structure"] > 1:  # the fallback attempt
+                    raise RuntimeError("model not found")
+            return replies.pop(0) if replies else "{}"
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        ex = extract_diagram(IMG, {})
+        assert [n["label"] for n in ex["nodes"]] == ["A", "B"]
+        assert calls["structure"] == 2  # it was attempted
+
+    def test_config_disables_it(self, monkeypatch):
+        seen = self._models(monkeypatch, self.THIN)
+        extract_diagram(IMG, {"fallback_model": ""})
+        assert not self._fallback_fired(seen)
+
+    def test_fast_profile_never_falls_back(self, monkeypatch):
+        seen = self._models(monkeypatch, ['{"nodes": ["A"], "edges": [], "zones": []}'])
+        extract_diagram(IMG, {"profile": "fast"})
+        assert seen == [("qwen2.5vl:3b", "structure")]
+
+    def test_progress_announces_the_second_read(self, monkeypatch):
+        self._models(monkeypatch, self.THIN + self.RICH)
+        steps: list[str] = []
+        extract_diagram(IMG, {}, progress=steps.append)
+        assert any("second read" in s for s in steps)
+
+
 class TestPostprocessZones:
     def test_nested_list_zone_becomes_a_label(self):
         out = postprocess({"nodes": ["A"], "edges": [], "zones": [["Cluster GKE"], []]})
@@ -178,7 +292,8 @@ class TestProgress:
             monkeypatch,
             [
                 '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
-                '{"nodes": ["API", "DB"], "edges": [], "zones": []}',
+                '{"nodes": ["API", "DB", "Cache"], "edges": [["API", "DB"]],'
+                ' "zones": []}',
                 '{"title": "", "kinds": {}, "tech": {}}',
                 '{"edges": []}',
             ],
@@ -313,7 +428,7 @@ class TestScanner:
         img = tmp_path / "d.png"
         img.write_bytes(b"\x89PNG" + b"0" * 6000)
         monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: False)
-        with pytest.raises(RuntimeError, match="Ollama"):
+        with pytest.raises(RuntimeError, match="not reachable"):
             VisionScanner({}, tmp_path).scan(img, "", None)
 
 
@@ -389,3 +504,250 @@ class TestSdkWiring:
         )
         inv = sdk.image_inventory(IMG, {})
         assert inv["content"] == ["chart"]
+
+
+class TestMissingModels:
+    """Naming the absent model beats failing on it a minute later, and
+    a locally registered GGUF must count as present."""
+
+    def _tags(self, monkeypatch, names):
+        import io
+        import json as _json
+        from contextlib import contextmanager
+
+        import cgh_vision.backends as backends
+
+        @contextmanager
+        def fake_urlopen(url, timeout=2.0):
+            payload = _json.dumps({"models": [{"name": n} for n in names]}).encode()
+            yield io.BytesIO(payload)
+
+        monkeypatch.setattr(backends.urllib.request, "urlopen", fake_urlopen)
+
+    def test_reports_only_what_is_absent(self, monkeypatch):
+        from cgh_vision.backends import missing_models
+
+        self._tags(monkeypatch, ["qwen2.5vl:3b"])
+        assert missing_models({}, ["qwen2.5vl:3b", "gemma3:4b"]) == ["gemma3:4b"]
+
+    def test_locally_registered_model_counts_as_present(self, monkeypatch):
+        from cgh_vision.backends import missing_models
+
+        self._tags(monkeypatch, ["qwen2.5-vl:7b"])  # ollama create from a GGUF
+        assert missing_models({}, ["qwen2.5-vl:7b"]) == []
+
+    def test_unreachable_daemon_raises_no_false_alarm(self, monkeypatch):
+        import cgh_vision.backends as backends
+        from cgh_vision.backends import missing_models
+
+        def boom(*a, **k):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(backends.urllib.request, "urlopen", boom)
+        assert missing_models({}, ["anything:1b"]) == []
+
+
+class TestOllamaSetup:
+    """cgh points at the publisher's own installer, never bundles or
+    obfuscates it, and never auto-runs a piped remote script."""
+
+    def test_windows_uses_winget(self):
+        from cgh_vision.setup_ollama import official_install
+
+        hint, argv = official_install("nt")
+        assert argv == ["winget", "install", "--id", "Ollama.Ollama", "-e"]
+        assert "ollama.com/install.sh" not in hint  # no pipe-to-shell on Windows
+
+    def test_macos_uses_brew(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+
+        monkeypatch.setattr(m.sys, "platform", "darwin")
+        _hint, argv = m.official_install("posix")
+        assert argv == ["brew", "install", "ollama"]
+
+    def test_linux_shows_the_script_but_never_runs_it(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+
+        monkeypatch.setattr(m.sys, "platform", "linux")
+        hint, argv = m.official_install("posix")
+        assert argv is None  # nothing auto-run
+        assert "install.sh" in hint
+
+    def test_offer_is_a_noop_without_a_tty(self, monkeypatch):
+        import io
+
+        import cgh_vision.setup_ollama as m
+        from rich.console import Console
+
+        monkeypatch.setattr(m.sys, "stdin", io.StringIO("y\n"))  # not a tty
+        ran = m.offer_to_install(Console(file=io.StringIO()))
+        assert ran is False
+
+    def test_offer_never_runs_the_linux_script(self, monkeypatch):
+        import cgh_vision.setup_ollama as m
+        from rich.console import Console
+
+        monkeypatch.setattr(m.sys, "platform", "linux")
+
+        class _TTY:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(m.sys, "stdin", _TTY())
+        called = {"run": False}
+        monkeypatch.setattr(
+            m.subprocess, "run", lambda *a, **k: called.__setitem__("run", True)
+        )
+        assert m.offer_to_install(Console()) is False
+        assert called["run"] is False
+
+
+class TestOpenAIBackend:
+    """openai_base_url switches the transport to /chat/completions, so
+    a local llama-server on GGUF needs no Ollama at all, and a gateway
+    is reachable through the same path (subject to the egress gate)."""
+
+    CFG = {"openai_base_url": "http://127.0.0.1:8080/v1"}
+
+    def test_backend_kind_selected_by_config(self):
+        from cgh_vision.backends import backend_kind
+
+        assert backend_kind({}) == "ollama"
+        assert backend_kind(self.CFG) == "openai"
+        assert backend_kind({"vision_backend": "ollama", **self.CFG}) == "ollama"
+
+    def test_loopback_endpoint_stays_local(self):
+        from cgh_vision.backends import is_local
+
+        assert is_local(self.CFG) is True
+        assert is_local({"openai_base_url": "https://gw.corp/v1"}) is False
+
+    def test_ask_posts_chat_completions_with_image(self, tmp_path, monkeypatch):
+        import io
+
+        import cgh_vision.backends as b
+
+        img = tmp_path / "d.png"
+        img.write_bytes(b"\x89PNG" + b"0" * 100)
+        captured = {}
+
+        def fake_urlopen(req, timeout=120):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data.decode())
+            payload = {"choices": [{"message": {"content": '{"nodes": []}'}}]}
+            return io.BytesIO(json.dumps(payload).encode())
+
+        monkeypatch.setattr(b.urllib.request, "urlopen", fake_urlopen)
+        out = b.ask("qwen2.5-vl:7b", img, "read this", self.CFG)
+        assert out == '{"nodes": []}'
+        assert captured["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+        content = captured["body"]["messages"][0]["content"]
+        assert content[0]["text"] == "read this"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        assert captured["body"]["temperature"] == 0
+
+    def test_http_error_becomes_vision_error(self, tmp_path, monkeypatch):
+        import cgh_vision.backends as b
+        from cgh_vision.backends import VisionError
+
+        img = tmp_path / "d.png"
+        img.write_bytes(b"\x89PNG" + b"0" * 100)
+
+        def boom(req, timeout=120):
+            raise b.urllib.error.HTTPError(req.full_url, 404, "no model", {}, None)
+
+        monkeypatch.setattr(b.urllib.request, "urlopen", boom)
+        with pytest.raises(VisionError, match="404"):
+            b.ask("x", img, "p", self.CFG)
+
+    def test_missing_models_unknown_never_false_alarms(self, monkeypatch):
+        import cgh_vision.backends as b
+
+        monkeypatch.setattr(b, "installed_models", lambda cfg, timeout_s=2.0: set())
+        assert b.missing_models(self.CFG, ["anything"]) == []
+
+
+class TestSetupLlamacpp:
+    """cgh vision setup --llamacpp wires the OpenAI backend at a local
+    llama-server, installs only through the official channel, and never
+    supervises the process."""
+
+    def test_config_block_points_at_llama_server(self):
+        from cgh_vision.setup_llamacpp import _config_block
+
+        b = _config_block(8080)
+        assert 'openai_base_url = "http://127.0.0.1:8080/v1"' in b
+        assert 'nodes_model = "qwen2.5-vl"' in b
+        assert 'fallback_model = ""' in b
+
+    def test_macos_install_is_brew(self, monkeypatch):
+        import cgh_vision.setup_llamacpp as m
+
+        monkeypatch.setattr(m.sys, "platform", "darwin")
+        _hint, argv = m.llamacpp_install("posix")
+        assert argv == ["brew", "install", "llama.cpp"]
+
+    def test_windows_points_at_signed_release_no_autorun(self):
+        from cgh_vision.setup_llamacpp import llamacpp_install
+
+        hint, argv = llamacpp_install("nt")
+        assert argv is None  # no auto-run on Windows
+        assert "github.com/ggml-org/llama.cpp/releases" in hint
+
+    def test_writes_block_when_no_plugin_vision_section(self, tmp_path):
+        from cgh_vision.setup_llamacpp import _write_config
+        from rich.console import Console
+
+        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[codegraph]\nmode = 'assist'\n", encoding="utf-8")
+        _write_config(Console(quiet=True), tmp_path, 8080)
+        text = cfg.read_text()
+        assert "[plugin.vision]" in text
+        assert "http://127.0.0.1:8080/v1" in text
+        assert "[codegraph]" in text  # existing content preserved
+
+    def test_never_clobbers_existing_plugin_vision(self, tmp_path):
+        from cgh_vision.setup_llamacpp import _write_config
+        from rich.console import Console
+
+        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg.parent.mkdir(parents=True)
+        original = "[plugin.vision]\nollama_url = 'http://127.0.0.1:11434'\n"
+        cfg.write_text(original, encoding="utf-8")
+        _write_config(Console(quiet=True), tmp_path, 8080)
+        assert cfg.read_text() == original  # untouched
+
+
+class TestHint:
+    def test_hint_appended_to_prompts(self, monkeypatch):
+        seen = []
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append(prompt)
+            return '{"summary":"x","content":["logo"],"text_density":"none"}'
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        pipeline.inventory(IMG, {"hint": "labels are in French"})
+        assert "Additional guidance" in seen[0]
+        assert "labels are in French" in seen[0]
+
+    def test_no_hint_leaves_prompt_untouched(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            pipeline,
+            "ask",
+            lambda m, p, prompt, config=None, timeout_s=120: (
+                seen.append(prompt)
+                or '{"summary":"x","content":["logo"],"text_density":"none"}'
+            ),
+        )
+        pipeline.inventory(IMG, {})
+        assert "Additional guidance" not in seen[0]
+
+    def test_hint_keeps_the_json_contract_first(self, monkeypatch):
+        from cgh_vision.pipeline import _with_hint
+
+        out = _with_hint("RULES: return JSON", {"hint": "be terse"})
+        assert out.startswith("RULES: return JSON")  # contract precedes the nudge
+        assert "be terse" in out

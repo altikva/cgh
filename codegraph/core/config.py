@@ -212,6 +212,11 @@ class CodegraphConfig:
     # individually overridable in its own section.
     mode: str = "assist"  # "assist" | "secure"
 
+    # Network fetch (fetch_and_index). Always off in secure mode unless
+    # this is set; assist mode allows it. Private/loopback hosts are
+    # refused regardless (SSRF), and every fetch is audited.
+    allow_fetch: bool = False
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -313,6 +318,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         value = str(cg["mode"]).strip().lower()
         if value in ("assist", "secure"):
             config.mode = value
+    if "allow_fetch" in cg:
+        config.allow_fetch = bool(cg["allow_fetch"])
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:
@@ -367,6 +374,7 @@ max_file_size_kb = 500
 # fails open. "secure": everything assist does, plus the guard fails
 # closed, blocks reads of flagged files in hooked agents, and mirrors
 # barred paths into static deny lists (Claude settings, .bobignore).
+# allow_fetch = false   # let fetch_and_index reach the network in secure mode
 # mode = "assist"
 # Directories to force-index even if .gitignore excludes them (e.g. "docs/",
 # generated schema dumps, vendored source you still want in the graph).
@@ -439,7 +447,11 @@ reindex_on_start = true
 # nodes_model = "qwen2.5vl:3b"
 # edges_model = "gemma3:4b"
 # ollama_url = "http://127.0.0.1:11434"  # loopback only in secure mode
+# openai_base_url = ""   # any OpenAI-compatible vision endpoint instead
+# openai_api_key_env = "OPENAI_API_KEY"  # env var holding the key, if any
 # timeout_s = 120        # per model call
+# fallback_model = "gemma3:4b"     # second reader on skeletal results
+# hint = ""              # steer extraction ("labels are in French"); appended, never replaces the contract
 # prescale = true        # 2x upscale of small images before extraction
 # prescale_min_px = 1000 # apply when the smaller dimension is under this
 

@@ -29,7 +29,7 @@ call graphs, doc search, and BM25 full-text search exposed via MCP tools.
 | `search_symbols(query)` | Fuzzy search across functions, classes, docs |
 | `search_docs(query)` | Search Markdown documentation |
 | `find_callers(fn_name)` | Who calls this function? |
-| `find_callees(fn_name)` | What does this function call? |
+| `find_callees(fn_name, max_depth?)` | What does this function call? `max_depth>1` traces the forward call chain in one call. |
 | `doc_outline(file_path)` | Table of contents for a Markdown file |
 | `doc_refs(symbol_name)` | Find docs that reference a symbol |
 | `fts_search(query, kind?)` | BM25 full-text search (names + docstrings) |

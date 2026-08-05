@@ -5,6 +5,12 @@
 # Detects the environment, installs cgh (uv tool, then pipx, then pip --user),
 # and offers to add the cgh command to your PATH. On native Windows PowerShell
 # or cmd, use install.ps1 instead.
+#
+# Behind a corporate network:
+#   CGH_INDEX_URL=https://nexus.corp/repository/pypi/simple  (internal mirror)
+#   CGH_TRUSTED_HOST=nexus.corp                              (self-signed TLS)
+#   CGH_TIMEOUT=120 CGH_RETRIES=8                            (slow or flaky link)
+# Each installer is tried in turn, so one failing does not end the run.
 
 set -euo pipefail
 
@@ -48,6 +54,30 @@ if ! "$PY" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) els
 fi
 echo -e "${GREEN}+${RESET} Python $PY_VERSION found"
 
+# --- network posture --------------------------------------------------------
+# One place to say "the index is over there" and "the link is slow", honored
+# by uv, pipx and pip alike through their environment variables. An index the
+# caller already exported is respected, never overwritten.
+TIMEOUT="${CGH_TIMEOUT:-120}"
+RETRIES="${CGH_RETRIES:-5}"
+export PIP_TIMEOUT="${PIP_TIMEOUT:-$TIMEOUT}"
+export PIP_RETRIES="${PIP_RETRIES:-$RETRIES}"
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-$TIMEOUT}"
+
+INDEX="${CGH_INDEX_URL:-${PIP_INDEX_URL:-}}"
+if [ -n "$INDEX" ]; then
+  export PIP_INDEX_URL="$INDEX"
+  # uv renamed the variable; export both so any version picks it up.
+  export UV_INDEX_URL="$INDEX"
+  export UV_DEFAULT_INDEX="$INDEX"
+  echo -e "${GREEN}+${RESET} Package index: ${CYAN}${INDEX}${RESET}"
+fi
+if [ -n "${CGH_TRUSTED_HOST:-}" ]; then
+  export PIP_TRUSTED_HOST="$CGH_TRUSTED_HOST"
+  export UV_INSECURE_HOST="$CGH_TRUSTED_HOST"
+  echo -e "${YELLOW}!${RESET} TLS verification relaxed for ${CGH_TRUSTED_HOST}"
+fi
+
 # --- install ----------------------------------------------------------------
 # The PyPI package is `cgh` (not `codegraph`, which is an unrelated project).
 # CGH_PLUGINS=1 installs the five first-party plugins in the same shot:
@@ -57,16 +87,33 @@ if [ -n "${CGH_PLUGINS:-}" ]; then
   SPEC="cgh[full]"
   echo -e "${GREEN}+${RESET} Including plugins, extra parsers and precise calls (cgh[full])"
 fi
+# Every installer gets its turn: a network hiccup on uv used to abort the
+# script (set -e) instead of falling through to pipx and pip.
 INSTALLER=""
-if command -v uv >/dev/null 2>&1; then
-  echo -e "${GREEN}+${RESET} Installing with uv tool"
-  uv tool install "$SPEC" && INSTALLER="uv"
-elif command -v pipx >/dev/null 2>&1; then
-  echo -e "${GREEN}+${RESET} Installing with pipx"
-  pipx install "$SPEC" && INSTALLER="pipx"
-else
-  echo -e "${YELLOW}!${RESET} uv and pipx not found, using pip --user"
-  "$PY" -m pip install --user "$SPEC" && INSTALLER="pip"
+attempt() {
+  local name="$1"; shift
+  command -v "$1" >/dev/null 2>&1 || [ "$1" = "$PY" ] || return 1
+  echo -e "${GREEN}+${RESET} Installing with ${name}"
+  if "$@"; then
+    INSTALLER="$name"
+    return 0
+  fi
+  echo -e "${YELLOW}!${RESET} ${name} failed, trying the next installer"
+  return 1
+}
+
+attempt uv uv tool install "$SPEC" \
+  || attempt pipx pipx install "$SPEC" \
+  || attempt pip "$PY" -m pip install --user \
+       --timeout "$TIMEOUT" --retries "$RETRIES" "$SPEC" \
+  || true
+
+if [ -z "$INSTALLER" ]; then
+  echo -e "\n${RED}${BOLD}Every installer failed.${RESET}"
+  echo -e "If your network blocks PyPI, point the installer at your internal mirror:"
+  echo -e "  ${BOLD}curl -fsSL .../install.sh | CGH_INDEX_URL=https://your-mirror/simple bash${RESET}"
+  echo -e "Slow or flaky link? raise the budget: ${BOLD}CGH_TIMEOUT=300 CGH_RETRIES=10${RESET}"
+  exit 1
 fi
 
 # --- verify, and offer to fix PATH ------------------------------------------

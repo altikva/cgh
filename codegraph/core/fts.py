@@ -94,6 +94,12 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             content='memory_entries', content_rowid='rowid'
         )
     """)
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_tri USING fts5(
+            title, body, kind UNINDEXED,
+            content='memory_entries', content_rowid='rowid', tokenize='trigram'
+        )
+    """)
     # Plan documents, indexed from ~/.claude/plans/
     conn.execute("""
         CREATE TABLE IF NOT EXISTS plan_entries (
@@ -111,23 +117,35 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             content='plan_entries', content_rowid='rowid'
         )
     """)
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS plan_tri USING fts5(
+            title, body, slug UNINDEXED, agent_id UNINDEXED,
+            content='plan_entries', content_rowid='rowid', tokenize='trigram'
+        )
+    """)
     _backfill_trigram(conn)
     conn.commit()
     return conn
 
 
 def _backfill_trigram(conn: sqlite3.Connection) -> None:
-    """Populate symbols_tri from existing symbols the first time it
+    """Populate a trigram index from its content table the first time it
     appears (an index built before trigram support). Rebuild reads the
-    raw name and docstring straight from the content table."""
+    raw columns straight from the content table."""
+    pairs = [
+        ("symbols_tri", "symbols"),
+        ("memory_tri", "memory_entries"),
+        ("plan_tri", "plan_entries"),
+    ]
     with _FTS_LOCK:
-        try:
-            have = conn.execute("SELECT count(*) FROM symbols_tri").fetchone()[0]
-            total = conn.execute("SELECT count(*) FROM symbols").fetchone()[0]
-        except sqlite3.OperationalError:
-            return
-        if total and not have:
-            conn.execute("INSERT INTO symbols_tri(symbols_tri) VALUES('rebuild')")
+        for tri, content in pairs:
+            try:
+                have = conn.execute(f"SELECT count(*) FROM {tri}").fetchone()[0]
+                total = conn.execute(f"SELECT count(*) FROM {content}").fetchone()[0]
+            except sqlite3.OperationalError:
+                continue
+            if total and not have:
+                conn.execute(f"INSERT INTO {tri}({tri}) VALUES('rebuild')")
 
 
 def upsert_symbol(
@@ -349,18 +367,27 @@ def upsert_memory_entry(
                 "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", kind or "other"),
             )
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_tri(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
+                (rowid[0], title or "", body or "", kind or "other"),
+            )
 
 
 def delete_memory_entry(conn: sqlite3.Connection, path: str) -> None:
     with _FTS_LOCK:
-        rowid = conn.execute(
-            "SELECT rowid FROM memory_entries WHERE path = ?", (path,)
+        row = conn.execute(
+            "SELECT rowid, title, body, kind FROM memory_entries WHERE path = ?",
+            (path,),
         ).fetchone()
-        if rowid:
-            conn.execute(
-                "INSERT INTO memory_fts(memory_fts, rowid, title, body, kind) VALUES('delete', ?, '', '', '')",
-                (rowid[0],),
-            )
+        if row:
+            rowid, title, body, kind = row
+            # External-content FTS5 delete needs the exact indexed values.
+            for tbl in ("memory_fts", "memory_tri"):
+                conn.execute(
+                    f"INSERT INTO {tbl}({tbl}, rowid, title, body, kind) "
+                    "VALUES('delete', ?, ?, ?, ?)",
+                    (rowid, title or "", body or "", kind or "other"),
+                )
         conn.execute("DELETE FROM memory_entries WHERE path = ?", (path,))
 
 
@@ -370,32 +397,45 @@ def memory_search(
     kind: str | None = None,
     limit: int = 10,
 ) -> list[MemoryHit]:
-    """BM25 search over memory entries. Returns hits ordered by relevance."""
+    """Search memory entries, fusing tokenized BM25 with trigram
+    substring matching (RRF). Returns hits ordered by relevance."""
     out: list[MemoryHit] = []
     try:
-        sql = (
-            "SELECT m.path, m.kind, m.title, m.body, rank AS score "
-            "FROM memory_fts f JOIN memory_entries m ON m.rowid = f.rowid "
-            "WHERE memory_fts MATCH ? "
+        pool = max(limit * 4, 40)
+        bm25 = _match_rowids(conn, "memory_fts", _tokenize(query), pool)
+        trigram = (
+            _match_rowids(conn, "memory_tri", query, pool) if len(query) >= 3 else []
         )
-        params: list = [_tokenize(query)]
+        fused = _rrf([bm25, trigram]) if trigram else bm25
+        if not fused:
+            raise sqlite3.OperationalError("no fts match")
+        placeholders = ",".join("?" for _ in fused)
+        sql = (
+            "SELECT rowid, path, kind, title, body FROM memory_entries "
+            f"WHERE rowid IN ({placeholders})"
+        )
+        params: list = list(fused)
         if kind:
-            sql += "AND m.kind = ? "
+            sql += " AND kind = ?"
             params.append(kind)
-        sql += "ORDER BY rank LIMIT ?"
-        params.append(limit)
         with _FTS_LOCK:
             rows = conn.execute(sql, params).fetchall()
-        for row in rows:
+        by_rowid = {r[0]: r for r in rows}
+        for r in fused:
+            row = by_rowid.get(r)
+            if not row:
+                continue
             out.append(
                 MemoryHit(
-                    path=row[0],
-                    kind=row[1],
-                    title=row[2],
-                    snippet=(row[3] or "")[:240],
-                    score=-row[4],  # BM25 returns negative values; higher = better
+                    path=row[1],
+                    kind=row[2],
+                    title=row[3],
+                    snippet=(row[4] or "")[:240],
+                    score=1.0 / (len(out) + 1),
                 )
             )
+            if len(out) >= limit:
+                break
     except sqlite3.OperationalError:
         # Fallback: LIKE search if FTS chokes
         like = f"%{query}%"
@@ -467,44 +507,66 @@ def upsert_plan_entry(
                 "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", slug or "", agent_id or ""),
             )
+            conn.execute(
+                "INSERT OR REPLACE INTO plan_tri(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
+                (rowid[0], title or "", body or "", slug or "", agent_id or ""),
+            )
 
 
 def delete_plan_entry(conn: sqlite3.Connection, path: str) -> None:
     with _FTS_LOCK:
-        rowid = conn.execute(
-            "SELECT rowid FROM plan_entries WHERE path = ?", (path,)
+        row = conn.execute(
+            "SELECT rowid, title, body, slug, agent_id FROM plan_entries WHERE path = ?",
+            (path,),
         ).fetchone()
-        if rowid:
-            conn.execute(
-                "INSERT INTO plan_fts(plan_fts, rowid, title, body, slug, agent_id) "
-                "VALUES('delete', ?, '', '', '', '')",
-                (rowid[0],),
-            )
+        if row:
+            rowid, title, body, slug, agent_id = row
+            for tbl in ("plan_fts", "plan_tri"):
+                conn.execute(
+                    f"INSERT INTO {tbl}({tbl}, rowid, title, body, slug, agent_id) "
+                    "VALUES('delete', ?, ?, ?, ?, ?)",
+                    (rowid, title or "", body or "", slug or "", agent_id or ""),
+                )
         conn.execute("DELETE FROM plan_entries WHERE path = ?", (path,))
 
 
 def plan_search(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[PlanHit]:
-    """BM25 search over plan files."""
+    """Search plan files, fusing tokenized BM25 with trigram substring
+    matching (RRF)."""
     out: list[PlanHit] = []
     try:
+        pool = max(limit * 4, 40)
+        bm25 = _match_rowids(conn, "plan_fts", _tokenize(query), pool)
+        trigram = (
+            _match_rowids(conn, "plan_tri", query, pool) if len(query) >= 3 else []
+        )
+        fused = _rrf([bm25, trigram]) if trigram else bm25
+        if not fused:
+            raise sqlite3.OperationalError("no fts match")
+        placeholders = ",".join("?" for _ in fused)
         with _FTS_LOCK:
             rows = conn.execute(
-                "SELECT p.path, p.slug, p.agent_id, p.title, p.body, rank AS score "
-                "FROM plan_fts f JOIN plan_entries p ON p.rowid = f.rowid "
-                "WHERE plan_fts MATCH ? ORDER BY rank LIMIT ?",
-                (_tokenize(query), limit),
+                "SELECT rowid, path, slug, agent_id, title, body "
+                f"FROM plan_entries WHERE rowid IN ({placeholders})",
+                list(fused),
             ).fetchall()
-        for row in rows:
+        by_rowid = {r[0]: r for r in rows}
+        for r in fused:
+            row = by_rowid.get(r)
+            if not row:
+                continue
             out.append(
                 PlanHit(
-                    path=row[0],
-                    slug=row[1],
-                    agent_id=row[2],
-                    title=row[3],
-                    snippet=(row[4] or "")[:240],
-                    score=-row[5],
+                    path=row[1],
+                    slug=row[2],
+                    agent_id=row[3],
+                    title=row[4],
+                    snippet=(row[5] or "")[:240],
+                    score=1.0 / (len(out) + 1),
                 )
             )
+            if len(out) >= limit:
+                break
     except sqlite3.OperationalError:
         like = f"%{query}%"
         with _FTS_LOCK:

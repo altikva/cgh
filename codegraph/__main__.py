@@ -523,6 +523,11 @@ def _register_analysis(sub) -> None:
     # --- graph + add-dir ---
     register_graph_parser(sub)
 
+    # --- fetch (URL into the searchable index) ---
+    from codegraph.cli.commands_fetch import register_fetch_parser
+
+    register_fetch_parser(sub)
+
     # --- federate ---
     p = sub.add_parser(
         "federate",

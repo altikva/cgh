@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Fetch a URL into the searchable index**: `fetch_and_index` (MCP)
+  and `cgh fetch <url>` pull a page, reduce it to text, chunk and
+  index it, so `search_fetched` / `cgh fetch --search` read it back
+  with no further network. Results cache by URL with a TTL (default
+  24 h). A fetch is gated network egress: http/https only, private,
+  loopback and link-local hosts refused (SSRF), refused in secure
+  mode unless `[codegraph] allow_fetch` is set, and every fetch and
+  refusal is written to the activity log.
+
 ### Changed
 - **Symbol search fuses BM25 with a trigram substring ranking (RRF)**:
   `search_symbols` / `fts_search` kept a word-tokenized FTS index that

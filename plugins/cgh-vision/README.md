@@ -21,6 +21,28 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## Without Ollama, one command: `cgh vision setup --llamacpp`
+
+If Ollama is unavailable and you have llama.cpp (or can install it),
+this wires everything up:
+
+```bash
+cgh vision setup --llamacpp
+```
+
+It finds `llama-server` (offering `brew install llama.cpp` on macOS,
+or the signed GitHub-release binaries on Windows, official channels
+only), writes a `[plugin.vision]` block pointing cgh-vision at a local
+llama-server, and offers to start it. The server pulls our default
+vision model (`ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`, weights and
+mmproj projector) itself on first run. The server is yours to keep
+running and to stop, exactly like the Ollama daemon; cgh starts it on
+request but does not supervise it.
+
+Benchmark: llama-server gave the best node and edge scores of any
+transport (see the plugin's own notes). This is the recommended
+no-Ollama path.
+
 ## Without Ollama: any OpenAI-compatible endpoint
 
 Ollama is the default, not a requirement. Setting `openai_base_url`

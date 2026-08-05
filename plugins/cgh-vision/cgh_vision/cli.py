@@ -35,6 +35,12 @@ def make_cli_registrar(config: dict):
             action="store_true",
             help="With 'setup': use a local llama.cpp server instead of Ollama",
         )
+        p.add_argument(
+            "--hint",
+            default=None,
+            help="Steer extraction, e.g. 'labels are in French' "
+            "(appended to the prompt, never replaces the JSON contract)",
+        )
         from codegraph.plugin_api import add_format_option, add_out_option
 
         add_out_option(p, what="the report")
@@ -95,6 +101,8 @@ def _run(args, config: dict) -> None:
 
     if args.profile:
         config["profile"] = args.profile
+    if getattr(args, "hint", None):
+        config["hint"] = args.hint
     if not available(config):
         from rich.console import Console
 

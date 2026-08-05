@@ -717,3 +717,37 @@ class TestSetupLlamacpp:
         cfg.write_text(original, encoding="utf-8")
         _write_config(Console(quiet=True), tmp_path, 8080)
         assert cfg.read_text() == original  # untouched
+
+
+class TestHint:
+    def test_hint_appended_to_prompts(self, monkeypatch):
+        seen = []
+
+        def spy(model, path, prompt, config=None, timeout_s=120):
+            seen.append(prompt)
+            return '{"summary":"x","content":["logo"],"text_density":"none"}'
+
+        monkeypatch.setattr(pipeline, "ask", spy)
+        pipeline.inventory(IMG, {"hint": "labels are in French"})
+        assert "Additional guidance" in seen[0]
+        assert "labels are in French" in seen[0]
+
+    def test_no_hint_leaves_prompt_untouched(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            pipeline,
+            "ask",
+            lambda m, p, prompt, config=None, timeout_s=120: (
+                seen.append(prompt)
+                or '{"summary":"x","content":["logo"],"text_density":"none"}'
+            ),
+        )
+        pipeline.inventory(IMG, {})
+        assert "Additional guidance" not in seen[0]
+
+    def test_hint_keeps_the_json_contract_first(self, monkeypatch):
+        from cgh_vision.pipeline import _with_hint
+
+        out = _with_hint("RULES: return JSON", {"hint": "be terse"})
+        assert out.startswith("RULES: return JSON")  # contract precedes the nudge
+        assert "be terse" in out

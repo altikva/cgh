@@ -9,7 +9,26 @@
 
 Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
 
-**Result:** 60-90% fewer tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
+**Result:** 40-60% fewer context tokens on typical navigation tasks (see [Why cgh / Measured gains](#why-cgh--measured-gains)), learnings that survive context clears, and nothing leaving the machine without a gate.
+
+---
+
+## Why cgh / Measured gains
+
+cgh's job is to keep an agent's working context small and its round-trips few. It answers code questions from the graph, returning exact `file:line`, instead of the agent reading whole files or grepping. That shows up as fewer context tokens and fewer turns, at equal correctness.
+
+The figures below come from a two-arm benchmark: the same tasks run twice against the same repo, once with cgh available and once with Read/Grep only, scored on each session's token usage, turn count, and answer correctness. Cost is compared only across tasks both arms got right, so a cheap wrong answer never reads as a saving.
+
+**On code-navigation tasks: about 40 to 60% fewer context tokens and 20 to 40% fewer turns, correctness unchanged.**
+
+The gap is widest on multi-file questions, where a graph beats text search. For "what breaks if I change `_backend`?", the agent has to follow call edges across a module:
+
+| | turns | context tokens |
+|---|---|---|
+| Read / Grep | 13 | 2607 |
+| cgh | 6 | 886 |
+
+**What this is not.** The billed cost, once the model's prompt cache is counted, is roughly a wash: the cache dominates the invoice, so fewer turns do not cut it much. cgh's gain is a smaller working context and fewer turns, not a smaller bill. On a trivial one-file edit cgh adds nothing. Run-to-run variance is real (around 20%), so read these as ratios over a task set rather than a single guaranteed number, and rerun the benchmark on your own repo to see your figures.
 
 ---
 

@@ -91,7 +91,12 @@ cgh vision photo.jpg --profile photo
 cgh vision diagram.png --out report.md    # also save the markdown
 cgh vision diagram.png --format json      # the SDK dicts on stdout
 cgh vision diagram.png --format json | jq '.diagram.nodes[].label'
+cgh vision photo.jpg --hint "labels are in French"   # steer extraction
 ```
+
+No Ollama? `cgh vision setup --llamacpp` wires a local llama.cpp
+server instead, or set `openai_base_url` to any OpenAI-compatible
+vision endpoint. See the cgh-vision README for both.
 
 Small images (under 1000 px) are upscaled 2x before extraction, the
 benchmarked fix for thin-line drawio exports; `config.example.toml`

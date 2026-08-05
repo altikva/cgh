@@ -19,8 +19,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the NER tier (`cgh-pii[ner]`); requesting them without it fails
   clearly. Since NER can miss repeat mentions, a detected name is
   propagated to all its literal occurrences, so it is redacted
-  everywhere. Text files only: binary pdf/docx are not rewritten
-  (extract their text first).
+  everywhere. Word documents are redacted with the `docx` extra
+  (`pip install "cgh-pii[docx]"`): body paragraphs and table cells,
+  one shared token map across the file, formatting inside changed
+  paragraphs flattened (the only way to redact PII split across
+  runs). PDF stays unsupported (real redaction needs an AGPL
+  library); extract the pdf text and redact that.
 
 ### Added
 - **`cgh vision --hint`** (and the `hint` config key): a short steering

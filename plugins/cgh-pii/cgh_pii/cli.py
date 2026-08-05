@@ -62,20 +62,24 @@ def _dispatch(args, config: dict) -> None:
     if not src.exists():
         err.print(f"[red]not found:[/red] {args.file}")
         raise SystemExit(2)
-    if src.suffix.lower() in (".pdf", ".docx", ".xlsx"):
+    only = [c.strip() for c in args.only.split(",") if c.strip()] or None
+    key = os.environ.get("CGH_REDACT_SECRET")
+    secret = key.encode("utf-8") if key and len(key) >= 16 else None
+
+    if src.suffix.lower() == ".docx":
+        _redact_docx(err, args, src, only, secret)
+        return
+    if src.suffix.lower() in (".pdf", ".xlsx"):
         err.print(
-            f"[yellow]{src.suffix} is a binary document.[/yellow] cgh pii redact "
-            "rewrites text files only; formatted in-place redaction of pdf/docx "
-            "is not supported. Extract the text first, then redact that."
+            f"[yellow]{src.suffix} is not supported.[/yellow] cgh pii redact "
+            "handles text, markdown and docx. Extract the text of a pdf first "
+            "(see cgh-docs), then redact that."
         )
         raise SystemExit(2)
     if src.suffix.lower() not in _TEXT_SUFFIXES:
         err.print(f"[dim]note: {src.suffix or 'no suffix'} treated as text.[/dim]")
 
     text = src.read_text(encoding="utf-8", errors="replace")
-    only = [c.strip() for c in args.only.split(",") if c.strip()] or None
-    key = os.environ.get("CGH_REDACT_SECRET")
-    secret = key.encode("utf-8") if key and len(key) >= 16 else None
     try:
         out, counts = redact(text, only=only, mode=args.mode, secret=secret)
     except RedactError as exc:
@@ -94,3 +98,39 @@ def _dispatch(args, config: dict) -> None:
     else:
         print(out)
         err.print(f"[dim]redacted {summary}; --out FILE to save[/dim]")
+
+
+def _summary(counts: dict) -> str:
+    return ", ".join(f"{n} {c}" for c, n in sorted(counts.items())) or "nothing"
+
+
+def _redact_docx(err, args, src, only, secret) -> None:
+    """docx path (the [docx] extra). Needs an --out or --in-place: a
+    docx cannot go to stdout. Formatting inside changed paragraphs is
+    flattened; unchanged paragraphs keep it."""
+    from .redact import RedactError
+
+    if not (args.out or args.in_place):
+        err.print(
+            "[red]docx needs --out FILE or --in-place (cannot go to stdout).[/red]"
+        )
+        raise SystemExit(2)
+    try:
+        from .redact_docx import redact_docx_file
+    except ImportError as exc:
+        err.print(
+            '[red]docx redaction needs the extra: pip install "cgh-pii[docx]"[/red]'
+        )
+        raise SystemExit(1) from exc
+    dst = src if args.in_place else Path(args.out)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        counts = redact_docx_file(src, dst, only=only, mode=args.mode, secret=secret)
+    except RedactError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    where = "in place" if args.in_place else str(dst)
+    err.print(
+        f"[green]+[/green] redacted docx {where} ({_summary(counts)}); "
+        "[dim]formatting inside changed paragraphs is flattened[/dim]"
+    )

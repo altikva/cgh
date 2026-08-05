@@ -114,6 +114,66 @@ def _dedup(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
     return kept
 
 
+class _Tokenizer:
+    """Shared token map so the same value maps to the same token across
+    every chunk of one document. Numbering follows first-seen order."""
+
+    def __init__(self, mode: str, key: bytes) -> None:
+        self._mode = mode
+        self._key = key
+        self._map: dict[tuple[str, str], str] = {}
+        self._counters: dict[str, int] = {}
+
+    def token(self, cat: str, value: str) -> str:
+        cached = self._map.get((cat, value))
+        if cached:
+            return cached
+        if self._mode == "pseudonym":
+            digest = _hmac.new(
+                self._key, value.encode("utf-8"), hashlib.sha256
+            ).hexdigest()[:10]
+            tok = f"<pii.{cat}:{digest}>"
+        else:
+            self._counters[cat] = self._counters.get(cat, 0) + 1
+            tok = f"[{cat.upper()}_{self._counters[cat]}]"
+        self._map[(cat, value)] = tok
+        return tok
+
+    def known(self) -> list[tuple[str, str]]:
+        return list(self._map)
+
+
+def _validate(only: list[str] | None, mode: str) -> set[str]:
+    cats = set(only) if only else set(ALL_CATEGORIES)
+    unknown = cats - ALL_CATEGORIES
+    if unknown:
+        raise RedactError(f"unknown categor(y/ies): {', '.join(sorted(unknown))}")
+    if mode not in ("placeholder", "pseudonym"):
+        raise RedactError("mode must be 'placeholder' or 'pseudonym'")
+    return cats
+
+
+def _all_spans(text: str, cats: set[str], language: str) -> list[tuple[int, int, str]]:
+    spans = _regex_spans(text, cats)
+    if cats & NER_CATEGORIES:
+        ner = _ner_spans(text, cats, language)
+        # NER is probabilistic and misses repeat mentions: a name it
+        # tagged once may recur untagged, which for redaction is a leak.
+        # Propagate every distinct detected value to all its literal
+        # occurrences, so "Jean Dupont" found once is redacted
+        # everywhere. Regex spans are already exhaustive.
+        spans += ner + _propagate(text, ner)
+    return _dedup(spans)
+
+
+def _apply(text: str, spans: list[tuple[int, int, str]], tk: _Tokenizer) -> str:
+    """Replace back to front to keep not-yet-replaced offsets valid."""
+    out = text
+    for start, end, cat in sorted(spans, key=lambda s: s[0], reverse=True):
+        out = out[:start] + tk.token(cat, text[start:end]) + out[end:]
+    return out
+
+
 def redact(
     text: str,
     only: list[str] | None = None,
@@ -128,55 +188,44 @@ def redact(
     "pseudonym" (keyed <pii.person:hex>; pass a fixed ``secret`` for the
     same token across documents, else one is generated for this call).
     Raises RedactError if a requested NER category has no presidio."""
-    cats = set(only) if only else set(ALL_CATEGORIES)
-    unknown = cats - ALL_CATEGORIES
-    if unknown:
-        raise RedactError(f"unknown categor(y/ies): {', '.join(sorted(unknown))}")
-    if mode not in ("placeholder", "pseudonym"):
-        raise RedactError("mode must be 'placeholder' or 'pseudonym'")
+    out, counts = redact_chunks([text], only, mode, secret, language)
+    return out[0], counts
 
-    spans = _regex_spans(text, cats)
-    if cats & NER_CATEGORIES:
-        ner = _ner_spans(text, cats, language)
-        # NER is probabilistic and misses repeat mentions: a name it
-        # tagged once may recur untagged, which for redaction is a leak.
-        # Propagate every distinct detected value to all its literal
-        # occurrences, so "Jean Dupont" found once is redacted
-        # everywhere. Regex spans are already exhaustive.
-        spans += ner + _propagate(text, ner)
-    spans = _dedup(spans)
 
-    # Always have a key ready; placeholder mode just never uses it. One
-    # key per call means the same value maps to the same token within
-    # this document even when the caller passed none.
+def redact_chunks(
+    chunks: list[str],
+    only: list[str] | None = None,
+    mode: str = "placeholder",
+    secret: bytes | None = None,
+    language: str = "en",
+) -> tuple[list[str], dict[str, int]]:
+    """Redact several pieces of one document with shared tokens, so the
+    same value gets the same token everywhere and names detected in any
+    chunk are redacted in all of them. Used for docx paragraphs and
+    table cells; single-text callers use redact()."""
+    cats = _validate(only, mode)
+    # Always have a key ready; placeholder mode just never uses it.
     key = secret if secret is not None else secrets.token_bytes(32)
-    tokens: dict[tuple[str, str], str] = {}
-    counters: dict[str, int] = {}
+    tk = _Tokenizer(mode, key)
 
-    def _token(cat: str, value: str) -> str:
-        cached = tokens.get((cat, value))
-        if cached:
-            return cached
-        if mode == "pseudonym":
-            digest = _hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()[
-                :10
-            ]
-            tok = f"<pii.{cat}:{digest}>"
-        else:
-            counters[cat] = counters.get(cat, 0) + 1
-            tok = f"[{cat.upper()}_{counters[cat]}]"
-        tokens[(cat, value)] = tok
-        return tok
+    # Pass 1: number tokens in document reading order over the whole text.
+    full = "\n".join(chunks)
+    for start, end, cat in sorted(_all_spans(full, cats, language), key=lambda s: s[0]):
+        tk.token(cat, full[start:end])
 
-    # Number tokens in reading order (a forward pass), so [PERSON_1] is
-    # the first name in the text. Then replace back to front to keep the
-    # offsets of not-yet-replaced spans valid.
-    forward = sorted(spans, key=lambda s: s[0])
-    for start, end, cat in forward:
-        _token(cat, text[start:end])
+    # Pass 2: redact each chunk. Regex re-detected per chunk; every known
+    # NER value replaced by literal search, so a name found once lands in
+    # every chunk. Tokens come from the shared map.
+    known_ner = [(c, v) for (c, v) in tk.known() if c in NER_CATEGORIES]
+    out_chunks: list[str] = []
     counts: dict[str, int] = {}
-    out = text
-    for start, end, cat in reversed(forward):
-        out = out[:start] + _token(cat, text[start:end]) + out[end:]
-        counts[cat] = counts.get(cat, 0) + 1
-    return out, counts
+    for chunk in chunks:
+        spans = _regex_spans(chunk, cats)
+        for cat, value in known_ner:
+            for m in re.finditer(re.escape(value), chunk):
+                spans.append((m.start(), m.end(), cat))
+        spans = _dedup(spans)
+        for _s, _e, cat in spans:
+            counts[cat] = counts.get(cat, 0) + 1
+        out_chunks.append(_apply(chunk, spans, tk))
+    return out_chunks, counts

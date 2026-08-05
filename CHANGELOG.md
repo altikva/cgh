@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh vision --hint`** (and the `hint` config key): a short steering
+  instruction appended to the extraction prompts, for example
+  `--hint "labels are in French"` or "prefer application service
+  names". It is added after the format rules and never replaces the
+  JSON contract, so it nudges the model without breaking parsing.
+
+### Added
 - **`cgh vision setup --llamacpp`**: one command to run vision without
   Ollama. It finds or installs llama.cpp through its official channel
   (brew on macOS, the signed GitHub-release binaries on Windows, never

@@ -396,13 +396,24 @@ def _is_endpoint(label: str, edges: list) -> bool:
 # -- passes -----------------------------------------------------------------
 
 
+def _with_hint(prompt: str, config: dict) -> str:
+    """Append the caller's steering hint after the format rules, so it
+    guides the model without touching the JSON contract. Empty is a
+    no-op. Kept short: a hint is a nudge ('labels are in French',
+    'prefer application service names'), not a new prompt."""
+    hint = str(config.get("hint", "")).strip()
+    if not hint:
+        return prompt
+    return f"{prompt}\nAdditional guidance (do not change the output format): {hint}"
+
+
 def inventory(path: Path, config: dict) -> dict:
     """Pass 0: what does the image contain?"""
     profile = profile_for(config)
     raw = ask(
         profile["nodes_model"],
         path,
-        INVENTORY_PROMPT,
+        _with_hint(INVENTORY_PROMPT, config),
         config,
         int(profile.get("timeout_s", 120)),
     )
@@ -484,7 +495,9 @@ def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     cannot see, never fires on images it reads correctly."""
     profile = profile_for(config)
     timeout = int(profile.get("timeout_s", 120))
-    prompt = STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else "")
+    prompt = _with_hint(
+        STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else ""), config
+    )
     path, cleanup = prescaled(path, config)
     try:
         ex = _extract_diagram_inner(path, config, profile, timeout, prompt, progress)

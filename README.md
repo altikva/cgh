@@ -1155,9 +1155,10 @@ MdSection --MD_REFS_CLASS-----> Class        (code references in docs)
 `codegraph.sdk` is the documented surface for using cgh's bricks
 inside your own agent, pipeline or API, without the CLI, the owner
 process, MCP or a `.codegraph/` repo: `scan_text`, `egress_decision`,
-`pseudonymize`, `summarize`, the image functions (`image_inventory`,
-`extract_diagram`, `extract_table`, `extract_chart`, via cgh-vision)
-and an in-memory finding store. Code exercised solely through
+`pseudonymize`, `redact_text` (anonymize a document, via cgh-pii),
+`summarize`, the image functions (`image_inventory`, `extract_diagram`,
+`extract_table`, `extract_chart`, via cgh-vision) and an in-memory
+finding store. Code exercised solely through
 this surface may be used under the MIT license alone, including
 commercially (the SDK embedding exception in LICENSE); the graph
 index, MCP server, federation and shared memory are not exposed by it

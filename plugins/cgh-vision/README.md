@@ -48,6 +48,11 @@ switches the transport to `/chat/completions` with a base64
   just a different `openai_base_url`. A key is read from the env var
   named by `openai_api_key_env` (default `OPENAI_API_KEY`).
 
+  Node and edge extraction over the OpenAI transport is on par with
+  native Ollama; zone detection is a little weaker, because the
+  `/chat/completions` template differs from the raw prompt Ollama's
+  native API takes. If zones matter most, keep the Ollama backend.
+
 - **Hosted vision models** (a corporate LLM gateway serving qwen-vl,
   GLM-4V, and such). These are non-loopback, so cgh treats them as
   cloud: allowed in assist mode with an audit line, refused in secure

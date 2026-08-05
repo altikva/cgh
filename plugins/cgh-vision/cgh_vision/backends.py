@@ -198,6 +198,11 @@ def _ask_openai(
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:200]
         raise VisionError(f"vision endpoint {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # Connection refused, DNS failure, timeout: the endpoint is not
+        # answering. Surface it as a VisionError like every other
+        # backend failure, never a raw urllib error.
+        raise VisionError(f"vision endpoint unreachable: {exc}") from exc
     try:
         return str(data["choices"][0]["message"]["content"])
     except (KeyError, IndexError, TypeError) as exc:

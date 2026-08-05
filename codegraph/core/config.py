@@ -540,7 +540,10 @@ def init_project(root: Path) -> dict:
     # Add .codegraph to .gitignore if not already there
     gitignore = root / ".gitignore"
     if gitignore.exists():
-        content = gitignore.read_text(encoding="utf-8")
+        # A user/template .gitignore may not be UTF-8 (e.g. a CP1252 em dash
+        # in a header comment). We only scan for a substring, so decode
+        # leniently instead of crashing init on the encoding.
+        content = gitignore.read_text(encoding="utf-8", errors="replace")
         if ".codegraph" not in content:
             with open(gitignore, "a", encoding="utf-8") as f:
                 f.write("\n# codegraph index\n.codegraph/\n")

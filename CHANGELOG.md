@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh init` no longer crashes on a non-UTF-8 ignore file**: a
+  template `.gitignore` carrying a CP1252 byte (an em dash in a header
+  comment) raised `UnicodeDecodeError` and took down init across every
+  federated subrepo. The `.gitignore`, `.cghignore` and `.bobignore`
+  reads now decode leniently (`errors="replace"`); they only scan for a
+  substring, so a mangled byte elsewhere is harmless.
 - **`cgh init` self-heals a corrupt DuckDB graph**: when indexing hits
   the DuckDB `Failed to delete all rows from index` fatal (a corrupt ART
   index left by an earlier crash), index_repo now wipes the graph and

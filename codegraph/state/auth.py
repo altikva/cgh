@@ -77,7 +77,9 @@ def ensure_gitignore_has_auth_key(repo_root: str | Path) -> bool:
     pattern = f"{_CODEGRAPH_DIR}/{AUTH_KEY_FILE}"
 
     if gitignore.exists():
-        content = gitignore.read_text(encoding="utf-8")
+        # Lenient decode: a non-UTF-8 .gitignore must not crash init (we
+        # only test for a substring here).
+        content = gitignore.read_text(encoding="utf-8", errors="replace")
         if pattern in content:
             return False
         with open(gitignore, "a", encoding="utf-8") as f:

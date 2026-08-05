@@ -88,7 +88,9 @@ def _load_cghignore(repo_root: Path) -> list[str]:
         return _cghignore_cache[key]
 
     patterns = []
-    for line in ignore_file.read_text(encoding="utf-8").splitlines():
+    # A .cghignore is user-authored; tolerate a non-UTF-8 byte rather than
+    # crashing the scan on it.
+    for line in ignore_file.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue

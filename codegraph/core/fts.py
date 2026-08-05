@@ -67,6 +67,17 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             name, docstring, content='symbols', content_rowid='rowid'
         )
     """)
+    # A parallel trigram index for substring matching. The tokenized
+    # FTS above splits identifiers into words (good for "Handler"), the
+    # trigram catches partial fragments the tokenizer never emits
+    # ("andl" inside DonationHandler). fts_search fuses the two rankings
+    # with RRF. Raw name goes in here, not the tokenized form.
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS symbols_tri USING fts5(
+            name, docstring, content='symbols', content_rowid='rowid',
+            tokenize='trigram'
+        )
+    """)
     # Memory entries, indexed from ~/.claude/projects/<slug>/memory/
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memory_entries (
@@ -100,8 +111,23 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             content='plan_entries', content_rowid='rowid'
         )
     """)
+    _backfill_trigram(conn)
     conn.commit()
     return conn
+
+
+def _backfill_trigram(conn: sqlite3.Connection) -> None:
+    """Populate symbols_tri from existing symbols the first time it
+    appears (an index built before trigram support). Rebuild reads the
+    raw name and docstring straight from the content table."""
+    with _FTS_LOCK:
+        try:
+            have = conn.execute("SELECT count(*) FROM symbols_tri").fetchone()[0]
+            total = conn.execute("SELECT count(*) FROM symbols").fetchone()[0]
+        except sqlite3.OperationalError:
+            return
+        if total and not have:
+            conn.execute("INSERT INTO symbols_tri(symbols_tri) VALUES('rebuild')")
 
 
 def upsert_symbol(
@@ -129,18 +155,37 @@ def upsert_symbol(
                 "INSERT OR REPLACE INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
                 (rowid[0], _tokenize(name), docstring),
             )
+            # Raw name here: the trigram tokenizer wants the original
+            # identifier, not the word-split form.
+            conn.execute(
+                "INSERT OR REPLACE INTO symbols_tri(rowid, name, docstring) VALUES (?, ?, ?)",
+                (rowid[0], name, docstring),
+            )
 
 
 def delete_file_symbols(conn: sqlite3.Connection, file_path: str) -> None:
-    """Remove all symbols for a file from both tables."""
+    """Remove all symbols for a file from both tables.
+
+    External-content FTS5 'delete' must be handed the exact values that
+    were indexed for that rowid, not empty strings, or the index is left
+    corrupt. symbols_fts stored the tokenized name, symbols_tri the raw
+    name, so each delete replays its own form.
+    """
     with _FTS_LOCK:
         rows = conn.execute(
-            "SELECT rowid FROM symbols WHERE file_path = ?", (file_path,)
+            "SELECT rowid, name, docstring FROM symbols WHERE file_path = ?",
+            (file_path,),
         ).fetchall()
-        for (rowid,) in rows:
+        for rowid, name, docstring in rows:
             conn.execute(
-                "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) VALUES('delete', ?, '', '')",
-                (rowid,),
+                "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) "
+                "VALUES('delete', ?, ?, ?)",
+                (rowid, _tokenize(name), docstring),
+            )
+            conn.execute(
+                "INSERT INTO symbols_tri(symbols_tri, rowid, name, docstring) "
+                "VALUES('delete', ?, ?, ?)",
+                (rowid, name, docstring),
             )
         conn.execute("DELETE FROM symbols WHERE file_path = ?", (file_path,))
 
@@ -151,6 +196,32 @@ def commit(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _rrf(rank_lists: list[list[int]], k: int = 60) -> list[int]:
+    """Reciprocal Rank Fusion: merge several ranked rowid lists into one
+    ordering. A rowid ranked high in either list rises; agreement across
+    lists compounds. k dampens the top ranks (the standard 60)."""
+    score: dict[int, float] = {}
+    for lst in rank_lists:
+        for rank, rowid in enumerate(lst):
+            score[rowid] = score.get(rowid, 0.0) + 1.0 / (k + rank)
+    return sorted(score, key=lambda r: score[r], reverse=True)
+
+
+def _match_rowids(
+    conn: sqlite3.Connection, table: str, match: str, cap: int
+) -> list[int]:
+    """Rowids of a MATCH, best rank first. Empty on any FTS error."""
+    try:
+        with _FTS_LOCK:
+            rows = conn.execute(
+                f"SELECT rowid FROM {table} WHERE {table} MATCH ? ORDER BY rank LIMIT ?",
+                (match, cap),
+            ).fetchall()
+        return [r[0] for r in rows]
+    except sqlite3.OperationalError:
+        return []
+
+
 def fts_search(
     conn: sqlite3.Connection,
     query: str,
@@ -158,46 +229,48 @@ def fts_search(
     kind_filter: str | None = None,
 ) -> list[FTSResult]:
     """
-    Search symbols by name or docstring content using BM25 ranking.
-    Falls back to LIKE search if FTS5 match fails.
+    Search symbols by name or docstring, fusing a tokenized BM25 ranking
+    with a trigram substring ranking (RRF). Falls back to LIKE if both
+    FTS indexes fail.
     """
     results = []
 
-    # Try FTS5 first
+    # Fuse the word-tokenized BM25 ranking with the trigram substring
+    # ranking. Either alone misses cases the other catches: BM25 nails
+    # whole words, trigram nails fragments inside identifiers.
     tokenized = _tokenize(query)
-    try:
-        sql = (
-            "SELECT s.kind, s.name, s.file_path, s.start_line, s.end_line, s.docstring, "
-            "rank AS score "
-            "FROM symbols_fts f "
-            "JOIN symbols s ON s.rowid = f.rowid "
-            "WHERE symbols_fts MATCH ? "
-        )
-        params: list = [tokenized]
-        if kind_filter:
-            sql += "AND s.kind = ? "
-            params.append(kind_filter)
-        sql += "ORDER BY rank LIMIT ?"
-        params.append(limit)
+    pool = max(limit * 4, 40)
+    bm25 = _match_rowids(conn, "symbols_fts", tokenized, pool)
+    trigram = _match_rowids(conn, "symbols_tri", query, pool) if len(query) >= 3 else []
+    fused = _rrf([bm25, trigram]) if trigram else bm25
 
+    if fused:
+        placeholders = ",".join("?" for _ in fused)
+        sql = (
+            "SELECT rowid, kind, name, file_path, start_line, end_line, docstring "
+            f"FROM symbols WHERE rowid IN ({placeholders})"
+        )
+        params: list = list(fused)
+        if kind_filter:
+            sql += " AND kind = ?"
+            params.append(kind_filter)
         with _FTS_LOCK:
             rows = conn.execute(sql, params).fetchall()
-        for row in rows:
+        by_rowid = {row[0]: row for row in rows}
+        # Preserve the fused order; assign a descending score for display.
+        ordered = [by_rowid[r] for r in fused if r in by_rowid][:limit]
+        for i, row in enumerate(ordered):
             results.append(
                 FTSResult(
-                    kind=row[0],
-                    name=row[1],
-                    file_path=row[2],
-                    start_line=row[3],
-                    end_line=row[4],
-                    docstring=row[5][:200] if row[5] else "",
-                    score=abs(row[6]) if row[6] else 0.0,
+                    kind=row[1],
+                    name=row[2],
+                    file_path=row[3],
+                    start_line=row[4],
+                    end_line=row[5],
+                    docstring=row[6][:200] if row[6] else "",
+                    score=1.0 / (i + 1),
                 )
             )
-    except Exception as exc:
-        # A broken FTS index degrading to LIKE must not be silent: LIKE
-        # results look plausible while ranking and prefix logic are gone.
-        print(f"[codegraph] warning: FTS MATCH failed, falling back to LIKE: {exc}")
 
     # Fallback: LIKE search if FTS returned nothing
     if not results:

@@ -439,6 +439,17 @@ graph TD
   classDef layer fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
 ```
 
+#### `fetch`
+
+Fetch a URL, reduce it to text, chunk and index it, then search it back with no further network. A fetch is gated network egress: http/https only, private/loopback/link-local hosts refused (SSRF guard), refused in secure mode unless `[codegraph] allow_fetch = true`, and every fetch is written to the activity log. Results cache by URL with a TTL (default 24 h).
+
+```bash
+cgh fetch https://example.com/doc      # fetch and index
+cgh fetch --search "rate limit"        # search fetched pages
+cgh fetch https://example.com/doc --force   # bypass the cache
+cgh fetch --purge https://example.com/doc   # drop one URL (omit to purge all)
+```
+
 ### Monitor
 
 #### `stats`
@@ -842,6 +853,9 @@ When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus wh
 | `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
 | `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
+| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused in secure mode unless `allow_fetch`) |
+| `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |
+| `purge_fetched(url?)` | Drop one URL's chunks, or all fetched content |
 
 ### Indexing
 

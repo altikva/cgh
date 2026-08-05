@@ -60,6 +60,27 @@ Same key and value give the same pseudonym, so joins and dedup keep
 working; HMAC does not decode, so the raw value cannot be recovered
 from the output.
 
+## Redact a document, keeping only what you choose
+
+`redact_text` returns an anonymized copy: pick the categories, each
+match becomes a stable token (same value, same token). Names need the
+NER tier (`cgh-pii[ner]`); the regex categories work with cgh-pii
+alone.
+
+```python
+from codegraph import sdk
+
+clean = sdk.redact_text(text, only=["person"])           # names -> [PERSON_1]
+clean = sdk.redact_text(text, only=["email", "iban"])    # regex categories
+clean = sdk.redact_text(text, mode="pseudonym", secret=KEY)  # <pii.email:hex>
+```
+
+`mode="placeholder"` (default) numbers distinct values within the
+document; `mode="pseudonym"` uses a keyed HMAC, so the same value maps
+to the same token across documents that share `KEY`. A name detected
+once is redacted at every occurrence. Text in, text out; the CLI
+`cgh pii redact` also handles docx.
+
 ## Summarize with the safe default
 
 ```python

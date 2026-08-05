@@ -12,6 +12,13 @@ from __future__ import annotations
 import json
 import os
 
+# Forward call-chain traversal bounds for find_callees(max_depth>1): the
+# hop ceiling, the per-node edge fan-out, and the total callees returned.
+# Mirror the reverse-reach caps impact_of already uses.
+_CALLEE_DEPTH_CAP = 5
+_CALLEE_FANOUT_CAP = 500
+_CALLEE_TOTAL_CAP = 300
+
 
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
@@ -250,27 +257,64 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def find_callees(fn_name: str) -> str:
+    def find_callees(fn_name: str, max_depth: int = 1) -> str:
         """
-        Find all functions that `fn_name` calls. Federated across subrepos.
+        Find the functions `fn_name` calls. With `max_depth=1` (default)
+        that is the direct callees. With `max_depth>1` it walks the CALLS
+        edges forward transitively, so one call returns the ordered call
+        chain (each callee carries its `depth`, 1 = direct) instead of
+        forcing a separate lookup per hop. Use it to trace a flow in a
+        single call.
+
+        Federated across subrepos; cross-repo CALLS edges are not inferred
+        (each subrepo's graph is canonical for its own code). Like every
+        name-matched CALLS reach it can over-count: a listed callee may
+        belong to a same-named function elsewhere. `truncated` is set when
+        the fan-out or total cap was hit.
         """
+        depth_cap = max(1, min(int(max_depth), _CALLEE_DEPTH_CAP))
+        state = {"truncated": False}
 
         def query(conn):
-            return [
-                {
-                    "callee": row["dst_name"],
-                    "file": row["dst_file_path"],
-                    "line": row["dst_start_line"],
-                }
-                for row in conn.find_neighbors(
-                    "CALLS",
-                    src_where={"name": fn_name},
-                    return_dst=["name", "file_path", "start_line"],
-                )
-            ]
+            seen: set[str] = {fn_name}  # names already expanded (cycle guard)
+            frontier = [fn_name]
+            out: list[dict] = []
+            depth = 0
+            while frontier and depth < depth_cap:
+                depth += 1
+                nxt: list[str] = []
+                for name in frontier:
+                    rows = conn.find_neighbors(
+                        "CALLS",
+                        src_where={"name": name},
+                        return_dst=["name", "file_path", "start_line"],
+                        limit=_CALLEE_FANOUT_CAP,
+                    )
+                    if len(rows) >= _CALLEE_FANOUT_CAP:
+                        state["truncated"] = True
+                    for row in rows:
+                        callee = row["dst_name"]
+                        out.append(
+                            {
+                                "callee": callee,
+                                "file": row["dst_file_path"],
+                                "line": row["dst_start_line"],
+                                "depth": depth,
+                            }
+                        )
+                        if callee not in seen:
+                            seen.add(callee)
+                            nxt.append(callee)
+                    if len(out) >= _CALLEE_TOTAL_CAP:
+                        state["truncated"] = True
+                        return out
+                frontier = nxt
+            return out
 
         callees, warnings = _federate(query)
-        out = {"fn": fn_name, "callees": callees}
+        out = {"fn": fn_name, "max_depth": depth_cap, "callees": callees}
+        if state["truncated"]:
+            out["truncated"] = True
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings

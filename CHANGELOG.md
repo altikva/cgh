@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **SSRF hardening on `fetch_and_index`** (found by the commit security
+  review): the guard only checked bare IP literals, so three bypasses
+  slipped through: a hostname resolving to a private address
+  (DNS-based SSRF), a decimal/hex/IPv6-encoded loopback
+  (`http://2130706433/`), and a public URL redirecting to a private
+  host. The guard now resolves the host through getaddrinfo and refuses
+  if any resulting IP is private, loopback, link-local, reserved,
+  multicast or unspecified (a host that resolves to nothing is refused
+  too, fail closed), and a custom opener re-guards every redirect hop.
+
 ### Added
 - **Fetch a URL into the searchable index**: `fetch_and_index` (MCP)
   and `cgh fetch <url>` pull a page, reduce it to text, chunk and

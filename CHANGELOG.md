@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **cgh-vision: a clear error instead of a crash when Ollama is missing
+  the model or is down**: `_ask_ollama` did not catch HTTP / connection
+  errors, so a 404 (model not pulled) or an unreachable daemon raised a
+  raw urllib traceback and a crash report. It now raises a VisionError
+  the CLI catches: a 404 names the model and the ways to get it (ollama
+  pull, a local GGUF, or `cgh vision setup --llamacpp` to serve it from
+  Hugging Face), an unreachable daemon says so, and the command exits
+  non-zero cleanly.
+
 ## [0.11.1] - 2026-08-06
 
 ### Fixed

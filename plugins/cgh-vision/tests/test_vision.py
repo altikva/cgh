@@ -751,3 +751,27 @@ class TestHint:
         out = _with_hint("RULES: return JSON", {"hint": "be terse"})
         assert out.startswith("RULES: return JSON")  # contract precedes the nudge
         assert "be terse" in out
+
+
+def test_ask_ollama_404_raises_clear_visionerror(tmp_path, monkeypatch):
+    """A 404 from Ollama /api/generate (model not pulled) must surface as a
+    VisionError naming the model and how to get it, not a raw HTTPError."""
+    import urllib.error
+    import urllib.request
+
+    from cgh_vision import backends
+
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+    def _raise_404(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise_404)
+
+    import pytest
+
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:7b", img, "prompt", {}, 5)
+    msg = str(ei.value)
+    assert "qwen2.5vl:7b" in msg and "ollama pull" in msg

@@ -9,6 +9,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **The non-UTF-8 tolerance now also covers the agent docs read during
+  init**: `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` are read to splice in
+  the codegraph block; a CP1252 byte in a templated one crashed init
+  (notably every federated child). Those reads decode leniently too.
 - **`cgh init` no longer crashes on a non-UTF-8 ignore file**: a
   template `.gitignore` carrying a CP1252 byte (an em dash in a header
   comment) raised `UnicodeDecodeError` and took down init across every
@@ -37,6 +41,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   retries once when it meets an already-corrupt index instead of
   crashing the reindex. Indexes corrupted by an earlier build self-heal
   on the next index.
+
+
+### Added
+- **Progress bar while refreshing federated subrepos**: `cgh init` runs
+  a full sub-init per child, so the refresh of many subrepos no longer
+  waits silently. A live bar shows the current child, count and elapsed
+  time, then the per-child results are printed.
 
 ## [0.11.0] - 2026-08-05
 

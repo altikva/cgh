@@ -1008,7 +1008,11 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
 
     # -- Step 0: Probe existing state (before anything mutates disk) --
-    prior_state = _detect_existing_state(root)
+    # This counts the existing index and probes MCP / agents / skills, which
+    # is a few seconds on a large repo, so show a spinner instead of a
+    # silent wait right after the banner.
+    with phase_status("[dim]checking existing codegraph state..."):
+        prior_state = _detect_existing_state(root)
     _print_prior_state(prior_state)
 
     # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --

@@ -48,10 +48,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ### Added
 - **Progress feedback across every init phase**: spinners while detecting
-  AI tools and searching for subrepos, a bar while refreshing federated
-  subrepos, and the existing indexing bar. All are gated to a real
-  terminal (`disable`/`console.status`), so a background owner, a
-  post-commit hook, or a captured child subprocess never gets ANSI spam.
+  AI tools, searching for subrepos and counting files, plus the indexing
+  and federated-refresh bars. Rendered on real terminals AND on git-bash /
+  mintty (where isatty is unreliable), and suppressed via CGH_NO_PROGRESS
+  in background / captured runs (federated children, hooks) so a pipe or
+  log never gets ANSI. A federated child that fails now shows its full
+  traceback (they run captured), not just the last line.
 - **Progress bar while refreshing federated subrepos**: `cgh init` runs
   a full sub-init per child, so the refresh of many subrepos no longer
   waits silently. A live bar shows the current child, count and elapsed

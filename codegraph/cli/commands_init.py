@@ -17,7 +17,15 @@ from rich import box
 from rich.panel import Panel
 from rich.table import Table
 
-from codegraph.cli import LOGO, console
+from codegraph.cli import (
+    LOGO,
+    console,
+    progress_console,
+    show_progress,
+)
+from codegraph.cli import (
+    status as phase_status,
+)
 from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Wildcards that cover every codegraph MCP tool (current + future). The
@@ -642,7 +650,7 @@ def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
 
     # console.status renders a spinner only on a real terminal; in a
     # background / captured run it is a silent no-op, so this never spams.
-    with console.status("[dim]probing installed tools...", spinner="dots"):
+    with phase_status("[dim]probing installed tools..."):
         all_tools = _probe_ai_tools(root, shutil)
 
     for name, _, detected in all_tools:
@@ -926,7 +934,7 @@ def _offer_federation(root: Path, args: argparse.Namespace, cg_style) -> None:
     # and instead query their own DBs read-only at runtime. Crucial for
     # workspaces containing multiple git repos, without this, the parent
     # would count and try to index every node_modules + child source tree.
-    with console.status("[dim]searching for subrepos...", spinner="dots"):
+    with phase_status("[dim]searching for subrepos..."):
         detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
     if detected_subrepos:
         console.print(
@@ -1003,7 +1011,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     _auto_migrate_kuzu_to_duckdb(root)
 
     # -- Step 1: Create .codegraph/ --
-    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
+    with phase_status("[bold cyan]Setting up codegraph..."):
         result = init_project(root)
 
     if result["created"]:
@@ -1025,7 +1033,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     _offer_federation(root, args, cg_style)
 
     # -- Step 4: Detect parseable files --
-    file_counts = _count_parseable_files(root)
+    with phase_status("[dim]counting files to index..."):
+        file_counts = _count_parseable_files(root)
     _print_file_counts(file_counts)
 
     total = sum(file_counts.values())
@@ -1202,15 +1211,16 @@ def _init_children(root: Path, assume_yes: bool) -> None:
     )
 
     results: list[str] = []
+    first_failure: tuple[str, str] | None = None  # (child name, full stderr)
     with Progress(
         SpinnerColumn(),
         TextColumn("[cyan]{task.description}"),
         BarColumn(),
         TextColumn("{task.completed}/{task.total}"),
         TimeElapsedColumn(),
-        console=console,
+        console=progress_console(),
         transient=True,
-        disable=not console.is_terminal,  # no live bar in background / capture
+        disable=not show_progress(),
     ) as progress:
         task = progress.add_task("Refreshing subrepos", total=len(children))
         for child in children:
@@ -1232,14 +1242,20 @@ def _init_children(root: Path, assume_yes: bool) -> None:
                     capture_output=True,
                     text=True,
                     timeout=900,
+                    # Output is captured, so tell the child not to animate
+                    # progress: no spinner/bar ANSI ends up in the pipe.
+                    env={**os.environ, "CGH_NO_PROGRESS": "1"},
                     **quiet_subprocess_kwargs(),
                 )
                 if proc.returncode != 0:
-                    tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                    full = (proc.stderr or proc.stdout or "").strip()
+                    tail = full.splitlines()
                     results.append(
                         f"  [red]x[/red] {child.name}: init failed"
                         + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
                     )
+                    if first_failure is None and full:
+                        first_failure = (child.name, full)
                     progress.advance(task)
                     continue
             except (subprocess.TimeoutExpired, OSError) as exc:
@@ -1260,6 +1276,16 @@ def _init_children(root: Path, assume_yes: bool) -> None:
 
     for line in results:
         console.print(line)
+
+    # Children run captured, so their traceback is otherwise invisible: on a
+    # failure show the first one in full (they usually share a root cause),
+    # so it can be diagnosed without re-running each child by hand.
+    if first_failure is not None:
+        name, detail = first_failure
+        console.print(
+            f"\n  [dim]First failure ({name}), full output:[/dim]\n"
+            + "\n".join(f"  [dim]|[/dim] {ln}" for ln in detail.splitlines()[-40:])
+        )
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:

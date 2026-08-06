@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
+
 from rich.console import Console
 
 from codegraph import __version__ as VERSION
@@ -17,13 +20,51 @@ from codegraph.core.utils import short_path as _short_path
 
 console = Console()
 
+_PROGRESS_CONSOLE: Console | None = None
+
+
+def show_progress() -> bool:
+    """Whether to animate spinners / progress bars.
+
+    Off when a parent asked for quiet via CGH_NO_PROGRESS=1 (a federated
+    child run with captured output, a git hook, a background owner): those
+    must never spray ANSI into a pipe or a log. On otherwise, including on
+    terminals rich mis-detects as non-tty, notably git-bash / mintty on
+    Windows (isatty is False there even though a human is watching), which
+    is why we also trust MSYSTEM.
+    """
+    if os.environ.get("CGH_NO_PROGRESS") == "1":
+        return False
+    return console.is_terminal or bool(os.environ.get("MSYSTEM"))
+
+
+def progress_console() -> Console:
+    """A console that actually renders live progress even where isatty is
+    unreliable (git-bash). Only used when show_progress() is True."""
+    global _PROGRESS_CONSOLE
+    if _PROGRESS_CONSOLE is None:
+        _PROGRESS_CONSOLE = Console(force_terminal=True)
+    return _PROGRESS_CONSOLE
+
+
+@contextmanager
+def status(message: str):
+    """A spinner during a quiet phase, or a silent no-op when progress is
+    disabled (background / captured). Safe to wrap any blocking step."""
+    if show_progress():
+        with progress_console().status(message, spinner="dots"):
+            yield
+    else:
+        yield
+
+
 LOGO = r"""[bold cyan]
-   ___          _                          _
-  / __\___   __| | ___  __ _ _ __ __ _ _ __ | |__
- / /  / _ \ / _` |/ _ \/ _` | '__/ _` | '_ \| '_ \
-/ /__| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |
-\____/\___/ \__,_|\___|\__, |_|  \__,_| .__/|_| |_|
-                       |___/          |_|
+               _                            _
+  ___ ___   __| | ___  __ _ _ __ __ _ _ __ | |__
+ / __/ _ \ / _` |/ _ \/ _` | '__/ _` | '_ \| '_ \
+| (_| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |
+ \___\___/ \__,_|\___|\__, |_|  \__,_| .__/|_| |_|
+                      |___/          |_|
 [/bold cyan]"""
 
 

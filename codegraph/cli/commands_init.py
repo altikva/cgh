@@ -553,7 +553,11 @@ def _set_config_mode(root: Path, mode: str) -> bool:
     cfg = root / ".codegraph" / "config.toml"
     if not cfg.exists():
         return False
-    text = cfg.read_text(encoding="utf-8")
+    # errors="replace": a config.toml carrying a non-UTF-8 byte (a CP1252
+    # em dash pasted into a comment) crashed secure-mode init here. Decode
+    # leniently; the write-back below then re-encodes valid UTF-8, so the
+    # file is repaired for the tomllib reads that follow.
+    text = cfg.read_text(encoding="utf-8", errors="replace")
     line = f'mode = "{mode}"'
     new, n = _re.subn(
         r'(?m)^#?\s*mode\s*=\s*"(?:assist|secure)"\s*$', line, text, count=1

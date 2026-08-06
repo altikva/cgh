@@ -9,6 +9,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **Secure-mode init crashed on a non-UTF-8 config.toml**: enabling
+  secure mode reads `.codegraph/config.toml` to edit the `mode` line; a
+  CP1252 byte in it (an em dash in a comment) raised UnicodeDecodeError
+  and took down every federated child refresh. It now decodes leniently
+  and the write-back repairs the file to valid UTF-8. A failed federated
+  child now also prints its full traceback (they run captured), so such
+  crashes are diagnosable from the parent run.
+- **Incremental reindex shows progress**: it drove no progress callbacks,
+  so `cgh init` with the incremental choice was a silent wait. It now
+  feeds the same spinner/bar as a full scan (and its fallback does too).
 - **The `cgh` banner is the correct figlet again**: the hand-tweaked
   logo had a misaligned underscore floating above the `h`; it is now the
   clean Standard figlet of `codegraph`.

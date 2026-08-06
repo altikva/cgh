@@ -1285,7 +1285,9 @@ def _index_repo(
     # "incremental" is a different workflow (handles deletions, keyed on
     # per-file blob SHAs). Delegate to the dedicated implementation.
     if method == "incremental":
-        return incremental_reindex(repo_root)
+        return incremental_reindex(
+            repo_root, on_file=on_file, on_discovery=on_discovery
+        )
 
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     t0 = time.time()
@@ -1376,7 +1378,11 @@ def _index_repo(
     return stats
 
 
-def incremental_reindex(repo_root: str | Path) -> dict:
+def incremental_reindex(
+    repo_root: str | Path,
+    on_file: Callable[[Path, str, dict], None] | None = None,
+    on_discovery: Callable[[int, str], None] | None = None,
+) -> dict:
     """
     Surgical reindex: compare each File node's stored git_blob_sha to the
     current HEAD blob SHA and re-index only files whose blob changed.
@@ -1404,7 +1410,10 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     if head_shas is None:
         # Not a git repo, fall back to full scan
         _activity_log(repo_root, "incremental_fallback", "no git")
-        return {"mode": "fallback_full", **index_repo(repo_root)}
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
 
     # Drop any path that lives under a federated subrepo. The subrepo
     # owns its own index; the parent acts as a passe-plat.
@@ -1425,13 +1434,19 @@ def incremental_reindex(repo_root: str | Path) -> dict:
     except Exception:
         # Old schema / column missing, fall back
         _activity_log(repo_root, "incremental_fallback", "no git_blob_sha column")
-        return {"mode": "fallback_full", **index_repo(repo_root)}
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
 
     # If nothing is stored OR none of the stored entries have a sha, the
     # index predates per-file blob tracking, do a full scan to populate.
     if not stored or all(sha is None for sha in stored.values()):
         _activity_log(repo_root, "incremental_fallback", "no stored blob shas")
-        return {"mode": "fallback_full", **index_repo(repo_root)}
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
 
     # Diff: paths whose blob_sha changed or that are new
     to_index: list[tuple[str, str]] = []  # (rel_path, blob_sha)
@@ -1502,23 +1517,38 @@ def incremental_reindex(repo_root: str | Path) -> dict:
             delete_errors += 1
             _act_log(repo_root, "scan_error", f"delete failed for {path}: {exc}")
 
-    # Re-index changed/new files
+    # Re-index changed/new files. Drive the progress callbacks (a spinner /
+    # bar in the CLI) the same way the full scan does, so an incremental run
+    # is not a silent wait.
+    if on_discovery is not None:
+        on_discovery(len(to_index) + len(include_extras), "incremental")
+
     reindexed: list[str] = []
     errors = 0
+
+    def _progress(full: Path, ok: bool) -> None:
+        if on_file is not None:
+            on_file(full, "indexed" if ok else "error", {"errors": errors})
+
     for rel_path, blob_sha in to_index:
         full = repo_root / rel_path
+        ok = False
         try:
-            if index_file(full, repo_root, force=True, git_blob_sha=blob_sha):
+            ok = bool(index_file(full, repo_root, force=True, git_blob_sha=blob_sha))
+            if ok:
                 reindexed.append(rel_path)
             else:
                 errors += 1
         except Exception:
             errors += 1
+        _progress(full, ok)
 
     # Re-index include_dir files flagged by mtime (gitignored but force-included)
     for full in include_extras:
+        ok = False
         try:
-            if index_file(full, repo_root, force=True):
+            ok = bool(index_file(full, repo_root, force=True))
+            if ok:
                 try:
                     reindexed.append(str(full.relative_to(repo_root)))
                 except ValueError:
@@ -1527,6 +1557,7 @@ def incremental_reindex(repo_root: str | Path) -> dict:
                 errors += 1
         except Exception:
             errors += 1
+        _progress(full, ok)
 
     elapsed = round(time.time() - t0, 2)
     result = {

@@ -31,3 +31,19 @@ def test_ensure_gitignore_auth_key_tolerates_non_utf8(tmp_path):
     ensure_gitignore_has_auth_key(tmp_path)  # must not raise
     content = (tmp_path / ".gitignore").read_bytes().decode("utf-8", "replace")
     assert "auth.key" in content
+
+
+def test_set_config_mode_tolerates_non_utf8_config(tmp_path):
+    """Secure-mode init edits config.toml in place; a CP1252 byte in it
+    must not crash the read, and the write-back repairs it to valid UTF-8."""
+    from codegraph.cli.commands_init import _set_config_mode
+
+    cg = tmp_path / ".codegraph"
+    cg.mkdir()
+    body = b"[codegraph]\n# comment with \x97 em dash\n" + b"key = 1\n" * 300
+    (cg / "config.toml").write_bytes(body)
+
+    assert _set_config_mode(tmp_path, "secure") is True
+    # Must now be readable as valid UTF-8 with the mode set.
+    txt = (cg / "config.toml").read_text(encoding="utf-8")
+    assert 'mode = "secure"' in txt

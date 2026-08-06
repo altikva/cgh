@@ -369,7 +369,9 @@ def _install_agents_md(target: Path) -> list[str]:
         return []
 
     if target.exists():
-        existing = target.read_text(encoding="utf-8")
+        # errors="replace": a user AGENTS.md / GEMINI.md may not be UTF-8; we
+        # only splice our block in, so a stray byte must not crash init.
+        existing = target.read_text(encoding="utf-8", errors="replace")
         pattern = re.compile(
             re.escape(_BLOCK_START) + r".*?" + re.escape(_BLOCK_END) + r"\n?",
             re.DOTALL,
@@ -442,7 +444,7 @@ def _remove_legacy_usage_block(project_root: Path) -> None:
         if not candidate.exists():
             continue
         try:
-            text = candidate.read_text(encoding="utf-8")
+            text = candidate.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         pattern = _re.compile(
@@ -529,7 +531,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     )
 
     if target.exists():
-        existing = target.read_text(encoding="utf-8")
+        existing = target.read_text(encoding="utf-8", errors="replace")
         pattern = re.compile(
             re.escape(_USAGE_BLOCK_START)
             + r".*?"

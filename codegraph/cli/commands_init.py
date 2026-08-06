@@ -17,7 +17,15 @@ from rich import box
 from rich.panel import Panel
 from rich.table import Table
 
-from codegraph.cli import LOGO, console
+from codegraph.cli import (
+    LOGO,
+    console,
+    progress_console,
+    show_progress,
+)
+from codegraph.cli import (
+    status as phase_status,
+)
 from codegraph.core.utils import quiet_subprocess_kwargs
 
 # Wildcards that cover every codegraph MCP tool (current + future). The
@@ -545,7 +553,11 @@ def _set_config_mode(root: Path, mode: str) -> bool:
     cfg = root / ".codegraph" / "config.toml"
     if not cfg.exists():
         return False
-    text = cfg.read_text(encoding="utf-8")
+    # errors="replace": a config.toml carrying a non-UTF-8 byte (a CP1252
+    # em dash pasted into a comment) crashed secure-mode init here. Decode
+    # leniently; the write-back below then re-encodes valid UTF-8, so the
+    # file is repaired for the tomllib reads that follow.
+    text = cfg.read_text(encoding="utf-8", errors="replace")
     line = f'mode = "{mode}"'
     new, n = _re.subn(
         r'(?m)^#?\s*mode\s*=\s*"(?:assist|secure)"\s*$', line, text, count=1
@@ -597,14 +609,10 @@ def _maybe_enable_secure_mode(root: Path, args: argparse.Namespace, cg_style) ->
         )
 
 
-def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
-    """Probe for installed AI tools, print the detection table, and return
-    the full (name, key, detected) list."""
-    import shutil
-
-    console.print("  [bold]Detecting AI tools...[/bold]\n")
-
-    all_tools = [
+def _probe_ai_tools(root: Path, shutil) -> list[tuple[str, str, bool]]:
+    """The (name, key, detected) probes for every supported AI tool. Split
+    out of _detect_ai_tools so the probing can run inside a status spinner."""
+    return [
         (
             "Claude Code",
             "claude",
@@ -635,6 +643,19 @@ def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
             or shutil.which("bob") is not None,
         ),
     ]
+
+
+def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
+    """Probe for installed AI tools, print the detection table, and return
+    the full (name, key, detected) list."""
+    import shutil
+
+    console.print("  [bold]Detecting AI tools...[/bold]\n")
+
+    # console.status renders a spinner only on a real terminal; in a
+    # background / captured run it is a silent no-op, so this never spams.
+    with phase_status("[dim]probing installed tools..."):
+        all_tools = _probe_ai_tools(root, shutil)
 
     for name, _, detected in all_tools:
         icon = "[green]>[/green]" if detected else "[dim]-[/dim]"
@@ -917,7 +938,8 @@ def _offer_federation(root: Path, args: argparse.Namespace, cg_style) -> None:
     # and instead query their own DBs read-only at runtime. Crucial for
     # workspaces containing multiple git repos, without this, the parent
     # would count and try to index every node_modules + child source tree.
-    detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
+    with phase_status("[dim]searching for subrepos..."):
+        detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
     if detected_subrepos:
         console.print(
             f"  [bold]Detected {len(detected_subrepos)} already-initialized subrepo(s) inside this project:[/bold]\n"
@@ -986,14 +1008,18 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
 
     # -- Step 0: Probe existing state (before anything mutates disk) --
-    prior_state = _detect_existing_state(root)
+    # This counts the existing index and probes MCP / agents / skills, which
+    # is a few seconds on a large repo, so show a spinner instead of a
+    # silent wait right after the banner.
+    with phase_status("[dim]checking existing codegraph state..."):
+        prior_state = _detect_existing_state(root)
     _print_prior_state(prior_state)
 
     # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
     _auto_migrate_kuzu_to_duckdb(root)
 
     # -- Step 1: Create .codegraph/ --
-    with console.status("[bold cyan]Setting up codegraph...", spinner="dots"):
+    with phase_status("[bold cyan]Setting up codegraph..."):
         result = init_project(root)
 
     if result["created"]:
@@ -1015,7 +1041,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     _offer_federation(root, args, cg_style)
 
     # -- Step 4: Detect parseable files --
-    file_counts = _count_parseable_files(root)
+    with phase_status("[dim]counting files to index..."):
+        file_counts = _count_parseable_files(root)
     _print_file_counts(file_counts)
 
     total = sum(file_counts.values())
@@ -1180,46 +1207,93 @@ def _init_children(root: Path, assume_yes: bool) -> None:
 
     secure_flag = ["--secure"] if guard_mode(root) == "secure" else []
 
-    for child in children:
-        was_ok = verify_child(child).ok
-        try:
-            proc = subprocess.run(
-                [
-                    _sys.executable,
-                    "-m",
-                    "codegraph",
-                    "init",
-                    "--root",
-                    str(child),
-                    "--yes",
-                    "--no-children",
-                    *secure_flag,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=900,
-                **quiet_subprocess_kwargs(),
-            )
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-                console.print(
-                    f"  [red]x[/red] {child.name}: init failed"
-                    + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
-                )
-                continue
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            console.print(f"  [red]x[/red] {child.name}: {exc}")
-            continue
+    # Each child is a full sub-init subprocess and there can be many, so show
+    # a live progress bar while they run (which child, how many done, elapsed)
+    # instead of a long silent wait, then print the per-child results.
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
 
-        status = verify_child(child)
-        if status.ok:
-            label = "refreshed" if was_ok else "initialized + indexed"
-            console.print(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
-        else:
-            console.print(
-                f"  [yellow]~[/yellow] {child.name} "
-                "[dim]initialized but still no graph DB, run cgh index there[/dim]"
-            )
+    results: list[str] = []
+    first_failure: tuple[str, str] | None = None  # (child name, full stderr)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=progress_console(),
+        transient=True,
+        disable=not show_progress(),
+    ) as progress:
+        task = progress.add_task("Refreshing subrepos", total=len(children))
+        for child in children:
+            progress.update(task, description=f"Refreshing {child.name}")
+            was_ok = verify_child(child).ok
+            try:
+                proc = subprocess.run(
+                    [
+                        _sys.executable,
+                        "-m",
+                        "codegraph",
+                        "init",
+                        "--root",
+                        str(child),
+                        "--yes",
+                        "--no-children",
+                        *secure_flag,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                    # Output is captured, so tell the child not to animate
+                    # progress: no spinner/bar ANSI ends up in the pipe.
+                    env={**os.environ, "CGH_NO_PROGRESS": "1"},
+                    **quiet_subprocess_kwargs(),
+                )
+                if proc.returncode != 0:
+                    full = (proc.stderr or proc.stdout or "").strip()
+                    tail = full.splitlines()
+                    results.append(
+                        f"  [red]x[/red] {child.name}: init failed"
+                        + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
+                    )
+                    if first_failure is None and full:
+                        first_failure = (child.name, full)
+                    progress.advance(task)
+                    continue
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                results.append(f"  [red]x[/red] {child.name}: {exc}")
+                progress.advance(task)
+                continue
+
+            status = verify_child(child)
+            if status.ok:
+                label = "refreshed" if was_ok else "initialized + indexed"
+                results.append(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
+            else:
+                results.append(
+                    f"  [yellow]~[/yellow] {child.name} "
+                    "[dim]initialized but still no graph DB, run cgh index there[/dim]"
+                )
+            progress.advance(task)
+
+    for line in results:
+        console.print(line)
+
+    # Children run captured, so their traceback is otherwise invisible: on a
+    # failure show the first one in full (they usually share a root cause),
+    # so it can be diagnosed without re-running each child by hand.
+    if first_failure is not None:
+        name, detail = first_failure
+        console.print(
+            f"\n  [dim]First failure ({name}), full output:[/dim]\n"
+            + "\n".join(f"  [dim]|[/dim] {ln}" for ln in detail.splitlines()[-40:])
+        )
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:
@@ -1591,7 +1665,9 @@ def audit_claude_integration(root: Path) -> dict:
     has_block = False
     if claude_md.exists():
         try:
-            text = claude_md.read_text(encoding="utf-8")
+            # errors="replace": a user CLAUDE.md may not be UTF-8 (a CP1252
+            # em dash, say); we only scan for a marker, so never crash on it.
+            text = claude_md.read_text(encoding="utf-8", errors="replace")
             has_block = "<!-- codegraph-usage:start -->" in text
         except OSError:
             has_block = False

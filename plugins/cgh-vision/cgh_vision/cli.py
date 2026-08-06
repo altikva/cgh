@@ -118,19 +118,27 @@ def _run(args, config: dict) -> None:
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=Console(stderr=True),
-        transient=True,
-    ) as bar:
-        task = bar.add_task("warming up", total=None)
-        result = route_structured(
-            Path(args.image),
-            config,
-            progress=lambda step: bar.update(task, description=step),
-        )
+    from .backends import VisionError
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=Console(stderr=True),
+            transient=True,
+        ) as bar:
+            task = bar.add_task("warming up", total=None)
+            result = route_structured(
+                Path(args.image),
+                config,
+                progress=lambda step: bar.update(task, description=step),
+            )
+    except VisionError as exc:
+        # A missing model, an unreachable daemon, a bad response: a clear
+        # message on stderr and a non-zero exit, never a crash report.
+        Console(stderr=True).print(f"[red]vision failed:[/red] {exc}")
+        raise SystemExit(1) from exc
     from codegraph.plugin_api import emit_result
 
     if getattr(args, "format", "md") == "json":

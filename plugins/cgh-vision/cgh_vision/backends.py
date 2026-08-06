@@ -151,8 +151,28 @@ def _ask_ollama(
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        out = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            out = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # Ollama returns 404 from /api/generate when the model is not
+            # present (a pull that never happened, or a tag mismatch).
+            # Name it and how to get it, not a raw urllib traceback.
+            raise VisionError(
+                f"Ollama has no model {model!r}. Pull it with "
+                f"`ollama pull {model}`, or if your network blocks the "
+                "registry, register a local GGUF (see the 'When ollama "
+                "pull is blocked' section of the cgh-vision README), or "
+                "run `cgh vision setup --llamacpp` to serve it from "
+                "Hugging Face without Ollama."
+            ) from exc
+        detail = exc.read().decode(errors="replace")[:200]
+        raise VisionError(f"Ollama error {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise VisionError(
+            f"Ollama unreachable at {ollama_url(cfg)}: {exc} (is the daemon running?)"
+        ) from exc
     return str(out.get("response", ""))
 
 

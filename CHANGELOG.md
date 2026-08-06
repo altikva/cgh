@@ -8,6 +8,76 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-06
+
+### Fixed
+- **MCP server no longer times out on startup for large repos**: the
+  owner ran the startup `--reindex` synchronously before publishing its
+  port, so a big repo's index (30s+) blocked the MCP initialize handshake
+  and the client gave up ("failed to restart cgh mcp, timeout after
+  30000ms"). The reindex now runs in a background thread; the owner
+  publishes its port and answers the handshake immediately, and queries
+  hit the existing graph until the reindex catches up.
+- **Secure-mode init crashed on a non-UTF-8 config.toml**: enabling
+  secure mode reads `.codegraph/config.toml` to edit the `mode` line; a
+  CP1252 byte in it (an em dash in a comment) raised UnicodeDecodeError
+  and took down every federated child refresh. It now decodes leniently
+  and the write-back repairs the file to valid UTF-8. A failed federated
+  child now also prints its full traceback (they run captured), so such
+  crashes are diagnosable from the parent run.
+- **Incremental reindex shows progress**: it drove no progress callbacks,
+  so `cgh init` with the incremental choice was a silent wait. It now
+  feeds the same spinner/bar as a full scan (and its fallback does too).
+- **The `cgh` banner is the correct figlet again**: the hand-tweaked
+  logo had a misaligned underscore floating above the `h`; it is now the
+  clean Standard figlet of `codegraph`.
+- **The non-UTF-8 tolerance now also covers the agent docs read during
+  init**: `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` are read to splice in
+  the codegraph block; a CP1252 byte in a templated one crashed init
+  (notably every federated child). Those reads decode leniently too.
+- **`cgh init` no longer crashes on a non-UTF-8 ignore file**: a
+  template `.gitignore` carrying a CP1252 byte (an em dash in a header
+  comment) raised `UnicodeDecodeError` and took down init across every
+  federated subrepo. The `.gitignore`, `.cghignore` and `.bobignore`
+  reads now decode leniently (`errors="replace"`); they only scan for a
+  substring, so a mangled byte elsewhere is harmless.
+- **`cgh init` self-heals a corrupt DuckDB graph**: when indexing hits
+  the DuckDB `Failed to delete all rows from index` fatal (a corrupt ART
+  index left by an earlier crash), index_repo now wipes the graph and
+  retries a full scan once instead of crashing. The graph is derived
+  from source, so only the index is rebuilt (FTS, knowledge, config
+  stay).
+- **`cgh reset` now removes the DuckDB graph**: the name filter only
+  matched the Kuzu `graph.db`, so on a DuckDB repo (the default since
+  v0.4) reset left `graph.duckdb` in place and could not recover a
+  corrupt graph. It now targets `graph.*` (both backends and their
+  wal/shm sidecars), keeping `call_log.db` (knowledge) untouched.
+- **Re-indexing no longer corrupts the trigram FTS index**: the symbol,
+  memory and plan upserts did `INSERT OR REPLACE` into the content table
+  (which reassigns the row's rowid) and then wrote the new postings
+  without removing the old rowid's, so every reindex orphaned postings
+  in the external-content trigram index until it corrupted into
+  `database disk image is malformed` and crashed `cgh init`. The upserts
+  now delete the old rowid's postings before the replace, and
+  `delete_file_symbols` rebuilds the index from its content table and
+  retries once when it meets an already-corrupt index instead of
+  crashing the reindex. Indexes corrupted by an earlier build self-heal
+  on the next index.
+
+
+### Added
+- **Progress feedback across every init phase**: spinners while detecting
+  AI tools, searching for subrepos and counting files, plus the indexing
+  and federated-refresh bars. Rendered on real terminals AND on git-bash /
+  mintty (where isatty is unreliable), and suppressed via CGH_NO_PROGRESS
+  in background / captured runs (federated children, hooks) so a pipe or
+  log never gets ANSI. A federated child that fails now shows its full
+  traceback (they run captured), not just the last line.
+- **Progress bar while refreshing federated subrepos**: `cgh init` runs
+  a full sub-init per child, so the refresh of many subrepos no longer
+  waits silently. A live bar shows the current child, count and elapsed
+  time, then the per-child results are printed.
+
 ## [0.11.0] - 2026-08-05
 
 ### Added
@@ -969,7 +1039,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/altikva/cgh/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0

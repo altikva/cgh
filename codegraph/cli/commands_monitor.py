@@ -980,15 +980,24 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
     # 2. Confirm destructive deletion
     targets = []
-    for name in ("graph.db", "fts.db", "scan_meta.json", "activity.log"):
+    # graph.duckdb is the DuckDB backend (default since v0.4), graph.db the
+    # Kuzu one; a reset must remove whichever is present or a corrupt graph
+    # survives the reset (graph.duckdb does not start with "graph.db").
+    for name in (
+        "graph.duckdb",
+        "graph.db",
+        "fts.db",
+        "scan_meta.json",
+        "activity.log",
+    ):
         p = cg_dir / name
         if p.exists():
             targets.append(p)
-    # Kuzu also writes .wal / .tmp / shm files
+    # Both backends also write .wal / .tmp / shm sidecar files.
     for p in cg_dir.iterdir():
         if (
             p.is_file()
-            and (p.name.startswith("graph.db") or p.name.startswith("fts.db"))
+            and (p.name.startswith("graph.") or p.name.startswith("fts.db"))
             and p not in targets
         ):
             targets.append(p)

@@ -27,6 +27,66 @@ _FTS_FILE = "fts.db"
 # This lock guards every operation against the shared connection.
 _FTS_LOCK = threading.RLock()
 
+# One authoritative DDL per external-content FTS index. get_fts_conn creates
+# them (with IF NOT EXISTS); rebuild_fts_indexes drops and recreates them from
+# the same string, so the two paths never drift apart. Every entry has a
+# `content=`/`content_rowid=` pair: the index is derived from a base table and
+# must be kept in sync via the FTS5 'delete' / 'insert' commands, never by a
+# bare INSERT OR REPLACE that changes the base rowid (that orphans postings and
+# eventually corrupts the index, which is what rebuild_fts_indexes recovers).
+_FTS_DDL = {
+    "symbols_fts": (
+        "CREATE VIRTUAL TABLE symbols_fts USING fts5("
+        "name, docstring, content='symbols', content_rowid='rowid')"
+    ),
+    "symbols_tri": (
+        "CREATE VIRTUAL TABLE symbols_tri USING fts5("
+        "name, docstring, content='symbols', content_rowid='rowid', "
+        "tokenize='trigram')"
+    ),
+    "memory_fts": (
+        "CREATE VIRTUAL TABLE memory_fts USING fts5("
+        "title, body, kind UNINDEXED, content='memory_entries', "
+        "content_rowid='rowid')"
+    ),
+    "memory_tri": (
+        "CREATE VIRTUAL TABLE memory_tri USING fts5("
+        "title, body, kind UNINDEXED, content='memory_entries', "
+        "content_rowid='rowid', tokenize='trigram')"
+    ),
+    "plan_fts": (
+        "CREATE VIRTUAL TABLE plan_fts USING fts5("
+        "title, body, slug UNINDEXED, agent_id UNINDEXED, "
+        "content='plan_entries', content_rowid='rowid')"
+    ),
+    "plan_tri": (
+        "CREATE VIRTUAL TABLE plan_tri USING fts5("
+        "title, body, slug UNINDEXED, agent_id UNINDEXED, "
+        "content='plan_entries', content_rowid='rowid', tokenize='trigram')"
+    ),
+}
+
+
+def _is_corrupt(exc: Exception) -> bool:
+    """True for the SQLite errors that mean the FTS index on disk is
+    inconsistent and needs rebuilding, not a logic bug to propagate."""
+    m = str(exc).lower()
+    return "malformed" in m or "disk image" in m or "corrupt" in m
+
+
+def rebuild_fts_indexes(conn: sqlite3.Connection) -> None:
+    """Drop and rebuild every external-content FTS/trigram index from its
+    content table. Recovers a 'database disk image is malformed' on the
+    derived index without touching the content rows (symbols / memory /
+    plan stay); only the index is rebuilt. Safe to call whenever a
+    corrupt-index error surfaces."""
+    with _FTS_LOCK:
+        for name, ddl in _FTS_DDL.items():
+            conn.execute(f"DROP TABLE IF EXISTS {name}")
+            conn.execute(ddl)
+            conn.execute(f"INSERT INTO {name}({name}) VALUES('rebuild')")
+        conn.commit()
+
 
 @dataclass
 class FTSResult:
@@ -62,22 +122,11 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             docstring   TEXT NOT NULL DEFAULT ''
         )
     """)
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
-            name, docstring, content='symbols', content_rowid='rowid'
-        )
-    """)
-    # A parallel trigram index for substring matching. The tokenized
-    # FTS above splits identifiers into words (good for "Handler"), the
-    # trigram catches partial fragments the tokenizer never emits
-    # ("andl" inside DonationHandler). fts_search fuses the two rankings
-    # with RRF. Raw name goes in here, not the tokenized form.
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS symbols_tri USING fts5(
-            name, docstring, content='symbols', content_rowid='rowid',
-            tokenize='trigram'
-        )
-    """)
+    # The trigram indexes (symbols_tri etc.) split identifiers into 3-grams
+    # so a fragment inside an identifier ("andl" in DonationHandler) matches
+    # where the word tokenizer never emits it; fts_search fuses the two with
+    # RRF. Content tables come first, then every FTS index from the single
+    # _FTS_DDL source (same strings rebuild_fts_indexes uses).
     # Memory entries, indexed from ~/.claude/projects/<slug>/memory/
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memory_entries (
@@ -86,18 +135,6 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             title       TEXT NOT NULL DEFAULT '',
             body        TEXT NOT NULL DEFAULT '',
             mtime       REAL NOT NULL DEFAULT 0
-        )
-    """)
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-            title, body, kind UNINDEXED,
-            content='memory_entries', content_rowid='rowid'
-        )
-    """)
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS memory_tri USING fts5(
-            title, body, kind UNINDEXED,
-            content='memory_entries', content_rowid='rowid', tokenize='trigram'
         )
     """)
     # Plan documents, indexed from ~/.claude/plans/
@@ -111,18 +148,12 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             mtime       REAL NOT NULL DEFAULT 0
         )
     """)
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS plan_fts USING fts5(
-            title, body, slug UNINDEXED, agent_id UNINDEXED,
-            content='plan_entries', content_rowid='rowid'
+    for ddl in _FTS_DDL.values():
+        conn.execute(
+            ddl.replace(
+                "CREATE VIRTUAL TABLE ", "CREATE VIRTUAL TABLE IF NOT EXISTS ", 1
+            )
         )
-    """)
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS plan_tri USING fts5(
-            title, body, slug UNINDEXED, agent_id UNINDEXED,
-            content='plan_entries', content_rowid='rowid', tokenize='trigram'
-        )
-    """)
     _backfill_trigram(conn)
     conn.commit()
     return conn
@@ -160,6 +191,26 @@ def upsert_symbol(
 ) -> None:
     """Insert or replace a symbol in both the main table and FTS index."""
     with _FTS_LOCK:
+        # REPLACE on the content table gives the row a NEW rowid, so first
+        # remove the old rowid's postings from each external-content index
+        # (an FTS5 'delete' with the exact indexed values). Skipping this
+        # orphans the old postings and eventually corrupts the index.
+        old = conn.execute(
+            "SELECT rowid, name, docstring FROM symbols WHERE sym_id = ?",
+            (sym_id,),
+        ).fetchone()
+        if old:
+            o_rowid, o_name, o_doc = old
+            conn.execute(
+                "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) "
+                "VALUES('delete', ?, ?, ?)",
+                (o_rowid, _tokenize(o_name), o_doc),
+            )
+            conn.execute(
+                "INSERT INTO symbols_tri(symbols_tri, rowid, name, docstring) "
+                "VALUES('delete', ?, ?, ?)",
+                (o_rowid, o_name, o_doc),
+            )
         conn.execute(
             "INSERT OR REPLACE INTO symbols (sym_id, kind, name, file_path, start_line, end_line, docstring) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -170,13 +221,13 @@ def upsert_symbol(
         ).fetchone()
         if rowid:
             conn.execute(
-                "INSERT OR REPLACE INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
+                "INSERT INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
                 (rowid[0], _tokenize(name), docstring),
             )
             # Raw name here: the trigram tokenizer wants the original
             # identifier, not the word-split form.
             conn.execute(
-                "INSERT OR REPLACE INTO symbols_tri(rowid, name, docstring) VALUES (?, ?, ?)",
+                "INSERT INTO symbols_tri(rowid, name, docstring) VALUES (?, ?, ?)",
                 (rowid[0], name, docstring),
             )
 
@@ -194,17 +245,28 @@ def delete_file_symbols(conn: sqlite3.Connection, file_path: str) -> None:
             "SELECT rowid, name, docstring FROM symbols WHERE file_path = ?",
             (file_path,),
         ).fetchall()
-        for rowid, name, docstring in rows:
-            conn.execute(
-                "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) "
-                "VALUES('delete', ?, ?, ?)",
-                (rowid, _tokenize(name), docstring),
-            )
-            conn.execute(
-                "INSERT INTO symbols_tri(symbols_tri, rowid, name, docstring) "
-                "VALUES('delete', ?, ?, ?)",
-                (rowid, name, docstring),
-            )
+        # If the index is already malformed (an older build orphaned
+        # postings), the 'delete' below raises. Rebuild the index from the
+        # content table once, then retry, rather than crashing the reindex.
+        for attempt in range(2):
+            try:
+                for rowid, name, docstring in rows:
+                    conn.execute(
+                        "INSERT INTO symbols_fts(symbols_fts, rowid, name, docstring) "
+                        "VALUES('delete', ?, ?, ?)",
+                        (rowid, _tokenize(name), docstring),
+                    )
+                    conn.execute(
+                        "INSERT INTO symbols_tri(symbols_tri, rowid, name, docstring) "
+                        "VALUES('delete', ?, ?, ?)",
+                        (rowid, name, docstring),
+                    )
+                break
+            except sqlite3.DatabaseError as exc:
+                if attempt == 0 and _is_corrupt(exc):
+                    rebuild_fts_indexes(conn)
+                    continue
+                raise
         conn.execute("DELETE FROM symbols WHERE file_path = ?", (file_path,))
 
 
@@ -355,6 +417,20 @@ def upsert_memory_entry(
 ) -> None:
     """Insert or replace a memory entry in both main table and FTS index."""
     with _FTS_LOCK:
+        # Delete the old rowid's postings before REPLACE reassigns the rowid
+        # (see upsert_symbol) so the external-content index stays in sync.
+        old = conn.execute(
+            "SELECT rowid, title, body, kind FROM memory_entries WHERE path = ?",
+            (path,),
+        ).fetchone()
+        if old:
+            o_rowid, o_title, o_body, o_kind = old
+            for tbl in ("memory_fts", "memory_tri"):
+                conn.execute(
+                    f"INSERT INTO {tbl}({tbl}, rowid, title, body, kind) "
+                    "VALUES('delete', ?, ?, ?, ?)",
+                    (o_rowid, o_title or "", o_body or "", o_kind or "other"),
+                )
         conn.execute(
             "INSERT OR REPLACE INTO memory_entries(path, kind, title, body, mtime) VALUES (?, ?, ?, ?, ?)",
             (path, kind or "other", title or "", body or "", mtime),
@@ -364,11 +440,11 @@ def upsert_memory_entry(
         ).fetchone()
         if rowid:
             conn.execute(
-                "INSERT OR REPLACE INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
+                "INSERT INTO memory_fts(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", kind or "other"),
             )
             conn.execute(
-                "INSERT OR REPLACE INTO memory_tri(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
+                "INSERT INTO memory_tri(rowid, title, body, kind) VALUES (?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", kind or "other"),
             )
 
@@ -495,6 +571,20 @@ def upsert_plan_entry(
     mtime: float,
 ) -> None:
     with _FTS_LOCK:
+        # Delete the old rowid's postings before REPLACE reassigns the rowid
+        # (see upsert_symbol) so the external-content index stays in sync.
+        old = conn.execute(
+            "SELECT rowid, title, body, slug, agent_id FROM plan_entries WHERE path = ?",
+            (path,),
+        ).fetchone()
+        if old:
+            o_rowid, o_title, o_body, o_slug, o_agent = old
+            for tbl in ("plan_fts", "plan_tri"):
+                conn.execute(
+                    f"INSERT INTO {tbl}({tbl}, rowid, title, body, slug, agent_id) "
+                    "VALUES('delete', ?, ?, ?, ?, ?)",
+                    (o_rowid, o_title or "", o_body or "", o_slug or "", o_agent or ""),
+                )
         conn.execute(
             "INSERT OR REPLACE INTO plan_entries(path, slug, agent_id, title, body, mtime) VALUES (?, ?, ?, ?, ?, ?)",
             (path, slug or "", agent_id or "", title or "", body or "", mtime),
@@ -504,11 +594,11 @@ def upsert_plan_entry(
         ).fetchone()
         if rowid:
             conn.execute(
-                "INSERT OR REPLACE INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO plan_fts(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", slug or "", agent_id or ""),
             )
             conn.execute(
-                "INSERT OR REPLACE INTO plan_tri(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO plan_tri(rowid, title, body, slug, agent_id) VALUES (?, ?, ?, ?, ?)",
                 (rowid[0], title or "", body or "", slug or "", agent_id or ""),
             )
 

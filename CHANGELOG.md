@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-06
+
 ### Fixed
 - **MCP server no longer times out on startup for large repos**: the
   owner ran the startup `--reindex` synchronously before publishing its
@@ -1037,7 +1039,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/altikva/cgh/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/altikva/cgh/compare/v0.9.0...v0.10.0

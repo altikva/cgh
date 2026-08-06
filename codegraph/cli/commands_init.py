@@ -1180,46 +1180,75 @@ def _init_children(root: Path, assume_yes: bool) -> None:
 
     secure_flag = ["--secure"] if guard_mode(root) == "secure" else []
 
-    for child in children:
-        was_ok = verify_child(child).ok
-        try:
-            proc = subprocess.run(
-                [
-                    _sys.executable,
-                    "-m",
-                    "codegraph",
-                    "init",
-                    "--root",
-                    str(child),
-                    "--yes",
-                    "--no-children",
-                    *secure_flag,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=900,
-                **quiet_subprocess_kwargs(),
-            )
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-                console.print(
-                    f"  [red]x[/red] {child.name}: init failed"
-                    + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
-                )
-                continue
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            console.print(f"  [red]x[/red] {child.name}: {exc}")
-            continue
+    # Each child is a full sub-init subprocess and there can be many, so show
+    # a live progress bar while they run (which child, how many done, elapsed)
+    # instead of a long silent wait, then print the per-child results.
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
 
-        status = verify_child(child)
-        if status.ok:
-            label = "refreshed" if was_ok else "initialized + indexed"
-            console.print(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
-        else:
-            console.print(
-                f"  [yellow]~[/yellow] {child.name} "
-                "[dim]initialized but still no graph DB, run cgh index there[/dim]"
-            )
+    results: list[str] = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Refreshing subrepos", total=len(children))
+        for child in children:
+            progress.update(task, description=f"Refreshing {child.name}")
+            was_ok = verify_child(child).ok
+            try:
+                proc = subprocess.run(
+                    [
+                        _sys.executable,
+                        "-m",
+                        "codegraph",
+                        "init",
+                        "--root",
+                        str(child),
+                        "--yes",
+                        "--no-children",
+                        *secure_flag,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                    **quiet_subprocess_kwargs(),
+                )
+                if proc.returncode != 0:
+                    tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                    results.append(
+                        f"  [red]x[/red] {child.name}: init failed"
+                        + (f" [dim]({tail[-1][:100]})[/dim]" if tail else "")
+                    )
+                    progress.advance(task)
+                    continue
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                results.append(f"  [red]x[/red] {child.name}: {exc}")
+                progress.advance(task)
+                continue
+
+            status = verify_child(child)
+            if status.ok:
+                label = "refreshed" if was_ok else "initialized + indexed"
+                results.append(f"  [green]+[/green] {child.name} [dim]({label})[/dim]")
+            else:
+                results.append(
+                    f"  [yellow]~[/yellow] {child.name} "
+                    "[dim]initialized but still no graph DB, run cgh index there[/dim]"
+                )
+            progress.advance(task)
+
+    for line in results:
+        console.print(line)
 
 
 def _claude_hook_specs(cli_prefix: str) -> list[dict]:
@@ -1591,7 +1620,9 @@ def audit_claude_integration(root: Path) -> dict:
     has_block = False
     if claude_md.exists():
         try:
-            text = claude_md.read_text(encoding="utf-8")
+            # errors="replace": a user CLAUDE.md may not be UTF-8 (a CP1252
+            # em dash, say); we only scan for a marker, so never crash on it.
+            text = claude_md.read_text(encoding="utf-8", errors="replace")
             has_block = "<!-- codegraph-usage:start -->" in text
         except OSError:
             has_block = False

@@ -25,7 +25,14 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from codegraph.cli import LOGO, _lang_color, _short_path, console
+from codegraph.cli import (
+    LOGO,
+    _lang_color,
+    _short_path,
+    console,
+    progress_console,
+    show_progress,
+)
 
 # ---------------------------------------------------------------------------
 # cmd_index
@@ -88,12 +95,13 @@ def cmd_index(args: argparse.Namespace) -> None:
         MofNCompleteColumn(),
         TextColumn("[dim]{task.fields[status]}[/dim]"),
         TimeElapsedColumn(),
-        console=console,
+        console=progress_console(),
         transient=False,
-        # No live bar when not attached to a terminal (background owner,
-        # post-commit hook, a federated child run with captured output):
-        # it would spam ANSI into logs / the parent's captured pipe.
-        disable=not console.is_terminal,
+        # Off when progress is disabled (background owner, post-commit hook,
+        # a federated child run with captured output) so it never spams a
+        # pipe; force_terminal in progress_console keeps it visible where
+        # isatty is unreliable (git-bash / mintty).
+        disable=not show_progress(),
     ) as progress:
 
         def on_discovery(total, method):

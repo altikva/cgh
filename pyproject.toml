@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.11.0"
+version = "0.11.1"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -120,16 +120,6 @@ cgh = "codegraph.__main__:main"
 # every tool call) each flash a conhost window; cghw.exe is built
 # from the GUI subsystem so it never does. No effect on POSIX.
 cghw = "codegraph.__main__:main"
-
-# Temporary path sources so `uv lock` resolves the plugin versions bumped
-# in this release before they are on PyPI. Remove after the release
-# publishes them (see the release runbook step 4); the published core wheel
-# depends on the extras floors, not on these dev-only sources.
-[tool.uv.sources]
-cgh-pii = { path = "plugins/cgh-pii" }
-cgh-vision = { path = "plugins/cgh-vision" }
-cgh-summarize = { path = "plugins/cgh-summarize" }
-cgh-classify = { path = "plugins/cgh-classify" }
 
 [tool.setuptools.packages.find]
 where = ["."]

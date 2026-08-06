@@ -8,14 +8,24 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **cgh-vision auto-fetches a missing model from Hugging Face**: on the
+  Ollama backend, a missing default model is now pulled from Hugging Face
+  via Ollama's own `hf.co/...` pull (which works where the Ollama registry
+  is blocked but HF is not), then aliased to the profile's name. It runs
+  pre-flight (before the extraction bar) so Ollama's own download progress
+  shows cleanly, and again as a retry if the model 404s mid-run. Opt out
+  with `[plugin.vision] vision_auto_fetch = false`; an unmapped custom
+  model still gets the manual guidance.
+
 ### Fixed
 - **cgh-vision: a clear error instead of a crash when Ollama is missing
   the model or is down**: `_ask_ollama` did not catch HTTP / connection
   errors, so a 404 (model not pulled) or an unreachable daemon raised a
   raw urllib traceback and a crash report. It now raises a VisionError
-  the CLI catches: a 404 names the model and the ways to get it (ollama
-  pull, a local GGUF, or `cgh vision setup --llamacpp` to serve it from
-  Hugging Face), an unreachable daemon says so, and the command exits
+  the CLI catches: when auto-fetch cannot help, a 404 names the model and
+  the ways to get it (ollama pull, a local GGUF, or `cgh vision setup
+  --llamacpp`), an unreachable daemon says so, and the command exits
   non-zero cleanly.
 
 ## [0.11.1] - 2026-08-06

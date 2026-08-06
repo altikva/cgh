@@ -50,21 +50,28 @@ def make_cli_registrar(config: dict):
     return register_cli
 
 
-def _warn_missing_models(config: dict) -> None:
-    """Name the models the daemon lacks before spending a minute
-    failing on them, and point at the route that works when
-    `ollama pull` is blocked by a corporate network."""
+def _ensure_models(config: dict) -> None:
+    """Before the extraction bar starts, name any missing models and, on
+    the Ollama backend, fetch them from Hugging Face (with ollama's own
+    download progress) unless vision_auto_fetch is off. Runs pre-flight so
+    ollama's progress bar does not fight the extraction spinner, and points
+    at the manual route when auto-fetch cannot help."""
     from rich.console import Console
 
-    from .backends import backend_kind, missing_models
+    from .backends import backend_kind, fetch_model_from_hf, missing_models
     from .pipeline import profile_for
 
+    err = Console(stderr=True)
     profile = profile_for(config)
-    wanted = [profile.get("nodes_model"), profile.get("edges_model")]
-    missing = missing_models(config, [str(m) for m in wanted if m])
+    wanted = [
+        profile.get("nodes_model"),
+        profile.get("edges_model"),
+        profile.get("fallback_model"),
+    ]
+    with err.status("[dim]checking models...", spinner="dots"):
+        missing = missing_models(config, [str(m) for m in wanted if m])
     if not missing:
         return
-    err = Console(stderr=True)
     err.print(f"[yellow]missing model(s):[/yellow] {', '.join(missing)}")
     if backend_kind(config) == "openai":
         # An OpenAI-compatible endpoint loads its own models; naming
@@ -74,12 +81,18 @@ def _warn_missing_models(config: dict) -> None:
             "nodes_model / edges_model to a model it exposes.[/dim]"
         )
         return
-    err.print(f"[dim]  ollama pull {' '.join(missing)}[/dim]")
-    err.print(
-        "[dim]  blocked by your network? register a GGUF locally instead, "
-        "see the 'When ollama pull is blocked' section of the cgh-vision "
-        "README (weights + mmproj projector, then ollama create).[/dim]"
-    )
+    for m in missing:
+        # Shows ollama's native download bar. Returns False (no-op) when
+        # auto-fetch is off, the model is unmapped, or ollama is absent,
+        # in which case we print the manual route.
+        if not fetch_model_from_hf(m, config):
+            err.print(f"[dim]  ollama pull {m}[/dim]")
+            err.print(
+                "[dim]  blocked by your network? register a GGUF locally "
+                "instead, see the 'When ollama pull is blocked' section of "
+                "the cgh-vision README (weights + mmproj, then ollama "
+                "create).[/dim]"
+            )
 
 
 def _run(args, config: dict) -> None:
@@ -113,7 +126,7 @@ def _run(args, config: dict) -> None:
         print_install_help(err, ollama_url=url)
         offer_to_install(err)  # interactive only; official channel only
         raise SystemExit(1)
-    _warn_missing_models(config)
+    _ensure_models(config)
     # Progress rides stderr so stdout stays pure markdown (pipeable).
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn

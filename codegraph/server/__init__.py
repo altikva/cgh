@@ -365,14 +365,24 @@ def owner_main(
 
     # Reindex + watcher (if requested)
     if reindex:
+        import threading as _th_startup
+
         from codegraph.indexer import index_repo
 
-        _log.info("indexing %s ...", _root)
-        try:
-            stats = index_repo(_root, verbose=False)
-            _log.info("done: %s", stats)
-        except RuntimeError as exc:
-            _log.warning("reindex skipped: %s", exc)
+        def _bg_reindex() -> None:
+            _log.info("indexing %s ...", _root)
+            try:
+                stats = index_repo(_root, verbose=False)
+                _log.info("done: %s", stats)
+            except RuntimeError as exc:
+                _log.warning("reindex skipped: %s", exc)
+
+        # Run in the background so the owner publishes its port and answers
+        # the MCP initialize handshake immediately. A large repo's reindex
+        # would otherwise block startup past the client's ~30s timeout
+        # (the reported "failed to restart cgh mcp"). Queries hit the
+        # existing graph until the reindex catches up, same as the watcher.
+        _th_startup.Thread(target=_bg_reindex, daemon=True).start()
 
     if watch:
         from codegraph.state.watcher import start_watcher

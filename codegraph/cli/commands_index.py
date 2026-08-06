@@ -90,6 +90,10 @@ def cmd_index(args: argparse.Namespace) -> None:
         TimeElapsedColumn(),
         console=console,
         transient=False,
+        # No live bar when not attached to a terminal (background owner,
+        # post-commit hook, a federated child run with captured output):
+        # it would spam ANSI into logs / the parent's captured pipe.
+        disable=not console.is_terminal,
     ) as progress:
 
         def on_discovery(total, method):

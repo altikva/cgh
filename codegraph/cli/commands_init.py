@@ -597,14 +597,10 @@ def _maybe_enable_secure_mode(root: Path, args: argparse.Namespace, cg_style) ->
         )
 
 
-def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
-    """Probe for installed AI tools, print the detection table, and return
-    the full (name, key, detected) list."""
-    import shutil
-
-    console.print("  [bold]Detecting AI tools...[/bold]\n")
-
-    all_tools = [
+def _probe_ai_tools(root: Path, shutil) -> list[tuple[str, str, bool]]:
+    """The (name, key, detected) probes for every supported AI tool. Split
+    out of _detect_ai_tools so the probing can run inside a status spinner."""
+    return [
         (
             "Claude Code",
             "claude",
@@ -635,6 +631,19 @@ def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
             or shutil.which("bob") is not None,
         ),
     ]
+
+
+def _detect_ai_tools(root: Path) -> list[tuple[str, str, bool]]:
+    """Probe for installed AI tools, print the detection table, and return
+    the full (name, key, detected) list."""
+    import shutil
+
+    console.print("  [bold]Detecting AI tools...[/bold]\n")
+
+    # console.status renders a spinner only on a real terminal; in a
+    # background / captured run it is a silent no-op, so this never spams.
+    with console.status("[dim]probing installed tools...", spinner="dots"):
+        all_tools = _probe_ai_tools(root, shutil)
 
     for name, _, detected in all_tools:
         icon = "[green]>[/green]" if detected else "[dim]-[/dim]"
@@ -917,7 +926,8 @@ def _offer_federation(root: Path, args: argparse.Namespace, cg_style) -> None:
     # and instead query their own DBs read-only at runtime. Crucial for
     # workspaces containing multiple git repos, without this, the parent
     # would count and try to index every node_modules + child source tree.
-    detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
+    with console.status("[dim]searching for subrepos...", spinner="dots"):
+        detected_subrepos = _detect_existing_subrepos(root, max_depth=4)
     if detected_subrepos:
         console.print(
             f"  [bold]Detected {len(detected_subrepos)} already-initialized subrepo(s) inside this project:[/bold]\n"
@@ -1200,6 +1210,7 @@ def _init_children(root: Path, assume_yes: bool) -> None:
         TimeElapsedColumn(),
         console=console,
         transient=True,
+        disable=not console.is_terminal,  # no live bar in background / capture
     ) as progress:
         task = progress.add_task("Refreshing subrepos", total=len(children))
         for child in children:

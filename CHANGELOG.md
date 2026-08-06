@@ -9,6 +9,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **The `cgh` banner is the correct figlet again**: the hand-tweaked
+  logo had a misaligned underscore floating above the `h`; it is now the
+  clean Standard figlet of `codegraph`.
 - **The non-UTF-8 tolerance now also covers the agent docs read during
   init**: `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` are read to splice in
   the codegraph block; a CP1252 byte in a templated one crashed init
@@ -44,6 +47,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 
 ### Added
+- **Progress feedback across every init phase**: spinners while detecting
+  AI tools and searching for subrepos, a bar while refreshing federated
+  subrepos, and the existing indexing bar. All are gated to a real
+  terminal (`disable`/`console.status`), so a background owner, a
+  post-commit hook, or a captured child subprocess never gets ANSI spam.
 - **Progress bar while refreshing federated subrepos**: `cgh init` runs
   a full sub-init per child, so the refresh of many subrepos no longer
   waits silently. A live bar shows the current child, count and elapsed

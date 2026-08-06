@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **MCP server no longer times out on startup for large repos**: the
+  owner ran the startup `--reindex` synchronously before publishing its
+  port, so a big repo's index (30s+) blocked the MCP initialize handshake
+  and the client gave up ("failed to restart cgh mcp, timeout after
+  30000ms"). The reindex now runs in a background thread; the owner
+  publishes its port and answers the handshake immediately, and queries
+  hit the existing graph until the reindex catches up.
 - **Secure-mode init crashed on a non-UTF-8 config.toml**: enabling
   secure mode reads `.codegraph/config.toml` to edit the `mode` line; a
   CP1252 byte in it (an em dash in a comment) raised UnicodeDecodeError

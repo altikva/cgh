@@ -751,3 +751,103 @@ class TestHint:
         out = _with_hint("RULES: return JSON", {"hint": "be terse"})
         assert out.startswith("RULES: return JSON")  # contract precedes the nudge
         assert "be terse" in out
+
+
+def test_ask_ollama_404_raises_clear_visionerror(tmp_path, monkeypatch):
+    """A 404 from Ollama /api/generate (model not pulled) must surface as a
+    VisionError naming the model and how to get it, not a raw HTTPError."""
+    import urllib.error
+    import urllib.request
+
+    from cgh_vision import backends
+
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+    def _raise_404(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise_404)
+
+    import pytest
+
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:7b", img, "prompt", {}, 5)
+    msg = str(ei.value)
+    assert "qwen2.5vl:7b" in msg and "ollama pull" in msg
+
+
+def test_fetch_model_from_hf_gated_and_mapped(monkeypatch):
+    """No auto-fetch when disabled, unmapped, or ollama absent."""
+    import shutil
+
+    from cgh_vision import backends
+
+    # opt-out wins
+    assert (
+        backends.fetch_model_from_hf("qwen2.5vl:3b", {"vision_auto_fetch": False})
+        is False
+    )
+    # unmapped model
+    assert backends.fetch_model_from_hf("some-custom:latest", {}) is False
+    # mapped but no ollama binary
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert backends.fetch_model_from_hf("qwen2.5vl:3b", {}) is False
+
+
+def test_fetch_model_from_hf_runs_ollama(monkeypatch):
+    import shutil
+    import subprocess
+
+    from cgh_vision import backends
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/ollama")
+    calls = []
+
+    class _OK:
+        returncode = 0
+
+    def _run(cmd, **kw):
+        calls.append(cmd)
+        return _OK()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    assert backends.fetch_model_from_hf("qwen2.5vl:3b", {}) is True
+    # pulled the HF spec, then aliased it to the profile name
+    assert calls[0][:2] == ["ollama", "pull"]
+    assert calls[0][2].startswith("hf.co/")
+    assert calls[1][:2] == ["ollama", "cp"] and calls[1][3] == "qwen2.5vl:3b"
+
+
+def test_ask_ollama_404_fetches_then_retries(tmp_path, monkeypatch):
+    """On a 404 for a mapped model, fetch from HF and retry once."""
+    import urllib.error
+    import urllib.request
+
+    from cgh_vision import backends
+
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+
+    monkeypatch.setattr(backends, "fetch_model_from_hf", lambda m, c: True)
+    state = {"n": 0}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"response": "ok"}'
+
+    def _urlopen(req, timeout=0):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    out = backends._ask_ollama("qwen2.5vl:3b", img, "p", {}, 5)
+    assert out == "ok" and state["n"] == 2  # 404, fetched, retried, succeeded

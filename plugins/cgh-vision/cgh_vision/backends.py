@@ -134,8 +134,59 @@ def ask(
     return _ask_ollama(model, image_path, prompt, cfg, timeout_s)
 
 
+# cgh-vision's default models, as Ollama's own Hugging Face pull specs.
+# `ollama pull hf.co/<repo>:<quant>` fetches the GGUF (and its mmproj for a
+# vision model) straight from Hugging Face, which works when the Ollama
+# registry is blocked but HF is not. One curated entry per default model;
+# an unmapped custom model gets the guidance message instead.
+_HF_FALLBACK = {
+    "qwen2.5vl:3b": "hf.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF:Q4_K_M",
+    "gemma3:4b": "hf.co/ggml-org/gemma-3-4b-it-GGUF:Q4_K_M",
+}
+
+
+def fetch_model_from_hf(model: str, cfg: dict) -> bool:
+    """Missing Ollama model: fetch it from Hugging Face via Ollama's own
+    hf.co pull, then alias it to the expected name so the profile keeps
+    working. Returns True when the model is available afterwards. Best
+    effort: opt-out (vision_auto_fetch=false), no ollama binary, an
+    unmapped model, or a failed pull all return False and the caller
+    surfaces the guidance error instead."""
+    import shutil
+    import subprocess
+    import sys
+
+    if not cfg.get("vision_auto_fetch", True):
+        return False
+    spec = _HF_FALLBACK.get(model)
+    if not spec or shutil.which("ollama") is None:
+        return False
+    print(
+        f"[cgh-vision] model {model!r} not in Ollama; fetching it from "
+        f"Hugging Face ({spec}). This downloads several GB. "
+        "Disable with vision_auto_fetch = false.",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        # ollama prints its own download progress to the inherited stderr.
+        if subprocess.run(["ollama", "pull", spec], timeout=3600).returncode != 0:
+            return False
+        # Alias hf.co/... to the profile's name so nodes_model resolves now
+        # and on the next run. A failed alias just means the retry misses.
+        subprocess.run(["ollama", "cp", spec, model], timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def _ask_ollama(
-    model: str, image_path: Path, prompt: str, cfg: dict, timeout_s: int
+    model: str,
+    image_path: Path,
+    prompt: str,
+    cfg: dict,
+    timeout_s: int,
+    _allow_fallback: bool = True,
 ) -> str:
     payload = json.dumps(
         {
@@ -151,8 +202,32 @@ def _ask_ollama(
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        out = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            out = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # Model not present. Try to fetch it from Hugging Face via
+            # Ollama and retry once; if that is off or fails, name the
+            # model and every way to get it, not a raw urllib traceback.
+            if _allow_fallback and fetch_model_from_hf(model, cfg):
+                return _ask_ollama(
+                    model, image_path, prompt, cfg, timeout_s, _allow_fallback=False
+                )
+            raise VisionError(
+                f"Ollama has no model {model!r}. Pull it with "
+                f"`ollama pull {model}`, or if your network blocks the "
+                "registry, register a local GGUF (see the 'When ollama "
+                "pull is blocked' section of the cgh-vision README), or "
+                "run `cgh vision setup --llamacpp` to serve it from "
+                "Hugging Face without Ollama."
+            ) from exc
+        detail = exc.read().decode(errors="replace")[:200]
+        raise VisionError(f"Ollama error {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise VisionError(
+            f"Ollama unreachable at {ollama_url(cfg)}: {exc} (is the daemon running?)"
+        ) from exc
     return str(out.get("response", ""))
 
 

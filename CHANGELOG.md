@@ -9,6 +9,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-pii gains an optional LLM detection tier**: with `[plugin.pii]
+  llm = true` it probes each file with a local Ollama or a configured
+  OpenAI-compatible endpoint and flags the PII the regex and NER tiers
+  miss (names in odd formats, quasi-identifiers, addresses,
+  context-bound identifiers). It runs deferred like NER (never inline),
+  emits count-only `pii.llm.*` findings, and needs no extra package. On
+  demand: `cgh pii probe <file>` lists what it would flag, and `cgh pii
+  redact <file> --llm` folds its hits into the redaction (a catch-all
+  `other` token for id numbers, orgs, credentials). Egress is gated the
+  same way as `fetch_and_index`: a loopback endpoint is free, a
+  non-loopback one needs `pii_llm_allow_remote = true`, and every probe,
+  allowed or denied, is audited. A quote the model invents (absent
+  verbatim) redacts nothing, so a hallucination cannot anonymize the
+  wrong bytes.
 - **cgh-vision auto-fetches a missing model from Hugging Face**: on the
   Ollama backend, a missing default model is now pulled from Hugging Face
   via Ollama's own `hf.co/...` pull (which works where the Ollama registry

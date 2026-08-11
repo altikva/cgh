@@ -973,6 +973,13 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | `cgh-vision` | image understanding: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models via Ollama |
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
 
+On a locked-down machine where the Ollama registry is blocked,
+`cgh-vision` runs from Hugging Face GGUF weights instead: download the
+model plus its vision projector, register it with `ollama create`, and
+point the plugin at the name. The plugin prints these exact steps when a
+run hits a missing model, and the full walkthrough is in the cgh-vision
+README under "When `ollama pull` is blocked".
+
 ---
 
 ## Findings, modes and the guard

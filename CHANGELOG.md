@@ -17,6 +17,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   shows cleanly, and again as a retry if the model 404s mid-run. Opt out
   with `[plugin.vision] vision_auto_fetch = false`; an unmapped custom
   model still gets the manual guidance.
+- **cgh-vision prints the manual GGUF steps when every automatic route
+  fails**: if a model is missing and the automatic Hugging Face pull
+  cannot resolve it either, the error now spells out the by-hand path for
+  that specific model (download the weights and the mmproj projector, write
+  a two-line Modelfile, `ollama create` under the profile's name) instead
+  of only pointing at the README. The same steps are documented under
+  "When `ollama pull` is blocked" and aligned on the default `ggml-org`
+  3B/4B repos.
 
 ### Fixed
 - **cgh-vision: a clear error instead of a crash when Ollama is missing

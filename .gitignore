@@ -39,3 +39,6 @@ internal/
 
 # Maintainer-only project skill (reads the internal runbook)
 .claude/skills/release/
+
+# Local model weights (GGUF), never committed
+downloads/

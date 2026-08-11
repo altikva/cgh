@@ -967,7 +967,7 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | Plugin | What it adds |
 |---|---|
 | `cgh-docs` | pdf, docx and xlsx files become searchable sections |
-| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
+| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys), optional NER and LLM tiers for names and what regex misses |
 | `cgh-classify` | human-trainable confidentiality labels + a local classifier |
 | `cgh-summarize` | file summaries via your agent CLIs (Claude, Gemini, Codex, IBM Bob), Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
 | `cgh-vision` | image understanding: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models via Ollama |

@@ -36,6 +36,51 @@ The optional NER tier (person names, locations) installs with
 `pip install "cgh-pii[ner]"` and activates with `ner = true` under
 `[plugin.pii]`; it runs deferred, off the indexing hot path.
 
+## The optional LLM tier
+
+A third tier probes each file with a local or configured LLM and flags
+the PII the regex and NER tiers miss: names in unusual formats,
+quasi-identifiers, postal addresses, context-bound identifiers. It needs
+no extra package (a stdlib HTTP client), only a reachable model. Turn it
+on under `[plugin.pii]`:
+
+```toml
+[plugin.pii]
+llm = true
+llm_ollama_url = "http://127.0.0.1:11434"   # default; a loopback URL
+llm_model = "qwen2.5:3b"                     # any text model you have
+# or an OpenAI-compatible endpoint instead of Ollama:
+# llm_openai_base_url = "https://llm.internal.acme/v1"
+# llm_openai_model = "acme-cor"
+# llm_openai_api_key_env = "ACME_LLM_KEY"
+```
+
+Like NER, it runs **deferred**, never on the inline hot path (an LLM call
+per file is heavy), and its findings carry only a count
+(`pii.llm.person`, `pii.llm.other`, ...), never the matched text.
+
+**Egress is gated.** Probing a file sends its content to the model. A
+**loopback** endpoint stays on the machine and is free. A **non-loopback**
+endpoint (an enterprise LLM) is egress: it is refused unless you set
+`pii_llm_allow_remote = true`, and every probe, allowed or denied, is
+written to the activity log. The endpoint scheme is pinned to http/https.
+This mirrors the `fetch_and_index` egress gate: nothing leaves without an
+explicit opt-in, and every departure is audited.
+
+Try it on one file before trusting it, without redacting anything:
+
+```bash
+cgh pii probe contract.md          # lists what the LLM tier would flag
+cgh pii redact contract.md --llm --out contract.anon.md
+```
+
+A quote the model invents (not present verbatim in the file) redacts
+nothing, so a hallucination can never anonymize the wrong bytes. On the
+redact path the LLM categories fold into the redactor's set, with a
+catch-all `other` (`[OTHER_1]`) for id numbers, org names and
+credentials. `--llm` is wired for text and markdown; docx redaction still
+uses the regex and NER tiers only.
+
 ## Redacting a document
 
 Beyond detecting PII, cgh-pii can produce an anonymized copy of a text

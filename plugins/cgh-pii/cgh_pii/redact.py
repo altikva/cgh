@@ -45,7 +45,13 @@ _REGEX = {
 # NER entity type -> category
 _NER = {"PERSON": "person", "LOCATION": "location"}
 NER_CATEGORIES = frozenset(_NER.values())
-ALL_CATEGORIES = frozenset(_REGEX) | NER_CATEGORIES
+# "other" is the catch-all the optional LLM tier maps its off-vocabulary
+# hits into (id numbers, org names, credentials). Like NER values, LLM
+# values are located by literal search, so they propagate to every
+# occurrence in the document.
+LLM_CATEGORY = "other"
+_LITERAL_CATS = NER_CATEGORIES | {LLM_CATEGORY}
+ALL_CATEGORIES = frozenset(_REGEX) | NER_CATEGORIES | {LLM_CATEGORY}
 
 
 class RedactError(RuntimeError):
@@ -153,7 +159,30 @@ def _validate(only: list[str] | None, mode: str) -> set[str]:
     return cats
 
 
-def _all_spans(text: str, cats: set[str], language: str) -> list[tuple[int, int, str]]:
+def _llm_spans(
+    text: str, cats: set[str], llm_hits: list[tuple[str, str]] | None
+) -> list[tuple[int, int, str]]:
+    """(category, quote) pairs from the LLM tier located in ``text`` by
+    literal search, filtered to the requested categories. A quote the
+    model invented (absent verbatim) yields no span, so a hallucination
+    can never redact the wrong bytes."""
+    if not llm_hits:
+        return []
+    spans: list[tuple[int, int, str]] = []
+    for cat, quote in llm_hits:
+        if cat not in cats or not quote:
+            continue
+        for m in re.finditer(re.escape(quote), text):
+            spans.append((m.start(), m.end(), cat))
+    return spans
+
+
+def _all_spans(
+    text: str,
+    cats: set[str],
+    language: str,
+    llm_hits: list[tuple[str, str]] | None = None,
+) -> list[tuple[int, int, str]]:
     spans = _regex_spans(text, cats)
     if cats & NER_CATEGORIES:
         ner = _ner_spans(text, cats, language)
@@ -163,6 +192,7 @@ def _all_spans(text: str, cats: set[str], language: str) -> list[tuple[int, int,
         # occurrences, so "Jean Dupont" found once is redacted
         # everywhere. Regex spans are already exhaustive.
         spans += ner + _propagate(text, ner)
+    spans += _llm_spans(text, cats, llm_hits)
     return _dedup(spans)
 
 
@@ -180,6 +210,7 @@ def redact(
     mode: str = "placeholder",
     secret: bytes | None = None,
     language: str = "en",
+    llm_hits: list[tuple[str, str]] | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Return (redacted_text, counts_by_category).
 
@@ -187,8 +218,11 @@ def redact(
     "placeholder" (numbered [PERSON_1], distinct within this text) or
     "pseudonym" (keyed <pii.person:hex>; pass a fixed ``secret`` for the
     same token across documents, else one is generated for this call).
-    Raises RedactError if a requested NER category has no presidio."""
-    out, counts = redact_chunks([text], only, mode, secret, language)
+    ``llm_hits`` are (redaction_category, quote) pairs from the optional
+    LLM tier; each quote is located by literal search and redacted like a
+    NER value. Raises RedactError if a requested NER category has no
+    presidio."""
+    out, counts = redact_chunks([text], only, mode, secret, language, llm_hits)
     return out[0], counts
 
 
@@ -198,6 +232,7 @@ def redact_chunks(
     mode: str = "placeholder",
     secret: bytes | None = None,
     language: str = "en",
+    llm_hits: list[tuple[str, str]] | None = None,
 ) -> tuple[list[str], dict[str, int]]:
     """Redact several pieces of one document with shared tokens, so the
     same value gets the same token everywhere and names detected in any
@@ -210,18 +245,21 @@ def redact_chunks(
 
     # Pass 1: number tokens in document reading order over the whole text.
     full = "\n".join(chunks)
-    for start, end, cat in sorted(_all_spans(full, cats, language), key=lambda s: s[0]):
+    for start, end, cat in sorted(
+        _all_spans(full, cats, language, llm_hits), key=lambda s: s[0]
+    ):
         tk.token(cat, full[start:end])
 
     # Pass 2: redact each chunk. Regex re-detected per chunk; every known
-    # NER value replaced by literal search, so a name found once lands in
-    # every chunk. Tokens come from the shared map.
-    known_ner = [(c, v) for (c, v) in tk.known() if c in NER_CATEGORIES]
+    # literal value (NER names, LLM quotes) replaced by literal search, so
+    # a value found once lands in every chunk. Tokens come from the shared
+    # map.
+    known_literal = [(c, v) for (c, v) in tk.known() if c in _LITERAL_CATS]
     out_chunks: list[str] = []
     counts: dict[str, int] = {}
     for chunk in chunks:
         spans = _regex_spans(chunk, cats)
-        for cat, value in known_ner:
+        for cat, value in known_literal:
             for m in re.finditer(re.escape(value), chunk):
                 spans.append((m.start(), m.end(), cat))
         spans = _dedup(spans)

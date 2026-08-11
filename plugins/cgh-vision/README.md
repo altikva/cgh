@@ -110,41 +110,73 @@ ollama pull qwen2.5vl:3b   # works? nothing else to read here
 
 If it fails, the models can come from Hugging Face instead and be
 registered locally. The vision models need two files: the weights and
-the **vision projector**, which is what makes the model multimodal;
-without it Ollama loads a text-only model and every image is ignored.
+the **vision projector** (mmproj), which is what makes the model
+multimodal; without it Ollama loads a text-only model and every image
+is ignored.
+
+The two default models live in official `ggml-org` GGUF repos, weights
+and mmproj in the same repo. Download both files, then register each
+under the exact name the plugin expects (`qwen2.5vl:3b` for nodes and
+edges, `gemma3:4b` for the fallback):
 
 ```bash
 pip install -U "huggingface_hub[cli]"
-mkdir -p ~/models/qwen2.5-vl-7b && cd ~/models/qwen2.5-vl-7b
 
-# weights (q4_k_m is about 5 GB, q8_0 about 8 GB for more quality)
-hf download Mungert/Qwen2.5-VL-7B-Instruct-GGUF \
-  Qwen2.5-VL-7B-Instruct-q4_k_m.gguf --local-dir .
+# --- Qwen2.5-VL-3B (the default nodes + edges model) ---
+hf download ggml-org/Qwen2.5-VL-3B-Instruct-GGUF --include "*Q4_K_M*" \
+  --local-dir models/Qwen2.5-VL-3B-Instruct-GGUF
+hf download ggml-org/Qwen2.5-VL-3B-Instruct-GGUF --include "*mmproj*" \
+  --local-dir models/Qwen2.5-VL-3B-Instruct-GGUF
 
-# the vision projector, mandatory
-hf download Mungert/Qwen2.5-VL-7B-Instruct-GGUF \
-  Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf --local-dir .
-
-cat > Modelfile <<'EOF'
-FROM ./Qwen2.5-VL-7B-Instruct-q4_k_m.gguf
-FROM ./Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf
+cat > models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile <<'EOF'
+FROM ./Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+FROM ./mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
 EOF
+ollama create qwen2.5vl:3b -f models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile
 
-ollama create qwen2.5-vl:7b -f Modelfile
+# --- Gemma-3-4b (the default fallback model) ---
+hf download ggml-org/gemma-3-4b-it-GGUF --include "*Q4_K_M*" \
+  --local-dir models/gemma-3-4b-it-GGUF
+hf download ggml-org/gemma-3-4b-it-GGUF --include "*mmproj*" \
+  --local-dir models/gemma-3-4b-it-GGUF
+
+cat > models/gemma-3-4b-it-GGUF/Modelfile <<'EOF'
+FROM ./gemma-3-4b-it-Q4_K_M.gguf
+FROM ./mmproj-model-f16.gguf
+EOF
+ollama create gemma3:4b -f models/gemma-3-4b-it-GGUF/Modelfile
 ```
 
-Then point the plugin at the name you registered, since it will not
-match the registry tag:
+Two things that trip people up:
+
+- **Pass one glob per `hf download`.** `--include "*Q4_K_M*" "*mmproj*"`
+  in a single call makes the CLI treat the second pattern as a literal
+  filename and it 404s; run two calls into the same `--local-dir`.
+- **The Qwen repo ships two mmproj variants** (a `Q8_0` and an `f16`);
+  you only need one. The Modelfile above picks the lighter `Q8_0`. Gemma
+  ships a single `mmproj-model-f16.gguf`.
+
+Confirm each registered model is multimodal, not text-only:
+
+```bash
+ollama show qwen2.5vl:3b | grep -iA1 Capabilities   # should list: vision
+```
+
+Because these names match the plugin defaults, no config change is
+needed. If you register under a different name, point the plugin at it:
 
 ```toml
 [plugin.vision]
-nodes_model = "qwen2.5-vl:7b"
-edges_model = "qwen2.5-vl:7b"   # or another locally created model
+nodes_model = "qwen2.5-vl:custom"
+edges_model = "qwen2.5-vl:custom"
 fallback_model = ""             # unless you registered a second one
 ```
 
 `cgh vision --help` and the daemon probe behave identically: cgh only
 ever asks Ollama for a model name, it never downloads anything itself.
+When a run hits a missing model and the automatic HF pull cannot resolve
+it either, the error prints exactly these manual steps for the model in
+question, so you do not have to come back here.
 
 ## Pipeline
 

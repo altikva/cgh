@@ -19,18 +19,20 @@ from pathlib import Path
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv", ".log", ".json"}
 
 
-def make_cli_registrar(config: dict):
+def make_cli_registrar(config: dict, repo_root=None):
     def register_cli(subparsers) -> None:
         p = subparsers.add_parser(
             "pii", help="Redact PII in a text file (anonymize names, emails, ...)"
         )
-        p.add_argument("action", nargs="?", default="redact", choices=["redact"])
+        p.add_argument(
+            "action", nargs="?", default="redact", choices=["redact", "probe"]
+        )
         p.add_argument("file", nargs="?", help="Text or markdown file to redact")
         p.add_argument(
             "--only",
             default="",
             help="Comma-separated categories: person,location,email,phone,"
-            "iban,card,aws_key,private_key (default: all)",
+            "iban,card,aws_key,private_key,other (default: all)",
         )
         p.add_argument(
             "--mode",
@@ -42,31 +44,50 @@ def make_cli_registrar(config: dict):
         p.add_argument(
             "--in-place", action="store_true", help="Overwrite the input file"
         )
-        p.set_defaults(func=lambda args: _dispatch(args, config))
+        p.add_argument(
+            "--llm",
+            action="store_true",
+            help="Also probe with the configured LLM (catches PII regex/NER "
+            "miss). A non-loopback endpoint needs pii_llm_allow_remote; "
+            "every probe is audited.",
+        )
+        p.set_defaults(func=lambda args: _dispatch(args, config, repo_root))
 
     return register_cli
 
 
-def _dispatch(args, config: dict) -> None:
+def _dispatch(args, config: dict, repo_root=None) -> None:
     from rich.console import Console
 
     from .redact import RedactError, redact
 
     err = Console(stderr=True)
+    root = repo_root if repo_root is not None else Path.cwd()
     if not args.file:
         err.print(
-            "[red]usage: cgh pii redact <file> [--only person] [--out FILE][/red]"
+            "[red]usage: cgh pii redact <file> [--only person] [--llm] "
+            "[--out FILE], or cgh pii probe <file>[/red]"
         )
         raise SystemExit(2)
     src = Path(args.file)
     if not src.exists():
         err.print(f"[red]not found:[/red] {args.file}")
         raise SystemExit(2)
+
+    if args.action == "probe":
+        _probe(err, src, config, root)
+        return
+
     only = [c.strip() for c in args.only.split(",") if c.strip()] or None
     key = os.environ.get("CGH_REDACT_SECRET")
     secret = key.encode("utf-8") if key and len(key) >= 16 else None
 
     if src.suffix.lower() == ".docx":
+        if args.llm:
+            err.print(
+                "[yellow]--llm is not wired for docx yet; redacting it with "
+                "the regex and NER tiers only.[/yellow]"
+            )
         _redact_docx(err, args, src, only, secret)
         return
     if src.suffix.lower() in (".pdf", ".xlsx"):
@@ -80,8 +101,11 @@ def _dispatch(args, config: dict) -> None:
         err.print(f"[dim]note: {src.suffix or 'no suffix'} treated as text.[/dim]")
 
     text = src.read_text(encoding="utf-8", errors="replace")
+    llm_hits = _llm_hits(err, text, config, root, src) if args.llm else None
     try:
-        out, counts = redact(text, only=only, mode=args.mode, secret=secret)
+        out, counts = redact(
+            text, only=only, mode=args.mode, secret=secret, llm_hits=llm_hits
+        )
     except RedactError as exc:
         err.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
@@ -102,6 +126,46 @@ def _dispatch(args, config: dict) -> None:
 
 def _summary(counts: dict) -> str:
     return ", ".join(f"{n} {c}" for c, n in sorted(counts.items())) or "nothing"
+
+
+def _llm_hits(err, text: str, config: dict, root, src):
+    """(redaction_category, quote) pairs from the LLM tier, or None. A
+    denied egress gate prints why and returns None so redaction proceeds
+    with the regex and NER tiers only, never silently."""
+    from . import llm
+
+    try:
+        raw = llm.probe(text, config, root, str(src))
+    except llm.LlmProbeError as exc:
+        err.print(f"[yellow]LLM tier skipped:[/yellow] {exc}")
+        return None
+    if not raw:
+        err.print("[dim]LLM tier: no additional PII found (or backend down).[/dim]")
+        return None
+    return [(llm.redaction_category(cat), quote) for cat, quote in raw]
+
+
+def _probe(err, src: Path, config: dict, root) -> None:
+    """`cgh pii probe <file>`: run only the LLM tier and print what it
+    finds, without redacting. Handy to see whether the LLM adds anything
+    over regex + NER before committing to a redaction."""
+    from . import llm
+
+    text = src.read_text(encoding="utf-8", errors="replace")
+    try:
+        hits = llm.probe(text, config, root, str(src))
+    except llm.LlmProbeError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    if not hits:
+        err.print("[dim]no PII found by the LLM tier (or backend unreachable).[/dim]")
+        return
+    by_cat: dict[str, int] = {}
+    for cat, _quote in hits:
+        by_cat[cat] = by_cat.get(cat, 0) + 1
+    summary = ", ".join(f"{n} {c}" for c, n in sorted(by_cat.items()))
+    err.print(f"[green]{len(hits)} hit(s):[/green] {summary}")
+    err.print("[dim]run `cgh pii redact <file> --llm` to anonymize them.[/dim]")
 
 
 def _redact_docx(err, args, src, only, secret) -> None:

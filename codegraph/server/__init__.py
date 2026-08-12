@@ -305,8 +305,10 @@ def main() -> None:
             sys.exit(1)
         _log.info("owner up on port %s", port)
 
-    # Act as the stdio <-> HTTP bridge for this Claude session
-    exit_code = proxy_stdio_to_http(port, repo_root=_root)
+    # Act as the stdio <-> HTTP bridge for this Claude session. Pass watch
+    # so a mid-session owner death can be self-healed with the same
+    # posture the session started with.
+    exit_code = proxy_stdio_to_http(port, repo_root=_root, watch=args.watch)
     sys.exit(exit_code)
 
 

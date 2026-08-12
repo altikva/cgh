@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-08-12
+
 ### Added
 - **cgh-pii gains an optional LLM detection tier**: with `[plugin.pii]
   llm = true` it probes each file with a local Ollama or a configured

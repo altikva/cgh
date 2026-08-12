@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **The MCP proxy self-heals when its owner has died**: the owner shuts
+  down when its last worker leaves, so a long-lived session's proxy could
+  outlive the owner it attached to and then answer every tool call with
+  `proxy: [Errno 61] Connection refused` forever, with no way back short
+  of killing the stale proxies and restarting by hand. The proxy now
+  treats a refused connection as a dead owner: it re-attaches to one that
+  another session respawned, or spawns a fresh owner itself (no reindex,
+  the graph is on disk), and retries the request against the new port.
+  Recovery is bounded and fails cleanly with a proxy error if no owner can
+  be brought up.
+
 ### Added
 - **cgh-pii gains an optional LLM detection tier**: with `[plugin.pii]
   llm = true` it probes each file with a local Ollama or a configured

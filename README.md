@@ -967,11 +967,18 @@ First-party plugins live in [plugins/](./plugins) and install separately, so the
 | Plugin | What it adds |
 |---|---|
 | `cgh-docs` | pdf, docx and xlsx files become searchable sections |
-| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys) |
+| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys), optional NER and LLM tiers for names and what regex misses |
 | `cgh-classify` | human-trainable confidentiality labels + a local classifier |
 | `cgh-summarize` | file summaries via your agent CLIs (Claude, Gemini, Codex, IBM Bob), Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
 | `cgh-vision` | image understanding: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models via Ollama |
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
+
+On a locked-down machine where the Ollama registry is blocked,
+`cgh-vision` runs from Hugging Face GGUF weights instead: download the
+model plus its vision projector, register it with `ollama create`, and
+point the plugin at the name. The plugin prints these exact steps when a
+run hits a missing model, and the full walkthrough is in the cgh-vision
+README under "When `ollama pull` is blocked".
 
 ---
 

@@ -777,6 +777,54 @@ def test_ask_ollama_404_raises_clear_visionerror(tmp_path, monkeypatch):
     assert "qwen2.5vl:7b" in msg and "ollama pull" in msg
 
 
+def test_manual_gguf_steps_mapped_model():
+    """A known default model fills in its real HF repo, quant, two-pass
+    download (weights + mmproj) and the `ollama create` under the exact
+    profile name."""
+    from cgh_vision import backends
+
+    steps = backends.manual_gguf_steps("qwen2.5vl:3b")
+    assert "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF" in steps
+    assert '--include "*Q4_K_M*"' in steps and '--include "*mmproj*"' in steps
+    assert "ollama create qwen2.5vl:3b" in steps
+    assert "mmproj" in steps  # the projector is called out as mandatory
+
+
+def test_manual_gguf_steps_unmapped_model_uses_placeholders():
+    """An unmapped custom model still gets the full shape, with a repo
+    placeholder and its own name in the `ollama create` line."""
+    from cgh_vision import backends
+
+    steps = backends.manual_gguf_steps("my-vlm:custom")
+    assert "<org>/<Model>-GGUF" in steps
+    assert "ollama create my-vlm:custom" in steps
+
+
+def test_ask_ollama_404_prints_manual_steps_when_hf_fetch_fails(tmp_path, monkeypatch):
+    """When the model is missing AND the auto HF pull cannot resolve it,
+    the VisionError carries the by-hand GGUF registration steps, not just
+    a pointer to the README."""
+    import urllib.error
+    import urllib.request
+
+    import pytest
+    from cgh_vision import backends
+
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+    def _raise_404(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise_404)
+    monkeypatch.setattr(backends, "fetch_model_from_hf", lambda m, c: False)
+
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:3b", img, "prompt", {}, 5)
+    msg = str(ei.value)
+    assert "hf download" in msg and "ollama create qwen2.5vl:3b" in msg
+
+
 def test_fetch_model_from_hf_gated_and_mapped(monkeypatch):
     """No auto-fetch when disabled, unmapped, or ollama absent."""
     import shutil

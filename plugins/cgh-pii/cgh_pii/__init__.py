@@ -21,7 +21,7 @@ def register(api) -> None:
 
     disabled = set(api.config.get("disable_keys", []))
     api.register_scanner(RegexPiiScanner(disabled_keys=disabled))
-    api.register_cli(make_cli_registrar(api.config))
+    api.register_cli(make_cli_registrar(api.config, api.repo_root))
 
     if api.config.get("ner"):
         try:
@@ -36,3 +36,12 @@ def register(api) -> None:
                 "ner = true but presidio is not installed; "
                 'run pip install "cgh-pii[ner]". NER tier skipped.'
             )
+
+    # Deferred LLM tier: an extra pass that catches PII the regex and NER
+    # tiers miss, by probing each file with a local or configured LLM.
+    # Off by default (an LLM call per file is heavy, and a cloud endpoint
+    # is egress); enable with [plugin.pii] llm = true.
+    if api.config.get("llm"):
+        from .llm_scanner import LlmPiiScanner
+
+        api.register_scanner(LlmPiiScanner(api.repo_root, api.config))

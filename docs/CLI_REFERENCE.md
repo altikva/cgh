@@ -1,8 +1,8 @@
 # cgh CLI Reference
 
 Reference for the core CLI verbs. The single entry point is `cgh`;
-plugin verbs (`vision`, `summarize`, `insights`, `classify`, `bug`)
-are documented in their plugin's README.
+plugin verbs (`vision`, `summarize`, `insights`, `classify`, `pii`,
+`bug`) are documented in their plugin's README.
 
 Global flag available on all commands:
 

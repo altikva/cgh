@@ -8,6 +8,44 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-08-12
+
+### Added
+- **cgh-pii gains an optional LLM detection tier**: with `[plugin.pii]
+  llm = true` it probes each file with a local Ollama or a configured
+  OpenAI-compatible endpoint and flags the PII the regex and NER tiers
+  miss (names in odd formats, quasi-identifiers, addresses,
+  context-bound identifiers). It runs deferred like NER (never inline),
+  emits count-only `pii.llm.*` findings, and needs no extra package. On
+  demand: `cgh pii probe <file>` lists what it would flag, and `cgh pii
+  redact <file> --llm` folds its hits into the redaction (a catch-all
+  `other` token for id numbers, orgs, credentials). Egress is gated the
+  same way as `fetch_and_index`: a loopback endpoint is free, a
+  non-loopback one needs `pii_llm_allow_remote = true`, and every probe,
+  allowed or denied, is audited. A quote the model invents (absent
+  verbatim) redacts nothing, so a hallucination cannot anonymize the
+  wrong bytes.
+- **cgh-vision prints the manual GGUF steps when every automatic route
+  fails**: if a model is missing and the automatic Hugging Face pull
+  cannot resolve it either, the error now spells out the by-hand path for
+  that specific model (download the weights and the mmproj projector, write
+  a two-line Modelfile, `ollama create` under the profile's name) instead
+  of only pointing at the README. The same steps are documented under
+  "When `ollama pull` is blocked" and aligned on the default `ggml-org`
+  3B/4B repos.
+
+### Fixed
+- **The MCP proxy self-heals when its owner has died**: the owner shuts
+  down when its last worker leaves, so a long-lived session's proxy could
+  outlive the owner it attached to and then answer every tool call with
+  `proxy: [Errno 61] Connection refused` forever, with no way back short
+  of killing the stale proxies and restarting by hand. The proxy now
+  treats a refused connection as a dead owner: it re-attaches to one that
+  another session respawned, or spawns a fresh owner itself (no reindex,
+  the graph is on disk), and retries the request against the new port.
+  Recovery is bounded and fails cleanly with a proxy error if no owner can
+  be brought up.
+
 ## [0.11.2] - 2026-08-08
 
 ### Added

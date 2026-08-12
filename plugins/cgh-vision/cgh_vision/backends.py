@@ -145,6 +145,40 @@ _HF_FALLBACK = {
 }
 
 
+def manual_gguf_steps(model: str) -> str:
+    """The by-hand path to register `model` in Ollama when both the
+    registry and the automatic Hugging Face pull are unreachable: download
+    the weights and the vision projector (mmproj), write a two-line
+    Modelfile, `ollama create` under the exact name the profile expects.
+    For a known default model the HF repo and quant are filled in; an
+    unmapped custom model gets the same shape with placeholders."""
+    spec = _HF_FALLBACK.get(model)
+    if spec:
+        repo_quant = spec.removeprefix("hf.co/")
+        repo, _, quant = repo_quant.partition(":")
+        quant = quant or "Q4_K_M"
+    else:
+        repo, quant = "<org>/<Model>-GGUF", "Q4_K_M"
+    base = repo.rsplit("/", 1)[-1]
+    return (
+        f"Register {model!r} by hand (the Ollama registry and the automatic\n"
+        "Hugging Face pull are both unreachable):\n\n"
+        '  1. pip install -U "huggingface_hub[cli]"\n\n'
+        "  2. Download the weights AND the vision projector (mmproj) into one\n"
+        "     directory. A vision model needs both: without the mmproj, Ollama\n"
+        "     loads a text-only model and ignores every image.\n"
+        f'       hf download {repo} --include "*{quant}*" --local-dir models/{base}\n'
+        f'       hf download {repo} --include "*mmproj*" --local-dir models/{base}\n\n'
+        f"  3. Write models/{base}/Modelfile with the two files you got (exact\n"
+        "     names vary by repo), the weights first, then the mmproj:\n"
+        "       FROM ./<weights>.gguf\n"
+        "       FROM ./<mmproj>.gguf\n\n"
+        f"  4. ollama create {model} -f models/{base}/Modelfile\n\n"
+        "  5. Re-run. cgh only ever asks Ollama for the name, it downloads\n"
+        "     nothing itself."
+    )
+
+
 def fetch_model_from_hf(model: str, cfg: dict) -> bool:
     """Missing Ollama model: fetch it from Hugging Face via Ollama's own
     hf.co pull, then alias it to the expected name so the profile keeps
@@ -215,12 +249,12 @@ def _ask_ollama(
                     model, image_path, prompt, cfg, timeout_s, _allow_fallback=False
                 )
             raise VisionError(
-                f"Ollama has no model {model!r}. Pull it with "
-                f"`ollama pull {model}`, or if your network blocks the "
-                "registry, register a local GGUF (see the 'When ollama "
-                "pull is blocked' section of the cgh-vision README), or "
-                "run `cgh vision setup --llamacpp` to serve it from "
-                "Hugging Face without Ollama."
+                f"Ollama has no model {model!r}, and the automatic Hugging "
+                f"Face pull did not resolve it. Fastest fix if the registry "
+                f"is reachable: `ollama pull {model}`. Otherwise serve it from "
+                "Hugging Face without Ollama via `cgh vision setup --llamacpp`, "
+                "or register a local GGUF by hand:\n\n"
+                f"{manual_gguf_steps(model)}"
             ) from exc
         detail = exc.read().decode(errors="replace")[:200]
         raise VisionError(f"Ollama error {exc.code}: {detail}") from exc

@@ -8,18 +8,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
-### Fixed
-- **The MCP proxy self-heals when its owner has died**: the owner shuts
-  down when its last worker leaves, so a long-lived session's proxy could
-  outlive the owner it attached to and then answer every tool call with
-  `proxy: [Errno 61] Connection refused` forever, with no way back short
-  of killing the stale proxies and restarting by hand. The proxy now
-  treats a refused connection as a dead owner: it re-attaches to one that
-  another session respawned, or spawns a fresh owner itself (no reindex,
-  the graph is on disk), and retries the request against the new port.
-  Recovery is bounded and fails cleanly with a proxy error if no owner can
-  be brought up.
-
 ### Added
 - **cgh-pii gains an optional LLM detection tier**: with `[plugin.pii]
   llm = true` it probes each file with a local Ollama or a configured
@@ -35,14 +23,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   allowed or denied, is audited. A quote the model invents (absent
   verbatim) redacts nothing, so a hallucination cannot anonymize the
   wrong bytes.
-- **cgh-vision auto-fetches a missing model from Hugging Face**: on the
-  Ollama backend, a missing default model is now pulled from Hugging Face
-  via Ollama's own `hf.co/...` pull (which works where the Ollama registry
-  is blocked but HF is not), then aliased to the profile's name. It runs
-  pre-flight (before the extraction bar) so Ollama's own download progress
-  shows cleanly, and again as a retry if the model 404s mid-run. Opt out
-  with `[plugin.vision] vision_auto_fetch = false`; an unmapped custom
-  model still gets the manual guidance.
 - **cgh-vision prints the manual GGUF steps when every automatic route
   fails**: if a model is missing and the automatic Hugging Face pull
   cannot resolve it either, the error now spells out the by-hand path for
@@ -51,6 +31,30 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   of only pointing at the README. The same steps are documented under
   "When `ollama pull` is blocked" and aligned on the default `ggml-org`
   3B/4B repos.
+
+### Fixed
+- **The MCP proxy self-heals when its owner has died**: the owner shuts
+  down when its last worker leaves, so a long-lived session's proxy could
+  outlive the owner it attached to and then answer every tool call with
+  `proxy: [Errno 61] Connection refused` forever, with no way back short
+  of killing the stale proxies and restarting by hand. The proxy now
+  treats a refused connection as a dead owner: it re-attaches to one that
+  another session respawned, or spawns a fresh owner itself (no reindex,
+  the graph is on disk), and retries the request against the new port.
+  Recovery is bounded and fails cleanly with a proxy error if no owner can
+  be brought up.
+
+## [0.11.2] - 2026-08-08
+
+### Added
+- **cgh-vision auto-fetches a missing model from Hugging Face**: on the
+  Ollama backend, a missing default model is now pulled from Hugging Face
+  via Ollama's own `hf.co/...` pull (which works where the Ollama registry
+  is blocked but HF is not), then aliased to the profile's name. It runs
+  pre-flight (before the extraction bar) so Ollama's own download progress
+  shows cleanly, and again as a retry if the model 404s mid-run. Opt out
+  with `[plugin.vision] vision_auto_fetch = false`; an unmapped custom
+  model still gets the manual guidance.
 
 ### Fixed
 - **cgh-vision: a clear error instead of a crash when Ollama is missing
@@ -1093,7 +1097,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/altikva/cgh/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/altikva/cgh/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/altikva/cgh/compare/v0.10.0...v0.10.1

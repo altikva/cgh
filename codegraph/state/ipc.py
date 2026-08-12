@@ -324,7 +324,24 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     return None
 
 
-def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
+def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
+    """A request hit a dead owner port. Recover a live owner: attach to one
+    that another proxy already respawned, otherwise spawn a fresh one.
+    Returns the live port, or None if recovery is impossible (no repo_root,
+    or the owner would not come up). Never reindexes on recovery: the graph
+    is on disk, only the serving process is gone."""
+    if repo_root is None:
+        return None
+    if is_owner_alive(repo_root):
+        return read_owner_port(repo_root)
+    return spawn_owner(repo_root, watch=watch, reindex=False)
+
+
+def proxy_stdio_to_http(
+    port: int,
+    repo_root: str | Path | None = None,
+    watch: bool = False,
+) -> int:
     """
     Bridge the current process's stdin/stdout to the owner's HTTP MCP
     endpoint at http://127.0.0.1:<port>/mcp/. One JSON-RPC message per
@@ -332,6 +349,11 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
 
     Auth: sends `Authorization: Bearer <key>` from .codegraph/auth.key
     (the same key shipped with `cgh init`). Owner rejects anything else.
+
+    Self-healing: the owner shuts down when its last worker leaves, so a
+    long-lived proxy can outlive the owner it attached to. When a request
+    meets a refused connection, the proxy respawns (or re-attaches to) an
+    owner and retries, instead of surfacing a dead-port error forever.
 
     Returns an exit code (0 on clean EOF).
     """
@@ -369,9 +391,13 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
 
         body = line.encode("utf-8")
 
-        # One request, retry once on stale connection
+        # One request, with retries. A refused connection means the owner
+        # died (it shuts down when its last worker leaves); recover a live
+        # owner between attempts and retry against the new port, rather
+        # than failing the request against a dead port.
         response_body: bytes = b""
-        for attempt in (1, 2):
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
             try:
                 conn = _open()
                 conn.request("POST", url_path, body=body, headers=headers)
@@ -386,7 +412,7 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
                 conn.close()
                 break
             except (ConnectionError, OSError) as exc:
-                if attempt == 2:
+                if attempt == max_attempts:
                     err = {
                         "jsonrpc": "2.0",
                         "id": json.loads(line).get("id") if line else None,
@@ -394,6 +420,14 @@ def proxy_stdio_to_http(port: int, repo_root: str | Path | None = None) -> int:
                     }
                     sys.stdout.write(json.dumps(err) + "\n")
                     sys.stdout.flush()
+                    break
+                # Try to bring an owner back before the next attempt. A
+                # fresh owner means a fresh port and a dropped session, so
+                # forget the stale session id and let the owner re-init.
+                recovered = _recover_owner(repo_root, watch)
+                if recovered:
+                    port = recovered
+                    session_id = None
                 time.sleep(0.1)
 
         if not response_body:

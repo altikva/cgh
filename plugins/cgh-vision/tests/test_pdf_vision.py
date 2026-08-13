@@ -61,7 +61,7 @@ def test_pdf_runs_vision_per_page(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_ensure_models", lambda cfg: None)
     seen = []
 
-    def _fake_extract(image_path, config):
+    def _fake_extract(image_path, config, force=False):
         seen.append(Path(image_path).suffix)
         return {
             "image": Path(image_path).name,

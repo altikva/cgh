@@ -24,6 +24,46 @@ _QUEUE: queue.Queue[tuple[str, str, str]] = queue.Queue()
 _WORKER_STARTED = threading.Event()
 _LOCK = threading.Lock()
 
+# Deferred scan errors are collapsed by message, not logged per file: a
+# misconfigured backend (say a summarize model that 404s) would otherwise
+# print the same line once per file. Each distinct message is counted with
+# one sample path and flushed as a single summary line when the queue
+# drains, so identical errors read as one line and different errors each
+# get their own.
+_ERR_LOCK = threading.Lock()
+_ERR_COUNTS: dict[str, int] = {}
+_ERR_SAMPLE: dict[str, str] = {}
+
+
+def _record_error(path: str, exc: Exception) -> None:
+    key = str(exc)
+    with _ERR_LOCK:
+        _ERR_COUNTS[key] = _ERR_COUNTS.get(key, 0) + 1
+        _ERR_SAMPLE.setdefault(key, str(path))
+
+
+def _flush_errors() -> None:
+    """Emit one line per distinct error accumulated since the last flush,
+    then reset. Called when the queue drains."""
+    with _ERR_LOCK:
+        if not _ERR_COUNTS:
+            return
+        items = list(_ERR_COUNTS.items())
+        samples = dict(_ERR_SAMPLE)
+        _ERR_COUNTS.clear()
+        _ERR_SAMPLE.clear()
+    log = logging.getLogger(__name__)
+    for msg, count in items:
+        if count == 1:
+            log.error("deferred scan error: %s: %s", samples.get(msg, ""), msg)
+        else:
+            log.error(
+                "deferred scan error x%d (e.g. %s): %s",
+                count,
+                samples.get(msg, ""),
+                msg,
+            )
+
 
 def enqueue(repo_root: str | Path, path: str | Path, blob_sha: str) -> None:
     """Queue a file for every registered deferred scanner. Cheap and
@@ -43,13 +83,26 @@ def _ensure_worker() -> None:
         _WORKER_STARTED.set()
 
 
+_FLUSH_QUIET_S = 1.0  # flush the error summary after this much quiet
+
+
 def _worker() -> None:
     while True:
-        repo_root, path, blob_sha = _QUEUE.get()
+        try:
+            # Block for the item, but wake up after a quiet period so a
+            # finished burst (an index run, a watcher batch) flushes its
+            # error summary once. A busy queue never times out.
+            repo_root, path, blob_sha = _QUEUE.get(timeout=_FLUSH_QUIET_S)
+        except queue.Empty:
+            _flush_errors()
+            continue
         try:
             _process(repo_root, path, blob_sha)
         except Exception as exc:
-            logging.getLogger(__name__).error("deferred scan error: %s: %s", path, exc)
+            # Collapse repeats: count now, one summary line per distinct
+            # message on the next quiet period, so a bad backend does not
+            # print N lines.
+            _record_error(path, exc)
         finally:
             _QUEUE.task_done()
 
@@ -133,3 +186,4 @@ def drain_for_tests(timeout: float = 5.0) -> None:
     while not _QUEUE.empty() and time.time() < deadline:
         time.sleep(0.05)
     _QUEUE.join()
+    _flush_errors()  # deterministic summary for the caller / tests

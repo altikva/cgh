@@ -432,6 +432,92 @@ class TestScanner:
             VisionScanner({}, tmp_path).scan(img, "", None)
 
 
+class TestAutoExtract:
+    """auto_extract writes a structured <file>.json sidecar in the same
+    background pass, for images and PDFs, without a manual cgh vision call.
+    cache_ttl_hours=0 isolates each test from the shared result cache."""
+
+    _REPLIES = [
+        '{"summary": "an archi", "content": ["architecture_diagram"], "text_density": "sparse"}',
+        '{"nodes": ["Bastion 10.128.0.5"], "edges": [], "zones": []}',
+        '{"title": "", "kinds": {}, "tech": {}}',
+        '{"edges": []}',
+    ]
+
+    def _img(self, tmp_path):
+        img = tmp_path / "docs" / "d.png"
+        img.parent.mkdir(parents=True)
+        img.write_bytes(b"\x89PNG" + b"0" * 6000)
+        return img
+
+    def test_sidecar_default_mirrors_path_under_codegraph(self, tmp_path, monkeypatch):
+        from cgh_vision.scanner import VisionScanner
+
+        img = self._img(tmp_path)
+        monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
+        _script(monkeypatch, list(self._REPLIES))
+        found = VisionScanner(
+            {"auto_extract": True, "cache_ttl_hours": 0}, tmp_path
+        ).scan(img, "", None)
+        # Findings are still produced alongside the sidecar.
+        assert {"image.content", "diagram.mermaid"} <= {f.key for f in found}
+        side = tmp_path / ".codegraph" / "vision" / "docs" / "d.png.json"
+        assert side.is_file()
+        doc = json.loads(side.read_text())
+        assert doc["image"] == "d.png"
+        assert doc["inventory"]["content"] == ["architecture_diagram"]
+
+    def test_sidecar_beside_source(self, tmp_path, monkeypatch):
+        from cgh_vision.scanner import VisionScanner
+
+        img = self._img(tmp_path)
+        monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
+        _script(monkeypatch, list(self._REPLIES))
+        VisionScanner(
+            {"auto_extract": True, "auto_extract_out": "beside", "cache_ttl_hours": 0},
+            tmp_path,
+        ).scan(img, "", None)
+        assert (img.parent / "d.png.json").is_file()
+        assert not (tmp_path / ".codegraph" / "vision").exists()
+
+    def test_auto_off_writes_no_sidecar(self, tmp_path, monkeypatch):
+        from cgh_vision.scanner import VisionScanner
+
+        img = self._img(tmp_path)
+        monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
+        _script(monkeypatch, list(self._REPLIES))
+        VisionScanner({}, tmp_path).scan(img, "", None)
+        assert not (tmp_path / ".codegraph").exists()
+        assert not (img.parent / "d.png.json").exists()
+
+    def test_pdf_writes_per_page_sidecar(self, tmp_path, monkeypatch):
+        import sys
+        import types
+
+        from cgh_vision.scanner import VisionScanner
+
+        pdf = tmp_path / "spec.pdf"
+        pdf.write_bytes(b"%PDF-1.4" + b"0" * 6000)
+        page_png = tmp_path / "p1.png"
+        page_png.write_bytes(b"\x89PNG" + b"0" * 6000)
+        fake = types.SimpleNamespace(
+            iter_pdf_pages=lambda p, pages="": iter([(1, page_png)]),
+            PdfRenderError=RuntimeError,
+        )
+        monkeypatch.setitem(sys.modules, "cgh_vision.pdf_render", fake)
+        monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
+        _script(monkeypatch, list(self._REPLIES))
+        out = VisionScanner(
+            {"auto_extract": True, "cache_ttl_hours": 0}, tmp_path
+        ).scan(pdf, "", None)
+        assert out == []  # PDFs carry no findings from the vision scanner
+        side = tmp_path / ".codegraph" / "vision" / "spec.pdf.json"
+        assert side.is_file()
+        doc = json.loads(side.read_text())
+        assert doc["pdf"] == "spec.pdf"
+        assert doc["pages"][0]["page"] == 1
+
+
 class TestEgressPosture:
     """Image bytes only ever reach a loopback daemon in secure mode; a
     remote ollama_url is refused there and audited elsewhere."""

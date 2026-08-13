@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Plain-text files are indexed now**: `.txt`, `.text`, `.log`, `.csv`,
+  `.tsv` and `.rst` had no parser, and the indexer skips any file no parser
+  claims, so they were never indexed and never scanned for PII or secrets.
+  A core plain-text parser now claims them and exposes their content as
+  `scan_text`, with a preview section so they are findable.
 - **Images are indexed now** (cgh-vision): the indexer skips any file no
   parser claims, so `.png` / `.jpg` / `.jpeg` / `.webp` were never indexed
   and the deferred vision scanner (which only runs on indexed files) never

@@ -285,3 +285,27 @@ class TestCliCommandShapes:
         assert "cli:bob" in names
         # After the other CLIs, before the local daemon fallbacks.
         assert names.index("cli:codex") < names.index("cli:bob") < names.index("ollama")
+
+
+def test_resolve_and_gate_on_installed_model(monkeypatch):
+    """Ollama backend auto-picks an installed model and reads as
+    unavailable when nothing is pulled (so the scanner degrades, not 404s)."""
+    from cgh_summarize import backends as sb
+
+    u = "http://127.0.0.1:11434"
+    sb.reset_tags_cache()
+    sb._tags_cache[u] = (9e18, frozenset({"gemma3:4b", "qwen2.5vl:3b"}))
+    assert sb.resolve_ollama_model(u, "gemma3:4b") == "gemma3:4b"  # configured
+    assert sb.resolve_ollama_model(u, "qwen2.5:1.5b") == "qwen2.5vl:3b"  # auto qwen
+    # daemon reachable but no model -> available() is False
+    sb._tags_cache[u] = (9e18, frozenset())
+    monkeypatch.setattr(sb.socket, "create_connection", lambda *a, **k: _Dummy())
+    assert sb.OllamaBackend().available({"ollama_url": u}) is False
+
+
+class _Dummy:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False

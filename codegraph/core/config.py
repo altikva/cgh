@@ -478,6 +478,9 @@ reindex_on_start = true
 # hint = ""              # steer extraction ("labels are in French"); appended, never replaces the contract
 # prescale = true        # 2x upscale of small images before extraction
 # prescale_min_px = 1000 # apply when the smaller dimension is under this
+# cache_ttl_hours = 24   # reuse a cached result for the same file+params;
+#                        # 0 disables the cache. `cgh vision --force` bypasses it
+# cache_dir = ""         # where cached results live (default: a temp dir)
 
 [ruflo]
 # Ruflo integration (auto-detected if not set)

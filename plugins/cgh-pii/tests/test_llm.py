@@ -122,3 +122,20 @@ def test_scanner_returns_empty_when_egress_denied(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "probe", _deny)
     sc = LlmPiiScanner(tmp_path, {})
     assert sc.scan(tmp_path / "f.py", "text", None) == []
+
+
+def test_resolve_ollama_model(monkeypatch):
+    from cgh_pii import llm
+
+    u = "http://127.0.0.1:11434"
+    llm._tags_cache[u] = (
+        9e18,
+        frozenset({"gemma3:4b", "qwen2.5vl:3b", "nomic-embed:latest"}),
+    )
+    # configured-and-installed wins
+    assert llm.resolve_ollama_model(u, "gemma3:4b") == "gemma3:4b"
+    # configured-but-absent -> auto-pick, qwen family preferred, embed excluded
+    assert llm.resolve_ollama_model(u, "qwen2.5:3b") == "qwen2.5vl:3b"
+    # nothing installed -> None (caller degrades)
+    llm._tags_cache[u] = (9e18, frozenset())
+    assert llm.resolve_ollama_model(u, "gemma3:4b") is None

@@ -8,6 +8,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Ollama backends auto-pick an installed model** (cgh-summarize and the
+  cgh-pii LLM tier): both used to send a hardcoded model name
+  (`qwen2.5:1.5b`, `qwen2.5:3b`), so a running daemon that had not pulled
+  that exact model answered every file with `http error 404: not found`
+  during `cgh init` / `reset`. They now query `/api/tags`: the configured
+  model is used when installed, otherwise an installed generative model is
+  auto-picked (family preference, embedding models excluded), and when
+  nothing is installed the backend reads as unavailable so the scan
+  degrades cleanly instead of erroring per file.
+- **The default `config.toml` documents every plugin option**: the
+  `[plugin.pii]` block now lists the LLM tier (`llm`, `llm_model`, the
+  Ollama / OpenAI-compatible endpoints, `pii_llm_allow_remote`, `ner`,
+  `disable_keys`) with defaults and one-line explanations, and the
+  summarize / vision model options note the auto-pick behavior.
+
 ## [0.11.3] - 2026-08-12
 
 ### Added

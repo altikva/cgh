@@ -74,7 +74,11 @@ class RegexPiiScanner:
                 )
 
         _emit("pii.email", "warn", _match_lines(_EMAIL, text))
-        _emit("pii.phone", "warn", _match_lines(_PHONE, text))
+        _emit(
+            "pii.phone",
+            "warn",
+            _match_lines(_PHONE, text, validate=lambda m: _phone_ok(m.group(0))),
+        )
         _emit(
             "pii.iban",
             "warn",
@@ -95,8 +99,44 @@ class RegexPiiScanner:
         return found
 
 
+# Real card networks: first digit 3 (Amex/Diners/JCB), 4 (Visa),
+# 5 (Mastercard), 6 (Discover/Maestro). A 13-19 digit run that starts
+# elsewhere, or is a single repeated digit or a straight run, is almost
+# always a coincidental Luhn pass in an id, coordinate or hash, not a PAN.
+_CARD_IIN = frozenset("3456")
+
+
+def _is_monotone(digits: str) -> bool:
+    """A strictly ascending or descending consecutive run (1234..., 9876...):
+    a filler value, never a real card even when it passes Luhn."""
+    from itertools import pairwise
+
+    steps = {int(b) - int(a) for a, b in pairwise(digits)}
+    return steps in ({1}, {-1})
+
+
 def _card_ok(digits: str) -> bool:
-    return 13 <= len(digits) <= 19 and _luhn_ok(digits)
+    if not (13 <= len(digits) <= 19):
+        return False
+    if digits[0] not in _CARD_IIN:
+        return False
+    if len(set(digits)) == 1 or _is_monotone(digits):
+        return False
+    return _luhn_ok(digits)
+
+
+def _phone_ok(match: str) -> bool:
+    """The regex accepts any `+`/`00` prefixed digit-and-separator run;
+    keep only plausible E.164 numbers (8 to 15 digits) and drop runs that
+    are mostly separators (single digits spaced out, as diagram text
+    renders a coordinate list), which are noise, not phone numbers."""
+    digits = re.sub(r"\D", "", match)
+    if not (8 <= len(digits) <= 15):
+        return False
+    seps = sum(1 for ch in match if ch in " .-")
+    # A real number groups digits; more separators than digits means the
+    # run is a spaced sequence, not a phone.
+    return seps <= len(digits) // 2
 
 
 def _match_lines(pattern: re.Pattern, text: str, validate=None) -> list[int]:

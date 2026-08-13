@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **Deferred scan errors no longer flood the output**: a misconfigured
+  deferred scanner (say a summarize model that 404s) logged one error line
+  per file, so an index of 100 files printed the same error 100 times. The
+  background worker now collapses errors by message and emits one summary
+  line per distinct error when the burst goes quiet: identical errors read
+  as `... x100 (e.g. <file>)`, different errors each keep their own line.
+
+### Fixed
 - **`cgh init` actually installs the bundled skills now**: the skill
   source directory resolved to `codegraph/integrations/skills` (next to
   the installer module) instead of `codegraph/skills`, so it always found

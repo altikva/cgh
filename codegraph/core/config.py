@@ -421,7 +421,27 @@ reindex_on_start = true
 # A project-level table replaces the same plugin's global table whole.
 
 # [plugin.pii]
-# PII detection runs deferred with its defaults; see the cgh-pii README.
+# Regex PII + secret detection runs inline by default (emails, phones,
+# IBANs, cards, keys). See the cgh-pii README. All lines below are OFF by
+# default; uncomment to change behavior.
+# disable_keys = ["pii.phone", "pii.card"]  # silence noisy finding keys
+#                        # (regex phones/cards false-positive on number-heavy
+#                        # extracted text like diagram PDFs)
+# ner = false            # add person-name / location detection via presidio
+#                        # (needs: pip install "cgh-pii[ner]")
+# llm = false            # add an LLM tier that catches what regex + NER miss
+#                        # (names in odd formats, quasi-identifiers, addresses)
+#                        # and, with context, avoids much of the regex noise.
+#                        # Runs deferred; emits count-only pii.llm.* findings.
+# llm_model = "qwen2.5:3b"        # Ollama model; if this one is not pulled,
+#                                 # an installed generative model is auto-picked
+# llm_ollama_url = "http://127.0.0.1:11434"
+# llm_openai_base_url = ""        # an OpenAI-compatible endpoint instead of Ollama
+# llm_openai_model = ""
+# llm_openai_api_key_env = "OPENAI_API_KEY"
+# pii_llm_allow_remote = false    # a NON-loopback LLM endpoint sees file
+#                                 # content (egress): opt-in required, and every
+#                                 # probe, allowed or denied, is audited
 
 # [plugin.classify]
 # threshold = 0.7        # predict confidential above this probability
@@ -436,7 +456,9 @@ reindex_on_start = true
 # language = "en"        # summary language
 # claude_model = "haiku"
 # gemini_model = "gemini-2.5-flash"
-# ollama_model = "qwen2.5:1.5b"
+# ollama_model = "qwen2.5:1.5b"   # if this one is not pulled, an installed
+#                                 # generative model is auto-picked; if none
+#                                 # is installed the tier degrades (no summary)
 # ollama_url = "http://127.0.0.1:11434"
 # openai_base_url = ""   # any OpenAI-compatible endpoint, e.g. vLLM
 # openai_model = ""

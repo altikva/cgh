@@ -131,6 +131,7 @@ hf download ggml-org/Qwen2.5-VL-3B-Instruct-GGUF --include "*mmproj*" \
 cat > models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile <<'EOF'
 FROM ./Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
 FROM ./mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
+PARAMETER num_ctx 8192
 EOF
 ollama create qwen2.5vl:3b -f models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile
 
@@ -143,6 +144,7 @@ hf download ggml-org/gemma-3-4b-it-GGUF --include "*mmproj*" \
 cat > models/gemma-3-4b-it-GGUF/Modelfile <<'EOF'
 FROM ./gemma-3-4b-it-Q4_K_M.gguf
 FROM ./mmproj-model-f16.gguf
+PARAMETER num_ctx 8192
 EOF
 ollama create gemma3:4b -f models/gemma-3-4b-it-GGUF/Modelfile
 ```
@@ -155,6 +157,11 @@ Two things that trip people up:
 - **The Qwen repo ships two mmproj variants** (a `Q8_0` and an `f16`);
   you only need one. The Modelfile above picks the lighter `Q8_0`. Gemma
   ships a single `mmproj-model-f16.gguf`.
+- **`PARAMETER num_ctx 8192`** in the Modelfile gives a detailed image
+  room in the context window. cgh also sets num_ctx on each request
+  (`[plugin.vision] num_ctx`), but baking it in helps when you run the
+  model outside cgh. A 400 "exceeds the available context size" means the
+  page needs a larger num_ctx.
 
 Confirm each registered model is multimodal, not text-only:
 

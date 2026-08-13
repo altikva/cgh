@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
+  vision model encodes an image into many tokens, so a detailed diagram
+  plus the prompt overflowed Ollama's small default context and returned
+  `400 ... exceeds the available context size`. Each request now sets
+  `num_ctx` (default 8192, `[plugin.vision] num_ctx` to change), and a
+  context-overflow 400 points at that lever instead of a raw error. The
+  manual-GGUF instructions and the `manual_gguf_steps` output now include
+  `PARAMETER num_ctx 8192` in the Modelfile too.
 - **cgh-vision: a request timeout no longer reads as a dead daemon**: when
   Ollama answered the socket but the extraction call ran past the deadline
   (the model loading on first use, or slow CPU inference), the error said

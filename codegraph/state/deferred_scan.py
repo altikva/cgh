@@ -58,7 +58,10 @@ def _flush_errors() -> None:
             log.error("deferred scan error: %s: %s", samples.get(msg, ""), msg)
         else:
             log.error(
-                "deferred scan error x%d (e.g. %s): %s", count, samples.get(msg, ""), msg
+                "deferred scan error x%d (e.g. %s): %s",
+                count,
+                samples.get(msg, ""),
+                msg,
             )
 
 

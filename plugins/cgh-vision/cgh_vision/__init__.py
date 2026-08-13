@@ -19,8 +19,14 @@ CGH_PLUGIN_API = 1
 
 def register(api) -> None:
     from .cli import make_cli_registrar
+    from .image_parser import IMAGE_EXTENSIONS, ImageParser
     from .scanner import VisionScanner
 
+    # Claim image extensions so images are indexed at all; the indexer skips
+    # any file no parser claims, which is why images were invisible until
+    # now (and the deferred vision scanner, which only runs on indexed
+    # files, never fired).
+    api.register_parser(*IMAGE_EXTENSIONS)(ImageParser)
     api.register_scanner(VisionScanner(api.config, api.repo_root))
     api.register_cli(make_cli_registrar(api.config))
 

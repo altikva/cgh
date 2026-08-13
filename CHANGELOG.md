@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Images are indexed now** (cgh-vision): the indexer skips any file no
+  parser claims, so `.png` / `.jpg` / `.jpeg` / `.webp` were never indexed
+  and the deferred vision scanner (which only runs on indexed files) never
+  fired on repo images. cgh-vision now registers a minimal image parser, so
+  an image becomes a known indexed file and the vision scanner reaches it.
+  The scan stays deferred and gated as before (size bounds, a reachable
+  vision backend, the egress rule for non-loopback endpoints); disable it
+  with `[plugins] disabled = ["vision"]` if you do not want vision
+  inference running over repo images.
+
 ### Fixed
 - **PII scanning now reads a document's extracted text, not its raw
   bytes**: scanners were fed `read_text(errors="replace")` of the file,

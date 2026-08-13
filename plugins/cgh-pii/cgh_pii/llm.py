@@ -61,7 +61,7 @@ def installed_ollama_models(url: str) -> frozenset[str]:
         return hit[1]
     names: set[str] = set()
     try:
-        req = urllib.request.Request(url.rstrip("/") + "/api/tags")
+        req = urllib.request.Request(url.rstrip("/") + "/api/tags")  # noqa: S310
         with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
             data = json.loads(resp.read().decode())
         for m in data.get("models", []):

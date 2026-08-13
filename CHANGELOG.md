@@ -21,6 +21,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `cache_dir` to relocate); `cgh vision --force` recomputes and refreshes
   the cache. PDF pages are cached per page too. The key also covers the
   pre-scaling settings, since those change the pixels sent to the model.
+- **`cgh vision` reports how long each call took**: vision inference runs
+  for many seconds, so each extraction now leaves a persistent `extracted
+  in N.Ns` line on stderr once its progress bar clears (per page for a
+  PDF). A cache hit stays instant and prints its cached-result note
+  instead. stdout keeps only the markdown or json, so it still pipes.
 - **`cgh examples`**: list runnable examples bundled inside the installed
   packages and install one locally to modify (`cgh examples install
   <name> [--dest DIR]`). Examples ship as package data, so this works

@@ -21,6 +21,24 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## Result cache
+
+Vision inference is slow, so a result is cached by the input file's
+fingerprint plus the parameters that shape it (profile, models, hint,
+`num_ctx`). Run the same image once to look at it, then again with
+`--out` to save it, and the second run is instant instead of recomputing:
+
+```bash
+cgh vision archi.png                 # computes, caches
+cgh vision archi.png --out report.md # cache hit, saved instantly
+cgh vision archi.png --force         # recompute and refresh the cache
+```
+
+The key includes the parameters, so `--profile fast` never returns the
+`default` answer. Cached results live in a temp dir with a 24 h TTL;
+tune it with `[plugin.vision] cache_ttl_hours` (0 disables) and
+`cache_dir`.
+
 ## Without Ollama, one command: `cgh vision setup --llamacpp`
 
 If Ollama is unavailable and you have llama.cpp (or can install it),

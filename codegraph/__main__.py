@@ -160,6 +160,7 @@ def _print_help():
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
+                ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
     ]
@@ -533,6 +534,11 @@ def _register_analysis(sub) -> None:
     from codegraph.cli.commands_files import register_files_parser
 
     register_files_parser(sub)
+
+    # --- examples (bundled, installable without git/network) ---
+    from codegraph.cli.commands_examples import register_examples_parser
+
+    register_examples_parser(sub)
 
     # --- federate ---
     p = sub.add_parser(

@@ -1,0 +1,23 @@
+# Starter .codegraph/config.toml. Copy the parts you want into your repo's
+# .codegraph/config.toml, then `cgh index --force`.
+
+[codegraph]
+# The size cap is in KILOBYTES. 500 (the default) skips files over 0.5 MB,
+# which drops many PDFs and spreadsheets. 512000 = 500 MB.
+max_file_size_kb = 512000
+# Skip generated / vendored noise. Add your own globs.
+ignore_patterns = ["*.min.js", "*.bundle.js", "*.map"]
+
+[plugin.pii]
+# Regex PII + secrets run by default. Add the name/location tier and the
+# LLM tier for what regex misses. The LLM model is auto-picked from what
+# Ollama has installed if the named one is absent.
+ner = true          # needs: pip install "cgh-pii[ner]"
+llm = true          # deferred; emits count-only pii.llm.* findings
+llm_model = "qwen2.5:3b"
+# A non-loopback LLM endpoint sees file content: opt in, every probe audited.
+pii_llm_allow_remote = false
+
+[plugin.summarize]
+# File summaries. If this model is not pulled, an installed one is used.
+ollama_model = "gemma3:4b"

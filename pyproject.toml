@@ -128,7 +128,14 @@ where = ["."]
 include = ["codegraph", "codegraph.*", "cgh"]
 
 [tool.setuptools.package-data]
-codegraph = ["py.typed", "skills/*/SKILL.md", "skills/*/*.md"]
+codegraph = [
+    "py.typed",
+    "skills/*/SKILL.md",
+    "skills/*/*.md",
+    # Bundled examples, shipped in the wheel so `cgh examples install` works
+    # with no git checkout and no network.
+    "examples/**/*",
+]
 
 [dependency-groups]
 # The declared dev toolchain: local and CI run the same artifact

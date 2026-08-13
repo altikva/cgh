@@ -43,6 +43,56 @@ LLM_CATEGORIES = frozenset(
 _TIMEOUT = 60
 _MAX_CHARS = 100_000  # a probe of a multi-MB blob is pointless and slow
 
+# Auto-pick preference when the configured Ollama model is not installed.
+# Embedding models cannot generate and are excluded.
+_MODEL_PREF = ("qwen", "gemma", "llama", "mistral", "phi", "granite")
+_TAGS_TTL = 60.0
+_tags_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def installed_ollama_models(url: str) -> frozenset[str]:
+    """Model names Ollama reports at <url>/api/tags, cached briefly. Empty
+    set on any error."""
+    import time
+
+    now = time.time()
+    hit = _tags_cache.get(url)
+    if hit and now - hit[0] < _TAGS_TTL:
+        return hit[1]
+    names: set[str] = set()
+    try:
+        req = urllib.request.Request(url.rstrip("/") + "/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode())
+        for m in data.get("models", []):
+            n = str(m.get("name") or m.get("model") or "").strip()
+            if n:
+                names.add(n)
+    except Exception:
+        return frozenset()
+    result = frozenset(names)
+    _tags_cache[url] = (now, result)
+    return result
+
+
+def resolve_ollama_model(url: str, configured: str) -> str | None:
+    """The Ollama model to call: the configured one when installed, else an
+    auto-picked installed generative model, else None."""
+    installed = installed_ollama_models(url)
+    if not installed:
+        return None
+    if configured and configured in installed:
+        return configured
+    generative = sorted(m for m in installed if "embed" not in m.lower())
+    if not generative:
+        return None
+    for fam in _MODEL_PREF:
+        for m in generative:
+            if m.lower().startswith(fam):
+                return m
+    return generative[0]
+
+
 _PROMPT = (
     "You are a PII detector. Find every piece of personally identifiable or "
     "sensitive information in the TEXT below: names of people, locations, "
@@ -117,9 +167,14 @@ def available(config: dict) -> bool:
         return False
     try:
         with socket.create_connection((host, port), timeout=0.3):
-            return True
+            pass
     except OSError:
         return False
+    # Reachable is not enough: an Ollama with no pulled model cannot probe.
+    return (
+        resolve_ollama_model(url, str(config.get("llm_model", "qwen2.5:3b")))
+        is not None
+    )
 
 
 def _post_json(url: str, payload: bytes, headers: dict) -> dict:
@@ -155,9 +210,12 @@ def _call(text: str, config: dict) -> str:
             headers["Authorization"] = f"Bearer {key}"
         data = _post_json(url + "/chat/completions", payload, headers)
         return str(data["choices"][0]["message"]["content"])
+    model = resolve_ollama_model(url, str(config.get("llm_model", "qwen2.5:3b")))
+    if model is None:
+        return ""  # no installed model: probe() turns this into no findings
     payload = json.dumps(
         {
-            "model": config.get("llm_model", "qwen2.5:3b"),
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0},

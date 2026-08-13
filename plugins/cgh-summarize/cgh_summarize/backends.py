@@ -20,13 +20,70 @@ import json
 import shutil
 import socket
 import subprocess
+import time
 import urllib.request
 
 _TIMEOUT = 120  # seconds per model call
 
+# Auto-pick preference when no configured model is installed: generative
+# families, small-to-capable first. Embedding models cannot generate text,
+# so they are excluded from the pick entirely.
+_MODEL_PREF = ("qwen", "gemma", "llama", "mistral", "phi", "granite")
+_TAGS_TTL = 60.0
+_tags_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
 
 class SummarizeError(RuntimeError):
     """A backend failed to produce a summary."""
+
+
+def installed_ollama_models(url: str) -> frozenset[str]:
+    """Model names Ollama reports at <url>/api/tags, cached briefly so an
+    indexing run does not re-query per file. Empty set on any error (an
+    empty set makes the backend read as unavailable, which is correct)."""
+    now = time.time()
+    hit = _tags_cache.get(url)
+    if hit and now - hit[0] < _TAGS_TTL:
+        return hit[1]
+    names: set[str] = set()
+    try:
+        req = urllib.request.Request(url.rstrip("/") + "/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for m in data.get("models", []):
+            n = str(m.get("name") or m.get("model") or "").strip()
+            if n:
+                names.add(n)
+    except Exception:
+        return frozenset()
+    result = frozenset(names)
+    _tags_cache[url] = (now, result)
+    return result
+
+
+def resolve_ollama_model(url: str, configured: str) -> str | None:
+    """The model to call: the configured one when it is installed,
+    otherwise an auto-picked installed generative model (family preference,
+    then name order). None when nothing usable is installed, so callers can
+    degrade instead of 404-ing on a hardcoded name that was never pulled."""
+    installed = installed_ollama_models(url)
+    if not installed:
+        return None
+    if configured and configured in installed:
+        return configured
+    generative = sorted(m for m in installed if "embed" not in m.lower())
+    if not generative:
+        return None
+    for fam in _MODEL_PREF:
+        for m in generative:
+            if m.lower().startswith(fam):
+                return m
+    return generative[0]
+
+
+def reset_tags_cache() -> None:
+    """Test seam: drop the cached /api/tags results."""
+    _tags_cache.clear()
 
 
 def _url_host_port(url: str) -> tuple[str, int] | None:
@@ -134,25 +191,38 @@ class OllamaBackend:
         return "local" if is_loopback_url(self._url(config)) else "cloud"
 
     def available(self, config: dict) -> bool:
+        # The daemon must be reachable AND expose at least one usable
+        # (generative) model. A running daemon with no pulled model is not
+        # usable: gating on model presence here is what lets the scanner
+        # fall through to the next backend (or degrade) instead of 404-ing
+        # on every file with a hardcoded model name.
         target = _url_host_port(self._url(config))
         if target is None:
             return False
         try:
             with socket.create_connection(target, timeout=0.3):
-                return True
+                pass
         except OSError:
             return False
+        return resolve_ollama_model(self._url(config), self._model(config)) is not None
+
+    def _model(self, config: dict) -> str:
+        return str(config.get("ollama_model", "qwen2.5:1.5b"))
 
     def summarize(self, prompt: str, config: dict) -> str:
+        url = self._url(config)
+        model = resolve_ollama_model(url, self._model(config))
+        if model is None:
+            raise SummarizeError(
+                "no Ollama model installed to summarize with; pull one "
+                "(`ollama pull qwen2.5:1.5b`) or set [plugin.summarize] "
+                "ollama_model to a model you have"
+            )
         payload = json.dumps(
-            {
-                "model": config.get("ollama_model", "qwen2.5:1.5b"),
-                "prompt": prompt,
-                "stream": False,
-            }
+            {"model": model, "prompt": prompt, "stream": False}
         ).encode("utf-8")
         req = urllib.request.Request(
-            self._url(config) + "/api/generate",
+            url + "/api/generate",
             data=payload,
             headers={"Content-Type": "application/json"},
         )

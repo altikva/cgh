@@ -29,7 +29,7 @@ adopting over time):
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--secure] [--no-children] [--root DIR]
+cgh init [--yes | -y] [--secure] [--no-children] [--tools LIST] [--root DIR]
 ```
 
 | Flag | Description |
@@ -37,6 +37,11 @@ cgh init [--yes | -y] [--secure] [--no-children] [--root DIR]
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
 | `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
 | `--no-children` | Don't initialize / refresh federated subrepos |
+| `--tools` | Comma-separated tools to wire regardless of detection (`claude,cursor,codex,gemini,bob`). For a fresh repo where cgh cannot detect the tool yet |
+
+The interactive selection is offered even when no tool is detected (a
+fresh repo can still wire one by hand); `--tools` forces the choice for a
+scripted or empty-repo bootstrap.
 
 **What it does:**
 
@@ -46,7 +51,7 @@ cgh init [--yes | -y] [--secure] [--no-children] [--root DIR]
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
 5. Offers secure mode (guards fail closed, egress allowlist); assist stays the default
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
-6. For selected tools: writes MCP config, installs the bundled skills, and (optional) appends codegraph usage guidelines to the agent's root rules file (CLAUDE.md / AGENTS.md / GEMINI.md)
+6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the codegraph usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
 7. Offers Claude-specific auto-accept for MCP tool calls
 8. Counts parseable files by language
 9. Optionally runs `cgh index`

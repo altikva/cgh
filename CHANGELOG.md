@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh files`**: list the indexed files (optionally filtered by a path
+  substring), and `cgh files --check <path>` answers "is this file
+  indexed, and if not, why was it skipped" using the same decision the
+  indexer makes (no parser for the suffix, over the `max_file_size_kb`
+  cap, or an ignore rule). The why-skipped answer is a pure function of
+  the file and config, so it works even while an owner holds the graph
+  lock; listing falls back to the FTS in that case.
 - **`cgh vision` reads PDFs** (cgh-vision): pass a `.pdf` and it rasterizes
   the pages to images (via pypdfium2, behind the `cgh-vision[pdf]` extra)
   and runs the vision pipeline per page, emitting a per-page report; a

@@ -129,6 +129,7 @@ def _print_help():
                 ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
                 ("parsers", "List registered language parsers"),
                 ("findings", "Scanner findings: pii, secrets, summaries"),
+                ("files", "List indexed files, or check one (--check)"),
             ],
         ),
         (
@@ -527,6 +528,11 @@ def _register_analysis(sub) -> None:
     from codegraph.cli.commands_fetch import register_fetch_parser
 
     register_fetch_parser(sub)
+
+    # --- files (list indexed files / check one) ---
+    from codegraph.cli.commands_files import register_files_parser
+
+    register_files_parser(sub)
 
     # --- federate ---
     p = sub.add_parser(

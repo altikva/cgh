@@ -32,4 +32,4 @@ vision = "cgh_vision"
 include = ["cgh_vision*"]
 
 [tool.setuptools.package-data]
-cgh_vision = ["py.typed"]
+cgh_vision = ["py.typed", "examples/**/*"]

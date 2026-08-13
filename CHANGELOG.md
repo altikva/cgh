@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh examples`**: list runnable examples bundled inside the installed
+  packages and install one locally to modify (`cgh examples install
+  <name> [--dest DIR]`). Examples ship as package data, so this works
+  with no git checkout and no network. Discovery spans the base package
+  and every plugin (each can bundle its own under `<package>/examples/`);
+  the base ships `starter-config` and cgh-vision ships `pdf-to-vision`.
+
 ### Fixed
 - **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
   vision model encodes an image into many tokens, so a detailed diagram

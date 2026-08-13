@@ -8,6 +8,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh init` wires a tool cgh could not auto-detect**: the tool
+  multi-select only appeared when at least one agent was detected, so a
+  fresh repo with no agent CLI on PATH (or an IDE-only tool like Cursor,
+  which has no CLI to probe) got nothing wired and no chance to choose.
+  The selection is now offered even when nothing is detected (detected
+  tools pre-checked, the rest offered unchecked), and a new `--tools
+  claude,cursor,bob` forces the choice for a scripted or empty-repo
+  "init cgh before the LLM" bootstrap.
+- **`cgh init` now writes the usage guidelines for IBM Bob**: Bob's rules
+  target (`.bob/rules/00-codegraph-usage.md`) was missing from the
+  injection map, so a Bob setup installed the skills but never the
+  "when to use the codegraph tools" rules. Bob now gets them like every
+  other agent.
+
 ### Added
 - **`cgh vision` caches its result per file**: vision inference is slow,
   so running the same image twice (once to look, again with `--out` to

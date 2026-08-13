@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-08-13
+
 ### Added
 - **`cgh vision` caches its result per file**: vision inference is slow,
   so running the same image twice (once to look, again with `--out` to

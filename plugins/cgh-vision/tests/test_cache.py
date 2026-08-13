@@ -30,6 +30,9 @@ def test_round_trip_and_key_sensitivity(tmp_path):
     assert cache.get({**cfg, "profile": "fast"}, img) is None
     # A different image is a different key.
     assert cache.get(cfg, b"other-bytes") is None
+    # Pre-scaling changes the pixels sent to the model, so it changes the key.
+    assert cache.get({**cfg, "prescale": False}, img) is None
+    assert cache.get({**cfg, "prescale_min_px": 2000}, img) is None
 
 
 def test_ttl_zero_disables(tmp_path):

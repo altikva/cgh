@@ -46,6 +46,10 @@ def cache_key(image_bytes: bytes, config: dict) -> str:
         "profile": config.get("profile", "default"),
         "hint": config.get("hint", ""),
         "num_ctx": config.get("num_ctx", 8192),
+        # Pre-scaling changes the pixels sent to the model, so it changes
+        # the result: keep it in the key.
+        "prescale": config.get("prescale", True),
+        "prescale_min_px": config.get("prescale_min_px", 1000),
     }
     blob = json.dumps(parts, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()

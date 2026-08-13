@@ -1,127 +1,57 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# __creation__ = 2026-04-14
+# __creation__ = 2026-08-13
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Lightweight parser for config, devops, and data files.
-#
-# These files don't produce function/class symbols, but they become
-# File nodes in the graph (searchable, visible in architecture_overview,
-# reachable by pattern_search). YAML/JSON get top-level key extraction;
-# Dockerfiles get stage extraction.
+# Description: Plain-text parser for .txt / .text / .log / .csv / .tsv /
+#              .rst. The indexer skips any file no parser claims, so these
+#              formats were invisible: not indexed, never scanned for PII or
+#              secrets. This claims them and exposes their content as
+#              scan_text so scanners see it, with a short preview section so
+#              the file is findable. No symbols, no structure: it is text.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from . import register_parser
-from .base import BaseParser, FileIndex, ResourceDef
+from .base import BaseParser, FileIndex, SectionDef
 
-# ---------------------------------------------------------------------------
-# Dockerfile parser, extracts FROM stages
-# ---------------------------------------------------------------------------
+_PREVIEW_CHARS = 400
+_MAX_SCAN_CHARS = 200_000  # cap the text fed to scanners
 
 
-@register_parser(".dockerfile")
-class DockerfileParser(BaseParser):
-    """Dockerfile, extracts FROM stages and build targets."""
+@register_parser(".txt", ".text", ".log", ".csv", ".tsv", ".rst")
+class PlainTextParser(BaseParser):
+    """Register a plain-text file as indexed and expose its content to
+    scanners. Read-with-replace: a stray non-UTF-8 byte never crashes the
+    scan, it just decodes lossily."""
 
-    lang = "dockerfile"
-    extensions = [".dockerfile"]
-    extracts = ["resources"]
+    lang = "text"
+    extensions = [".txt", ".text", ".log", ".csv", ".tsv", ".rst"]
+    extracts = ["sections"]
+    description = (
+        "Plain-text files (txt, log, csv, ...) indexed for search and scanning"
+    )
 
     def parse(self, path: Path) -> FileIndex:
         idx = FileIndex(path=str(path), lang=self.lang)
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            content = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return idx
-        for i, line in enumerate(text.splitlines(), 1):
-            m = re.match(r"^FROM\s+(\S+)(?:\s+[Aa][Ss]\s+(\S+))?", line)
-            if m:
-                image, alias = m.group(1), m.group(2)
-                name = alias or image.split(":")[0].split("/")[-1]
-                idx.resources.append(
-                    ResourceDef(
-                        id=f"{path}::stage:{name}",
-                        name=name,
-                        type="docker_stage",
-                        file_path=str(path),
-                        start_line=i,
-                        end_line=i,
-                        kind="resource",
-                    )
-                )
-        return idx
-
-
-# ---------------------------------------------------------------------------
-# XML, file node only (no symbol extraction)
-#
-# YAML / TOML / JSON live in config_data.py and SQL lives in sql.py: they parse
-# structured config into sections / resources instead of bare File nodes.
-# ---------------------------------------------------------------------------
-
-
-@register_parser(".xml", ".xsl", ".xslt", ".svg")
-class XmlParser(BaseParser):
-    """XML/SVG files, indexed as File nodes."""
-
-    lang = "xml"
-    extensions = [".xml", ".xsl", ".xslt", ".svg"]
-    extracts = []
-
-    def parse(self, path: Path) -> FileIndex:
-        return FileIndex(path=str(path), lang=self.lang)
-
-
-# ---------------------------------------------------------------------------
-# Docker Compose + misc config
-# ---------------------------------------------------------------------------
-
-
-@register_parser(".env", ".ini", ".cfg", ".conf", ".properties")
-class ConfigParser(BaseParser):
-    """Generic config files, indexed as File nodes."""
-
-    lang = "config"
-    extensions = [".env", ".ini", ".cfg", ".conf", ".properties"]
-    extracts = []
-
-    def parse(self, path: Path) -> FileIndex:
-        return FileIndex(path=str(path), lang=self.lang)
-
-
-@register_parser(".sh", ".bash", ".zsh")
-class ShellParser(BaseParser):
-    """Shell scripts, extracts function definitions."""
-
-    lang = "shell"
-    extensions = [".sh", ".bash", ".zsh"]
-    extracts = ["functions"]
-
-    def parse(self, path: Path) -> FileIndex:
-        from .base import SymbolDef
-
-        idx = FileIndex(path=str(path), lang=self.lang)
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return idx
-        for i, line in enumerate(text.splitlines(), 1):
-            m = re.match(r"^(?:function\s+)?(\w+)\s*\(\s*\)", line)
-            if m:
-                name = m.group(1)
-                idx.functions.append(
-                    SymbolDef(
-                        id=f"{path}::{name}",
-                        name=name,
-                        file_path=str(path),
-                        start_line=i,
-                        end_line=i,
-                        kind="function",
-                    )
-                )
+        idx.scan_text = content[:_MAX_SCAN_CHARS]
+        idx.sections.append(
+            SectionDef(
+                id=f"{path}::text",
+                title=path.name,
+                level=1,
+                file_path=str(path),
+                start_line=1,
+                end_line=content.count("\n") + 1,
+                body_preview=content[:_PREVIEW_CHARS],
+                anchor="text",
+            )
+        )
         return idx

@@ -472,6 +472,8 @@ reindex_on_start = true
 # openai_base_url = ""   # any OpenAI-compatible vision endpoint instead
 # openai_api_key_env = "OPENAI_API_KEY"  # env var holding the key, if any
 # timeout_s = 300        # per model call; raise for a slow CPU cold start
+# num_ctx = 8192         # Ollama context window; raise for very dense pages
+#                        # (a 400 "exceeds context size" means bump this)
 # fallback_model = "gemma3:4b"     # second reader on skeletal results
 # hint = ""              # steer extraction ("labels are in French"); appended, never replaces the contract
 # prescale = true        # 2x upscale of small images before extraction

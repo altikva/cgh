@@ -943,3 +943,68 @@ def test_ask_ollama_connection_refused_asks_if_daemon_runs(tmp_path, monkeypatch
         backends._ask_ollama("qwen2.5vl:3b", _png(tmp_path), "p", {}, 300)
     msg = str(ei.value)
     assert "daemon" in msg.lower() and "ollama serve" in msg
+
+
+def test_ask_ollama_sets_num_ctx(tmp_path, monkeypatch):
+    """The request must carry a roomy num_ctx (default 8192, configurable)
+    so a vision model's image tokens do not overflow Ollama's small default
+    context and 400."""
+    import json as _json
+    import urllib.request
+
+    from cgh_vision import backends
+
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"response": "ok"}'
+
+    def _capture(req, timeout=0):
+        captured["body"] = _json.loads(req.data.decode())
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _capture)
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+    backends._ask_ollama("qwen2.5vl:3b", img, "p", {}, 300)
+    assert captured["body"]["options"]["num_ctx"] == 8192
+
+    backends._ask_ollama("qwen2.5vl:3b", img, "p", {"num_ctx": 16384}, 300)
+    assert captured["body"]["options"]["num_ctx"] == 16384
+
+
+def test_ask_ollama_context_400_points_at_num_ctx(tmp_path, monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    import pytest
+    from cgh_vision import backends
+
+    def _raise_400(req, timeout=0):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            400,
+            "Bad Request",
+            {},
+            io_bytes(b"request exceeds the available context size (4096)"),
+        )
+
+    def io_bytes(b):
+        import io
+
+        return io.BytesIO(b)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise_400)
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:3b", img, "p", {}, 300)
+    assert "num_ctx" in str(ei.value)

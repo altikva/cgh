@@ -217,14 +217,23 @@ def _run_scanners(root, path, idx: FileIndex, blob_sha: str | None, fts_conn) ->
     if not inline:
         return
 
-    try:
-        # Strip embedded nulls: binary-ish files decoded with replace keep
-        # \x00, which downstream consumers (argv, SQL) reject.
-        text = (
-            Path(path).read_text(encoding="utf-8", errors="replace").replace("\x00", "")
-        )
-    except OSError:
-        return
+    # A parser that extracted text from a binary/compound format (pdf,
+    # xlsx, docx) exposes it as idx.scan_text; scan THAT, not the raw
+    # bytes, so PII scanners see real page/cell content and not the binary
+    # noise that produces phantom card/phone hits.
+    if idx.scan_text:
+        text = idx.scan_text.replace("\x00", "")
+    else:
+        try:
+            # Strip embedded nulls: binary-ish files decoded with replace
+            # keep \x00, which downstream consumers (argv, SQL) reject.
+            text = (
+                Path(path)
+                .read_text(encoding="utf-8", errors="replace")
+                .replace("\x00", "")
+            )
+        except OSError:
+            return
 
     from codegraph.state.findings import record_findings
 

@@ -8,6 +8,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **PII scanning now reads a document's extracted text, not its raw
+  bytes**: scanners were fed `read_text(errors="replace")` of the file,
+  so for a pdf they matched the binary stream (phantom `pii.card` /
+  `pii.phone` hits at huge offsets on diagram PDFs) and for a zip-based
+  xlsx they saw compressed garbage and missed the real cell content
+  entirely. Parsers now expose their extracted text as `FileIndex.scan_text`
+  (pdf pages, xlsx cell values across data rows, docx paragraphs and table
+  cells), and both the inline and the deferred scan paths run on that when
+  present, falling back to raw bytes only for source files. This removes
+  the diagram-PDF false positives and makes PII inside spreadsheets and
+  Word tables detectable.
+- **Tighter card and phone matching**: a card candidate must now start
+  with a real network IIN (3/4/5/6) and not be a single repeated digit or
+  a straight run, on top of the Luhn check; a phone candidate must hold a
+  plausible E.164 digit count (8 to 15) and not be a mostly-separator
+  spaced sequence. Cuts the coincidental matches that number-heavy text
+  still produces even after the extracted-text fix.
+
 ### Added
 - **Ollama backends auto-pick an installed model** (cgh-summarize and the
   cgh-pii LLM tier): both used to send a hardcoded model name

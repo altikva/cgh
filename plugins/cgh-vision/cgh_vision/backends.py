@@ -170,9 +170,12 @@ def manual_gguf_steps(model: str) -> str:
         f'       hf download {repo} --include "*{quant}*" --local-dir models/{base}\n'
         f'       hf download {repo} --include "*mmproj*" --local-dir models/{base}\n\n'
         f"  3. Write models/{base}/Modelfile with the two files you got (exact\n"
-        "     names vary by repo), the weights first, then the mmproj:\n"
+        "     names vary by repo), the weights first, then the mmproj. The\n"
+        "     num_ctx line gives a detailed image room (a 400 'exceeds context\n"
+        "     size' means raise it):\n"
         "       FROM ./<weights>.gguf\n"
-        "       FROM ./<mmproj>.gguf\n\n"
+        "       FROM ./<mmproj>.gguf\n"
+        "       PARAMETER num_ctx 8192\n\n"
         f"  4. ollama create {model} -f models/{base}/Modelfile\n\n"
         "  5. Re-run. cgh only ever asks Ollama for the name, it downloads\n"
         "     nothing itself."
@@ -222,13 +225,19 @@ def _ask_ollama(
     timeout_s: int,
     _allow_fallback: bool = True,
 ) -> str:
+    # A vision model encodes an image into many tokens; a detailed diagram
+    # plus the prompt easily passes Ollama's small default context (2k/4k),
+    # which returns a 400 "exceeds the available context size". Ask for a
+    # roomier num_ctx so a single page fits. Configurable: raise it for very
+    # dense pages, lower it if the machine is tight on RAM.
+    num_ctx = int(cfg.get("num_ctx", 8192))
     payload = json.dumps(
         {
             "model": model,
             "prompt": prompt,
             "images": [base64.b64encode(image_path.read_bytes()).decode()],
             "stream": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": num_ctx},
         }
     ).encode()
     req = urllib.request.Request(
@@ -257,6 +266,14 @@ def _ask_ollama(
                 f"{manual_gguf_steps(model)}"
             ) from exc
         detail = exc.read().decode(errors="replace")[:200]
+        if exc.code == 400 and "context" in detail.lower():
+            # The image + prompt passed even the requested num_ctx. Point at
+            # the lever instead of a raw 400.
+            raise VisionError(
+                f"the image exceeds the model context ({num_ctx} tokens): "
+                f"{detail}. Raise [plugin.vision] num_ctx, or scale the image "
+                "down before extracting."
+            ) from exc
         raise VisionError(f"Ollama error {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", None) or exc

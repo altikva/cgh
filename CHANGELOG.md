@@ -17,7 +17,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   profile never returns another profile's answer. Cached results live in a
   temp dir with a 24 h TTL (`[plugin.vision] cache_ttl_hours`, 0 disables;
   `cache_dir` to relocate); `cgh vision --force` recomputes and refreshes
-  the cache. PDF pages are cached per page too.
+  the cache. PDF pages are cached per page too. The key also covers the
+  pre-scaling settings, since those change the pixels sent to the model.
 - **`cgh examples`**: list runnable examples bundled inside the installed
   packages and install one locally to modify (`cgh examples install
   <name> [--dest DIR]`). Examples ship as package data, so this works

@@ -123,6 +123,14 @@ class FileIndex:
     code_refs: list[CodeRef] = field(default_factory=list)
     links: list[LinkRef] = field(default_factory=list)
 
+    # Full text a parser extracted for a binary/compound format (pdf, xlsx,
+    # docx). Scanners (PII, secrets, summaries) run on THIS when set, not on
+    # the raw file bytes: reading a pdf or a zip-based xlsx as text yields
+    # binary noise (false-positive card/phone matches) and hides the real
+    # cell / page content (missed PII). Empty for source files, whose raw
+    # text is already the right thing to scan.
+    scan_text: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Base parser

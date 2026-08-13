@@ -19,6 +19,7 @@ from pathlib import Path
 from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 
 _PREVIEW_CHARS = 400
+_MAX_SCAN_CHARS = 200_000  # cap the extracted page text fed to scanners
 _log = logging.getLogger(__name__)
 
 
@@ -44,11 +45,19 @@ class PdfParser(BaseParser):
                     return idx
 
             outline_titles = self._outline_by_page(reader)
+            scan_parts: list[str] = []
+            scan_len = 0
             for page_no, page in enumerate(reader.pages, start=1):
                 try:
                     text = (page.extract_text() or "").strip()
                 except Exception:
                     text = ""
+                # Accumulate the real extracted page text for scanners, so
+                # PII is matched on page content and not on the pdf's raw
+                # binary (which fakes card/phone hits). Bounded per file.
+                if text and scan_len < _MAX_SCAN_CHARS:
+                    scan_parts.append(text)
+                    scan_len += len(text) + 1
                 title = outline_titles.get(page_no) or f"Page {page_no}"
                 idx.sections.append(
                     SectionDef(
@@ -62,6 +71,7 @@ class PdfParser(BaseParser):
                         anchor=f"page-{page_no}",
                     )
                 )
+            idx.scan_text = "\n".join(scan_parts)[:_MAX_SCAN_CHARS]
         except Exception:
             # Robustness contract: a corrupt file never kills indexing.
             # But an empty index that looks like success deserves a

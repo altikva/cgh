@@ -54,6 +54,21 @@ def _worker() -> None:
             _QUEUE.task_done()
 
 
+def _reparse(p: Path):
+    """Best-effort re-parse to recover a parser's extracted text
+    (idx.scan_text) for a binary/compound doc. None if no parser matches
+    or parsing fails; the caller then falls back to raw bytes."""
+    try:
+        from codegraph.parsers import get_parser_for_path
+
+        parser = get_parser_for_path(p)
+        if parser is None:
+            return None
+        return parser.parse(p)
+    except Exception:
+        return None
+
+
 def _process(repo_root: str, path: str, blob_sha: str) -> None:
     from codegraph.plugins import scanners as _plugin_scanners
     from codegraph.state.findings import already_scanned, record_findings
@@ -66,6 +81,7 @@ def _process(repo_root: str, path: str, blob_sha: str) -> None:
     if not p.exists():
         return
     text: str | None = None
+    idx = None
 
     for _plugin_name, scanner in deferred:
         from codegraph.indexer import _bind_scanner_root
@@ -74,16 +90,24 @@ def _process(repo_root: str, path: str, blob_sha: str) -> None:
         if already_scanned(repo_root, path, scanner.name, blob_sha):
             continue
         if text is None:
-            try:
-                # Binary files (docx, xlsx, images) decode with embedded
-                # nulls; strip them so scanners and their backends never
-                # receive text no OS API will accept.
-                text = p.read_text(encoding="utf-8", errors="replace").replace(
-                    "\x00", ""
-                )
-            except OSError:
-                return
-        found = scanner.scan(p, text, None) or []
+            # Re-parse so a binary/compound format (pdf, xlsx, docx) is
+            # scanned on its extracted text (idx.scan_text), not its raw
+            # bytes: reading a pdf or a zip-based xlsx as text is binary
+            # noise that both fakes PII hits and hides the real content.
+            idx = _reparse(p)
+            if idx is not None and idx.scan_text:
+                text = idx.scan_text.replace("\x00", "")
+            else:
+                try:
+                    # Embedded nulls decode into binary-ish files; strip
+                    # them so scanners and their backends never receive
+                    # text no OS API will accept.
+                    text = p.read_text(encoding="utf-8", errors="replace").replace(
+                        "\x00", ""
+                    )
+                except OSError:
+                    return
+        found = scanner.scan(p, text, idx) or []
         record_findings(repo_root, path, scanner.name, found, blob_sha=blob_sha)
         _feed_fts(repo_root, path, scanner.name, found)
 

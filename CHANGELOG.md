@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh init` actually installs the bundled skills now**: the skill
+  source directory resolved to `codegraph/integrations/skills` (next to
+  the installer module) instead of `codegraph/skills`, so it always found
+  zero skills and every tool setup (Claude, Cursor, Bob, ...) installed
+  none. Fixed to look one level up; a regression test now asserts the
+  skills are found and land as `SKILL.md` files under the tool's dir.
 - **`cgh init` wires a tool cgh could not auto-detect**: the tool
   multi-select only appeared when at least one agent was detected, so a
   fresh repo with no agent CLI on PATH (or an IDE-only tool like Cursor,

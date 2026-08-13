@@ -197,10 +197,13 @@ def _extract_one(image: Path, config: dict, force: bool = False) -> dict:
             err.print("[dim]cached result (use --force to recompute)[/dim]")
             return hit
 
+    import time
+
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     from .pipeline import route_structured
 
+    started = time.perf_counter()
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -212,6 +215,9 @@ def _extract_one(image: Path, config: dict, force: bool = False) -> dict:
         result = route_structured(
             image, config, progress=lambda step: bar.update(task, description=step)
         )
+    # The bar is transient (it vanishes); leave a persistent line so each
+    # vision call reports how long its inference took.
+    err.print(f"[dim]extracted in {time.perf_counter() - started:.1f}s[/dim]")
     cache.put(config, img_bytes, result)
     return result
 

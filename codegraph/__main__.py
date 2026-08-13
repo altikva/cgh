@@ -248,6 +248,13 @@ def _register_setup_and_serve(sub) -> None:
         action="store_true",
         help='Enable secure mode (mode = "secure") without prompting',
     )
+    p.add_argument(
+        "--tools",
+        default="",
+        help="Comma-separated agent tools to wire regardless of detection "
+        "(claude,cursor,codex,gemini,bob). For a fresh repo where cgh cannot "
+        "detect the tool yet.",
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")

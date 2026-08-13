@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **cgh-vision: a request timeout no longer reads as a dead daemon**: when
+  Ollama answered the socket but the extraction call ran past the deadline
+  (the model loading on first use, or slow CPU inference), the error said
+  "Ollama unreachable ... (is the daemon running?)", which is wrong and
+  sent people chasing a daemon that was up. A timeout now says so and
+  points at the fix (warm the model with `ollama run <model>`, raise
+  `[plugin.vision] timeout_s`, or `--profile fast`); a real connection
+  refusal still names the daemon. The per-call default timeout is raised
+  to 300s (fast 120s) so a cold model on CPU has room. `timeout_s` was
+  already configurable; only its default changed.
+
 ### Added
 - **`cgh files`**: list the indexed files (optionally filtered by a path
   substring), and `cgh files --check <path>` answers "is this file

@@ -899,3 +899,47 @@ def test_ask_ollama_404_fetches_then_retries(tmp_path, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
     out = backends._ask_ollama("qwen2.5vl:3b", img, "p", {}, 5)
     assert out == "ok" and state["n"] == 2  # 404, fetched, retried, succeeded
+
+
+def _png(tmp_path):
+    p = tmp_path / "x.png"
+    p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    return p
+
+
+def test_ask_ollama_timeout_names_the_slow_model_not_a_dead_daemon(
+    tmp_path, monkeypatch
+):
+    """A request timeout means the daemon is up but slow (cold model / CPU);
+    the error must say so, not falsely ask if the daemon is running."""
+    import urllib.request
+
+    import pytest
+    from cgh_vision import backends
+
+    def _timeout(req, timeout=0):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _timeout)
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:3b", _png(tmp_path), "p", {}, 300)
+    msg = str(ei.value)
+    assert "timed out" in msg and "timeout_s" in msg
+    assert "is the daemon running" not in msg.lower()
+
+
+def test_ask_ollama_connection_refused_asks_if_daemon_runs(tmp_path, monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    import pytest
+    from cgh_vision import backends
+
+    def _refused(req, timeout=0):
+        raise urllib.error.URLError(ConnectionRefusedError("refused"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refused)
+    with pytest.raises(backends.VisionError) as ei:
+        backends._ask_ollama("qwen2.5vl:3b", _png(tmp_path), "p", {}, 300)
+    msg = str(ei.value)
+    assert "daemon" in msg.lower() and "ollama serve" in msg

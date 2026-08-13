@@ -45,7 +45,7 @@ PROFILES: dict[str, dict] = {
         "read_legend": True,
         "read_title": True,
         "read_notes": True,
-        "timeout_s": 120,
+        "timeout_s": 300,  # per model call; generous for cold-start on CPU
         # Second reader when the first comes back skeletal. The
         # arrow reader doubles as it: benchmarked over every local
         # vision model, it rescues the most and costs no extra
@@ -58,7 +58,7 @@ PROFILES: dict[str, dict] = {
         "read_legend": False,
         "read_title": False,
         "read_notes": False,
-        "timeout_s": 60,
+        "timeout_s": 120,
         # fast means one pass: no second look, by definition.
         "fallback_model": "",
     },
@@ -68,7 +68,7 @@ PROFILES: dict[str, dict] = {
         "read_legend": False,
         "read_title": True,
         "read_notes": True,
-        "timeout_s": 180,
+        "timeout_s": 300,
         "photo_hint": True,
         "fallback_model": "gemma3:4b",
     },
@@ -415,7 +415,7 @@ def inventory(path: Path, config: dict) -> dict:
         path,
         _with_hint(INVENTORY_PROMPT, config),
         config,
-        int(profile.get("timeout_s", 120)),
+        int(profile.get("timeout_s", 300)),
     )
     parsed = parse_json(raw) or {}
     content = [
@@ -494,7 +494,7 @@ def extract_diagram(path: Path, config: dict, progress=None) -> dict:
     2026-08-04: rescues the thin-line exports the primary reader
     cannot see, never fires on images it reads correctly."""
     profile = profile_for(config)
-    timeout = int(profile.get("timeout_s", 120))
+    timeout = int(profile.get("timeout_s", 300))
     prompt = _with_hint(
         STRUCTURE_PROMPT + (PHOTO_HINT if profile.get("photo_hint") else ""), config
     )

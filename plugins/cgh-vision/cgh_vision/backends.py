@@ -124,7 +124,7 @@ def ask(
     image_path: Path,
     prompt: str,
     config: dict | None = None,
-    timeout_s: int = 120,
+    timeout_s: int = 300,
 ) -> str:
     """One vision call: the image and the prompt to the active backend,
     deterministic (temperature 0), raw text back."""
@@ -259,8 +259,27 @@ def _ask_ollama(
         detail = exc.read().decode(errors="replace")[:200]
         raise VisionError(f"Ollama error {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", None) or exc
+        timed_out = (
+            isinstance(exc, TimeoutError)
+            or isinstance(reason, TimeoutError)
+            or "timed out" in str(reason).lower()
+        )
+        if timed_out:
+            # The daemon answered the socket but not within the deadline:
+            # the model is loading on first use, or inference is slow (CPU).
+            # This is NOT a dead daemon, so do not ask if it is running.
+            raise VisionError(
+                f"Ollama did not respond within {timeout_s}s at "
+                f"{ollama_url(cfg)}. The daemon is up but the request timed "
+                f"out: the model {model!r} is likely loading on first use, or "
+                "inference is slow on CPU. Warm it once with "
+                f"`ollama run {model}`, raise [plugin.vision] timeout_s, or "
+                "try --profile fast."
+            ) from exc
         raise VisionError(
-            f"Ollama unreachable at {ollama_url(cfg)}: {exc} (is the daemon running?)"
+            f"Ollama unreachable at {ollama_url(cfg)}: {exc}. Is the daemon "
+            "running? Start it with `ollama serve`."
         ) from exc
     return str(out.get("response", ""))
 

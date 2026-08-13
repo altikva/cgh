@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh vision` reads PDFs** (cgh-vision): pass a `.pdf` and it rasterizes
+  the pages to images (via pypdfium2, behind the `cgh-vision[pdf]` extra)
+  and runs the vision pipeline per page, emitting a per-page report; a
+  `--pages 1-3` / `--pages 2,5` selects pages. A non-image, non-pdf input
+  now fails fast with a clear message instead of a cryptic Pillow error.
+  pypdfium2 is PDFium (BSD/Apache, pip wheels, no system binary, not AGPL).
 - **Plain-text files are indexed now**: `.txt`, `.text`, `.log`, `.csv`,
   `.tsv` and `.rst` had no parser, and the indexer skips any file no parser
   claims, so they were never indexed and never scanned for PII or secrets.

@@ -18,6 +18,13 @@ authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 # benchmarked 2x pre-scaling of small thin-line diagrams.
 dependencies = ["pillow>=10"]
 
+# `cgh vision file.pdf` rasterizes pages to images so the pipeline can read
+# a PDF's diagrams. pypdfium2 (PDFium: BSD/Apache, pip wheels, no system
+# binary, not AGPL like pymupdf) does the rendering. Kept optional so the
+# base install stays small.
+[project.optional-dependencies]
+pdf = ["pypdfium2>=4"]
+
 [project.entry-points.cgh]
 vision = "cgh_vision"
 

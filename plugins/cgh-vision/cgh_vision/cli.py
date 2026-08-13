@@ -50,6 +50,12 @@ def make_cli_registrar(config: dict):
             help="For a PDF: which pages to read (e.g. '1-3', '2,5', "
             "default all). Ignored for an image.",
         )
+        p.add_argument(
+            "--force",
+            action="store_true",
+            help="Recompute even if a cached result exists for this file "
+            "(and refresh the cache)",
+        )
         from codegraph.plugin_api import add_format_option, add_out_option
 
         add_out_option(p, what="the report")
@@ -163,7 +169,7 @@ def _run(args, config: dict) -> None:
     from .backends import VisionError
 
     try:
-        result = _extract_one(src, config)
+        result = _extract_one(src, config, force=getattr(args, "force", False))
     except VisionError as exc:
         # A missing model, an unreachable daemon, a bad response: a clear
         # message on stderr and a non-zero exit, never a crash report.
@@ -172,10 +178,25 @@ def _run(args, config: dict) -> None:
     _emit(args, result)
 
 
-def _extract_one(image: Path, config: dict) -> dict:
+def _extract_one(image: Path, config: dict, force: bool = False) -> dict:
     """Run the vision pipeline on one image with a stderr progress bar
-    (stdout stays pure markdown / json, so it pipes)."""
+    (stdout stays pure markdown / json, so it pipes). Vision inference is
+    slow, so the result is cached by the image bytes plus the parameters
+    that shape it; a re-run of the same image (say, later with --out)
+    returns the cached answer instantly. --force recomputes and refreshes
+    the cache."""
     from rich.console import Console
+
+    from . import cache
+
+    err = Console(stderr=True)
+    img_bytes = Path(image).read_bytes()
+    if not force:
+        hit = cache.get(config, img_bytes)
+        if hit is not None:
+            err.print("[dim]cached result (use --force to recompute)[/dim]")
+            return hit
+
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     from .pipeline import route_structured
@@ -188,9 +209,11 @@ def _extract_one(image: Path, config: dict) -> dict:
         transient=True,
     ) as bar:
         task = bar.add_task("warming up", total=None)
-        return route_structured(
+        result = route_structured(
             image, config, progress=lambda step: bar.update(task, description=step)
         )
+    cache.put(config, img_bytes, result)
+    return result
 
 
 def _run_pdf(args, config: dict, src: Path) -> None:
@@ -209,7 +232,7 @@ def _run_pdf(args, config: dict, src: Path) -> None:
         for page_no, png in iter_pdf_pages(src, pages=getattr(args, "pages", "")):
             try:
                 err.print(f"[dim]page {page_no}...[/dim]")
-                result = _extract_one(png, config)
+                result = _extract_one(png, config, force=getattr(args, "force", False))
                 result["page"] = page_no
                 per_page.append(result)
             finally:

@@ -38,7 +38,9 @@ def main() -> int:
             print(out)
     finally:
         doc.close()
-    print(f"{len(doc)} page(s) -> {args.out_dir}/  (now: cgh vision {args.out_dir}/page-1.png)")
+    print(
+        f"{len(doc)} page(s) -> {args.out_dir}/  (now: cgh vision {args.out_dir}/page-1.png)"
+    )
     return 0
 
 

@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh stop`**: a discoverable top-level verb to stop this repo's owner
+  and unregister the caller's worker plus the keepalive marker. It is an
+  alias for `cgh serve --stop` and goes through the exact same teardown
+  (graceful terminate on POSIX so the owner runs its cleanup,
+  TerminateProcess on Windows, stale-ipc files removed if it crashed).
+
 ### Fixed
 - **Deferred scan errors no longer flood the output**: a misconfigured
   deferred scanner (say a summarize model that 404s) logged one error line

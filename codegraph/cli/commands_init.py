@@ -677,41 +677,52 @@ def _select_tools(
     tool keys."""
     import questionary
 
-    selected_keys = []
-    if detected_tools and not args.yes:
+    all_keys = [k for _, k, _ in all_tools]
+    detected_keys = {key for _, key in detected_tools}
+
+    # An explicit --tools list forces the choice (scripted or empty-repo
+    # bootstrap: wire a tool cgh could not detect, e.g. Cursor with no
+    # .cursor yet). Unknown names are dropped with a warning, never
+    # silently wired to nothing.
+    forced = getattr(args, "tools", "") or ""
+    if forced:
+        wanted = [t.strip() for t in forced.split(",") if t.strip()]
+        selected_keys = [k for k in wanted if k in all_keys]
+        unknown = [t for t in wanted if t not in all_keys]
+        if unknown:
+            console.print(
+                f"  [yellow]unknown tool(s):[/yellow] {', '.join(unknown)} "
+                f"[dim](known: {', '.join(all_keys)})[/dim]"
+            )
+    elif args.yes:
+        selected_keys = list(detected_keys)
+    else:
+        # Always offer the selection, even when nothing was detected, so a
+        # fresh repo can still wire a tool by hand. Detected tools are
+        # pre-checked; the rest are offered unchecked.
         choices = [
             questionary.Choice(
-                title=f"{name}  (MCP server + hooks)",
+                title=(
+                    f"{name}  (MCP server + hooks)"
+                    if key in detected_keys
+                    else f"{name}  [not detected]"
+                ),
                 value=key,
-                checked=True,
+                checked=key in detected_keys,
             )
-            for name, key in detected_tools
+            for name, key, _ in all_tools
         ]
-        # Also offer non-detected tools as unchecked
-        for name, key, detected in all_tools:
-            if not detected:
-                choices.append(
-                    questionary.Choice(
-                        title=f"{name}  [not detected]",
-                        value=key,
-                        checked=False,
-                    )
-                )
-
-        selected_keys = questionary.checkbox(
-            "Install MCP server for:",
-            choices=choices,
-            style=cg_style,
-            instruction="(space to toggle, enter to confirm)",
-        ).ask()
-
-        if selected_keys is None:
-            selected_keys = []
-    elif args.yes:
-        selected_keys = [key for _, key in detected_tools]
+        selected_keys = (
+            questionary.checkbox(
+                "Install MCP server for:",
+                choices=choices,
+                style=cg_style,
+                instruction="(space to toggle, enter to confirm)",
+            ).ask()
+            or []
+        )
 
     # Show which tools will be skipped (explicit, no silent generation)
-    all_keys = [k for _, k, _ in all_tools]
     skipped = [k for k in all_keys if k not in selected_keys]
     if skipped:
         console.print(
@@ -901,6 +912,7 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
             "codex": "AGENTS.md",
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
+            "bob": ".bob/rules/00-codegraph-usage.md",
         }
         inject_targets = [
             (k, target_files[k]) for k in selected_keys if k in target_files

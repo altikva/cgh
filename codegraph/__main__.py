@@ -129,6 +129,7 @@ def _print_help():
                 ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
                 ("parsers", "List registered language parsers"),
                 ("findings", "Scanner findings: pii, secrets, summaries"),
+                ("files", "List indexed files, or check one (--check)"),
             ],
         ),
         (
@@ -159,6 +160,7 @@ def _print_help():
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
+                ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
     ]
@@ -245,6 +247,13 @@ def _register_setup_and_serve(sub) -> None:
         "--secure",
         action="store_true",
         help='Enable secure mode (mode = "secure") without prompting',
+    )
+    p.add_argument(
+        "--tools",
+        default="",
+        help="Comma-separated agent tools to wire regardless of detection "
+        "(claude,cursor,codex,gemini,bob). For a fresh repo where cgh cannot "
+        "detect the tool yet.",
     )
 
     # --- parsers ---
@@ -527,6 +536,16 @@ def _register_analysis(sub) -> None:
     from codegraph.cli.commands_fetch import register_fetch_parser
 
     register_fetch_parser(sub)
+
+    # --- files (list indexed files / check one) ---
+    from codegraph.cli.commands_files import register_files_parser
+
+    register_files_parser(sub)
+
+    # --- examples (bundled, installable without git/network) ---
+    from codegraph.cli.commands_examples import register_examples_parser
+
+    register_examples_parser(sub)
 
     # --- federate ---
     p = sub.add_parser(

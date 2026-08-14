@@ -20,6 +20,7 @@ from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
 _log = logging.getLogger(__name__)
 
 _PREVIEW_CHARS = 400
+_MAX_SCAN_CHARS = 200_000  # cap the extracted text fed to scanners
 _HEADING_RE = re.compile(r"heading\s*(\d)", re.IGNORECASE)
 
 
@@ -75,6 +76,24 @@ class DocxParser(BaseParser):
         _flush()
         if current is not None:
             current.end_line = len(document.paragraphs)
+
+        # Full extracted text for scanners: every paragraph plus every
+        # table cell (PII often sits in tables, which the heading walk
+        # above never visits). Bounded per file.
+        scan_parts = [
+            p.text.strip() for p in document.paragraphs if (p.text or "").strip()
+        ]
+        try:
+            for table in document.tables:
+                for trow in table.rows:
+                    cells = [
+                        c.text.strip() for c in trow.cells if (c.text or "").strip()
+                    ]
+                    if cells:
+                        scan_parts.append("\t".join(cells))
+        except Exception:
+            pass
+        idx.scan_text = "\n".join(scan_parts)[:_MAX_SCAN_CHARS]
 
         # A document with no heading styles at all still gets one section
         # so its text is searchable.

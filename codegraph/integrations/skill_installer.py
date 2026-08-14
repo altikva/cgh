@@ -145,8 +145,11 @@ Never re-derive a fact that could be looked up via `memory_search` or
 
 
 def _skills_source_dir() -> Path:
-    """Directory inside the installed codegraph package that holds skills."""
-    return Path(__file__).parent / "skills"
+    """Directory inside the installed codegraph package that holds skills.
+    The skills live at codegraph/skills/; this module is codegraph/
+    integrations/skill_installer.py, so the source dir is one level up
+    (`.parent` is integrations/, not the package root)."""
+    return Path(__file__).parent.parent / "skills"
 
 
 def list_bundled_skills() -> list[str]:

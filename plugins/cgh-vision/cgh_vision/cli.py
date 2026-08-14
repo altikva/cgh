@@ -13,16 +13,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
 
 def make_cli_registrar(config: dict):
     def register_cli(subparsers) -> None:
         p = subparsers.add_parser(
-            "vision", help="Inventory and extract one image (markdown + Mermaid)"
+            "vision",
+            help="Inventory and extract an image or pdf (markdown + Mermaid)",
         )
         p.add_argument(
             "image",
             nargs="?",
-            help="Path to the image file, or 'setup' to configure a backend",
+            help="Path to an image or pdf, or 'setup' to configure a backend",
         )
         p.add_argument(
             "--profile",
@@ -40,6 +43,18 @@ def make_cli_registrar(config: dict):
             default=None,
             help="Steer extraction, e.g. 'labels are in French' "
             "(appended to the prompt, never replaces the JSON contract)",
+        )
+        p.add_argument(
+            "--pages",
+            default="",
+            help="For a PDF: which pages to read (e.g. '1-3', '2,5', "
+            "default all). Ignored for an image.",
+        )
+        p.add_argument(
+            "--force",
+            action="store_true",
+            help="Recompute even if a cached result exists for this file "
+            "(and refresh the cache)",
         )
         from codegraph.plugin_api import add_format_option, add_out_option
 
@@ -97,7 +112,6 @@ def _ensure_models(config: dict) -> None:
 
 def _run(args, config: dict) -> None:
     from .backends import available
-    from .pipeline import render_markdown, route_structured
 
     if args.image == "setup":
         if not getattr(args, "llamacpp", False):
@@ -116,53 +130,175 @@ def _run(args, config: dict) -> None:
         config["profile"] = args.profile
     if getattr(args, "hint", None):
         config["hint"] = args.hint
-    if not available(config):
-        from rich.console import Console
 
+    # Validate the input BEFORE touching the backend, so a wrong file type
+    # fails fast with a clear message instead of a cryptic Pillow error.
+    from rich.console import Console
+
+    err = Console(stderr=True)
+    src = Path(args.image)
+    if not src.exists():
+        err.print(f"[red]not found:[/red] {args.image}")
+        raise SystemExit(2)
+    suffix = src.suffix.lower()
+    if suffix != ".pdf" and suffix not in _IMAGE_EXTS:
+        err.print(
+            f"[red]cgh vision reads an image[/red] ({', '.join(sorted(_IMAGE_EXTS))}) "
+            "or a pdf. "
+            + (
+                "Extract a document's text with cgh-docs instead."
+                if suffix in (".docx", ".xlsx", ".txt", ".md")
+                else "Convert this file to an image first."
+            )
+        )
+        raise SystemExit(2)
+
+    if not available(config):
         from .setup_ollama import offer_to_install, print_install_help
 
-        err = Console(stderr=True)
         url = str(config.get("ollama_url", "http://127.0.0.1:11434"))
         print_install_help(err, ollama_url=url)
         offer_to_install(err)  # interactive only; official channel only
         raise SystemExit(1)
-    _ensure_models(config)
-    # Progress rides stderr so stdout stays pure markdown (pipeable).
-    from rich.console import Console
-    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+    if suffix == ".pdf":
+        _run_pdf(args, config, src)
+        return
+
+    _ensure_models(config)
     from .backends import VisionError
 
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=Console(stderr=True),
-            transient=True,
-        ) as bar:
-            task = bar.add_task("warming up", total=None)
-            result = route_structured(
-                Path(args.image),
-                config,
-                progress=lambda step: bar.update(task, description=step),
-            )
+        result = _extract_one(src, config, force=getattr(args, "force", False))
     except VisionError as exc:
         # A missing model, an unreachable daemon, a bad response: a clear
         # message on stderr and a non-zero exit, never a crash report.
-        Console(stderr=True).print(f"[red]vision failed:[/red] {exc}")
+        err.print(f"[red]vision failed:[/red] {exc}")
         raise SystemExit(1) from exc
+    _emit(args, result)
+
+
+def _extract_one(image: Path, config: dict, force: bool = False) -> dict:
+    """Run the vision pipeline on one image with a stderr progress bar
+    (stdout stays pure markdown / json, so it pipes). Vision inference is
+    slow, so the result is cached by the image bytes plus the parameters
+    that shape it; a re-run of the same image (say, later with --out)
+    returns the cached answer instantly. --force recomputes and refreshes
+    the cache."""
+    from rich.console import Console
+
+    from . import cache
+
+    err = Console(stderr=True)
+    img_bytes = Path(image).read_bytes()
+    if not force:
+        hit = cache.get(config, img_bytes)
+        if hit is not None:
+            err.print("[dim]cached result (use --force to recompute)[/dim]")
+            return hit
+
+    import time
+
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+    from .pipeline import route_structured
+
+    started = time.perf_counter()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=Console(stderr=True),
+        transient=True,
+    ) as bar:
+        task = bar.add_task("warming up", total=None)
+        result = route_structured(
+            image, config, progress=lambda step: bar.update(task, description=step)
+        )
+    # The bar is transient (it vanishes); leave a persistent line so each
+    # vision call reports how long its inference took.
+    err.print(f"[dim]extracted in {time.perf_counter() - started:.1f}s[/dim]")
+    cache.put(config, img_bytes, result)
+    return result
+
+
+def _run_pdf(args, config: dict, src: Path) -> None:
+    """Rasterize the requested PDF pages to images and run vision on each,
+    then emit a per-page report. The heavy dependency (pypdfium2) is only
+    needed here, behind the [pdf] extra."""
+    from rich.console import Console
+
+    from .backends import VisionError
+    from .pdf_render import PdfRenderError, iter_pdf_pages
+
+    err = Console(stderr=True)
+    _ensure_models(config)
+    per_page: list[dict] = []
+    try:
+        for page_no, png in iter_pdf_pages(src, pages=getattr(args, "pages", "")):
+            try:
+                err.print(f"[dim]page {page_no}...[/dim]")
+                result = _extract_one(png, config, force=getattr(args, "force", False))
+                result["page"] = page_no
+                per_page.append(result)
+            finally:
+                png.unlink(missing_ok=True)
+    except PdfRenderError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    except VisionError as exc:
+        err.print(f"[red]vision failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+    if not per_page:
+        err.print("[yellow]no pages read from the pdf.[/yellow]")
+        raise SystemExit(1)
+    _emit_pdf(args, src, per_page)
+
+
+def _emit(args, result: dict) -> None:
     from codegraph.plugin_api import emit_result
+
+    from .pipeline import render_markdown
 
     if getattr(args, "format", "md") == "json":
         import json
 
-        payload = dict(result)
-        if payload["diagram"] is not None:
-            # The markdown projection is the other format; mermaid stays.
-            payload["diagram"] = {
-                k: v for k, v in payload["diagram"].items() if k != "markdown"
-            }
-        emit_result(json.dumps(payload, indent=2), out=args.out, hint="report.json")
+        emit_result(
+            json.dumps(_json_payload(result), indent=2),
+            out=args.out,
+            hint="report.json",
+        )
     else:
         emit_result(render_markdown(result), out=args.out, hint="report.md")
+
+
+def _emit_pdf(args, src: Path, per_page: list[dict]) -> None:
+    from codegraph.plugin_api import emit_result
+
+    from .pipeline import render_markdown
+
+    if getattr(args, "format", "md") == "json":
+        import json
+
+        payload = {
+            "file": src.name,
+            "pages": [{"page": r.get("page"), **_json_payload(r)} for r in per_page],
+        }
+        emit_result(json.dumps(payload, indent=2), out=args.out, hint="report.json")
+    else:
+        parts = [f"# {src.name}", ""]
+        for r in per_page:
+            parts.append(f"## Page {r.get('page')}")
+            parts.append(render_markdown(r))
+            parts.append("")
+        emit_result("\n".join(parts), out=args.out, hint="report.md")
+
+
+def _json_payload(result: dict) -> dict:
+    payload = {k: v for k, v in result.items() if k != "page"}
+    if payload.get("diagram") is not None:
+        # The markdown projection is the other format; mermaid stays.
+        payload["diagram"] = {
+            k: v for k, v in payload["diagram"].items() if k != "markdown"
+        }
+    return payload

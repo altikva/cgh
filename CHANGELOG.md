@@ -8,6 +8,134 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-08-13
+
+### Added
+- **`cgh vision` caches its result per file**: vision inference is slow,
+  so running the same image twice (once to look, again with `--out` to
+  save) used to recompute the whole thing. The result is now cached by the
+  input file's fingerprint plus the parameters that shape it (profile,
+  models, hint, `num_ctx`), so a re-run returns instantly. A different
+  profile never returns another profile's answer. Cached results live in a
+  temp dir with a 24 h TTL (`[plugin.vision] cache_ttl_hours`, 0 disables;
+  `cache_dir` to relocate); `cgh vision --force` recomputes and refreshes
+  the cache. PDF pages are cached per page too. The key also covers the
+  pre-scaling settings, since those change the pixels sent to the model.
+- **`cgh vision` reports how long each call took**: vision inference runs
+  for many seconds, so each extraction now leaves a persistent `extracted
+  in N.Ns` line on stderr once its progress bar clears (per page for a
+  PDF). A cache hit stays instant and prints its cached-result note
+  instead. stdout keeps only the markdown or json, so it still pipes.
+- **`cgh examples`**: list runnable examples bundled inside the installed
+  packages and install one locally to modify (`cgh examples install
+  <name> [--dest DIR]`). Examples ship as package data, so this works
+  with no git checkout and no network. Discovery spans the base package
+  and every plugin (each can bundle its own under `<package>/examples/`);
+  the base ships `starter-config` and cgh-vision ships `pdf-to-vision`.
+- **`cgh files`**: list the indexed files (optionally filtered by a path
+  substring), and `cgh files --check <path>` answers "is this file
+  indexed, and if not, why was it skipped" using the same decision the
+  indexer makes (no parser for the suffix, over the `max_file_size_kb`
+  cap, or an ignore rule). The why-skipped answer is a pure function of
+  the file and config, so it works even while an owner holds the graph
+  lock; listing falls back to the FTS in that case.
+- **`cgh vision` reads PDFs** (cgh-vision): pass a `.pdf` and it rasterizes
+  the pages to images (via pypdfium2, behind the `cgh-vision[pdf]` extra)
+  and runs the vision pipeline per page, emitting a per-page report; a
+  `--pages 1-3` / `--pages 2,5` selects pages. A non-image, non-pdf input
+  now fails fast with a clear message instead of a cryptic Pillow error.
+  pypdfium2 is PDFium (BSD/Apache, pip wheels, no system binary, not AGPL).
+- **Plain-text files are indexed now**: `.txt`, `.text`, `.log`, `.csv`,
+  `.tsv` and `.rst` had no parser, and the indexer skips any file no parser
+  claims, so they were never indexed and never scanned for PII or secrets.
+  A core plain-text parser now claims them and exposes their content as
+  `scan_text`, with a preview section so they are findable.
+- **Images are indexed now** (cgh-vision): the indexer skips any file no
+  parser claims, so `.png` / `.jpg` / `.jpeg` / `.webp` were never indexed
+  and the deferred vision scanner (which only runs on indexed files) never
+  fired on repo images. cgh-vision now registers a minimal image parser, so
+  an image becomes a known indexed file and the vision scanner reaches it.
+  The scan stays deferred and gated as before (size bounds, a reachable
+  vision backend, the egress rule for non-loopback endpoints); disable it
+  with `[plugins] disabled = ["vision"]` if you do not want vision
+  inference running over repo images.
+- **Ollama backends auto-pick an installed model** (cgh-summarize and the
+  cgh-pii LLM tier): both used to send a hardcoded model name
+  (`qwen2.5:1.5b`, `qwen2.5:3b`), so a running daemon that had not pulled
+  that exact model answered every file with `http error 404: not found`
+  during `cgh init` / `reset`. They now query `/api/tags`: the configured
+  model is used when installed, otherwise an installed generative model is
+  auto-picked (family preference, embedding models excluded), and when
+  nothing is installed the backend reads as unavailable so the scan
+  degrades cleanly instead of erroring per file.
+- **The default `config.toml` documents every plugin option**: the
+  `[plugin.pii]` block now lists the LLM tier (`llm`, `llm_model`, the
+  Ollama / OpenAI-compatible endpoints, `pii_llm_allow_remote`, `ner`,
+  `disable_keys`) with defaults and one-line explanations, and the
+  summarize / vision model options note the auto-pick behavior.
+
+### Fixed
+- **Deferred scan errors no longer flood the output**: a misconfigured
+  deferred scanner (say a summarize model that 404s) logged one error line
+  per file, so an index of 100 files printed the same error 100 times. The
+  background worker now collapses errors by message and emits one summary
+  line per distinct error when the burst goes quiet: identical errors read
+  as `... x100 (e.g. <file>)`, different errors each keep their own line.
+- **`cgh init` actually installs the bundled skills now**: the skill
+  source directory resolved to `codegraph/integrations/skills` (next to
+  the installer module) instead of `codegraph/skills`, so it always found
+  zero skills and every tool setup (Claude, Cursor, Bob, ...) installed
+  none. Fixed to look one level up; a regression test now asserts the
+  skills are found and land as `SKILL.md` files under the tool's dir.
+- **`cgh init` wires a tool cgh could not auto-detect**: the tool
+  multi-select only appeared when at least one agent was detected, so a
+  fresh repo with no agent CLI on PATH (or an IDE-only tool like Cursor,
+  which has no CLI to probe) got nothing wired and no chance to choose.
+  The selection is now offered even when nothing is detected (detected
+  tools pre-checked, the rest offered unchecked), and a new `--tools
+  claude,cursor,bob` forces the choice for a scripted or empty-repo
+  "init cgh before the LLM" bootstrap.
+- **`cgh init` now writes the usage guidelines for IBM Bob**: Bob's rules
+  target (`.bob/rules/00-codegraph-usage.md`) was missing from the
+  injection map, so a Bob setup installed the skills but never the
+  "when to use the codegraph tools" rules. Bob now gets them like every
+  other agent.
+- **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
+  vision model encodes an image into many tokens, so a detailed diagram
+  plus the prompt overflowed Ollama's small default context and returned
+  `400 ... exceeds the available context size`. Each request now sets
+  `num_ctx` (default 8192, `[plugin.vision] num_ctx` to change), and a
+  context-overflow 400 points at that lever instead of a raw error. The
+  manual-GGUF instructions and the `manual_gguf_steps` output now include
+  `PARAMETER num_ctx 8192` in the Modelfile too.
+- **cgh-vision: a request timeout no longer reads as a dead daemon**: when
+  Ollama answered the socket but the extraction call ran past the deadline
+  (the model loading on first use, or slow CPU inference), the error said
+  "Ollama unreachable ... (is the daemon running?)", which is wrong and
+  sent people chasing a daemon that was up. A timeout now says so and
+  points at the fix (warm the model with `ollama run <model>`, raise
+  `[plugin.vision] timeout_s`, or `--profile fast`); a real connection
+  refusal still names the daemon. The per-call default timeout is raised
+  to 300s (fast 120s) so a cold model on CPU has room. `timeout_s` was
+  already configurable; only its default changed.
+- **PII scanning now reads a document's extracted text, not its raw
+  bytes**: scanners were fed `read_text(errors="replace")` of the file,
+  so for a pdf they matched the binary stream (phantom `pii.card` /
+  `pii.phone` hits at huge offsets on diagram PDFs) and for a zip-based
+  xlsx they saw compressed garbage and missed the real cell content
+  entirely. Parsers now expose their extracted text as `FileIndex.scan_text`
+  (pdf pages, xlsx cell values across data rows, docx paragraphs and table
+  cells), and both the inline and the deferred scan paths run on that when
+  present, falling back to raw bytes only for source files. This removes
+  the diagram-PDF false positives and makes PII inside spreadsheets and
+  Word tables detectable.
+- **Tighter card and phone matching**: a card candidate must now start
+  with a real network IIN (3/4/5/6) and not be a single repeated digit or
+  a straight run, on top of the Luhn check; a phone candidate must hold a
+  plausible E.164 digit count (8 to 15) and not be a mostly-separator
+  spaced sequence. Cuts the coincidental matches that number-heavy text
+  still produces even after the extracted-text fix.
+
 ## [0.11.3] - 2026-08-12
 
 ### Added

@@ -21,6 +21,24 @@ The command shows a progress spinner on stderr while the model passes
 run (about 30 s per diagram on Apple Silicon); stdout stays pure
 markdown or JSON, pipeable either way.
 
+## Result cache
+
+Vision inference is slow, so a result is cached by the input file's
+fingerprint plus the parameters that shape it (profile, models, hint,
+`num_ctx`). Run the same image once to look at it, then again with
+`--out` to save it, and the second run is instant instead of recomputing:
+
+```bash
+cgh vision archi.png                 # computes, caches
+cgh vision archi.png --out report.md # cache hit, saved instantly
+cgh vision archi.png --force         # recompute and refresh the cache
+```
+
+The key includes the parameters, so `--profile fast` never returns the
+`default` answer. Cached results live in a temp dir with a 24 h TTL;
+tune it with `[plugin.vision] cache_ttl_hours` (0 disables) and
+`cache_dir`.
+
 ## Without Ollama, one command: `cgh vision setup --llamacpp`
 
 If Ollama is unavailable and you have llama.cpp (or can install it),
@@ -131,6 +149,7 @@ hf download ggml-org/Qwen2.5-VL-3B-Instruct-GGUF --include "*mmproj*" \
 cat > models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile <<'EOF'
 FROM ./Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
 FROM ./mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
+PARAMETER num_ctx 8192
 EOF
 ollama create qwen2.5vl:3b -f models/Qwen2.5-VL-3B-Instruct-GGUF/Modelfile
 
@@ -143,6 +162,7 @@ hf download ggml-org/gemma-3-4b-it-GGUF --include "*mmproj*" \
 cat > models/gemma-3-4b-it-GGUF/Modelfile <<'EOF'
 FROM ./gemma-3-4b-it-Q4_K_M.gguf
 FROM ./mmproj-model-f16.gguf
+PARAMETER num_ctx 8192
 EOF
 ollama create gemma3:4b -f models/gemma-3-4b-it-GGUF/Modelfile
 ```
@@ -155,6 +175,11 @@ Two things that trip people up:
 - **The Qwen repo ships two mmproj variants** (a `Q8_0` and an `f16`);
   you only need one. The Modelfile above picks the lighter `Q8_0`. Gemma
   ships a single `mmproj-model-f16.gguf`.
+- **`PARAMETER num_ctx 8192`** in the Modelfile gives a detailed image
+  room in the context window. cgh also sets num_ctx on each request
+  (`[plugin.vision] num_ctx`), but baking it in helps when you run the
+  model outside cgh. A 400 "exceeds the available context size" means the
+  page needs a larger num_ctx.
 
 Confirm each registered model is multimodal, not text-only:
 

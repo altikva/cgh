@@ -8,6 +8,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh vision` can auto-extract a repo in the background** (cgh-vision):
+  set `[plugin.vision] auto_extract = true` and the deferred scanner, which
+  already runs off the indexing hot path when a local backend is reachable,
+  also writes a structured `<file>.json` for every indexed image and PDF, so
+  a whole repo of diagrams gets extracted with no manual `cgh vision` call.
+  PDFs are rasterized and extracted per page. Sidecars land under
+  `.codegraph/vision/` by default (outside the working tree, cleaned with
+  the index); `auto_extract_out = "beside"` writes `<file>.json` next to the
+  source, or point it at any directory. The extraction is cached by file
+  fingerprint and shared with the interactive `cgh vision` command, so
+  neither recomputes what the other already ran.
+
 ### Fixed
 - **Deferred scan errors no longer flood the output**: a misconfigured
   deferred scanner (say a summarize model that 404s) logged one error line

@@ -295,7 +295,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         console.print(
             "[dim]Background keepalive registered. "
             "Owner stays alive across Claude sessions.[/dim]\n"
-            "[dim]Stop with:[/dim] [cyan]cgh serve --stop[/cyan] [dim]or[/dim] "
+            "[dim]Stop with:[/dim] [cyan]cgh stop[/cyan] [dim]or[/dim] "
             "[cyan]pkill -f 'codegraph _serve_owner'[/cyan]"
         )
         return
@@ -358,6 +358,15 @@ def cmd_serve(args: argparse.Namespace) -> None:
     from codegraph.server import main
 
     main()
+
+
+def cmd_stop(args: argparse.Namespace) -> None:
+    """`cgh stop`: a discoverable top-level alias for `cgh serve --stop`.
+    Cleanly stops this repo's owner and unregisters the caller's worker and
+    the keepalive marker, going through the exact same path (graceful
+    terminate on POSIX, TerminateProcess on Windows, stale-ipc cleanup)."""
+    args.stop = True
+    cmd_serve(args)
 
 
 # ---------------------------------------------------------------------------

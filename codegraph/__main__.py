@@ -42,6 +42,7 @@ from codegraph.cli.commands_index import (
     cmd_plan_index,
     cmd_reindex_hook,
     cmd_serve,
+    cmd_stop,
     cmd_watch,
 )
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
@@ -101,6 +102,7 @@ def _print_help():
                 ("init", "Initialize codegraph in any project (interactive wizard)"),
                 ("index", "Build / rebuild the code graph"),
                 ("serve", "Start MCP server (for Claude, Cursor, Codex, Gemini)"),
+                ("stop", "Stop this repo's owner + worker (alias of serve --stop)"),
                 ("setup", "Configure integration for a specific AI tool"),
             ],
         ),
@@ -312,6 +314,10 @@ def _register_setup_and_serve(sub) -> None:
         help="Spawn owner in background and exit (keeps graph alive for Claude sessions)",
     )
     p.add_argument("--stop", action="store_true", help="Stop a running owner process")
+
+    # --- stop (discoverable alias for `serve --stop`) ---
+    p = sub.add_parser("stop", help="Stop this repo's owner and unregister the worker")
+    _add_root(p)
 
     # --- _serve_owner (hidden internal subcommand) ---
     p = sub.add_parser("_serve_owner", help=argparse.SUPPRESS)
@@ -716,6 +722,7 @@ def main() -> None:
         "index": cmd_index,
         "watch": cmd_watch,
         "serve": cmd_serve,
+        "stop": cmd_stop,
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,

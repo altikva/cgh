@@ -251,14 +251,14 @@ requires-dist = [
     { name = "cgh-bugreport", marker = "extra == 'plugins'", specifier = ">=0.1.1" },
     { name = "cgh-classify", marker = "extra == 'full'", specifier = ">=0.1.3" },
     { name = "cgh-classify", marker = "extra == 'plugins'", specifier = ">=0.1.3" },
-    { name = "cgh-docs", marker = "extra == 'full'", directory = "plugins/cgh-docs" },
-    { name = "cgh-docs", marker = "extra == 'plugins'", directory = "plugins/cgh-docs" },
-    { name = "cgh-pii", marker = "extra == 'full'", directory = "plugins/cgh-pii" },
-    { name = "cgh-pii", marker = "extra == 'plugins'", directory = "plugins/cgh-pii" },
-    { name = "cgh-summarize", marker = "extra == 'full'", directory = "plugins/cgh-summarize" },
-    { name = "cgh-summarize", marker = "extra == 'plugins'", directory = "plugins/cgh-summarize" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", directory = "plugins/cgh-vision" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", directory = "plugins/cgh-vision" },
+    { name = "cgh-docs", marker = "extra == 'full'", specifier = ">=0.2" },
+    { name = "cgh-docs", marker = "extra == 'plugins'", specifier = ">=0.2" },
+    { name = "cgh-pii", marker = "extra == 'full'", specifier = ">=0.3.1" },
+    { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
+    { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.2.4" },
+    { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.2.4" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", specifier = ">=0.4" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", specifier = ">=0.4" },
     { name = "duckdb", specifier = ">=1.2" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
@@ -306,56 +306,51 @@ wheels = [
 [[package]]
 name = "cgh-docs"
 version = "0.2.0"
-source = { directory = "plugins/cgh-docs" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openpyxl" },
     { name = "pypdf" },
     { name = "python-docx" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pypdf", specifier = ">=4.0" },
-    { name = "python-docx", specifier = ">=1.1" },
+sdist = { url = "https://files.pythonhosted.org/packages/15/cf/cc884fc783794216f1c8ef170ff517f4ce6df07de8048dc6ea38481d590e/cgh_docs-0.2.0.tar.gz", hash = "sha256:1d235e044e6f9593438c10536375c8543d81fd46818af320cb73baaf69ab5b77", size = 7745, upload-time = "2026-08-14T17:50:20.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/c7/c509f8dbd10c5b99346281495c8d8366e20773ce8c1af7c10191d6955381/cgh_docs-0.2.0-py3-none-any.whl", hash = "sha256:c2fb87550ecc2ccd913422e639902bbe9d020d98c70a537c00a93c979fc4491e", size = 7637, upload-time = "2026-08-14T17:50:18.927Z" },
 ]
 
 [[package]]
 name = "cgh-pii"
 version = "0.3.1"
-source = { directory = "plugins/cgh-pii" }
-
-[package.metadata]
-requires-dist = [
-    { name = "presidio-analyzer", marker = "extra == 'ner'", specifier = ">=2.2" },
-    { name = "python-docx", marker = "extra == 'docx'", specifier = ">=1.1" },
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/ca/f2b03ccef66793518ae5caa90ff369824e9764f0bfb7f4b178015b3426c0/cgh_pii-0.3.1.tar.gz", hash = "sha256:bf4dae39a9a6711642b34ed705f709f6e06a21fa2be62b6c629ee348deb70e4b", size = 24342, upload-time = "2026-08-14T17:50:19.931Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/8c/05956e47fea30d20f31a9195bd6a64d356b438ebed83805c1de91177f39e/cgh_pii-0.3.1-py3-none-any.whl", hash = "sha256:0a91406adb20204d5182d588a07f49fd7fa770bb9302ba1f2ccb1a0082ae1a0c", size = 21525, upload-time = "2026-08-14T17:50:18.888Z" },
 ]
-provides-extras = ["ner", "docx"]
 
 [[package]]
 name = "cgh-summarize"
 version = "0.2.4"
-source = { directory = "plugins/cgh-summarize" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/81/589c864ff2a60d299d5ac7f3b715dcc927a3cf54eb990750c6c587e60257/cgh_summarize-0.2.4.tar.gz", hash = "sha256:1b0db2d8d4becbc49549bee08f1466ecf1968f4c4b399e3c39041e78a93be550", size = 17150, upload-time = "2026-08-14T17:50:15.069Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/c6/08a05f7881acf849f53fa753ba85c7eab33c6f76c7b5f4c24aa5758a1f1a/cgh_summarize-0.2.4-py3-none-any.whl", hash = "sha256:8c61553dfe512f32efc7ddfa97b451e6869b65dea43fdb1c354aa6a19a897090", size = 16555, upload-time = "2026-08-14T17:50:13.933Z" },
+]
 
 [[package]]
 name = "cgh-vision"
 version = "0.4.0"
-source = { directory = "plugins/cgh-vision" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/43/9c883b3999186640f724daaa0141588ab817a357f2f9c8f2017cfcdc42a4/cgh_vision-0.4.0.tar.gz", hash = "sha256:883cd5dc9f0f79ff3a219b2f0b388a81d9510b72e659a77af068d13c538d0672", size = 47338, upload-time = "2026-08-14T17:50:14.432Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/d0/690df19752db81de73b4079541d94af64acc0287f2b4c0eef27becb24638/cgh_vision-0.4.0-py3-none-any.whl", hash = "sha256:4d59e3b319eb3b6b47bd6ab5b85c69d86923e6edc0de9c18351088b3669f32a8", size = 38361, upload-time = "2026-08-14T17:50:13.393Z" },
 ]
 
 [package.optional-dependencies]
 pdf = [
     { name = "pypdfium2" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "pillow", specifier = ">=10" },
-    { name = "pypdfium2", marker = "extra == 'pdf'", specifier = ">=4" },
-]
-provides-extras = ["pdf"]
 
 [[package]]
 name = "click"

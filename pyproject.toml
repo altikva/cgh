@@ -125,12 +125,6 @@ cghw = "codegraph.__main__:main"
 # versions before they are on PyPI. Removed post-release (runbook step 4);
 # the published core wheel depends on the extras floors, not these dev-only
 # sources.
-[tool.uv.sources]
-cgh-vision = { path = "plugins/cgh-vision" }
-cgh-docs = { path = "plugins/cgh-docs" }
-cgh-pii = { path = "plugins/cgh-pii" }
-cgh-summarize = { path = "plugins/cgh-summarize" }
-
 [tool.setuptools.packages.find]
 where = ["."]
 # `cgh` is a thin entry shim so `python -m cgh` works; the real code lives in

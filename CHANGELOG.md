@@ -26,34 +26,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   fingerprint and shared with the interactive `cgh vision` command, so
   neither recomputes what the other already ran.
 
-### Fixed
-- **Deferred scan errors no longer flood the output**: a misconfigured
-  deferred scanner (say a summarize model that 404s) logged one error line
-  per file, so an index of 100 files printed the same error 100 times. The
-  background worker now collapses errors by message and emits one summary
-  line per distinct error when the burst goes quiet: identical errors read
-  as `... x100 (e.g. <file>)`, different errors each keep their own line.
-
-### Fixed
-- **`cgh init` actually installs the bundled skills now**: the skill
-  source directory resolved to `codegraph/integrations/skills` (next to
-  the installer module) instead of `codegraph/skills`, so it always found
-  zero skills and every tool setup (Claude, Cursor, Bob, ...) installed
-  none. Fixed to look one level up; a regression test now asserts the
-  skills are found and land as `SKILL.md` files under the tool's dir.
-- **`cgh init` wires a tool cgh could not auto-detect**: the tool
-  multi-select only appeared when at least one agent was detected, so a
-  fresh repo with no agent CLI on PATH (or an IDE-only tool like Cursor,
-  which has no CLI to probe) got nothing wired and no chance to choose.
-  The selection is now offered even when nothing is detected (detected
-  tools pre-checked, the rest offered unchecked), and a new `--tools
-  claude,cursor,bob` forces the choice for a scripted or empty-repo
-  "init cgh before the LLM" bootstrap.
-- **`cgh init` now writes the usage guidelines for IBM Bob**: Bob's rules
-  target (`.bob/rules/00-codegraph-usage.md`) was missing from the
-  injection map, so a Bob setup installed the skills but never the
-  "when to use the codegraph tools" rules. Bob now gets them like every
-  other agent.
+## [0.11.4] - 2026-08-13
 
 ### Added
 - **`cgh vision` caches its result per file**: vision inference is slow,
@@ -66,34 +39,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `cache_dir` to relocate); `cgh vision --force` recomputes and refreshes
   the cache. PDF pages are cached per page too. The key also covers the
   pre-scaling settings, since those change the pixels sent to the model.
+- **`cgh vision` reports how long each call took**: vision inference runs
+  for many seconds, so each extraction now leaves a persistent `extracted
+  in N.Ns` line on stderr once its progress bar clears (per page for a
+  PDF). A cache hit stays instant and prints its cached-result note
+  instead. stdout keeps only the markdown or json, so it still pipes.
 - **`cgh examples`**: list runnable examples bundled inside the installed
   packages and install one locally to modify (`cgh examples install
   <name> [--dest DIR]`). Examples ship as package data, so this works
   with no git checkout and no network. Discovery spans the base package
   and every plugin (each can bundle its own under `<package>/examples/`);
   the base ships `starter-config` and cgh-vision ships `pdf-to-vision`.
-
-### Fixed
-- **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
-  vision model encodes an image into many tokens, so a detailed diagram
-  plus the prompt overflowed Ollama's small default context and returned
-  `400 ... exceeds the available context size`. Each request now sets
-  `num_ctx` (default 8192, `[plugin.vision] num_ctx` to change), and a
-  context-overflow 400 points at that lever instead of a raw error. The
-  manual-GGUF instructions and the `manual_gguf_steps` output now include
-  `PARAMETER num_ctx 8192` in the Modelfile too.
-- **cgh-vision: a request timeout no longer reads as a dead daemon**: when
-  Ollama answered the socket but the extraction call ran past the deadline
-  (the model loading on first use, or slow CPU inference), the error said
-  "Ollama unreachable ... (is the daemon running?)", which is wrong and
-  sent people chasing a daemon that was up. A timeout now says so and
-  points at the fix (warm the model with `ollama run <model>`, raise
-  `[plugin.vision] timeout_s`, or `--profile fast`); a real connection
-  refusal still names the daemon. The per-call default timeout is raised
-  to 300s (fast 120s) so a cold model on CPU has room. `timeout_s` was
-  already configurable; only its default changed.
-
-### Added
 - **`cgh files`**: list the indexed files (optionally filtered by a path
   substring), and `cgh files --check <path>` answers "is this file
   indexed, and if not, why was it skipped" using the same decision the
@@ -121,8 +77,65 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   vision backend, the egress rule for non-loopback endpoints); disable it
   with `[plugins] disabled = ["vision"]` if you do not want vision
   inference running over repo images.
+- **Ollama backends auto-pick an installed model** (cgh-summarize and the
+  cgh-pii LLM tier): both used to send a hardcoded model name
+  (`qwen2.5:1.5b`, `qwen2.5:3b`), so a running daemon that had not pulled
+  that exact model answered every file with `http error 404: not found`
+  during `cgh init` / `reset`. They now query `/api/tags`: the configured
+  model is used when installed, otherwise an installed generative model is
+  auto-picked (family preference, embedding models excluded), and when
+  nothing is installed the backend reads as unavailable so the scan
+  degrades cleanly instead of erroring per file.
+- **The default `config.toml` documents every plugin option**: the
+  `[plugin.pii]` block now lists the LLM tier (`llm`, `llm_model`, the
+  Ollama / OpenAI-compatible endpoints, `pii_llm_allow_remote`, `ner`,
+  `disable_keys`) with defaults and one-line explanations, and the
+  summarize / vision model options note the auto-pick behavior.
 
 ### Fixed
+- **Deferred scan errors no longer flood the output**: a misconfigured
+  deferred scanner (say a summarize model that 404s) logged one error line
+  per file, so an index of 100 files printed the same error 100 times. The
+  background worker now collapses errors by message and emits one summary
+  line per distinct error when the burst goes quiet: identical errors read
+  as `... x100 (e.g. <file>)`, different errors each keep their own line.
+- **`cgh init` actually installs the bundled skills now**: the skill
+  source directory resolved to `codegraph/integrations/skills` (next to
+  the installer module) instead of `codegraph/skills`, so it always found
+  zero skills and every tool setup (Claude, Cursor, Bob, ...) installed
+  none. Fixed to look one level up; a regression test now asserts the
+  skills are found and land as `SKILL.md` files under the tool's dir.
+- **`cgh init` wires a tool cgh could not auto-detect**: the tool
+  multi-select only appeared when at least one agent was detected, so a
+  fresh repo with no agent CLI on PATH (or an IDE-only tool like Cursor,
+  which has no CLI to probe) got nothing wired and no chance to choose.
+  The selection is now offered even when nothing is detected (detected
+  tools pre-checked, the rest offered unchecked), and a new `--tools
+  claude,cursor,bob` forces the choice for a scripted or empty-repo
+  "init cgh before the LLM" bootstrap.
+- **`cgh init` now writes the usage guidelines for IBM Bob**: Bob's rules
+  target (`.bob/rules/00-codegraph-usage.md`) was missing from the
+  injection map, so a Bob setup installed the skills but never the
+  "when to use the codegraph tools" rules. Bob now gets them like every
+  other agent.
+- **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
+  vision model encodes an image into many tokens, so a detailed diagram
+  plus the prompt overflowed Ollama's small default context and returned
+  `400 ... exceeds the available context size`. Each request now sets
+  `num_ctx` (default 8192, `[plugin.vision] num_ctx` to change), and a
+  context-overflow 400 points at that lever instead of a raw error. The
+  manual-GGUF instructions and the `manual_gguf_steps` output now include
+  `PARAMETER num_ctx 8192` in the Modelfile too.
+- **cgh-vision: a request timeout no longer reads as a dead daemon**: when
+  Ollama answered the socket but the extraction call ran past the deadline
+  (the model loading on first use, or slow CPU inference), the error said
+  "Ollama unreachable ... (is the daemon running?)", which is wrong and
+  sent people chasing a daemon that was up. A timeout now says so and
+  points at the fix (warm the model with `ollama run <model>`, raise
+  `[plugin.vision] timeout_s`, or `--profile fast`); a real connection
+  refusal still names the daemon. The per-call default timeout is raised
+  to 300s (fast 120s) so a cold model on CPU has room. `timeout_s` was
+  already configurable; only its default changed.
 - **PII scanning now reads a document's extracted text, not its raw
   bytes**: scanners were fed `read_text(errors="replace")` of the file,
   so for a pdf they matched the binary stream (phantom `pii.card` /
@@ -140,22 +153,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   plausible E.164 digit count (8 to 15) and not be a mostly-separator
   spaced sequence. Cuts the coincidental matches that number-heavy text
   still produces even after the extracted-text fix.
-
-### Added
-- **Ollama backends auto-pick an installed model** (cgh-summarize and the
-  cgh-pii LLM tier): both used to send a hardcoded model name
-  (`qwen2.5:1.5b`, `qwen2.5:3b`), so a running daemon that had not pulled
-  that exact model answered every file with `http error 404: not found`
-  during `cgh init` / `reset`. They now query `/api/tags`: the configured
-  model is used when installed, otherwise an installed generative model is
-  auto-picked (family preference, embedding models excluded), and when
-  nothing is installed the backend reads as unavailable so the scan
-  degrades cleanly instead of erroring per file.
-- **The default `config.toml` documents every plugin option**: the
-  `[plugin.pii]` block now lists the LLM tier (`llm`, `llm_model`, the
-  Ollama / OpenAI-compatible endpoints, `pii_llm_allow_remote`, `ner`,
-  `disable_keys`) with defaults and one-line explanations, and the
-  summarize / vision model options note the auto-pick behavior.
 
 ## [0.11.3] - 2026-08-12
 

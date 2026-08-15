@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-summarize"
-version = "0.2.3"
+version = "0.2.4"
 description = "File summaries for cgh behind a confidentiality egress gate: agent CLIs, Ollama or any OpenAI-compatible endpoint, plus corpus-level insights"
 readme = "README.md"
 requires-python = ">=3.11"

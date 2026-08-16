@@ -424,6 +424,36 @@ def _status_via_fts(root: str) -> dict:
     return src
 
 
+def _format_indexed_at(iso: str | None) -> str:
+    """Render a scan_meta ``indexed_at`` ISO timestamp as a local wall-clock
+    time plus a relative age (``2026-08-15 14:32 · 3h ago``). Returns "" when
+    it is missing or unparseable, so callers can append it unconditionally."""
+    if not iso:
+        return ""
+    from datetime import UTC, datetime
+
+    try:
+        when = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - when
+    secs = int(delta.total_seconds())
+    if secs < 0:
+        age = "in the future"
+    elif secs < 60:
+        age = "just now"
+    elif secs < 3600:
+        age = f"{secs // 60}m ago"
+    elif secs < 86400:
+        age = f"{secs // 3600}h ago"
+    else:
+        age = f"{secs // 86400}d ago"
+    stamp = when.astimezone().strftime("%Y-%m-%d %H:%M")
+    return f"{stamp} · {age}"
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     """Quick one-screen health check: owner, freshness, counts, extra_dirs."""
     import json as _json
@@ -592,10 +622,12 @@ def cmd_status(args: argparse.Namespace) -> None:
         owner_line = "[dim]not running[/dim]"
 
     # Freshness
+    when = _format_indexed_at(payload["scan"]["indexed_at"])
+    when_suffix = f"  [dim]· {when}[/dim]" if when else ""
     if ss.get("fresh"):
         scan_line = (
             f"[green]fresh[/green]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] "
-            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]"
+            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]{when_suffix}"
         )
     elif payload["scan"]["indexed_sha"]:
         drift = []
@@ -609,6 +641,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             f"[yellow]stale[/yellow]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] → "
             f"HEAD [bold]{payload['scan']['current_sha']}[/bold]"
             + (f"  ({', '.join(drift)})" if drift else "")
+            + when_suffix
         )
     else:
         scan_line = "[dim]no scan recorded, run cgh index[/dim]"

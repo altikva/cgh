@@ -182,13 +182,15 @@ Press Ctrl-C to stop.
 Start the MCP server over stdio transport. This is the command that AI tools invoke via their MCP config.
 
 ```
-cgh serve [--watch] [--reindex] [--root DIR]
+cgh serve [--watch] [--reindex] [--background] [--stop] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--watch` | Enable live file watcher alongside the MCP server |
 | `--reindex` | Rebuild the graph before accepting MCP connections |
+| `--background`, `-b` | Spawn the owner in the background and exit, keeping the graph alive across sessions |
+| `--stop` | Stop the running owner and unregister this worker (see also `cgh stop`) |
 
 **Example (in `.mcp.json`):**
 
@@ -201,6 +203,16 @@ cgh serve [--watch] [--reindex] [--root DIR]
     }
   }
 }
+```
+
+---
+
+### `stop`
+
+Stop this repo's owner process and unregister the caller's worker and keepalive marker. A discoverable alias for `cgh serve --stop`, going through the same teardown (graceful terminate on POSIX so the owner runs its cleanup, `TerminateProcess` on Windows, stale ipc files removed if it crashed).
+
+```
+cgh stop [--root DIR]
 ```
 
 ---

@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh status` shows when the index was last scanned**: the `Scan` row
+  now carries the `indexed_at` timestamp as a local wall-clock time plus a
+  relative age (`indexed <sha> on <branch> · 2026-08-15 14:32 · 3h ago`).
+  The timestamp was already recorded in scan_meta and present in
+  `--json`; only the display was missing it.
 - **`cgh stop`**: a discoverable top-level verb to stop this repo's owner
   and unregister the caller's worker plus the keepalive marker. It is an
   alias for `cgh serve --stop` and goes through the exact same teardown

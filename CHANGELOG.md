@@ -28,20 +28,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ### Fixed
 - **The Grep/Read PreToolUse nudges now actually reach the model**: the
-  `cgh init` hooks that suggest cgh's symbol tools over a raw Grep, and its
-  outline tools over a full Read, printed their advice to stderr and exited
-  0. For a PreToolUse hook that output only lands in the debug log, Claude
-  Code turns exit-0 output into context solely for `UserPromptSubmit`,
-  `UserPromptExpansion` and `SessionStart`, so the nudges fired on every
-  Read and Grep in every cgh-indexed repo and reached nobody. They now emit
-  their text as `hookSpecificOutput.additionalContext`, the channel
-  PreToolUse does deliver, still advisory (no permission decision, the tool
-  call is never blocked) and still silent on the skip cases. No hook
-  rewiring is needed: the existing `cgh _hook_precheck_grep` /
-  `_hook_precheck_read` wiring delivers it once cgh is upgraded. If you had
-  manually wrapped the precheck to capture its stderr, drop that wrapper and
-  point the hook back at the plain command, a stderr-capturing wrapper now
-  swallows the stdout JSON.
+  `cgh init` hooks that suggest cgh's tools over a raw Grep or full Read
+  wrote to stderr, which a PreToolUse hook never delivers to the model, so
+  they nudged nobody. They now emit `hookSpecificOutput.additionalContext`
+  instead, still advisory and silent on the skip cases. No rewiring needed;
+  if you manually wrapped the precheck to capture its stderr, drop the
+  wrapper and point the hook back at the plain command.
 
 ## [0.11.4] - 2026-08-13
 

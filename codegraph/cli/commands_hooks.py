@@ -27,12 +27,36 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,}$")
 _MIN_SYMBOLS_FOR_OUTLINE_HINT = 5
 
 
+def _emit_nudge(message: str) -> None:
+    """Deliver an advisory nudge to the model on a PreToolUse hook, then
+    exit 0.
+
+    Plain stdout/stderr on exit 0 does NOT reach the model for PreToolUse:
+    Claude Code only turns exit-0 output into context for UserPromptSubmit,
+    UserPromptExpansion and SessionStart. The channel PreToolUse does
+    deliver is `hookSpecificOutput.additionalContext`, emitted as JSON on
+    stdout. This stays advisory: no permission decision is set, so the tool
+    call is never blocked or prompted.
+    """
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": message,
+            }
+        },
+        sys.stdout,
+    )
+    sys.exit(0)
+
+
 def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Grep. Reads the hook payload from stdin, and when
-    the pattern looks like a bare identifier prints a suggestion to stderr
-    pointing at cgh's symbol-search MCP tools. Always exits 0, advisory,
-    never blocking, so Claude can still run Grep when it really wants to.
+    the pattern looks like a bare identifier delivers a suggestion (via
+    hookSpecificOutput.additionalContext) pointing at cgh's symbol-search
+    MCP tools. Always exits 0, advisory, never blocking, so Claude can still
+    run Grep when it really wants to.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -44,17 +68,15 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     if not isinstance(pattern, str) or not _IDENTIFIER_RE.match(pattern):
         sys.exit(0)
 
-    print(
+    _emit_nudge(
         f"[cgh hook] Grep pattern '{pattern}' looks like a bare identifier. "
         "Prefer cgh MCP tools for symbol search (zero-token server-side execution):\n"
         f"  - symbol_lookup('{pattern}')   exact definition (functions, classes, sections)\n"
         f"  - search_symbols('{pattern}')  fuzzy across the graph\n"
         f"  - find_callers('{pattern}')    incoming CALLS edges (functions only)\n"
         "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
-        "to confirm a raw text search is what you want.",
-        file=sys.stderr,
+        "to confirm a raw text search is what you want."
     )
-    sys.exit(0)
 
 
 def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
@@ -62,7 +84,8 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
     Read is a full read (no offset/limit), suggest file_outline / symbols_in_file
     first, both return structured summaries for a fraction of the tokens of
-    a raw Read. Advisory: always exits 0.
+    a raw Read. The suggestion is delivered via
+    hookSpecificOutput.additionalContext. Advisory: always exits 0.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -132,12 +155,10 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
             f"  - search_symbols('<name>')    if you're after a specific definition\n"
         )
 
-    print(
+    _emit_nudge(
         f"[cgh hook] '{rel_path}' is indexed by cgh ({symbol_count} symbols). "
         "Before a full Read, consider:\n"
         f"{hint}"
         "Then Read with offset/limit on the range you actually need. "
-        "If you really want the whole file, ignore this and proceed.",
-        file=sys.stderr,
+        "If you really want the whole file, ignore this and proceed."
     )
-    sys.exit(0)

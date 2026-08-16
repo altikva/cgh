@@ -31,6 +31,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   fingerprint and shared with the interactive `cgh vision` command, so
   neither recomputes what the other already ran.
 
+### Fixed
+- **The Grep/Read PreToolUse nudges now actually reach the model**: the
+  `cgh init` hooks that suggest cgh's tools over a raw Grep or full Read
+  wrote to stderr, which a PreToolUse hook never delivers to the model, so
+  they nudged nobody. They now emit `hookSpecificOutput.additionalContext`
+  instead, still advisory and silent on the skip cases. No rewiring needed;
+  if you manually wrapped the precheck to capture its stderr, drop the
+  wrapper and point the hook back at the plain command.
+
 ## [0.11.4] - 2026-08-13
 
 ### Added

@@ -257,8 +257,8 @@ requires-dist = [
     { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
     { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.2.4" },
     { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.2.4" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", directory = "plugins/cgh-vision" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", directory = "plugins/cgh-vision" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", specifier = ">=0.5" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", specifier = ">=0.5" },
     { name = "duckdb", specifier = ">=1.2" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
@@ -338,22 +338,19 @@ wheels = [
 [[package]]
 name = "cgh-vision"
 version = "0.5.0"
-source = { directory = "plugins/cgh-vision" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/1a/49ca278b8361357de35b82db203837c02b7b869d01e07dbcae6c680fe36b/cgh_vision-0.5.0.tar.gz", hash = "sha256:df53520a7445bbd168760d4664078094b2ab229edab4a51a8b0b39ee5dada58c", size = 49166, upload-time = "2026-08-16T21:56:30.898Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/30/570770341308086e118d2f076426b24121fc737e468e28ad561fa45637a8/cgh_vision-0.5.0-py3-none-any.whl", hash = "sha256:0e0abb0a401980b9389eeb01a61e6d15b0616b6406a36486838ab1a2782c6afb", size = 39752, upload-time = "2026-08-16T21:56:29.863Z" },
 ]
 
 [package.optional-dependencies]
 pdf = [
     { name = "pypdfium2" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "pillow", specifier = ">=10" },
-    { name = "pypdfium2", marker = "extra == 'pdf'", specifier = ">=4" },
-]
-provides-extras = ["pdf"]
 
 [[package]]
 name = "click"

@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-08-16
+
 ### Added
 - **`cgh status` shows when the index was last scanned**: the `Scan` row
   now carries the `indexed_at` timestamp as a local wall-clock time plus a
@@ -1259,7 +1261,10 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.5...HEAD
+[0.11.5]: https://github.com/altikva/cgh/compare/v0.11.4...v0.11.5
+[0.11.4]: https://github.com/altikva/cgh/compare/v0.11.3...v0.11.4
+[0.11.3]: https://github.com/altikva/cgh/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/altikva/cgh/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/altikva/cgh/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0

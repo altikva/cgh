@@ -191,7 +191,7 @@ wheels = [
 
 [[package]]
 name = "cgh"
-version = "0.11.4"
+version = "0.11.5"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
@@ -257,8 +257,8 @@ requires-dist = [
     { name = "cgh-pii", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
     { name = "cgh-summarize", marker = "extra == 'full'", specifier = ">=0.2.4" },
     { name = "cgh-summarize", marker = "extra == 'plugins'", specifier = ">=0.2.4" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", specifier = ">=0.4" },
-    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", specifier = ">=0.4" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'full'", specifier = ">=0.5" },
+    { name = "cgh-vision", extras = ["pdf"], marker = "extra == 'plugins'", specifier = ">=0.5" },
     { name = "duckdb", specifier = ">=1.2" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
@@ -337,14 +337,14 @@ wheels = [
 
 [[package]]
 name = "cgh-vision"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pillow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/43/9c883b3999186640f724daaa0141588ab817a357f2f9c8f2017cfcdc42a4/cgh_vision-0.4.0.tar.gz", hash = "sha256:883cd5dc9f0f79ff3a219b2f0b388a81d9510b72e659a77af068d13c538d0672", size = 47338, upload-time = "2026-08-14T17:50:14.432Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/1a/49ca278b8361357de35b82db203837c02b7b869d01e07dbcae6c680fe36b/cgh_vision-0.5.0.tar.gz", hash = "sha256:df53520a7445bbd168760d4664078094b2ab229edab4a51a8b0b39ee5dada58c", size = 49166, upload-time = "2026-08-16T21:56:30.898Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/d0/690df19752db81de73b4079541d94af64acc0287f2b4c0eef27becb24638/cgh_vision-0.4.0-py3-none-any.whl", hash = "sha256:4d59e3b319eb3b6b47bd6ab5b85c69d86923e6edc0de9c18351088b3669f32a8", size = 38361, upload-time = "2026-08-14T17:50:13.393Z" },
+    { url = "https://files.pythonhosted.org/packages/88/30/570770341308086e118d2f076426b24121fc737e468e28ad561fa45637a8/cgh_vision-0.5.0-py3-none-any.whl", hash = "sha256:0e0abb0a401980b9389eeb01a61e6d15b0616b6406a36486838ab1a2782c6afb", size = 39752, upload-time = "2026-08-16T21:56:29.863Z" },
 ]
 
 [package.optional-dependencies]

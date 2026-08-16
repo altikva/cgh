@@ -120,6 +120,7 @@ Quote the package spec (`"cgh[...]"`) so zsh and bash do not try to glob the bra
 cgh --version
 cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini / Bob
+cgh stop           # stop this repo's owner + worker (alias of serve --stop)
 ```
 
 ### If `cgh` is not found after install

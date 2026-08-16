@@ -481,6 +481,12 @@ reindex_on_start = true
 # cache_ttl_hours = 24   # reuse a cached result for the same file+params;
 #                        # 0 disables the cache. `cgh vision --force` bypasses it
 # cache_dir = ""         # where cached results live (default: a temp dir)
+# auto_extract = false   # when a local backend is reachable, the background
+#                        # scanner also writes a structured <file>.json for
+#                        # every indexed image and PDF (no manual cgh vision)
+# auto_extract_out = ".codegraph/vision"  # where the sidecars land; "beside"
+#                        # writes <file>.json next to the source instead, or
+#                        # give any directory (repo-relative or absolute)
 
 [ruflo]
 # Ruflo integration (auto-detected if not set)

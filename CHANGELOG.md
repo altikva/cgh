@@ -8,6 +8,40 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-08-16
+
+### Added
+- **`cgh status` shows when the index was last scanned**: the `Scan` row
+  now carries the `indexed_at` timestamp as a local wall-clock time plus a
+  relative age (`indexed <sha> on <branch> · 2026-08-15 14:32 · 3h ago`).
+  The timestamp was already recorded in scan_meta and present in
+  `--json`; only the display was missing it.
+- **`cgh stop`**: a discoverable top-level verb to stop this repo's owner
+  and unregister the caller's worker plus the keepalive marker. It is an
+  alias for `cgh serve --stop` and goes through the exact same teardown
+  (graceful terminate on POSIX so the owner runs its cleanup,
+  TerminateProcess on Windows, stale-ipc files removed if it crashed).
+- **`cgh vision` can auto-extract a repo in the background** (cgh-vision):
+  set `[plugin.vision] auto_extract = true` and the deferred scanner, which
+  already runs off the indexing hot path when a local backend is reachable,
+  also writes a structured `<file>.json` for every indexed image and PDF, so
+  a whole repo of diagrams gets extracted with no manual `cgh vision` call.
+  PDFs are rasterized and extracted per page. Sidecars land under
+  `.codegraph/vision/` by default (outside the working tree, cleaned with
+  the index); `auto_extract_out = "beside"` writes `<file>.json` next to the
+  source, or point it at any directory. The extraction is cached by file
+  fingerprint and shared with the interactive `cgh vision` command, so
+  neither recomputes what the other already ran.
+
+### Fixed
+- **The Grep/Read PreToolUse nudges now actually reach the model**: the
+  `cgh init` hooks that suggest cgh's tools over a raw Grep or full Read
+  wrote to stderr, which a PreToolUse hook never delivers to the model, so
+  they nudged nobody. They now emit `hookSpecificOutput.additionalContext`
+  instead, still advisory and silent on the skip cases. No rewiring needed;
+  if you manually wrapped the precheck to capture its stderr, drop the
+  wrapper and point the hook back at the plain command.
+
 ## [0.11.4] - 2026-08-13
 
 ### Added
@@ -1227,7 +1261,10 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.5...HEAD
+[0.11.5]: https://github.com/altikva/cgh/compare/v0.11.4...v0.11.5
+[0.11.4]: https://github.com/altikva/cgh/compare/v0.11.3...v0.11.4
+[0.11.3]: https://github.com/altikva/cgh/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/altikva/cgh/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/altikva/cgh/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/altikva/cgh/compare/v0.10.1...v0.11.0

@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh init` now wires a working MCP server for IBM Bob**: Bob is an IDE
+  agent whose GUI process does not inherit the login shell PATH, so the
+  bare `cgh` command never spawned and Bob acted as if the server was
+  already running. `.bob/mcp.json` now uses the resolved absolute command
+  path and sets `cwd` to the project root.
+
 ## [0.11.5] - 2026-08-16
 
 ### Added

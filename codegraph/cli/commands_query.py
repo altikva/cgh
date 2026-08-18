@@ -20,7 +20,11 @@ from rich import box
 from rich.table import Table
 from rich.tree import Tree
 
-from codegraph.analysis.federation import for_each_child_graphdb, has_subrepos
+from codegraph.analysis.federation import (
+    for_each_child_fts,
+    for_each_child_graphdb,
+    has_subrepos,
+)
 from codegraph.cli import _get_conn, _short_path, console
 
 # ---------------------------------------------------------------------------
@@ -78,23 +82,62 @@ def cmd_grep(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _query_children_scoped(
+    root: str, fn
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Run ``fn(conn)`` on each subrepo's RO graph DB, one bucket per scope.
+
+    Returns ``([(scope, rows), …], failures)`` where failures are
+    ``(scope, error)`` pairs. Keeping the rows grouped lets callers merge
+    scopes fairly instead of concatenating them, which matters as soon as
+    the output is paginated; keeping the failures scoped lets them retry a
+    single child through another backend.
+    """
+    buckets: list[tuple[str, list]] = []
+    failures: list[tuple[str, str]] = []
+    if not has_subrepos(root):
+        return buckets, failures
+    for scoped in for_each_child_graphdb(root, lambda conn, _r: fn(conn)):
+        if scoped.error:
+            failures.append((scoped.scope, scoped.error))
+            continue
+        buckets.append((scoped.scope, list(scoped.payload or [])))
+    return buckets, failures
+
+
+def _fmt_scope_errors(failures: list[tuple[str, str]]) -> list[str]:
+    return [f"{scope}: {error}" for scope, error in failures]
+
+
 def _query_children(root: str, fn) -> tuple[list[tuple], list[str]]:
-    """Run ``fn(conn)`` on each subrepo's RO graph DB.
+    """Flat variant of :func:`_query_children_scoped`.
 
     Returns ``(rows, warnings)`` where each row is ``(scope, *fn_row)``
     and warnings are per-scope error strings.
     """
-    rows: list[tuple] = []
-    warnings: list[str] = []
-    if not has_subrepos(root):
-        return rows, warnings
-    for scoped in for_each_child_graphdb(root, lambda conn, _r: fn(conn)):
-        if scoped.error:
-            warnings.append(f"{scoped.scope}: {scoped.error}")
-            continue
-        for item in scoped.payload or []:
-            rows.append((scoped.scope, *item))
-    return rows, warnings
+    buckets, failures = _query_children_scoped(root, fn)
+    rows = [(scope, *item) for scope, items in buckets for item in items]
+    return rows, _fmt_scope_errors(failures)
+
+
+def _interleave(buckets: list[tuple[str, list]]) -> list[tuple]:
+    """Round-robin merge of per-scope rows, tagged with their scope.
+
+    A plain parent-then-children concatenation makes the page slice swallow
+    every child result whenever the parent alone fills the page. Taking one
+    row per scope per round gives every scope a share of the first page.
+    """
+    merged: list[tuple] = []
+    idx = 0
+    while True:
+        added = False
+        for scope, rows in buckets:
+            if idx < len(rows):
+                merged.append((scope, *rows[idx]))
+                added = True
+        if not added:
+            return merged
+        idx += 1
 
 
 def _print_scope_warnings(warnings: list[str]) -> None:
@@ -128,6 +171,39 @@ def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
     return out
 
 
+def _fts_rows(conn, query: str, fetch: int) -> list[tuple]:
+    """(kind, name, file_path, start_line) rows from an FTS sqlite conn."""
+    from codegraph.core.fts import fts_search
+
+    return [
+        (hit.kind, hit.name, hit.file_path, hit.start_line)
+        for hit in fts_search(conn, query, limit=fetch)
+    ]
+
+
+def _child_fts_fallback(
+    root: str, query: str, fetch: int, scopes: set[str]
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Search the named children through their FTS db instead of the graph.
+
+    A child whose own owner is running holds the graph DB's write lock, which
+    blocks read-only opens from here. SQLite takes concurrent readers, so the
+    child still answers from FTS rather than dropping out of the results.
+    """
+    buckets: list[tuple[str, list]] = []
+    failures: list[tuple[str, str]] = []
+    for scoped in for_each_child_fts(root, lambda c, _r: _fts_rows(c, query, fetch)):
+        if scoped.scope not in scopes:
+            continue
+        if scoped.error:
+            failures.append(
+                (scoped.scope, f"graph db unavailable; fts fallback: {scoped.error}")
+            )
+            continue
+        buckets.append((scoped.scope, list(scoped.payload or [])))
+    return buckets, failures
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     query = args.query
@@ -135,37 +211,41 @@ def cmd_search(args: argparse.Namespace) -> None:
     offset = getattr(args, "offset", 0) or 0
     # Fetch offset+limit+1 so we can detect whether more results exist.
     fetch = offset + limit + 1
-    # Rows are (scope, kind, name, file_path, start_line).
-    results: list[tuple] = []
-    warnings: list[str] = []
+    # Buckets are (scope, [(kind, name, file_path, start_line), …]).
+    buckets: list[tuple[str, list]] = []
 
     conn = _get_conn(root, readonly=True)
     if conn is None:
         # Graph DB locked (MCP server is running). Fall back to FTS, SQLite
         # supports concurrent readers, so this always works.
         try:
-            from codegraph.core.fts import fts_search, get_fts_conn
+            from codegraph.core.fts import get_fts_conn
 
             fts_conn = get_fts_conn(root)
-            for hit in fts_search(fts_conn, query, limit=fetch):
-                results.append(
-                    ("parent", hit.kind, hit.name, hit.file_path, hit.start_line)
-                )
+            buckets.append(("parent", _fts_rows(fts_conn, query, fetch)))
         except Exception as exc:
             console.print(
                 f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
             )
             return
     else:
-        for row in _search_symbols_conn(conn, query, fetch):
-            results.append(("parent", *row))
+        buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
 
-    child_rows, warnings = _query_children(
+    child_buckets, child_failures = _query_children_scoped(
         root, lambda c: _search_symbols_conn(c, query, fetch)
     )
-    results.extend(child_rows)
+    buckets.extend(child_buckets)
+    if child_failures:
+        fts_buckets, child_failures = _child_fts_fallback(
+            root, query, fetch, {scope for scope, _ in child_failures}
+        )
+        buckets.extend(fts_buckets)
+    warnings = _fmt_scope_errors(child_failures)
     federated = has_subrepos(root)
 
+    # Round-robin across scopes: parent-first concatenation would push every
+    # child result past the page slice on repos where the parent alone fills it.
+    results = _interleave(buckets)
     total_fetched = len(results)
     has_more = total_fetched > offset + limit
     page = results[offset : offset + limit]

@@ -422,6 +422,40 @@ def _run_one_fts(
             )
 
 
+def child_fts_symbol_search(
+    repo_root: str | Path,
+    query: str,
+    limit: int,
+    scopes: set[str] | None = None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Symbol search over children's FTS index instead of their graph DB.
+
+    A child whose own owner is running holds the graph DB's write lock, which
+    blocks read-only opens from the parent. SQLite takes concurrent readers,
+    so the child still answers from FTS rather than dropping out of the
+    results. Pass ``scopes`` to retry only the children that actually failed.
+
+    Returns ``([(scope, [FTSResult, …]), …], failures)`` where failures are
+    ``(scope, error)`` pairs for children that no backend could answer.
+    """
+    from codegraph.core.fts import fts_search
+
+    buckets: list[tuple[str, list]] = []
+    failures: list[tuple[str, str]] = []
+    for scoped in for_each_child_fts(
+        repo_root, lambda conn, _r: fts_search(conn, query, limit=limit)
+    ):
+        if scopes is not None and scoped.scope not in scopes:
+            continue
+        if scoped.error:
+            failures.append(
+                (scoped.scope, f"graph db unavailable; fts fallback: {scoped.error}")
+            )
+            continue
+        buckets.append((scoped.scope, list(scoped.payload or [])))
+    return buckets, failures
+
+
 def has_subrepos(repo_root: str | Path) -> bool:
     """Cheap check, useful for tools to take a fast no-op path when off."""
     return bool(resolve_children(repo_root))

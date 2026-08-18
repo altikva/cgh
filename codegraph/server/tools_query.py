@@ -23,13 +23,44 @@ _CALLEE_TOTAL_CAP = 300
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
-    from codegraph.analysis.federation import federate_flat
+    from codegraph.analysis.federation import (
+        child_fts_symbol_search,
+        federate_flat,
+    )
     from codegraph.server import _get_conn, _logged_tool
 
     def _federate(query_fn):
         """Parent + federated children fan-out, flattened. Returns
         (results_with_scope, warnings). See federation.federate_flat."""
         return federate_flat(_get_conn, _srv._root, query_fn)
+
+    def _retry_children_via_fts(results, warnings, query, limit):
+        """Re-run a name search on children whose graph DB was unreachable.
+
+        Returns the results with the recovered rows appended, and the warnings
+        trimmed to the scopes that no backend could answer. The parent's own
+        warning, if any, is left untouched.
+        """
+        locked = {
+            w["scope"] for w in warnings if w.get("scope") and w["scope"] != "parent"
+        }
+        if not locked or _srv._root is None:
+            return results, warnings
+        buckets, failures = child_fts_symbol_search(_srv._root, query, limit, locked)
+        for scope, hits in buckets:
+            for hit in hits:
+                results.append(
+                    {
+                        "kind": hit.kind,
+                        "name": hit.name,
+                        "file": hit.file_path,
+                        "line": hit.start_line,
+                        "scope": scope,
+                    }
+                )
+        kept = [w for w in warnings if w.get("scope") not in locked]
+        kept.extend({"scope": scope, "error": error} for scope, error in failures)
+        return results, kept
 
     @mcp.tool()
     @_logged_tool
@@ -446,6 +477,13 @@ def register(mcp) -> None:
             return out
 
         results, warnings = _federate(run)
+        if warnings and not (role or layer):
+            # A child whose own owner holds the graph write lock cannot be
+            # opened read-only from here. Retry it over its FTS index, which
+            # takes concurrent readers, so it stays in the results instead of
+            # coming back as a partial scope. The role / layer filters need
+            # the child's File nodes, so a filtered search keeps the warning.
+            results, warnings = _retry_children_via_fts(results, warnings, query, limit)
         payload = {"query": query, "results": results}
         if role:
             payload["role"] = role

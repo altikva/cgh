@@ -22,7 +22,7 @@ import pytest
 from rich.console import Console
 
 import codegraph.cli.commands_query as cq
-from codegraph.analysis.federation import add_subrepo
+from codegraph.analysis.federation import ScopedResult, add_subrepo
 from codegraph.core.db import reset_connection
 from codegraph.indexer import index_repo
 
@@ -126,6 +126,63 @@ class TestFederatedQuery:
         hits = [r for r in out["results"] if r["name"] == "child_only_fn"]
         assert hits
         assert hits[0]["scope"] == "childrepo"
+
+    def test_page_is_not_monopolised_by_the_parent(self, tmp_path, capsys):
+        """A parent that fills the page on its own must not starve children."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent",
+            "".join(f"def shared_p{i}():\n    return {i}\n\n\n" for i in range(30)),
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo",
+            "".join(f"def shared_c{i}():\n    return {i}\n\n\n" for i in range(30)),
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        cq.cmd_search(
+            argparse.Namespace(
+                root=str(parent), query="shared_", limit=10, offset=0, json=True
+            )
+        )
+        out = json.loads(capsys.readouterr().out)
+        scopes = {r["scope"] for r in out["results"]}
+        assert len(out["results"]) == 10
+        assert scopes == {"parent", "childrepo"}
+
+    def test_locked_child_falls_back_to_fts(self, tmp_path, capsys, monkeypatch):
+        """A child whose owner holds the graph lock still answers from FTS."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent", "def parent_fn():\n    return 1\n"
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo", "def child_only_fn():\n    return 2\n"
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        def _locked(root, fn):
+            return [
+                ScopedResult(
+                    scope="childrepo",
+                    scope_path=child,
+                    payload=None,
+                    error="db unavailable (missing or locked)",
+                )
+            ]
+
+        monkeypatch.setattr(cq, "for_each_child_graphdb", _locked)
+
+        cq.cmd_search(
+            argparse.Namespace(
+                root=str(parent), query="child_only_fn", limit=10, offset=0, json=True
+            )
+        )
+        out = json.loads(capsys.readouterr().out)
+        hits = [r for r in out["results"] if r["scope"] == "childrepo"]
+        assert hits
+        assert hits[0]["name"] == "child_only_fn"
+        assert not out.get("warnings")
 
     def test_lookup_reaches_subrepo(self, tmp_path, captured_console):
         parent = _mk_indexed_repo(

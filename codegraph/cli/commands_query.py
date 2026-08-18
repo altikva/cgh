@@ -21,7 +21,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from codegraph.analysis.federation import (
-    for_each_child_fts,
+    child_fts_symbol_search,
     for_each_child_graphdb,
     has_subrepos,
 )
@@ -171,37 +171,17 @@ def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
     return out
 
 
-def _fts_rows(conn, query: str, fetch: int) -> list[tuple]:
-    """(kind, name, file_path, start_line) rows from an FTS sqlite conn."""
-    from codegraph.core.fts import fts_search
-
-    return [
-        (hit.kind, hit.name, hit.file_path, hit.start_line)
-        for hit in fts_search(conn, query, limit=fetch)
-    ]
+def _fts_rows(hits) -> list[tuple]:
+    """(kind, name, file_path, start_line) rows from FTS hits."""
+    return [(h.kind, h.name, h.file_path, h.start_line) for h in hits]
 
 
 def _child_fts_fallback(
     root: str, query: str, fetch: int, scopes: set[str]
 ) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
-    """Search the named children through their FTS db instead of the graph.
-
-    A child whose own owner is running holds the graph DB's write lock, which
-    blocks read-only opens from here. SQLite takes concurrent readers, so the
-    child still answers from FTS rather than dropping out of the results.
-    """
-    buckets: list[tuple[str, list]] = []
-    failures: list[tuple[str, str]] = []
-    for scoped in for_each_child_fts(root, lambda c, _r: _fts_rows(c, query, fetch)):
-        if scoped.scope not in scopes:
-            continue
-        if scoped.error:
-            failures.append(
-                (scoped.scope, f"graph db unavailable; fts fallback: {scoped.error}")
-            )
-            continue
-        buckets.append((scoped.scope, list(scoped.payload or [])))
-    return buckets, failures
+    """Search the named children through their FTS db instead of the graph."""
+    buckets, failures = child_fts_symbol_search(root, query, fetch, scopes)
+    return [(scope, _fts_rows(hits)) for scope, hits in buckets], failures
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -219,10 +199,12 @@ def cmd_search(args: argparse.Namespace) -> None:
         # Graph DB locked (MCP server is running). Fall back to FTS, SQLite
         # supports concurrent readers, so this always works.
         try:
-            from codegraph.core.fts import get_fts_conn
+            from codegraph.core.fts import fts_search, get_fts_conn
 
             fts_conn = get_fts_conn(root)
-            buckets.append(("parent", _fts_rows(fts_conn, query, fetch)))
+            buckets.append(
+                ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
+            )
         except Exception as exc:
             console.print(
                 f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"

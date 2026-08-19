@@ -13,13 +13,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   page was filled parent-first, so every child hit fell past the `--limit`
   slice as soon as the parent matched enough symbols on its own. Scopes are
   now merged round-robin, each one getting a share of the page.
-- **A locked subrepo no longer drops out of a federated search**: a child
-  whose own owner holds the graph write lock cannot be opened read-only from
-  the parent, so it came back as an empty scope with a warning. Both
-  `cgh search` and the `search_symbols` MCP tool now fall back to that
-  child's FTS index, which takes concurrent readers. A `search_symbols`
-  filtered by `role` / `layer` still reports the scope as partial, since
-  those filters need the child's graph.
+- **A locked subrepo no longer drops out of a federated search or lookup**: a
+  child whose own owner holds the graph write lock cannot be opened read-only
+  from the parent, so it came back as an empty scope with a warning.
+  `cgh search`, `cgh lookup` and the `search_symbols` / `symbol_lookup` MCP
+  tools now fall back to that child's FTS index, which takes concurrent
+  readers. A search or lookup filtered by `role` / `layer` still reports the
+  scope as partial, since those filters need the child's graph.
 
 ## [0.11.5] - 2026-08-16
 

@@ -21,6 +21,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from codegraph.analysis.federation import (
+    child_fts_symbol_lookup,
     child_fts_symbol_search,
     for_each_child_graphdb,
     has_subrepos,
@@ -386,11 +387,27 @@ def cmd_lookup(args: argparse.Namespace) -> None:
             found = True
             _print_hit("parent", kind, n, fp, sl, el)
 
-    child_rows, warnings = _query_children(root, lambda c: _lookup_conn(c, name))
-    for scope, kind, n, fp, sl, el in child_rows:
-        found = True
-        _print_hit(scope, kind, n, fp, sl, el)
-    _print_scope_warnings(warnings)
+    child_buckets, child_failures = _query_children_scoped(
+        root, lambda c: _lookup_conn(c, name)
+    )
+    if child_failures:
+        # A child whose own owner holds the graph write lock still resolves
+        # the name through its FTS index.
+        fts_buckets, child_failures = child_fts_symbol_lookup(
+            root, name, {scope for scope, _ in child_failures}
+        )
+        child_buckets.extend(
+            (
+                scope,
+                [(h.kind, h.name, h.file_path, h.start_line, h.end_line) for h in hits],
+            )
+            for scope, hits in fts_buckets
+        )
+    for scope, rows in child_buckets:
+        for kind, n, fp, sl, el in rows:
+            found = True
+            _print_hit(scope, kind, n, fp, sl, el)
+    _print_scope_warnings(_fmt_scope_errors(child_failures))
 
     if not found:
         console.print(

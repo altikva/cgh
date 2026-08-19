@@ -184,6 +184,37 @@ class TestFederatedQuery:
         assert hits[0]["name"] == "child_only_fn"
         assert not out.get("warnings")
 
+    def test_locked_child_lookup_falls_back_to_fts(
+        self, tmp_path, captured_console, monkeypatch
+    ):
+        """A child whose owner holds the graph lock still resolves the name."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent", "def parent_fn():\n    return 1\n"
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo", "def child_only_fn():\n    return 2\n"
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        def _locked(root, fn):
+            return [
+                ScopedResult(
+                    scope="childrepo",
+                    scope_path=child,
+                    payload=None,
+                    error="db unavailable (missing or locked)",
+                )
+            ]
+
+        monkeypatch.setattr(cq, "for_each_child_graphdb", _locked)
+
+        cq.cmd_lookup(argparse.Namespace(root=str(parent), name="child_only_fn"))
+        out = captured_console.getvalue()
+        assert "child_only_fn" in out
+        assert "childrepo" in out
+        assert "unavailable" not in out
+
     def test_lookup_reaches_subrepo(self, tmp_path, captured_console):
         parent = _mk_indexed_repo(
             tmp_path / "parent", "def parent_fn():\n    return 1\n"

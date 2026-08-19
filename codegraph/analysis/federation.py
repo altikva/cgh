@@ -422,13 +422,12 @@ def _run_one_fts(
             )
 
 
-def child_fts_symbol_search(
+def _child_fts_fallback(
     repo_root: str | Path,
-    query: str,
-    limit: int,
-    scopes: set[str] | None = None,
+    fn: Callable[[sqlite3.Connection], Any],
+    scopes: set[str] | None,
 ) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
-    """Symbol search over children's FTS index instead of their graph DB.
+    """Run ``fn`` on the FTS index of the named children.
 
     A child whose own owner is running holds the graph DB's write lock, which
     blocks read-only opens from the parent. SQLite takes concurrent readers,
@@ -438,13 +437,9 @@ def child_fts_symbol_search(
     Returns ``([(scope, [FTSResult, …]), …], failures)`` where failures are
     ``(scope, error)`` pairs for children that no backend could answer.
     """
-    from codegraph.core.fts import fts_search
-
     buckets: list[tuple[str, list]] = []
     failures: list[tuple[str, str]] = []
-    for scoped in for_each_child_fts(
-        repo_root, lambda conn, _r: fts_search(conn, query, limit=limit)
-    ):
+    for scoped in for_each_child_fts(repo_root, lambda conn, _r: fn(conn)):
         if scopes is not None and scoped.scope not in scopes:
             continue
         if scoped.error:
@@ -454,6 +449,33 @@ def child_fts_symbol_search(
             continue
         buckets.append((scoped.scope, list(scoped.payload or [])))
     return buckets, failures
+
+
+def child_fts_symbol_search(
+    repo_root: str | Path,
+    query: str,
+    limit: int,
+    scopes: set[str] | None = None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Fuzzy symbol search over children's FTS index instead of their graph."""
+    from codegraph.core.fts import fts_search
+
+    return _child_fts_fallback(
+        repo_root, lambda conn: fts_search(conn, query, limit=limit), scopes
+    )
+
+
+def child_fts_symbol_lookup(
+    repo_root: str | Path,
+    name: str,
+    scopes: set[str] | None = None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Exact-name symbol lookup over children's FTS index."""
+    from codegraph.core.fts import fts_lookup_symbol
+
+    return _child_fts_fallback(
+        repo_root, lambda conn: fts_lookup_symbol(conn, name), scopes
+    )
 
 
 def has_subrepos(repo_root: str | Path) -> bool:

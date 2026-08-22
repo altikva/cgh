@@ -9,6 +9,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh lookup` now finds terraform variables and outputs**: they live in a
+  separate node table that symbol lookup and `search_symbols` skipped, so a
+  `variable`/`output` was invisible by name while resources resolved fine.
 - **`cgh init` now wires a working MCP server for IBM Bob**: Bob is an IDE
   agent whose GUI process does not inherit the login shell PATH, so the
   bare `cgh` command never spawned and Bob acted as if the server was

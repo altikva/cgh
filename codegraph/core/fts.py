@@ -383,6 +383,37 @@ def fts_search(
     return results
 
 
+def fts_lookup_symbol(
+    conn: sqlite3.Connection, name: str, limit: int = 50
+) -> list[FTSResult]:
+    """Exact-name symbol lookup, the definition-finding counterpart of
+    :func:`fts_search`.
+
+    Used when the graph DB cannot be opened (a federated child whose own
+    owner holds the write lock) and a name still has to resolve to a
+    definition. Scanner findings share the symbols table but are not
+    definitions, so they never come back here.
+    """
+    with _FTS_LOCK:
+        rows = conn.execute(
+            "SELECT kind, name, file_path, start_line, end_line, docstring "
+            "FROM symbols WHERE name = ? AND kind != 'finding' LIMIT ?",
+            (name, limit),
+        ).fetchall()
+    return [
+        FTSResult(
+            kind=row[0],
+            name=row[1],
+            file_path=row[2],
+            start_line=row[3],
+            end_line=row[4],
+            docstring=row[5][:200] if row[5] else "",
+            score=1.0,
+        )
+        for row in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Memory + Plan helpers (Phase A/B of the Claude Code integration)
 # ---------------------------------------------------------------------------

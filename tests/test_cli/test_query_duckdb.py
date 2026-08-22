@@ -22,7 +22,7 @@ import pytest
 from rich.console import Console
 
 import codegraph.cli.commands_query as cq
-from codegraph.analysis.federation import add_subrepo
+from codegraph.analysis.federation import ScopedResult, add_subrepo
 from codegraph.core.db import reset_connection
 from codegraph.indexer import index_repo
 
@@ -105,6 +105,34 @@ class TestQueryOnDuckDB:
         cq.cmd_outline(argparse.Namespace(root=str(indexed_repo), file="README.md"))
         assert "Usage" in captured_console.getvalue()
 
+    def test_lookup_finds_terraform_variable(self, tmp_path, captured_console):
+        # A terraform variable/output lives in the TFVar node table, which
+        # symbol lookup used to skip, so `cgh lookup <var>` returned nothing
+        # while `cgh lookup <resource>` worked. Both must resolve now.
+        root = tmp_path / "tf"
+        root.mkdir()
+        _git(root, "init")
+        (root / "main.tf").write_text(
+            'variable "region" {\n  type = string\n}\n\n'
+            'resource "google_storage_bucket" "assets" {\n  name = var.region\n}\n',
+            encoding="utf-8",
+        )
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "tf")
+        reset_connection()
+        index_repo(str(root))
+        reset_connection()
+
+        cq.cmd_lookup(argparse.Namespace(root=str(root), name="region"))
+        out = captured_console.getvalue()
+        assert "region" in out and "main.tf" in out
+        assert "var" in out  # the tf_var icon, not a resource/function hit
+        reset_connection()
+
+        cq.cmd_lookup(argparse.Namespace(root=str(root), name="assets"))
+        assert "assets" in captured_console.getvalue()
+        reset_connection()
+
 
 class TestFederatedQuery:
     def test_search_reaches_subrepo_with_scope_tag(self, tmp_path, capsys):
@@ -126,6 +154,94 @@ class TestFederatedQuery:
         hits = [r for r in out["results"] if r["name"] == "child_only_fn"]
         assert hits
         assert hits[0]["scope"] == "childrepo"
+
+    def test_page_is_not_monopolised_by_the_parent(self, tmp_path, capsys):
+        """A parent that fills the page on its own must not starve children."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent",
+            "".join(f"def shared_p{i}():\n    return {i}\n\n\n" for i in range(30)),
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo",
+            "".join(f"def shared_c{i}():\n    return {i}\n\n\n" for i in range(30)),
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        cq.cmd_search(
+            argparse.Namespace(
+                root=str(parent), query="shared_", limit=10, offset=0, json=True
+            )
+        )
+        out = json.loads(capsys.readouterr().out)
+        scopes = {r["scope"] for r in out["results"]}
+        assert len(out["results"]) == 10
+        assert scopes == {"parent", "childrepo"}
+
+    def test_locked_child_falls_back_to_fts(self, tmp_path, capsys, monkeypatch):
+        """A child whose owner holds the graph lock still answers from FTS."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent", "def parent_fn():\n    return 1\n"
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo", "def child_only_fn():\n    return 2\n"
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        def _locked(root, fn):
+            return [
+                ScopedResult(
+                    scope="childrepo",
+                    scope_path=child,
+                    payload=None,
+                    error="db unavailable (missing or locked)",
+                )
+            ]
+
+        monkeypatch.setattr(cq, "for_each_child_graphdb", _locked)
+
+        cq.cmd_search(
+            argparse.Namespace(
+                root=str(parent), query="child_only_fn", limit=10, offset=0, json=True
+            )
+        )
+        out = json.loads(capsys.readouterr().out)
+        hits = [r for r in out["results"] if r["scope"] == "childrepo"]
+        assert hits
+        assert hits[0]["name"] == "child_only_fn"
+        assert not out.get("warnings")
+
+    def test_locked_child_lookup_falls_back_to_fts(
+        self, tmp_path, captured_console, monkeypatch
+    ):
+        """A child whose owner holds the graph lock still resolves the name."""
+        parent = _mk_indexed_repo(
+            tmp_path / "parent", "def parent_fn():\n    return 1\n"
+        )
+        child = _mk_indexed_repo(
+            tmp_path / "childrepo", "def child_only_fn():\n    return 2\n"
+        )
+        add_subrepo(parent, child)
+        reset_connection()
+
+        def _locked(root, fn):
+            return [
+                ScopedResult(
+                    scope="childrepo",
+                    scope_path=child,
+                    payload=None,
+                    error="db unavailable (missing or locked)",
+                )
+            ]
+
+        monkeypatch.setattr(cq, "for_each_child_graphdb", _locked)
+
+        cq.cmd_lookup(argparse.Namespace(root=str(parent), name="child_only_fn"))
+        out = captured_console.getvalue()
+        assert "child_only_fn" in out
+        assert "childrepo" in out
+        assert "unavailable" not in out
 
     def test_lookup_reaches_subrepo(self, tmp_path, captured_console):
         parent = _mk_indexed_repo(

@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-08-22
+
 ### Fixed
 - **A moved or copied index rebuilds itself instead of serving dead paths**:
   graph paths are stored absolute, so an index built elsewhere (a repo zipped
@@ -1288,7 +1290,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.5...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.6...HEAD
+[0.11.6]: https://github.com/altikva/cgh/compare/v0.11.5...v0.11.6
 [0.11.5]: https://github.com/altikva/cgh/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/altikva/cgh/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/altikva/cgh/compare/v0.11.2...v0.11.3

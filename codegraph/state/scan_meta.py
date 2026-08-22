@@ -84,6 +84,13 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
     repo_root = Path(repo_root)
     meta = {
         "indexed_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        # Absolute root the index was built at. Graph node paths are stored
+        # absolute, so an index copied or moved to a different path (a repo
+        # zipped from another machine, a fresh clone at a new location) points
+        # every result at the old root. Recording it lets the incremental path
+        # detect the move and force a full rebuild instead of trusting the
+        # unchanged git blob shas and keeping the stale paths.
+        "root": str(repo_root.resolve()),
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
         "stats": {

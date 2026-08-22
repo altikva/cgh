@@ -143,3 +143,74 @@ class TestIndexRepo:
         index_repo(sample_repo, on_file=on_file)
         assert len(files_seen) >= 4
         assert all(s == "indexed" for _, s in files_seen)
+
+
+class TestRootMismatchGuard:
+    """A moved/foreign index must not be trusted by incremental reindex.
+
+    Graph node paths are stored absolute; the blob shas are content-based and
+    identical across machines, so a plain incremental after a move keeps every
+    stale absolute path. The guard detects the root change (recorded in
+    scan_meta) and forces a full rebuild that recomputes the paths.
+    """
+
+    @staticmethod
+    def _git(root, *args):
+        import subprocess
+
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_moved_index_forces_full_rebuild(self, tmp_path):
+        import shutil
+
+        from codegraph.indexer import incremental_reindex
+
+        src = tmp_path / "src"
+        src.mkdir()
+        self._git(src, "init")
+        (src / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+        self._git(src, "add", "-A")
+        self._git(src, "commit", "-m", "initial")
+        reset_connection()
+        index_repo(str(src))
+        reset_connection()
+
+        # Simulate shipping/moving the whole tree (index included) to a new path.
+        dst = tmp_path / "moved"
+        shutil.move(str(src), str(dst))
+        reset_connection()
+
+        result = incremental_reindex(str(dst))
+        # The move is detected: a full rebuild ran instead of a blob-sha diff.
+        assert result["mode"] == "fallback_full"
+
+        # And every stored path now points at the new root, not the old one
+        # (no orphaned old-root File nodes left behind). realpath normalizes
+        # the macOS /var -> /private/var symlink on both sides.
+        import os
+
+        conn = get_connection(dst)
+        paths = [
+            os.path.realpath(p) for (p,) in conn.list_node_fields("File", ["path"])
+        ]
+        reset_connection()
+        real_dst = os.path.realpath(dst)
+        real_src = os.path.realpath(src)
+        assert paths
+        assert all(p.startswith(real_dst) for p in paths)
+        assert not any(p.startswith(real_src) for p in paths)

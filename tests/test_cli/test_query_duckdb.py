@@ -105,6 +105,34 @@ class TestQueryOnDuckDB:
         cq.cmd_outline(argparse.Namespace(root=str(indexed_repo), file="README.md"))
         assert "Usage" in captured_console.getvalue()
 
+    def test_lookup_finds_terraform_variable(self, tmp_path, captured_console):
+        # A terraform variable/output lives in the TFVar node table, which
+        # symbol lookup used to skip, so `cgh lookup <var>` returned nothing
+        # while `cgh lookup <resource>` worked. Both must resolve now.
+        root = tmp_path / "tf"
+        root.mkdir()
+        _git(root, "init")
+        (root / "main.tf").write_text(
+            'variable "region" {\n  type = string\n}\n\n'
+            'resource "google_storage_bucket" "assets" {\n  name = var.region\n}\n',
+            encoding="utf-8",
+        )
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "tf")
+        reset_connection()
+        index_repo(str(root))
+        reset_connection()
+
+        cq.cmd_lookup(argparse.Namespace(root=str(root), name="region"))
+        out = captured_console.getvalue()
+        assert "region" in out and "main.tf" in out
+        assert "var" in out  # the tf_var icon, not a resource/function hit
+        reset_connection()
+
+        cq.cmd_lookup(argparse.Namespace(root=str(root), name="assets"))
+        assert "assets" in captured_console.getvalue()
+        reset_connection()
+
 
 class TestFederatedQuery:
     def test_search_reaches_subrepo_with_scope_tag(self, tmp_path, capsys):

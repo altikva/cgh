@@ -321,6 +321,22 @@ def _lookup_conn(conn, name: str) -> list[tuple]:
                     row["end_line"],
                 )
             )
+    # TFVar has no end_line column (a variable/output block is anchored by its
+    # start), so it needs its own loop; reuse start_line for the end slot.
+    for row in conn.find_nodes(
+        "TFVar",
+        where={"name": name},
+        return_fields=["name", "file_path", "start_line"],
+    ):
+        out.append(
+            (
+                "tf_var",
+                row["name"],
+                row["file_path"],
+                row["start_line"],
+                row["start_line"],
+            )
+        )
     for row in conn.find_nodes(
         "MdSection",
         contains={"title": name},
@@ -347,6 +363,7 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         "function": "[green]fn[/green]",
         "class": "[yellow]cls[/yellow]",
         "tf_resource": "[magenta]tf[/magenta]",
+        "tf_var": "[magenta]var[/magenta]",
         "md_section": "[cyan]doc[/cyan]",
     }
     federated = has_subrepos(root)

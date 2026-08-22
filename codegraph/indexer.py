@@ -1405,11 +1405,27 @@ def incremental_reindex(
     Returns a dict with: mode, reindexed, deleted, unchanged, elapsed_s.
     """
     from codegraph.state.activity import log as _activity_log
-    from codegraph.state.scan_meta import git_tree_blob_shas, write_meta
+    from codegraph.state.scan_meta import git_tree_blob_shas, read_meta, write_meta
 
     repo_root = Path(repo_root)
     t0 = time.time()
     _activity_log(repo_root, "incremental_start", str(repo_root))
+
+    # A moved or foreign index: graph node paths are stored absolute, so if the
+    # index was built at a different root (repo zipped from another machine,
+    # cloned to a new path) the git blob shas still match and incremental would
+    # keep every stale absolute path. Wipe the graph and rebuild from scratch,
+    # which recomputes every path from the current root. A plain full walk is
+    # not enough: it upserts the new paths but leaves the old-root File nodes
+    # orphaned in the graph.
+    recorded_root = (read_meta(repo_root) or {}).get("root")
+    if recorded_root and recorded_root != str(repo_root.resolve()):
+        _activity_log(repo_root, "incremental_fallback", "root moved")
+        _recover_corrupt_graph(repo_root)
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
 
     from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 

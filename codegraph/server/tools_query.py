@@ -199,6 +199,21 @@ def register(mcp) -> None:
                         "lines": f"{row['start_line']}-{row['end_line']}",
                     }
                 )
+            # TFVar (terraform variable/output) has no end_line column, so it
+            # gets its own block anchored on start_line.
+            for row in conn.find_nodes(
+                "TFVar",
+                where={"name": name},
+                return_fields=["file_path", "kind", "start_line"],
+            ):
+                out.append(
+                    {
+                        "kind": "tf_var",
+                        "type": row["kind"],
+                        "file": row["file_path"],
+                        "lines": str(row["start_line"]),
+                    }
+                )
             for row in conn.find_nodes(
                 "MdSection",
                 contains={"title": name},
@@ -444,6 +459,21 @@ def register(mcp) -> None:
                         "kind": "tf_resource",
                         "name": row["name"],
                         "type": row["type"],
+                        "file": row["file_path"],
+                        "line": row["start_line"],
+                    }
+                )
+            for row in conn.find_nodes(
+                "TFVar",
+                contains={"name": query, "kind": query},
+                return_fields=["name", "kind", "file_path", "start_line"],
+                limit=limit,
+            ):
+                out.append(
+                    {
+                        "kind": "tf_var",
+                        "name": row["name"],
+                        "type": row["kind"],
                         "file": row["file_path"],
                         "line": row["start_line"],
                     }

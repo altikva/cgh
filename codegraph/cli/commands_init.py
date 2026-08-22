@@ -1852,6 +1852,35 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
     elif tool == "bob":
         # Bob reads project-level MCP servers from .bob/mcp.json (its
         # global file is ~/.bob/mcp_settings.json; project wins).
+        #
+        # Bob is an IDE agent, and a GUI process does not inherit the login
+        # shell PATH: a bare "cgh" command fails to spawn, so Bob never
+        # starts the server and behaves as if it should already be running.
+        # Write the resolved absolute path as the command, and set cwd to
+        # the project root so the executable and `--root .` both resolve.
+        # Bob's stdio schema is command/args with an optional cwd; there is
+        # no "type" field for stdio.
+        cgh_abs = shutil.which("cgh") or shutil.which("codegraph")
+        if cgh_abs:
+            bob_entry = {
+                "command": cgh_abs,
+                "args": ["serve", "--root", ".", "--watch", "--reindex"],
+                "cwd": str(root.resolve()),
+            }
+        else:
+            bob_entry = {
+                "command": sys.executable,
+                "args": [
+                    "-m",
+                    "codegraph",
+                    "serve",
+                    "--root",
+                    ".",
+                    "--watch",
+                    "--reindex",
+                ],
+                "cwd": str(root.resolve()),
+            }
         bob_dir = root / ".bob"
         bob_dir.mkdir(exist_ok=True)
         mcp_path = bob_dir / "mcp.json"
@@ -1859,7 +1888,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
-        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
+        data.setdefault("mcpServers", {})["codegraph"] = bob_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         _skills_line(".bob/skills/", install_bob(root))

@@ -8,6 +8,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh graph overview` no longer crashes**: the default graph view built the
+  repo label with `root.name`, but the CLI passes the root as a string, so the
+  command raised `AttributeError` instead of rendering. It now derives the
+  basename from either a string or a path.
+
 ## [0.11.6] - 2026-08-22
 
 ### Fixed

@@ -379,7 +379,11 @@ def viz_full_overview(conn, root, max_nodes: int, fmt: str) -> str:
 
     if fmt == "mermaid":
         lines = ["graph TD"]
-        lines.append(f'  REPO["{root.name if root else "repo"}"]:::repo')
+        # root reaches here as a str from the CLI and as a Path from the MCP
+        # tool; normalize either to its basename (root.name assumed a Path and
+        # crashed the CLI overview view).
+        repo_label = os.path.basename(os.path.normpath(str(root))) if root else "repo"
+        lines.append(f'  REPO["{repo_label}"]:::repo')
 
         for ls in lang_stats:
             lang_id = _safe_id(ls["lang"] or "unknown")

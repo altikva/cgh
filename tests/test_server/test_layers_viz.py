@@ -84,3 +84,20 @@ def test_layers_scope_dot_format(viz_repo):
     register_viz(m)
     out = json.loads(m.tools["visualize_graph"](scope="layers", format="dot"))
     assert out["diagram"].startswith("digraph layers")
+
+
+def test_overview_accepts_str_root(viz_repo):
+    # The CLI passes root as a str (os.path.abspath); viz_full_overview did
+    # root.name and crashed the default `cgh graph overview` view. It must
+    # render the repo basename from a str root without raising.
+    from codegraph.core.db import get_connection
+    from codegraph.viz.graphviews import viz_full_overview
+
+    root = viz_repo
+    (root / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    index_file(root / "lib.py", root)
+
+    conn = get_connection(root)
+    diagram = viz_full_overview(conn, str(root), 40, "mermaid")
+    assert diagram.startswith("graph TD")
+    assert f'REPO["{root.name}"]' in diagram

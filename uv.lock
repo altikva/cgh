@@ -191,7 +191,7 @@ wheels = [
 
 [[package]]
 name = "cgh"
-version = "0.11.6"
+version = "0.11.7"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },

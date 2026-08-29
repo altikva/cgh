@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-08-29
+
+### Fixed
+- **`cgh graph overview` no longer crashes**: the default graph view built the
+  repo label with `root.name`, but the CLI passes the root as a string, so the
+  command raised `AttributeError` instead of rendering. It now derives the
+  basename from either a string or a path.
+
 ## [0.11.6] - 2026-08-22
 
 ### Fixed
@@ -1290,7 +1298,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.6...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.7...HEAD
+[0.11.7]: https://github.com/altikva/cgh/compare/v0.11.6...v0.11.7
 [0.11.6]: https://github.com/altikva/cgh/compare/v0.11.5...v0.11.6
 [0.11.5]: https://github.com/altikva/cgh/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/altikva/cgh/compare/v0.11.3...v0.11.4

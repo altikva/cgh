@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.11.7"
+version = "0.11.8"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -44,7 +44,11 @@ dependencies = [
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
     "watchdog>=4.0",
-    "fastmcp>=2.0",
+    # Upper bound: a fastmcp major can relocate modules the owner
+    # imports lazily (4.0 moved fastmcp.server.tasks to
+    # fastmcp.utilities.tasks). Keep the next major from arriving on an
+    # unrelated reinstall; raise the ceiling deliberately after testing.
+    "fastmcp>=2.0,<5",
     "rank-bm25>=0.2",
     "rich>=13.0",
     "questionary>=2.0",

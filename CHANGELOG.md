@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **A new fastmcp major no longer breaks cgh on an unrelated reinstall**: the
+  dependency was pinned `fastmcp>=2.0` with no ceiling, so a routine tool-env
+  rebuild could pull the next major and relocate a module the server imports.
+  The pin now caps at `<5`, admitting fastmcp 4 while holding the next major
+  back until it is tested.
+
 ## [0.11.7] - 2026-08-29
 
 ### Fixed

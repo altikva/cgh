@@ -261,11 +261,15 @@ def main() -> None:
     _root = Path(args.root).resolve()
 
     from codegraph.state.ipc import (
+        installed_cgh_version,
         is_owner_alive,
+        owner_version_current,
         proxy_stdio_to_http,
         read_owner_port,
+        read_owner_version,
         register_worker,
         spawn_owner,
+        stop_owner,
         unregister_worker,
     )
 
@@ -292,12 +296,24 @@ def main() -> None:
 
     configure_background_logging()
 
-    # Start (or reuse) the shared owner
-    if is_owner_alive(_root):
+    # Start (or reuse) the shared owner. A live owner is reused only when it
+    # is serving the installed version: one left running across a package
+    # upgrade holds stale code that can fail on a lazy import, so restart it
+    # rather than bridge to it.
+    if is_owner_alive(_root) and owner_version_current(_root):
         port = read_owner_port(_root)
         _log.info("attaching to existing owner on port %s", port)
     else:
-        _log.info("no owner running, launching one")
+        if is_owner_alive(_root):
+            _log.warning(
+                "owner is running cgh %s but %s is installed; restarting it "
+                "so calls run current code",
+                read_owner_version(_root),
+                installed_cgh_version(),
+            )
+            stop_owner(_root)
+        else:
+            _log.info("no owner running, launching one")
         port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
         if port is None:
             _log.error("failed to start owner (see .codegraph/owner.log)")
@@ -395,11 +411,25 @@ def owner_main(
             _log.warning("watcher disabled: %s", exc)
 
     # Pick a free port + publish port file + owner pid
-    from codegraph.state.ipc import free_port, owner_pidfile, port_file
+    from codegraph.state.ipc import (
+        free_port,
+        installed_cgh_version,
+        owner_pidfile,
+        port_file,
+        write_owner_version,
+    )
 
     port = free_port()
     port_file(_root).write_text(str(port) + "\n", encoding="utf-8")
     owner_pidfile(_root).write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    # Stamp the version this owner is serving under. If the package is
+    # upgraded on disk while this process keeps running, the in-memory code
+    # no longer matches site-packages and a lazy import can fail against the
+    # new layout. The worker-watch loop below compares this stamp to the
+    # installed version and exits on drift so the next call respawns on
+    # current code.
+    _startup_version = installed_cgh_version()
+    write_owner_version(_root, _startup_version)
 
     # Cleanup on exit
     import atexit as _atexit
@@ -503,6 +533,22 @@ def owner_main(
         started_at = _time.time()
         while True:
             _time.sleep(1.0)
+
+            # Exit if the installed package drifted from what this owner
+            # started under. The resident code no longer matches
+            # site-packages, so a not-yet-taken lazy import could resolve
+            # against the new layout and fail (that is how a fastmcp major
+            # bump took every tool down at once). Exiting lets the proxy
+            # respawn a fresh owner on current code.
+            _current = installed_cgh_version()
+            if _startup_version and _current and _current != _startup_version:
+                _shutdown(
+                    f"cgh changed on disk ({_startup_version} -> {_current}) "
+                    "while this owner was running; exiting so the next call "
+                    "respawns on current code"
+                )
+                return
+
             workers = live_workers(_root)
 
             if workers:

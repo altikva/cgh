@@ -44,7 +44,11 @@ dependencies = [
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
     "watchdog>=4.0",
-    "fastmcp>=2.0",
+    # Upper bound: a fastmcp major can relocate modules the owner
+    # imports lazily (4.0 moved fastmcp.server.tasks to
+    # fastmcp.utilities.tasks). Keep the next major from arriving on an
+    # unrelated reinstall; raise the ceiling deliberately after testing.
+    "fastmcp>=2.0,<5",
     "rank-bm25>=0.2",
     "rich>=13.0",
     "questionary>=2.0",

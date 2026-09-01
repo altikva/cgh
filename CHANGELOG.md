@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **A running owner no longer serves code that was upgraded out from under it**:
+  the per-repo owner process now stamps the cgh version it started under and
+  exits when the installed version changes on disk, so the next call respawns a
+  fresh owner on current code. A new session likewise restarts a still-running
+  owner whose version no longer matches. Previously an upgrade left the daemon
+  serving deleted code until it failed with an import error naming an unrelated
+  module.
 - **A new fastmcp major no longer breaks cgh on an unrelated reinstall**: the
   dependency was pinned `fastmcp>=2.0` with no ceiling, so a routine tool-env
   rebuild could pull the next major and relocate a module the server imports.

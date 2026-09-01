@@ -21,6 +21,7 @@ from pathlib import Path
 
 _PORT_FILE = "server.port"
 _OWNER_PID_FILE = "owner.pid"
+_OWNER_VERSION_FILE = "owner.version"
 _WORKERS_DIR = "workers"
 
 
@@ -187,6 +188,80 @@ def is_pid_alive(pid: int) -> bool:
     from codegraph.state.pidfile import process_alive
 
     return process_alive(pid)
+
+
+def owner_version_file(repo_root: str | Path) -> Path:
+    return Path(repo_root) / ".codegraph" / _OWNER_VERSION_FILE
+
+
+def installed_cgh_version() -> str | None:
+    """The cgh version currently resolvable on disk, or None if it cannot be
+    read. importlib.metadata rescans site-packages when its directory mtime
+    changes, so a long-lived owner sees a version that was swapped underneath
+    it after startup, which is exactly the drift this guards against."""
+    try:
+        from importlib.metadata import version
+
+        return version("cgh")
+    except Exception:
+        # Any resolution failure reads as "unknown"; the drift check treats
+        # unknown as current, so this never forces a restart.
+        return None
+
+
+def write_owner_version(repo_root: str | Path, ver: str | None) -> None:
+    """Stamp the version the owner is serving under. Best-effort: a missing
+    stamp just means the drift check stays quiet (fails safe, never a restart
+    loop)."""
+    if not ver:
+        return
+    try:
+        f = owner_version_file(repo_root)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(ver + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_owner_version(repo_root: str | Path) -> str | None:
+    p = owner_version_file(repo_root)
+    if not p.exists():
+        return None
+    try:
+        return p.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def owner_version_current(repo_root: str | Path) -> bool:
+    """True unless the running owner's stamped version and the installed
+    version are BOTH known and differ. Unknown on either side reads as
+    current, so an unreadable version can never drive a stop/respawn loop."""
+    stamped = read_owner_version(repo_root)
+    installed = installed_cgh_version()
+    if stamped is None or installed is None:
+        return True
+    return stamped == installed
+
+
+def stop_owner(repo_root: str | Path, graceful_timeout: float = 5.0) -> bool:
+    """Terminate this repo's owner and clear its ipc files. Returns True if an
+    owner was signalled. Cross-platform via pidfile.terminate (graceful on
+    POSIX so atexit cleanup runs, TerminateProcess on Windows)."""
+    pid = read_owner_pid(repo_root)
+    if pid is None:
+        return False
+    from codegraph.state.pidfile import terminate
+
+    try:
+        terminate(pid, graceful_timeout=graceful_timeout)
+    except (ProcessLookupError, PermissionError):
+        pass
+    # Drop stale ipc files whether or not the owner ran its own atexit.
+    owner_pidfile(repo_root).unlink(missing_ok=True)
+    port_file(repo_root).unlink(missing_ok=True)
+    owner_version_file(repo_root).unlink(missing_ok=True)
+    return True
 
 
 def is_owner_alive(repo_root: str | Path) -> bool:

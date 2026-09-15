@@ -5,10 +5,9 @@
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: cgh plugin entry point. Registers the `cgh codewrite` CLI
-#              verb and the codewrite_pick MCP tool. This is the reference
-#              selection surface: it finds the file to mirror. Code
-#              generation (the model call behind the egress gate) lands on
-#              top of this in a later change.
+#              verbs (pick, gen) and the codewrite_pick / code_write MCP
+#              tools: pick the file to mirror, then generate the target from
+#              a spec with a cheap model, behind the egress gate.
 
 from __future__ import annotations
 

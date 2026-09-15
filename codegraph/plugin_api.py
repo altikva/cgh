@@ -14,8 +14,9 @@
 #              changes here bump API_VERSION. It also re-exports (lazily,
 #              PEP 562) the core helpers plugins are allowed to depend
 #              on: the finding store, activity log, knowledge record,
-#              config resolution, parser lookup, federation children and
-#              subprocess hygiene. Anything NOT importable from here is
+#              config resolution, parser lookup, federation children, a
+#              read-only graph query, and subprocess hygiene. Anything NOT
+#              importable from here is
 #              internal and may change without notice; the first-party
 #              plugins import exclusively from this module.
 
@@ -201,6 +202,9 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
     "add_format_option": ("codegraph.cli.output", "add_format_option"),
     "emit_result": ("codegraph.cli.output", "emit_result"),
     "resolve_children": ("codegraph.analysis.federation", "resolve_children"),
+    # read-only graph query (parent scope) for plugins that need to find a
+    # file by the symbols it defines, e.g. reference selection for codegen
+    "find_symbol_files": ("codegraph.analysis.plugin_queries", "find_symbol_files"),
     "sync_static_rules": ("codegraph.state.guard", "sync_static_rules"),
     "loaded_plugins": ("codegraph.plugins", "loaded_plugins"),
     # parser building blocks (BaseParser subclassing per the docs)

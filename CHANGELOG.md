@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Plugins can read the graph**: the public plugin API now exposes
+  `find_symbol_files`, a read-only, parent-scope query returning the files
+  that define a symbol by name. It returns `None` when the graph cannot be
+  read (no index, or an owner holds the write lock) so a plugin can fall back
+  rather than fail. Enables graph-aware plugins such as reference selection
+  for code generation.
+
 ## [0.11.8] - 2026-09-01
 
 ### Fixed

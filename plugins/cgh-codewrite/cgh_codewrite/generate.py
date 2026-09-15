@@ -69,17 +69,32 @@ class Backend(Protocol):
 
 
 def build_prompt(
-    spec: str, references: list[tuple[str, str]], target: str | None = None
+    spec: str,
+    references: list[tuple[str, str]],
+    target: str | None = None,
+    prior: tuple[str, str] | None = None,
 ) -> tuple[str, str]:
     """Build the (system, user) prompt. ``references`` is a list of
     (path, text), each wrapped as a style example the model imitates but does
     not copy. Naming the ``target`` file up front keeps the model producing a
     new file rather than echoing the reference; the spec leads so it is not
-    buried under a long reference."""
+    buried under a long reference. ``prior`` is (previous_code, check_output)
+    from a failed verify: it is fed back so the model fixes the specific
+    failure instead of guessing, which is what makes the self-correct loop
+    catch the subtleties a first pass misses."""
     lead = f"Write the new file: {target}\n\n" if target else ""
     blocks = [f"{lead}SPEC:\n{spec.strip()}\n"]
     for path, text in references:
         blocks.append(f'<style_example path="{path}">\n{text}\n</style_example>')
+    if prior is not None:
+        prev_code, check_output = prior
+        blocks.append(
+            "Your previous attempt did not pass its check. Return a corrected, "
+            "complete file that fixes the failure below (keep everything that "
+            "was already correct).\n"
+            f"<previous_attempt>\n{prev_code}\n</previous_attempt>\n"
+            f"<check_failure>\n{check_output}\n</check_failure>"
+        )
     return SYSTEM_PROMPT, "\n\n".join(blocks)
 
 
@@ -104,14 +119,16 @@ def generate_code(
     references: list[tuple[str, str]],
     backend: Backend,
     target: str | None = None,
+    prior: tuple[str, str] | None = None,
 ) -> GenResult:
     """Run one generation. Pure orchestration: build the prompt, call the
     backend, clean the reply. No file is written and no egress gate is
     consulted here; that is the caller's job. Raises GenerationError when the
-    backend returns nothing usable so an empty file is never produced."""
+    backend returns nothing usable so an empty file is never produced.
+    ``prior`` feeds a failed attempt's code + check output back for a retry."""
     if not spec.strip():
         raise GenerationError("empty spec")
-    system, user = build_prompt(spec, references, target)
+    system, user = build_prompt(spec, references, target, prior)
     raw, cost = backend.generate(system, user)
     code = extract_code(raw)
     if not code.strip():

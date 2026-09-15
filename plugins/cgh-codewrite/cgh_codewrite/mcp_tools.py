@@ -74,6 +74,8 @@ def make_mcp_registrar(config: dict):
                     {"error": "no backend configured ([plugin.codewrite] command)"}
                 )
             try:
+                # The verify check comes from config, never the caller: an
+                # agent-supplied shell command would be an injection surface.
                 result = run_generation(
                     root,
                     spec,
@@ -82,6 +84,8 @@ def make_mcp_registrar(config: dict):
                     config=config,
                     backend=backend,
                     force=force,
+                    verify=config.get("verify") or None,
+                    max_attempts=max(1, int(config.get("max_attempts", 1))),
                 )
             except (CodeWriteError, GenerationError) as exc:
                 return json.dumps({"error": str(exc)})

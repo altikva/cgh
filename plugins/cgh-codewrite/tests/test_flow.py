@@ -170,5 +170,62 @@ def test_target_outside_repo_is_refused(tmp_path):
         )
 
 
+class SequenceBackend:
+    """Returns a different reply per call (sticky on the last), and records the
+    prompts so a test can assert the failure was fed back on the retry."""
+
+    is_local = True
+    name = "seq"
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = replies
+        self.calls: list[tuple[str, str]] = []
+
+    def generate(self, system: str, user: str) -> tuple[str, float]:
+        self.calls.append((system, user))
+        return self._replies[min(len(self.calls) - 1, len(self._replies) - 1)], 0.0
+
+
+def test_self_correct_retries_until_verify_passes(tmp_path):
+    root = _repo(tmp_path)
+    backend = SequenceBackend(
+        ["```python\nx = 1  # bad\n```", "```python\nx = 1  # GOOD\n```"]
+    )
+    out = run_generation(
+        root,
+        "spec",
+        "src/x.py",
+        "src/order_service.py",
+        config={},
+        backend=backend,
+        verify="grep -q GOOD src/x.py",
+        max_attempts=3,
+    )
+    assert out["verified"] is True
+    assert out["attempts"] == 2
+    assert (root / "src" / "x.py").read_text(
+        encoding="utf-8"
+    ).strip() == "x = 1  # GOOD"
+    # the failing attempt's output was fed back into the retry prompt
+    assert "check_failure" in backend.calls[1][1]
+
+
+def test_self_correct_gives_up_after_max_attempts(tmp_path):
+    root = _repo(tmp_path)
+    backend = SequenceBackend(["```python\nx = 1  # bad\n```"])  # never passes
+    out = run_generation(
+        root,
+        "spec",
+        "src/x.py",
+        "src/order_service.py",
+        config={},
+        backend=backend,
+        verify="grep -q GOOD src/x.py",
+        max_attempts=2,
+    )
+    assert out["verified"] is False
+    assert out["attempts"] == 2  # tried the cap, kept the last attempt
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

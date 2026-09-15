@@ -15,6 +15,20 @@ import os
 from pathlib import Path
 
 
+def plugin_config_for_root(root: str | Path, fallback: dict) -> dict:
+    """The [plugin.codewrite] table resolved from ``root``.
+
+    Plugins are loaded once at CLI startup against the current directory, so
+    the config captured then belongs to the CWD, not to a --root passed on
+    the command line. Re-resolve from the requested root so --root governs
+    the backend and the egress posture too, not just where the file lands.
+    Falls back to the captured config when the root declares no table.
+    """
+    from codegraph.plugin_api import load_config
+
+    return load_config(root).plugin_tables.get("codewrite", fallback)
+
+
 def make_cli_registrar(config: dict):
     def add_cli(sub) -> None:
         p = sub.add_parser("codewrite", help="Pattern-matched code generation helpers")
@@ -91,6 +105,7 @@ def _cmd_gen(args, config: dict) -> None:
 
     console = Console()
     root = Path(os.path.abspath(args.root))
+    config = plugin_config_for_root(root, config)
 
     backend = resolve_backend(config)
     if backend is None:

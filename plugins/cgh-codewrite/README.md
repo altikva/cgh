@@ -7,11 +7,6 @@ file to mirror straight from the code graph, so you do not have to name it.
 
 Installs through cgh's plugin entry point. Inert without cgh.
 
-## Status
-
-This release ships the reference-selection surface. Code generation (the
-model call behind cgh's egress gate) is being added on top of it.
-
 ## Surfaces
 
 ### `cgh codewrite pick`
@@ -30,12 +25,39 @@ kind in the target's directory). It degrades to a filesystem-only pick
 when the graph is not readable (no index yet, or an owner holds the write
 lock). Pass `--reference` to validate a specific file instead.
 
-### `codewrite_pick` (MCP tool)
+### `cgh codewrite gen`
 
-The same selection for an agent, returning JSON with the chosen
-`reference`, the `reason`, the runner-up `candidates`, and whether the
-graph was available. Runs inside the owner, so its graph read reuses the
-owner's connection.
+Generate a file from a spec, mirroring the reference, and write it.
+
+```
+cgh codewrite gen --spec "pytest tests for UserService: create, update, delete" \
+                  --target tests/test_user_service.py
+```
+
+The reference (picked, or forced with `--reference`) is run through the
+egress gate before it reaches a cloud model: a confidential or PII-labeled
+reference is refused. A local backend skips the gate. An existing target is
+never overwritten without `--force`; `--stdout` prints instead of writing.
+
+Configure the backend in `.codegraph/config.toml`:
+
+```toml
+[plugin.codewrite]
+command = "claude -p"   # any agent CLI, invoked with the prompt on stdin
+```
+
+The generated code is a proposal. Verify it by running the type-checker,
+linter, or tests, never by trusting that it is correct because a later check
+was green. This matters most for generated tests: a green run of tests you
+did not read proves nothing.
+
+### `codewrite_pick` and `code_write` (MCP tools)
+
+`codewrite_pick(target, reference?)` returns the selection as JSON.
+`code_write(spec, target, reference?, force?)` generates and writes the
+file, returning what it wrote, the reference used, the egress decision, and
+the cost. Both run inside the owner, so the graph read reuses its
+connection.
 
 ## License
 

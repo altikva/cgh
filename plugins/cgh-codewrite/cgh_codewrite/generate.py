@@ -52,9 +52,12 @@ class GenResult:
 class Backend(Protocol):
     """A code-generating model. One method, so FakeBackend is trivial and
     the real backends (agent CLI, local, cloud) drop in behind the same
-    seam later."""
+    seam later. ``is_local`` is True when generation never leaves the
+    machine (e.g. a local model); the flow skips the egress gate for those,
+    exactly like the rest of cgh."""
 
     name: str
+    is_local: bool
 
     def generate(self, system: str, user: str) -> tuple[str, float]:
         """Return (raw_text, cost). Must not raise for an empty reply,

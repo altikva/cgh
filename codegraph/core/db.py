@@ -23,6 +23,7 @@ from codegraph.core.protocol import GraphDB
 _DB_DIR = ".codegraph"
 _DB_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
+_SQLITE_FILE = "graph.sqlite"
 
 _KUZU_MISSING_MSG = (
     "This repo uses the Kuzu graph backend (it has a .codegraph/graph.db), "
@@ -76,7 +77,7 @@ def _backend(repo_root: str | Path | None = None) -> str:
     `cgh init` auto-migration handles the transition.
     """
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
-    if env_value in ("duckdb", "kuzu"):
+    if env_value in ("duckdb", "kuzu", "sqlite"):
         return env_value
 
     if repo_root is not None:
@@ -118,6 +119,9 @@ def detect_backend_file(repo_root: str | Path) -> tuple[str, Path] | None:
     duck = cg / _DUCKDB_FILE
     if duck.exists():
         return ("duckdb", duck)
+    lite = cg / _SQLITE_FILE
+    if lite.exists():
+        return ("sqlite", lite)
     kz = cg / _DB_FILE
     if kz.exists():
         return ("kuzu", kz)
@@ -135,6 +139,13 @@ def open_graphdb_file_ro(backend: str, db_file: str | Path) -> GraphDB | None:
 
         try:
             return DuckDBGraphDB(str(db_file), read_only=True)
+        except Exception:
+            return None
+    if backend == "sqlite":
+        from codegraph.core.db_sqlite import SQLiteGraphDB
+
+        try:
+            return SQLiteGraphDB(str(db_file), read_only=True)
         except Exception:
             return None
     try:
@@ -155,7 +166,8 @@ def open_graphdb_file_ro(backend: str, db_file: str | Path) -> GraphDB | None:
 def get_db_path(repo_root: str | Path) -> Path:
     """Return the DB file path for the active backend, auto-detected from
     what's on disk under ``repo_root`` when CGH_DB isn't set."""
-    fname = _DUCKDB_FILE if _backend(repo_root) == "duckdb" else _DB_FILE
+    backend = _backend(repo_root)
+    fname = {"duckdb": _DUCKDB_FILE, "sqlite": _SQLITE_FILE}.get(backend, _DB_FILE)
     return Path(repo_root) / _DB_DIR / fname
 
 
@@ -206,6 +218,14 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
 
         db_path = db_dir / _DUCKDB_FILE
         conn = DuckDBGraphDB(str(db_path), read_only=False)
+        _conns[key] = conn
+        return conn
+
+    if _backend(root) == "sqlite":
+        from codegraph.core.db_sqlite import SQLiteGraphDB
+
+        db_path = db_dir / _SQLITE_FILE
+        conn = SQLiteGraphDB(str(db_path), read_only=False)
         _conns[key] = conn
         return conn
 
@@ -279,6 +299,19 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
             # what's wrong (locked, corrupt, version mismatch). Treat all
             # as "fall through to None" so callers degrade gracefully,
             # symmetric with the Kuzu branch below.
+            return None
+
+    if _backend(root) == "sqlite":
+        from codegraph.core.db_sqlite import SQLiteGraphDB
+
+        db_path = root / _DB_DIR / _SQLITE_FILE
+        if not db_path.exists():
+            return None
+        try:
+            conn = SQLiteGraphDB(str(db_path), read_only=True)
+            _ro_conns[key] = conn
+            return conn
+        except Exception:
             return None
 
     db_path = root / _DB_DIR / _DB_FILE

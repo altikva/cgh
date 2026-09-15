@@ -192,6 +192,7 @@ ignore = [
 # (allow-list gate); the sidecar SQLite modules build clause lists from
 # constants. S608 cannot see the gate.
 "codegraph/core/db_duckdb.py" = ["S608"]
+"codegraph/core/db_sqlite.py" = ["S608"]
 "codegraph/core/db_kuzu.py" = ["S608"]
 "codegraph/core/fts.py" = ["S608"]
 "codegraph/state/*.py" = ["S608"]

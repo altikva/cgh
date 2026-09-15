@@ -27,6 +27,7 @@ class FakeBackend:
     """Canned reply, fixed cost. The whole test harness for the real thing."""
 
     name = "fake"
+    is_local = True
 
     def __init__(self, reply: str, cost: float = 0.01) -> None:
         self._reply = reply

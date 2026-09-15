@@ -43,13 +43,16 @@ def test_fake_backend_satisfies_protocol():
     assert isinstance(FakeBackend("x"), Backend)
 
 
-def test_build_prompt_leads_with_spec_and_labels_references():
+def test_build_prompt_names_target_and_frames_reference_as_example():
     system, user = build_prompt(
         "write tests for UserService",
         [("tests/test_order.py", "def test_order():\n    pass\n")],
+        target="tests/test_user.py",
     )
-    assert "match" in system.lower()
-    assert user.index("SPEC:") < user.index("<reference")
+    # the anti-echo instruction: the reference is a style example, not content
+    assert "do not reproduce" in system.lower()
+    assert "tests/test_user.py" in user  # target named up front
+    assert user.index("SPEC:") < user.index("<style_example")
     assert 'path="tests/test_order.py"' in user
     assert "def test_order()" in user
 

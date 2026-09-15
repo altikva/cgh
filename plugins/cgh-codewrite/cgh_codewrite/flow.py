@@ -63,7 +63,7 @@ def run_generation(
         egress = reason
 
     ref_text = ref_path.read_text(encoding="utf-8", errors="replace")
-    result = generate_code(spec, [(ref_rel, ref_text)], backend)
+    result = generate_code(spec, [(ref_rel, ref_text)], backend, target=target)
 
     written = False
     if not to_stdout:

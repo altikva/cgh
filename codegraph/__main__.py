@@ -19,6 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
+from codegraph.cli.commands_backend import cmd_backend, register_backend_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_findings import cmd_findings
@@ -125,6 +126,7 @@ def _print_help():
             [
                 ("stats", "Graph nodes, edges, call stats, storage"),
                 ("status", "Owner / workers state, scan freshness (--workers)"),
+                ("backend", "Show or switch the graph backend (sqlite/duckdb)"),
                 ("logs", "View MCP tool call history"),
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
@@ -537,6 +539,7 @@ def _register_analysis(sub) -> None:
 
     # --- graph + add-dir ---
     register_graph_parser(sub)
+    register_backend_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -729,6 +732,7 @@ def main() -> None:
         "migrate-to-duckdb": cmd_migrate_to_duckdb,
         "stats": cmd_stats,
         "status": cmd_status,
+        "backend": cmd_backend,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

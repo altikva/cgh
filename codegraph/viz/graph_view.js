@@ -26,7 +26,9 @@
   var SLOTS = ['#3987e5', '#d95926', '#199e70'];
   var NEUTRAL = '#8b949e';
   var EXACT_LIMIT = 900;
-  var LINK_DRAW_BUDGET = 15000;
+  var LINK_DRAW_BUDGET = 4000;
+  // Nodes painted per frame while anything moves, most connected first.
+  var NODE_DRAW_BUDGET = 4000;
   var LABEL_BUDGET = 60;
 
   var LANG_GROUPS = [
@@ -274,8 +276,10 @@
   function GraphView(data) {
     this.data = data;
     this.graphs = {};
+    var imports = (data.imports || []).length;
+    var calls = (data.calls || []).length;
     this.state = {
-      view: 'files', colorBy: 'folder', hidden: {}, showOrphans: true, minLinks: 0, arrows: false,
+      view: !imports && calls ? 'symbols' : 'files', colorBy: 'folder', hidden: {}, showOrphans: true, minLinks: 0, arrows: false,
       textFade: 50, nodeSize: 50, linkWidth: 40, center: 30, repel: 50, linkStrength: 50, linkDist: 40,
       open: { groups: true, filters: true, display: false, forces: false },
       selected: null, localDepth: 0, query: '', table: false
@@ -619,6 +623,10 @@
     var dense = linkCount > 8000;
     var busy = this.alpha > 0 || !!this.pointer || !!this.camTo || now() < this.busyUntil;
     var step = busy && linkCount > LINK_DRAW_BUDGET ? Math.ceil(linkCount / LINK_DRAW_BUDGET) : 1;
+    // Rasterising tens of thousands of thin alpha lines is the single most
+    // expensive thing on screen. On a big moving graph, skip them entirely
+    // and let the node cloud carry the shape until the layout settles.
+    var skipLinks = busy && idx.length > 3000 && linkCount > LINK_DRAW_BUDGET * 2;
     function radius(i) { return Math.max(1.5, g.nodes[i].r * sizeF * k); }
     function inView(x, y) { return x > -40 && y > -40 && x < W + 40 && y < H + 40; }
     function lit(i) { return (!f || f.has(i)) && (!mt || mt.has(i)); }
@@ -632,7 +640,7 @@
     ctx.strokeStyle = INK.subtle;
     ctx.globalAlpha = (f || mt) ? (dense ? 0.08 : 0.25) : (dense ? 0.24 : 0.7);
     ctx.beginPath();
-    for (var e = 0; e < linkCount; e += step) {
+    for (var e = 0; skipLinks ? false : e < linkCount; e += step) {
       var a = v.ls[e], b = v.lt[e];
       if (f && (a === f.core || b === f.core)) continue;
       var ax = ox + X[a] * k, ay = oy + Y[a] * k;
@@ -694,15 +702,37 @@
     var groups = g.modes[s.colorBy];
     var cidx = g.colorIdx[s.colorBy];
     var ring = idx.length <= 3000;
-    function batch(want, color, alpha) {
+    // One pass over the visible nodes, bucketed by colour. A pass per colour
+    // meant walking every node five times per frame, which is what made a
+    // large graph crawl. While anything moves only NODE_DRAW_BUDGET nodes are
+    // painted, most connected first; the rest land once the layout settles.
+    var buckets = groups.map(function () { return []; });
+    var dimmed = [];
+    var focused = [];
+    var pool = busy && idx.length > NODE_DRAW_BUDGET ? g.byDegree : idx;
+    var byDeg = pool === g.byDegree;
+    var painted = 0;
+    for (var a4 = 0; a4 < pool.length; a4++) {
+      var i4 = pool[a4];
+      if (byDeg && !v.allowed[i4]) continue;
+      var x4 = ox + X[i4] * k;
+      var y4 = oy + Y[i4] * k;
+      if (!inView(x4, y4)) continue;
+      var r4 = radius(i4);
+      if (!lit(i4)) dimmed.push(x4, y4, r4);
+      else if (f && f.has(i4)) focused.push(x4, y4, r4, cidx[i4]);
+      else buckets[cidx[i4]].push(x4, y4, r4);
+      if (busy && ++painted >= NODE_DRAW_BUDGET) break;
+    }
+    function paint(flat, color, alpha, stride, onlyColor) {
+      if (!flat.length) return;
       ctx.beginPath();
       var any = false;
-      for (var a4 = 0; a4 < idx.length; a4++) {
-        var i = idx[a4];
-        if (!want(i)) continue;
-        var x = ox + X[i] * k, y = oy + Y[i] * k;
-        if (!inView(x, y)) continue;
-        var r = radius(i);
+      for (var p4 = 0; p4 < flat.length; p4 += stride) {
+        if (onlyColor !== undefined && flat[p4 + 3] !== onlyColor) continue;
+        var x = flat[p4];
+        var y = flat[p4 + 1];
+        var r = flat[p4 + 2];
         if (r < 2.2) ctx.rect(x - r, y - r, r * 2, r * 2);
         else { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
         any = true;
@@ -714,13 +744,9 @@
       ctx.globalAlpha = 1;
       if (ring) { ctx.lineWidth = 2; ctx.strokeStyle = INK.page; ctx.stroke(); }
     }
-    if (f || mt) batch(function (i) { return !lit(i); }, INK.subtle, 0.5);
-    groups.forEach(function (gr, gi) {
-      batch(function (i) { return cidx[i] === gi && lit(i) && !(f && f.has(i)); }, gr.color, 1);
-    });
-    if (f) groups.forEach(function (gr, gi) {
-      batch(function (i) { return cidx[i] === gi && f.has(i) && lit(i); }, gr.color, 1);
-    });
+    paint(dimmed, INK.subtle, 0.5, 3);
+    groups.forEach(function (gr, gi) { paint(buckets[gi], gr.color, 1, 3); });
+    if (focused.length) groups.forEach(function (gr, gi) { paint(focused, gr.color, 1, 4, gi); });
     function halo(i, extra, width, color) {
       if (i == null || !v.allowed[i]) return;
       ctx.beginPath();
@@ -1172,6 +1198,10 @@
     if (s.localDepth > 0 && s.selected != null) line += ' · neighborhood';
     this.el.counts.textContent = line;
     this.el.empty.style.display = v.idx.length ? 'none' : 'flex';
+    if (g.view === 'files' && !g.ls.length && (this.data.calls || []).length) {
+      this.el.hint.textContent = 'No file imports in this index · Symbols · calls holds this repo\'s edges';
+      return;
+    }
     this.el.hint.textContent = v.idx.length > 2000
       ? 'Large graph: labels appear as you zoom in · Search or raise Minimum links to focus'
       : 'Scroll to zoom · Drag to pan or move a node · Double-click for its neighborhood';
@@ -1330,7 +1360,10 @@
     var c = this.canvas;
     if (!c) return;
     var host = this.el.stage;
-    var dpr = Math.min(global.devicePixelRatio || 1, 2);
+    var nodes = this.vis ? this.vis.idx.length : 0;
+    // Retina doubles every dimension, so a dense graph pays four times the
+    // rasterisation for detail nobody can see at that density.
+    var dpr = Math.min(global.devicePixelRatio || 1, nodes > 2000 ? 1 : 2);
     var pw = Math.round(host.clientWidth * dpr);
     var ph = Math.round(host.clientHeight * dpr);
     if (c.width !== pw || c.height !== ph || this.dpr !== dpr) {
@@ -1350,6 +1383,7 @@
     var sz = this.size();
     if (g.fresh && sz.W > 0) {
       g.fresh = false;
+      this.resize();
       this.userCam = false;
       if (v.idx.length <= 1500) this.prewarm(); else this.heat(1);
       this.fit(false);
@@ -1365,7 +1399,10 @@
     if (this.busyUntil && now() >= this.busyUntil) { this.busyUntil = 0; this.dirty = true; }
     if (this.mouse && !this.pointer && (this.alpha > 0 || this.camTo || this.dirty)) this.refreshHover();
     this.updateLayoutLabel(v);
-    if (this.dirty) { this.dirty = false; this.draw(); }
+    // While a big graph is still settling, paint every other frame: the layout
+    // keeps its full step rate and the canvas costs half as much.
+    var heavy = this.alpha > 0 && v.idx.length > 3000;
+    if (this.dirty && !(heavy && this.ticks % 2)) { this.dirty = false; this.draw(); }
   };
 
   global.CGHGraph = {

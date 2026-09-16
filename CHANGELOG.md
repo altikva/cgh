@@ -17,6 +17,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   and the forces themselves are adjustable, with a search box and a table view.
   The page is self-contained: no CDN, no network access, works from `file://`.
   The former diagrams stay available as `cgh graph overview|imports|calls|classes|docs|layers`.
+  The view opens on whichever side of the graph carries edges: most indexed
+  repos resolve no file imports, so those open on `Symbols · calls` instead of
+  a cloud of unconnected files. Measured in Chrome on a synthetic repo: about
+  33 frames per second while laying out 3,000 files, and 9 while laying out
+  8,500, which then pans at about 30 once settled.
 - **Plugins can read the graph**: the public plugin API now exposes
   `find_symbol_files`, a read-only, parent-scope query returning the files
   that define a symbol by name. It returns `None` when the graph cannot be

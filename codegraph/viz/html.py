@@ -340,7 +340,7 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
 
 <script>window.__CGH_GRAPH__ = __PAYLOAD__;</script>
 <script>__SCRIPT__</script>
-<script>window.CGHGraph.mount(window.__CGH_GRAPH__);</script>
+<script>window.__cghView = window.CGHGraph.mount(window.__CGH_GRAPH__);</script>
 </body>
 </html>"""
 

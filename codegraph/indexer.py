@@ -461,6 +461,26 @@ def _ingest_code(
     _resolve_inherits(conn, idx.classes)
 
 
+# Import resolution coverage for the current scan, keyed by language. Without
+# it, "this file imports nothing" and "no resolver for this language" are the
+# same empty answer, which is how 13 repos sat at zero import edges unnoticed.
+_IMPORT_COVERAGE: dict[str, dict[str, int]] = {}
+
+
+def take_import_coverage() -> dict[str, dict[str, int]]:
+    """Return the coverage gathered since the last call, and clear it."""
+    snapshot = {lang: dict(counts) for lang, counts in _IMPORT_COVERAGE.items()}
+    _IMPORT_COVERAGE.clear()
+    return snapshot
+
+
+def _count_import(lang: str, resolved: bool) -> None:
+    bucket = _IMPORT_COVERAGE.setdefault(lang or "unknown", {"seen": 0, "resolved": 0})
+    bucket["seen"] += 1
+    if resolved:
+        bucket["resolved"] += 1
+
+
 def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
     """
     Wire IMPORTS edges from idx.imports into Kuzu.
@@ -478,6 +498,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
     seen_targets: set[str] = set()
     for imp in idx.imports:
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
+        _count_import(idx.lang, target is not None)
         if target is None:
             continue
         target_str = str(target)
@@ -597,6 +618,7 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
                 "end_line": sec.end_line,
                 "body_preview": sec.body_preview,
                 "anchor": sec.anchor,
+                "kind": getattr(sec, "kind", "doc"),
             },
         )
         conn.ensure_edge("DEFINES_SECTION", sec.file_path, sec.id)
@@ -1299,6 +1321,7 @@ def _index_repo(
         )
 
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
+    take_import_coverage()  # drop anything a watcher left behind
     t0 = time.time()
 
     rotate_if_needed(repo_root)
@@ -1365,6 +1388,7 @@ def _index_repo(
     extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
+    stats["imports"] = take_import_coverage()
     stats["method"] = actual_method
     stats["method_requested"] = method
     stats["extra_dirs"] = extra_dirs

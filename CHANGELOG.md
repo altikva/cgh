@@ -8,7 +8,33 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Python imports resolve outside a flat layout**: an absolute import was only
+  ever tried against the repo root, so a `src/` layout or a package nested one
+  directory down resolved nothing at all, and those repos showed an import
+  graph with zero edges. `subgraph`, `impact_of` and the import neighbourhood
+  answered empty for them without a word. Absolute imports are now tried
+  against the importer's own package root, `src/`, the repo root and the
+  importer's directory, nearest first. On one 310-file repo this took the
+  import graph from 0 to 599 edges. Re-index (`cgh reset`) to pick it up.
+- **`Dockerfile` and `Makefile` no longer count as scan errors**: they were
+  mapped to extension keys with no parser behind them, so `is_supported` said
+  yes and `get_parser_for_path` said no, and every scan reported an error per
+  such file. They count as skipped, like any other unparsed file.
+
 ### Added
+- **Import coverage is recorded and shown**: each scan counts imports parsed
+  against imports resolved, per language, keeps it in `scan_meta` and prints it
+  in `cgh status`. An empty import graph is no longer indistinguishable from a
+  language with no resolver: Go, Rust, Java and Terraform parse their imports
+  and say so, instead of silently reporting nothing. An incremental scan keeps
+  the last full scan's measurement rather than erasing it.
+- **Documentation sections are told apart from config keys**: JSON, TOML and
+  YAML files expose their keys through the same section model as Markdown
+  headings, which mixed `.mcp.json` in with real documentation. Sections now
+  carry a `kind` (`doc` or `config`), set by the parser that creates them, so
+  both the graph view and the MCP tools can tell which is which. Existing
+  indexes gain the column on open.
 - **Plugins can read the graph**: the public plugin API now exposes
   `find_symbol_files`, a read-only, parent-scope query returning the files
   that define a symbol by name. It returns `None` when the graph cannot be

@@ -84,7 +84,8 @@ NODE_TABLES = [
         start_line      BIGINT,
         end_line        BIGINT,
         body_preview    TEXT,
-        anchor          TEXT
+        anchor          TEXT,
+        kind            TEXT
     )""",
 ]
 
@@ -200,7 +201,16 @@ INDEXES = [
 ]
 
 
+# Columns added after a graph may already exist on disk. ADD COLUMN IF NOT
+# EXISTS keeps an older index readable instead of failing on the first write.
+MIGRATIONS = [
+    "ALTER TABLE md_section ADD COLUMN IF NOT EXISTS kind TEXT",
+]
+
+
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Create the DuckDB tables and indexes. Idempotent via IF NOT EXISTS."""
     for ddl in NODE_TABLES + EDGE_TABLES + INDEXES:
         conn.execute(ddl)
+    for migration in MIGRATIONS:
+        conn.execute(migration)

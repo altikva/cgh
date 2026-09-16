@@ -79,6 +79,34 @@ def changed_files(repo_root: str | Path, base: str, head: str = "HEAD") -> list[
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def _kept_stats(repo_root: Path, stats: dict) -> dict:
+    """The subset of scan stats worth persisting.
+
+    Import coverage is carried over when a run recorded none: an incremental
+    scan that re-parses nothing would otherwise erase the measurement taken by
+    the last full scan, and `cgh status` would go back to saying nothing.
+    """
+    kept = {
+        k: v
+        for k, v in stats.items()
+        if k
+        in (
+            "indexed",
+            "skipped",
+            "errors",
+            "elapsed_s",
+            "method",
+            "extra_dirs",
+            "imports",
+        )
+    }
+    if not kept.get("imports"):
+        previous = ((read_meta(repo_root) or {}).get("stats") or {}).get("imports")
+        if previous:
+            kept["imports"] = previous
+    return kept
+
+
 def write_meta(repo_root: str | Path, stats: dict) -> None:
     """Persist scan metadata after index_repo completes."""
     repo_root = Path(repo_root)
@@ -93,12 +121,7 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "root": str(repo_root.resolve()),
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
-        "stats": {
-            k: v
-            for k, v in stats.items()
-            if k
-            in ("indexed", "skipped", "errors", "elapsed_s", "method", "extra_dirs")
-        },
+        "stats": _kept_stats(repo_root, stats),
     }
     try:
         path = _meta_path(repo_root)
@@ -187,6 +210,7 @@ def scan_status(repo_root: str | Path) -> dict:
     )
 
     return {
+        "imports": (meta.get("stats") or {}).get("imports") or {},
         "indexed_sha": indexed_sha,
         "indexed_branch": indexed_branch,
         "indexed_at": indexed_at,

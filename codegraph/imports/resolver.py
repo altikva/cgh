@@ -6,8 +6,9 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Resolve ImportRef.source_module to a file path on disk so
 # the indexer can wire IMPORTS edges between File nodes. Filesystem-based
-# only: no tsconfig aliases or workspace packages yet (those come in
-# follow-up PRs that build on this).
+# only, no sys.path traversal. Python absolute imports are tried against
+# every plausible source root (package root, src/, repo root, the
+# importer's own directory); JS/TS adds tsconfig aliases and workspaces.
 
 from __future__ import annotations
 
@@ -26,6 +27,58 @@ def _try_paths(candidates: list[Path]) -> Path | None:
         if c.is_file():
             return c.resolve()
     return None
+
+
+# Source roots per importer directory. The walk is a handful of stat calls,
+# but it runs once per import of every file, so memoise it.
+_PY_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+
+def reset_for_tests() -> None:
+    """Drop the memoised Python source roots."""
+    _PY_ROOTS_CACHE.clear()
+
+
+def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
+    """Directories an absolute Python import may be written against.
+
+    Anchoring only on the repo root misses every layout that does not put
+    the top-level package there: `src/` layouts resolve nothing at all, and
+    so does a package nested one directory down. The candidates, in order:
+
+      1. the parent of the importer's own top-level package, found by
+         walking up while `__init__.py` exists (covers src/ layouts and
+         packages nested anywhere),
+      2. `<repo>/src`, for a src layout whose packages carry no
+         `__init__.py` (namespace packages),
+      3. the repo root itself,
+      4. the importer's own directory, which is what a script run from
+         its own folder sees.
+    """
+    key = str(importer_dir)
+    cached = _PY_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    package_root = importer_dir
+    while (
+        package_root / "__init__.py"
+    ).is_file() and package_root.parent != package_root:
+        package_root = package_root.parent
+
+    roots: list[Path] = [package_root, repo_root / "src", repo_root, importer_dir]
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for root in roots:
+        text = str(root)
+        if text in seen or not root.is_dir():
+            continue
+        seen.add(text)
+        ordered.append(root)
+
+    result = tuple(ordered)
+    _PY_ROOTS_CACHE[key] = result
+    return result
 
 
 def resolve_python(
@@ -60,18 +113,23 @@ def resolve_python(
         for _ in range(leading_dots - 1):
             base = base.parent
         parts = rest.split(".") if rest else []
-    else:
-        # Absolute import, anchor at the repo root.
-        base = repo_root.resolve()
-        parts = source_module.split(".")
+        if not parts:
+            # `from . import x`, treat as the package's __init__.
+            return _try_paths([base / "__init__.py"])
+        return _resolve_python_under(base, parts)
 
-    if not parts:
-        # `from . import x`, treat as the package's __init__.
-        return _try_paths([base / "__init__.py"])
+    # Absolute import: try each plausible source root, nearest first.
+    parts = source_module.split(".")
+    for base in _python_source_roots(importer_dir, repo_root.resolve()):
+        if hit := _resolve_python_under(base, parts):
+            return hit
+    return None
 
+
+def _resolve_python_under(base: Path, parts: list[str]) -> Path | None:
+    """Resolve a dotted module below one source root."""
     target_dir = base.joinpath(*parts[:-1]) if len(parts) > 1 else base
     leaf = parts[-1]
-
     return _try_paths(
         [
             target_dir / f"{leaf}.py",
@@ -142,6 +200,12 @@ def resolve_js_ts(
             return hit
 
     return None
+
+
+# Languages with a resolver behind them. Everything else parses its imports
+# and then drops them here, which is why a Go or Terraform repo shows zero
+# import edges: not a missing edge, a missing resolver.
+RESOLVABLE_LANGS = frozenset({"python", "typescript", "tsx", "javascript", "vue"})
 
 
 def resolve_import(

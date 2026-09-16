@@ -47,6 +47,9 @@ def register(mcp) -> None:
 
         Args:
             scope: what to visualize:
+                - "explore": whole-graph JSON payload for the interactive
+                  browser view (max_nodes caps the functions carried, by
+                  call degree; files are never capped)
                 - "file_imports": file-level import graph (default)
                 - "call_graph": function call relationships
                 - "class_hierarchy": class inheritance tree
@@ -82,6 +85,20 @@ def register(mcp) -> None:
             "full_overview": lambda: viz_full_overview(conn, root, max_nodes, format),
             "layers": lambda: viz_layers(conn, root, format),
         }
+        if scope == "explore":
+            # The interactive `cgh graph` view: whole-graph payload, not a
+            # diagram. The CLI asks for it here whenever an owner is running,
+            # because the owner holds the write lock.
+            from codegraph.viz.graphdata import build_graph_payload
+
+            return json.dumps(
+                {
+                    "scope": "explore",
+                    "format": "json",
+                    "payload": build_graph_payload(conn, root, max_nodes),
+                }
+            )
+
         generator = generators.get(scope)
         if generator is None:
             return json.dumps({"error": f"Unknown scope: {scope}"})

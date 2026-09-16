@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`cgh graph` opens an interactive view of the whole graph**: a force-directed
+  canvas instead of a 40-node Mermaid diagram. Hovering a node lights it and its
+  neighbours, clicking opens a detail panel with its imports, callers and the
+  matching `cgh` command, and a double-click narrows the canvas to its
+  neighbourhood. Colour groups (folder, language, role), filters, label density
+  and the forces themselves are adjustable, with a search box and a table view.
+  The page is self-contained: no CDN, no network access, works from `file://`.
+  The former diagrams stay available as `cgh graph overview|imports|calls|classes|docs|layers`.
 - **Plugins can read the graph**: the public plugin API now exposes
   `find_symbol_files`, a read-only, parent-scope query returning the files
   that define a symbol by name. It returns `None` when the graph cannot be

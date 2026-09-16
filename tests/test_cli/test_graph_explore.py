@@ -4,11 +4,11 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The interactive `cgh graph` view: the whole-graph payload, the
-#              self-contained HTML around it (every element id the viewer looks
-#              up, no network reference, a payload that cannot close its own
-#              script tag), the CLI's explore scope, and the MCP scope the CLI
-#              falls back to while an owner holds the write lock.
+# Description: The interactive `cgh graph` view: the per-view payload (files
+#              and imports, functions and calls, Terraform resources, section
+#              trees), the self-contained HTML around it, the CLI's explore
+#              scope, and the MCP scope the CLI falls back to while an owner
+#              holds the write lock.
 
 from __future__ import annotations
 
@@ -64,10 +64,11 @@ def _git(root, *args):
 
 @pytest.fixture
 def indexed_repo(tmp_path):
-    """Two python files, one importing the other, plus a doc and a test."""
+    """A repo with all four kinds of structure: imports, calls, Terraform, docs."""
     root = tmp_path / "repo"
     (root / "pkg").mkdir(parents=True)
     (root / "tests").mkdir()
+    (root / "infra").mkdir()
     _git(root, "init")
     (root / "pkg" / "core.py").write_text(
         "def helper():\n    return 1\n\n\ndef run():\n    return helper()\n",
@@ -81,7 +82,14 @@ def indexed_repo(tmp_path):
         "from pkg.app import main\n\n\ndef test_main():\n    assert main() == 1\n",
         encoding="utf-8",
     )
-    (root / "README.md").write_text("# Guide\n\n## Usage\n\ntext\n", encoding="utf-8")
+    (root / "README.md").write_text(
+        "# Guide\n\ntext\n\n## Usage\n\nmore\n\n### Detail\n\nleaf\n", encoding="utf-8"
+    )
+    (root / "infra" / "main.tf").write_text(
+        'resource "google_storage_bucket" "state" {\n  name = "x"\n}\n\n'
+        'variable "region" {\n  type = string\n}\n',
+        encoding="utf-8",
+    )
     _git(root, "add", "-A")
     _git(root, "commit", "-m", "initial")
     reset_connection()
@@ -97,69 +105,137 @@ def _conn(root):
     return get_readonly_connection(str(root))
 
 
-class TestPayload:
-    def test_carries_every_file_with_its_metadata(self, indexed_repo):
-        payload = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
+def _payload(root, **kw):
+    return build_graph_payload(_conn(root), str(root), **kw)
 
-        by_path = {f["p"]: f for f in payload["files"]}
-        assert "pkg/core.py" in by_path
+
+def _names(view):
+    return [n["n"] for n in view["nodes"]]
+
+
+def _edge_pairs(view):
+    names = _names(view)
+    return {(names[s], names[t]) for s, t in view["edges"]}
+
+
+class TestFilesView:
+    def test_carries_every_file_with_its_metadata(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["files"]
+
+        by_path = {n["p"]: n for n in view["nodes"]}
         assert by_path["pkg/core.py"]["f"] == 2  # helper + run
         assert by_path["pkg/core.py"]["l"] == "python"
+        assert by_path["pkg/core.py"]["k"] == "file"
         assert by_path["tests/test_app.py"]["r"] == "test"
-        assert by_path["README.md"]["l"] == "markdown"
-        # paths are relative: the payload ships in a file anyone can open
-        assert all(not f["p"].startswith("/") for f in payload["files"])
+        assert all(not n["p"].startswith("/") for n in view["nodes"])
 
-    def test_import_edges_index_into_the_file_list(self, indexed_repo):
-        payload = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
+    def test_import_edges_index_into_the_node_list(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["files"]
 
-        paths = [f["p"] for f in payload["files"]]
-        edges = {(paths[s], paths[t]) for s, t in payload["imports"]}
-        assert ("pkg/app.py", "pkg/core.py") in edges
-        assert all(s != t for s, t in payload["imports"])
+        paths = [n["p"] for n in view["nodes"]]
+        pairs = {(paths[s], paths[t]) for s, t in view["edges"]}
+        assert ("pkg/app.py", "pkg/core.py") in pairs
+        assert all(s != t for s, t in view["edges"])
 
-    def test_symbol_side_is_capped_by_call_degree(self, indexed_repo):
-        payload = build_graph_payload(
-            _conn(indexed_repo), str(indexed_repo), max_symbols=1
-        )
 
-        assert len(payload["symbols"]) <= 1
-        assert payload["totals"]["symbols_shown"] == len(payload["symbols"])
-        # every call index stays inside the kept set
-        for s, t in payload["calls"]:
-            assert 0 <= s < len(payload["symbols"])
-            assert 0 <= t < len(payload["symbols"])
+class TestSymbolsView:
+    def test_is_capped_by_call_degree(self, indexed_repo):
+        view = _payload(indexed_repo, max_symbols=1)["views"]["symbols"]
+
+        assert len(view["nodes"]) <= 1
+        for s, t in view["edges"]:
+            assert 0 <= s < len(view["nodes"]) and 0 <= t < len(view["nodes"])
+
+    def test_functions_carry_their_line(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["symbols"]
+
+        assert view["nodes"], "the fixture calls helper() from run()"
+        assert all(n["k"] == "function" for n in view["nodes"])
+        assert any(n["s"] > 0 for n in view["nodes"])
+
+
+class TestInfraView:
+    def test_resources_hang_off_the_file_that_declares_them(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["infra"]
+
+        kinds = {n["k"] for n in view["nodes"]}
+        assert kinds == {"file", "resource"}
+        assert "google_storage_bucket.state" in _names(view)
+        assert ("main.tf", "google_storage_bucket.state") in _edge_pairs(view)
+
+    def test_cap_keeps_the_edges_consistent(self, indexed_repo):
+        view = _payload(indexed_repo, max_resources=0)["views"].get("infra")
+
+        # nothing kept, so the view drops out of the payload entirely
+        assert view is None
+
+
+class TestDocsView:
+    def test_sections_hang_off_their_file_and_nest(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["docs"]
+
+        names = _names(view)
+        assert "# Guide" in names
+        assert "## Usage" in names
+        pairs = _edge_pairs(view)
+        assert ("README.md", "# Guide") in pairs
+        assert ("# Guide", "## Usage") in pairs
+
+    def test_section_level_travels_in_the_line_field(self, indexed_repo):
+        view = _payload(indexed_repo)["views"]["docs"]
+
+        by_name = {n["n"]: n for n in view["nodes"] if n["k"] == "section"}
+        assert by_name["# Guide"]["s"] == 1
+        assert by_name["## Usage"]["s"] == 2
+
+    def test_shallow_headings_survive_the_cap(self, indexed_repo):
+        view = _payload(indexed_repo, max_sections=1)["views"]["docs"]
+
+        sections = [n for n in view["nodes"] if n["k"] == "section"]
+        assert len(sections) == 1
+        assert sections[0]["s"] == 1  # the h1, not a leaf
+        assert view["truncated"] >= 1
+
+
+class TestPayload:
+    def test_only_views_with_nodes_are_shipped(self, indexed_repo):
+        payload = _payload(indexed_repo)
+
+        assert set(payload["views"]) == {"files", "symbols", "infra", "docs"}
+        assert all(v["nodes"] for v in payload["views"].values())
+        assert payload["repo"] == indexed_repo.name
+
+    def test_every_view_declares_how_to_label_itself(self, indexed_repo):
+        for view in _payload(indexed_repo)["views"].values():
+            assert view["label"] and view["outTitle"] and view["inTitle"]
+            assert len(view["noun"]) == 2 and len(view["edge"]) == 2
 
     def test_totals_count_the_whole_index(self, indexed_repo):
-        payload = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
+        totals = _payload(indexed_repo)["totals"]
 
-        assert payload["totals"]["files"] == len(payload["files"])
-        assert payload["totals"]["functions"] >= 4
-        assert payload["repo"] == indexed_repo.name
+        assert totals["files"] >= 5
+        assert totals["functions"] >= 4
+        assert totals["resources"] >= 2  # the file node and its resource
 
 
 class TestHtml:
     def test_has_every_element_the_viewer_looks_up(self, indexed_repo):
-        payload = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
-        html = generate_graph_view_html(payload, str(indexed_repo))
+        html = generate_graph_view_html(_payload(indexed_repo), str(indexed_repo))
 
         wanted = set(re.findall(r"pick\('([a-z0-9-]+)'\)", VIEW_JS.read_text()))
         present = set(re.findall(r'id="([a-z0-9-]+)"', html))
-        assert wanted, "the viewer should look up element ids"
-        assert not wanted - present
+        assert wanted and not wanted - present
 
     def test_loads_nothing_from_the_network(self, indexed_repo):
-        payload = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
-        html = generate_graph_view_html(payload, str(indexed_repo))
+        html = generate_graph_view_html(_payload(indexed_repo), str(indexed_repo))
 
-        # a link in the footer is fine; a loaded resource is not
         assert not re.search(r'src="(?:https?:)?//', html)
         assert not re.search(r'<link[^>]+href="(?:https?:)?//', html)
         assert "fetch(" not in html
         assert "CGHGraph" in html
 
     def test_payload_cannot_close_its_own_script_tag(self, indexed_repo):
-        hostile = build_graph_payload(_conn(indexed_repo), str(indexed_repo))
+        hostile = _payload(indexed_repo)
         hostile["repo"] = "</script><script>window.owned = 1;//"
 
         html = generate_graph_view_html(hostile, str(indexed_repo))
@@ -223,10 +299,10 @@ class TestMcpScope:
             register_viz(mcp)
             out = json.loads(mcp.tools["visualize_graph"](scope="explore", max_nodes=5))
 
-            assert out["scope"] == "explore"
-            assert out["format"] == "json"
-            assert any(f["p"] == "pkg/core.py" for f in out["payload"]["files"])
-            assert len(out["payload"]["symbols"]) <= 5
+            assert out["scope"] == "explore" and out["format"] == "json"
+            files = out["payload"]["views"]["files"]["nodes"]
+            assert any(n["p"] == "pkg/core.py" for n in files)
+            assert len(out["payload"]["views"]["symbols"]["nodes"]) <= 5
         finally:
             _srv._root = None
             _srv._conn = None

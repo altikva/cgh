@@ -214,7 +214,13 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
     background: #1f6feb33; color: #58a6ff; padding: 2px 10px;
     border-radius: 12px; font-size: 12px; font-weight: 500;
   }
-  header .meta { font-size: 13px; color: #8b949e; }
+  /* four view buttons leave little room: the meta line truncates rather
+     than wrapping the header onto a second line */
+  header .meta {
+    font-size: 13px; color: #8b949e; min-width: 0; flex: 0 1 auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  header h1, header .scope { flex: none; }
   .cg-btn {
     background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
     padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;

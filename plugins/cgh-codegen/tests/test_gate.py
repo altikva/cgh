@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("cgh_codewrite")
+pytest.importorskip("cgh_codegen")
 
-from cgh_codewrite.gate import egress_decision
+from cgh_codegen.gate import egress_decision
 
 from codegraph.plugin_api import ScanFinding
 from codegraph.state import findings as store

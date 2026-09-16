@@ -202,7 +202,7 @@ ignore = [
 "codegraph/**" = ["S310"]
 "plugins/cgh-vision/**" = ["S310"]
 "plugins/cgh-summarize/**" = ["S310"]
-"plugins/cgh-codewrite/**" = ["S310"]
+"plugins/cgh-codegen/**" = ["S310"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"

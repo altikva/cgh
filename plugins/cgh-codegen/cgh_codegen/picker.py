@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 class CodeWriteError(RuntimeError):
-    """Base error for the cgh-codewrite plugin."""
+    """Base error for the cgh-codegen plugin."""
 
 
 # Name-stem prefixes/suffixes that carry no pattern signal on their own.

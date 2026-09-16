@@ -1,0 +1,28 @@
+{
+  "name": "cgh",
+  "version": "0.11.8",
+  "description": "Local code graph + memory + plans + knowledge for AI coding agents. 52 MCP tools that return exact file:line server-side, so navigation costs near-zero model tokens. Requires the cgh binary on PATH (uvx cgh, pip install cgh, or the standalone binary).",
+  "author": {
+    "name": "Joy Ndjama",
+    "email": "joy.ndjama@altikva.com"
+  },
+  "homepage": "https://github.com/altikva/cgh",
+  "repository": "https://github.com/altikva/cgh",
+  "license": "MIT AND CC-BY-NC-SA-4.0",
+  "keywords": [
+    "code-graph",
+    "mcp",
+    "memory",
+    "navigation",
+    "duckdb",
+    "sqlite"
+  ],
+  "mcpServers": {
+    "codegraph": {
+      "command": "cgh",
+      "args": ["serve", "--root", ".", "--watch", "--reindex"]
+    }
+  },
+  "skills": "./codegraph/skills",
+  "hooks": "./.claude-plugin/hooks.json"
+}

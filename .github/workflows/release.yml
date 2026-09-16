@@ -202,19 +202,21 @@ jobs:
             || gh release upload "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
 
   binaries:
-    name: Standalone binary (${{ matrix.target }})
+    name: Binary ${{ matrix.variant }} (${{ matrix.plat.target }})
     # The GitHub Release must already exist (github-release creates it), so we
-    # only upload here. This is a SEPARATE job on purpose: one target failing
+    # only upload here. This is a SEPARATE job on purpose: one leg failing
     # (Windows is the usual suspect) loses only that asset, it does not block
-    # the release or the other platforms' binaries. PyInstaller does not
-    # cross-compile, so each target builds on its own native runner.
+    # the release or the other legs. PyInstaller does not cross-compile, so
+    # each target builds on its own native runner.
     #
-    # The binary is CORE-ONLY: the graph, the 52 MCP tools, memory/plans/
-    # knowledge, and the SQLite backend. The first-party plugins (cgh-pii,
-    # cgh-vision, cgh-summarize, cgh-classify, cgh-docs, cgh-bugreport) are NOT
-    # bundled: they are discovered through Python entry points, several pull
-    # heavy or optional native deps, and their whole point is opt-in. Users who
-    # want them install cgh[plugins] from PyPI, which needs Python anyway.
+    # TWO variants per target (see packaging/build-binary.sh):
+    #   core  -> cgh-<target>       : core + the local-only plugins (pii,
+    #           classify). Provably egress-free, so "the core never phones
+    #           home" stays verifiable by absence.
+    #   full  -> cgh-full-<target>  : adds the egress-capable plugins (codegen,
+    #           summarize, bugreport), gated and inert until configured. The
+    #           separate name is the honest label for a build that carries them.
+    # The heavy native-dep plugins (docs, vision) stay pip-only in both.
     needs: [validate, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -222,23 +224,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: macos-arm64
-            runner: macos-14
-            asset: cgh-macos-arm64
-          - target: macos-x64
-            runner: macos-13
-            asset: cgh-macos-x64
-          - target: linux-x64
-            runner: ubuntu-latest
-            asset: cgh-linux-x64
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            asset: cgh-linux-arm64
-          - target: windows-x64
-            runner: windows-latest
-            asset: cgh-windows-x64.exe
-    runs-on: ${{ matrix.runner }}
+        variant: [core, full]
+        plat:
+          - { target: macos-arm64, runner: macos-14 }
+          - { target: macos-x64, runner: macos-13 }
+          - { target: linux-x64, runner: ubuntu-latest }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+          - { target: windows-x64, runner: windows-latest }
+    runs-on: ${{ matrix.plat.runner }}
     steps:
       - uses: actions/checkout@v5
 
@@ -249,33 +242,57 @@ jobs:
 
       - name: Build the binary
         shell: bash
+        env:
+          CGH_VARIANT: ${{ matrix.variant }}
         run: bash packaging/build-binary.sh
 
       - name: Stage the asset + checksum
         shell: bash
         env:
-          ASSET: ${{ matrix.asset }}
+          VARIANT: ${{ matrix.variant }}
+          TARGET: ${{ matrix.plat.target }}
         run: |
+          # core -> cgh-<target>, full -> cgh-full-<target>; .exe on Windows.
+          prefix="cgh"; [ "$VARIANT" = full ] && prefix="cgh-full"
+          asset="$prefix-$TARGET"
           # PyInstaller writes cgh (cgh.exe on Windows) into dist-binary/dist.
           src="dist-binary/dist/cgh"
-          [ -f "$src.exe" ] && src="$src.exe"
+          if [ -f "$src.exe" ]; then src="$src.exe"; asset="$asset.exe"; fi
           mkdir -p out
-          cp "$src" "out/$ASSET"
+          cp "$src" "out/$asset"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
           cd out
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$ASSET" > "$ASSET.sha256"
+            sha256sum "$asset" > "$asset.sha256"
           else
-            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+            shasum -a 256 "$asset" > "$asset.sha256"
           fi
           ls -lh
 
-      - name: Smoke-test the binary
+      - name: Smoke-test + verify bundled plugins
         shell: bash
         env:
-          ASSET: ${{ matrix.asset }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           chmod +x "out/$ASSET" 2>/dev/null || true
           "./out/$ASSET" --version
+          # The binary is only as bundled as its metadata: without --copy-metadata
+          # the plugins vanish silently. Assert the expected set is ACTIVE in the
+          # built binary itself, not in the source tree.
+          expected="pii classify"
+          [ "$VARIANT" = full ] && expected="pii classify codegen summarize bugreport"
+          python3 - "out/$ASSET" $expected <<'PY'
+          import json, subprocess, sys
+          binp, expected = sys.argv[1], set(sys.argv[2:])
+          out = subprocess.run([binp, "plugins", "--json"], capture_output=True, text=True)
+          data = json.loads(out.stdout or "[]")
+          active = {p["name"] for p in data if p.get("status") == "active"}
+          print("active plugins:", sorted(active))
+          missing = expected - active
+          if missing:
+              sys.exit(f"FAIL: expected plugins not active in the binary: {sorted(missing)}")
+          print("all expected plugins active")
+          PY
 
       - name: Upload to the GitHub Release
         shell: bash
@@ -283,7 +300,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ASSET: ${{ matrix.asset }}
         run: |
           gh release upload "$GITHUB_REF_NAME" "out/$ASSET" "out/$ASSET.sha256" \
             --repo "$GITHUB_REPOSITORY" --clobber

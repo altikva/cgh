@@ -4,13 +4,12 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Whole-graph payload for the interactive browser view: every
-#              indexed file with its language, role, layer and symbol counts,
-#              the file-to-file import edges, and the most connected functions
-#              with the calls between them. Mermaid views cap at a few dozen
-#              nodes because the diagram becomes unreadable; this payload is
-#              meant for the force-directed canvas, which handles the whole
-#              repo, so only the symbol side is capped (by call degree).
+# Description: Whole-graph payload for the interactive browser view, as one
+#              map of views. A repo rarely has every kind of edge: Python
+#              repos carry imports and calls, infrastructure repos carry
+#              Terraform resources, and documentation lives in section trees.
+#              Each view ships its own nodes and edges, so the viewer can open
+#              on whichever one actually holds the repo's structure.
 
 from __future__ import annotations
 
@@ -18,9 +17,12 @@ import os
 from collections import Counter
 from typing import Any
 
-# Functions carried into the symbol view, ranked by call degree. The file
-# view is never capped: a repo's files are the point of the overview.
+# Per-view caps. Files are never capped: a repo's files are the point of the
+# overview. The rest are ranked before cutting, so what remains is the part
+# worth looking at.
 DEFAULT_MAX_SYMBOLS = 400
+DEFAULT_MAX_RESOURCES = 1500
+DEFAULT_MAX_SECTIONS = 1200
 
 
 def _rel(root: str, path: str) -> str:
@@ -37,18 +39,49 @@ def _group(rel_path: str) -> str:
     return parts[0] if len(parts) > 1 else "(root)"
 
 
-def build_graph_payload(
-    conn: Any, root: str, max_symbols: int = DEFAULT_MAX_SYMBOLS
-) -> dict:
-    """Build the JSON payload the interactive graph view renders.
+def _view(label, noun, edge, out_title, in_title, cli, nodes, edges, truncated=0):
+    return {
+        "label": label,
+        "noun": noun,
+        "edge": edge,
+        "outTitle": out_title,
+        "inTitle": in_title,
+        "cli": cli,
+        "nodes": nodes,
+        "edges": [list(pair) for pair in edges],
+        "truncated": truncated,
+    }
 
-    Keys are short because the payload is inlined in the generated HTML and
-    a large repo ships tens of thousands of rows:
-      files:   p path, g directory group, l language, r role, y layer,
-               f function count, c class count
-      imports: [source index, target index] into files
-      symbols: n name, p file path, g directory group, s start line
-      calls:   [source index, target index] into symbols
+
+def _file_node(root: str, row: dict, fns: int = 0, classes: int = 0) -> dict:
+    rel = _rel(root, row["path"])
+    return {
+        "k": "file",
+        "n": rel.split("/")[-1],
+        "p": rel,
+        "g": _group(rel),
+        "l": row.get("lang") or "",
+        "r": row.get("role") or "",
+        "y": row.get("layer") or "",
+        "f": fns,
+        "c": classes,
+        "s": 0,
+    }
+
+
+def build_graph_payload(
+    conn: Any,
+    root: str,
+    max_symbols: int = DEFAULT_MAX_SYMBOLS,
+    max_resources: int = DEFAULT_MAX_RESOURCES,
+    max_sections: int = DEFAULT_MAX_SECTIONS,
+) -> dict:
+    """Build the payload the interactive graph view renders.
+
+    Keys are short because the payload is inlined in the generated HTML and a
+    large repo ships tens of thousands of rows. A node carries: k kind, n name,
+    p path, g directory group, l language, r role, y layer, f function count,
+    c class count, s start line. Edges are index pairs into the view's nodes.
     """
     root = os.path.abspath(root)
 
@@ -69,67 +102,265 @@ def build_graph_payload(
     fn_per_file = Counter(r.get("file_path") for r in functions)
     cls_per_file = Counter(r.get("file_path") for r in classes)
 
-    imports: set[tuple[int, int]] = set()
-    for edge in conn.find_neighbors(
-        "IMPORTS", return_src=["path"], return_dst=["path"]
-    ):
-        src = file_at.get(edge.get("src_path"))
-        dst = file_at.get(edge.get("dst_path"))
-        if src is not None and dst is not None and src != dst:
-            imports.add((src, dst))
+    views = {
+        "files": _files_view(conn, root, files, file_at, fn_per_file, cls_per_file),
+        "symbols": _symbols_view(conn, root, functions, max_symbols),
+        "infra": _infra_view(
+            conn, root, files, fn_per_file, cls_per_file, max_resources
+        ),
+        "docs": _docs_view(conn, root, files, fn_per_file, cls_per_file, max_sections),
+    }
 
-    file_rows = [
-        {
-            "p": _rel(root, f["path"]),
-            "g": _group(_rel(root, f["path"])),
-            "l": f.get("lang") or "",
-            "r": f.get("role") or "",
-            "y": f.get("layer") or "",
-            "f": fn_per_file.get(f["path"], 0),
-            "c": cls_per_file.get(f["path"], 0),
-        }
+    return {
+        "repo": os.path.basename(root) or root,
+        "views": {k: v for k, v in views.items() if v["nodes"]},
+        "totals": {
+            "files": len(files),
+            "functions": len(functions),
+            "classes": len(classes),
+            "symbols_shown": len(views["symbols"]["nodes"]),
+            "resources": len(views["infra"]["nodes"]),
+            "sections": len(views["docs"]["nodes"]),
+        },
+    }
+
+
+def _files_view(conn, root, files, file_at, fn_per_file, cls_per_file) -> dict:
+    nodes = [
+        _file_node(
+            root, f, fn_per_file.get(f["path"], 0), cls_per_file.get(f["path"], 0)
+        )
         for f in files
     ]
+    edges = set()
+    for e in conn.find_neighbors("IMPORTS", return_src=["path"], return_dst=["path"]):
+        src = file_at.get(e.get("src_path"))
+        dst = file_at.get(e.get("dst_path"))
+        if src is not None and dst is not None and src != dst:
+            edges.add((src, dst))
+    return _view(
+        "Files · imports",
+        ["file", "files"],
+        ["import", "imports"],
+        "Imports",
+        "Imported by",
+        "cgh graph imports --file {path}",
+        nodes,
+        sorted(edges),
+    )
 
+
+def _symbols_view(conn, root, functions, max_symbols) -> dict:
     by_id = {r["id"]: r for r in functions if r.get("id")}
-    calls_raw = [
+    calls = [
         (e.get("src_id"), e.get("dst_id"))
         for e in conn.find_neighbors("CALLS", return_src=["id"], return_dst=["id"])
     ]
     degree: Counter = Counter()
-    for src, dst in calls_raw:
+    for src, dst in calls:
         if src in by_id and dst in by_id and src != dst:
             degree[src] += 1
             degree[dst] += 1
-    kept = [sym_id for sym_id, _ in degree.most_common(max(0, max_symbols))]
-    sym_at = {sym_id: i for i, sym_id in enumerate(kept)}
-    symbol_rows = [
-        {
-            "n": by_id[sym_id].get("name") or "",
-            "p": _rel(root, by_id[sym_id].get("file_path") or ""),
-            "g": _group(_rel(root, by_id[sym_id].get("file_path") or "")),
-            "s": by_id[sym_id].get("start_line") or 0,
-        }
-        for sym_id in kept
-    ]
-    call_rows = sorted(
-        {
-            (sym_at[src], sym_at[dst])
-            for src, dst in calls_raw
-            if src in sym_at and dst in sym_at and src != dst
-        }
+    kept = [sym for sym, _ in degree.most_common(max(0, max_symbols))]
+    at = {sym: i for i, sym in enumerate(kept)}
+    nodes = []
+    for sym in kept:
+        row = by_id[sym]
+        rel = _rel(root, row.get("file_path") or "")
+        nodes.append(
+            {
+                "k": "function",
+                "n": row.get("name") or "",
+                "p": rel,
+                "g": _group(rel),
+                "l": "",
+                "r": "",
+                "y": "",
+                "f": 0,
+                "c": 0,
+                "s": row.get("start_line") or 0,
+            }
+        )
+    edges = sorted({(at[s], at[d]) for s, d in calls if s in at and d in at and s != d})
+    return _view(
+        "Symbols · calls",
+        ["function", "functions"],
+        ["call", "calls"],
+        "Calls",
+        "Called by",
+        "cgh callers {name}",
+        nodes,
+        edges,
+        truncated=max(0, len(degree) - len(kept)),
     )
 
-    return {
-        "repo": os.path.basename(root) or root,
-        "files": file_rows,
-        "imports": sorted(imports),
-        "symbols": symbol_rows,
-        "calls": [list(pair) for pair in call_rows],
-        "totals": {
-            "files": len(file_rows),
-            "functions": len(functions),
-            "classes": len(classes),
-            "symbols_shown": len(symbol_rows),
-        },
-    }
+
+def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> dict:
+    """Terraform resources hanging off the file that declares them.
+
+    TF_DEPENDS is carried too, but most indexes have none: the file-to-resource
+    edge is what gives an infrastructure repo a readable shape.
+    """
+    defines = conn.find_neighbors(
+        "DEFINES_RESOURCE", return_src=["path"], return_dst=["id", "name", "type"]
+    )
+    if not defines:
+        return _view(
+            "Infra · Terraform",
+            ["resource", "resources"],
+            ["declaration", "declarations"],
+            "Declares",
+            "Declared in",
+            "cgh lookup {name}",
+            [],
+            [],
+        )
+    defines.sort(key=lambda e: (e.get("src_path") or "", e.get("dst_id") or ""))
+    kept = defines[: max(0, max_resources)]
+
+    nodes: list[dict] = []
+    index_of: dict[str, int] = {}
+    by_path = {f["path"]: f for f in files}
+    edges: list[tuple[int, int]] = []
+    for e in kept:
+        path = e.get("src_path") or ""
+        if path not in index_of:
+            row = by_path.get(path) or {"path": path, "lang": "terraform"}
+            index_of[path] = len(nodes)
+            nodes.append(
+                _file_node(
+                    root, row, fn_per_file.get(path, 0), cls_per_file.get(path, 0)
+                )
+            )
+        res_id = e.get("dst_id") or ""
+        if res_id not in index_of:
+            rel = _rel(root, path)
+            index_of[res_id] = len(nodes)
+            nodes.append(
+                {
+                    "k": "resource",
+                    "n": f"{e.get('dst_type') or ''}.{e.get('dst_name') or ''}".strip(
+                        "."
+                    ),
+                    "p": rel,
+                    "g": _group(rel),
+                    "l": "terraform",
+                    "r": "infra",
+                    "y": "",
+                    "f": 0,
+                    "c": 0,
+                    "s": 0,
+                }
+            )
+        edges.append((index_of[path], index_of[res_id]))
+
+    for e in conn.find_neighbors("TF_DEPENDS", return_src=["id"], return_dst=["id"]):
+        src = index_of.get(e.get("src_id"))
+        dst = index_of.get(e.get("dst_id"))
+        if src is not None and dst is not None and src != dst:
+            edges.append((src, dst))
+
+    return _view(
+        "Infra · Terraform",
+        ["node", "nodes"],
+        ["link", "links"],
+        "Declares",
+        "Declared in",
+        "cgh lookup {name}",
+        nodes,
+        sorted(set(edges)),
+        truncated=max(0, len(defines) - len(kept)),
+    )
+
+
+def _docs_view(conn, root, files, fn_per_file, cls_per_file, max_sections) -> dict:
+    """Section trees: the file, its headings, and the nesting between them."""
+    defines = conn.find_neighbors(
+        "DEFINES_SECTION", return_src=["path"], return_dst=["id", "title", "level"]
+    )
+    if not defines:
+        return _view(
+            "Docs · sections",
+            ["section", "sections"],
+            ["link", "links"],
+            "Contains",
+            "Contained in",
+            "cgh outline {path}",
+            [],
+            [],
+        )
+
+    contains = conn.find_neighbors(
+        "CONTAINS_SECTION", return_src=["id"], return_dst=["id"]
+    )
+    child_count: Counter = Counter()
+    for e in contains:
+        child_count[e.get("src_id")] += 1
+    # Keep the top of each tree first: shallow headings, then those with the
+    # most children. A 2,000-section repo stays readable.
+    defines.sort(
+        key=lambda e: (
+            e.get("dst_level") or 9,
+            -child_count.get(e.get("dst_id"), 0),
+            e.get("src_path") or "",
+        )
+    )
+    kept = defines[: max(0, max_sections)]
+
+    nodes: list[dict] = []
+    index_of: dict[str, int] = {}
+    by_path = {f["path"]: f for f in files}
+    edges: list[tuple[int, int]] = []
+    for e in kept:
+        path = e.get("src_path") or ""
+        if path not in index_of:
+            row = by_path.get(path) or {"path": path, "lang": "markdown"}
+            index_of[path] = len(nodes)
+            nodes.append(
+                _file_node(
+                    root, row, fn_per_file.get(path, 0), cls_per_file.get(path, 0)
+                )
+            )
+        sec_id = e.get("dst_id") or ""
+        if sec_id not in index_of:
+            rel = _rel(root, path)
+            level = e.get("dst_level") or 1
+            index_of[sec_id] = len(nodes)
+            nodes.append(
+                {
+                    "k": "section",
+                    "n": ("#" * min(level, 6)) + " " + (e.get("dst_title") or ""),
+                    "p": rel,
+                    "g": _group(rel),
+                    "l": "markdown",
+                    "r": "doc",
+                    "y": "",
+                    "f": 0,
+                    "c": 0,
+                    "s": level,
+                }
+            )
+        edges.append((index_of[path], index_of[sec_id]))
+
+    for e in contains:
+        src = index_of.get(e.get("src_id"))
+        dst = index_of.get(e.get("dst_id"))
+        if src is not None and dst is not None and src != dst:
+            edges.append((src, dst))
+    for e in conn.find_neighbors("MD_LINKS_TO", return_src=["id"], return_dst=["path"]):
+        src = index_of.get(e.get("src_id"))
+        dst = index_of.get(e.get("dst_path"))
+        if src is not None and dst is not None and src != dst:
+            edges.append((src, dst))
+
+    return _view(
+        "Docs · sections",
+        ["node", "nodes"],
+        ["link", "links"],
+        "Contains",
+        "Contained in",
+        "cgh outline {path}",
+        nodes,
+        sorted(set(edges)),
+        truncated=max(0, len(defines) - len(kept)),
+    )

@@ -22,6 +22,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   a cloud of unconnected files. Measured in Chrome on a synthetic repo: about
   33 frames per second while laying out 3,000 files, and 9 while laying out
   8,500, which then pans at about 30 once settled.
+- **The graph view carries Terraform resources and documentation sections**,
+  not just imports and calls. An infrastructure repo shows each resource
+  hanging off the file that declares it, and any repo shows its heading trees,
+  including the links between documents. The payload ships one entry per view
+  and the page only offers the views a repo actually has, so a Terraform stack
+  no longer opens on an empty file graph.
 - **Plugins can read the graph**: the public plugin API now exposes
   `find_symbol_files`, a read-only, parent-scope query returning the files
   that define a symbol by name. It returns `None` when the graph cannot be

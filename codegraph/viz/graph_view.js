@@ -183,27 +183,38 @@
     return g;
   }
 
-  function buildFiles(data) {
-    var nodes = data.files.map(function (f) {
-      return {
-        name: f.p.split('/').pop(), path: f.p, sub: f.g, lang: f.l || '', role: f.r || '',
-        layer: f.y || '', fns: f.f, classes: f.c, line: 0
-      };
+  // The payload ships one entry per view; a repo rarely has every kind of
+  // edge, so the viewer renders whichever views came with nodes.
+  var VIEW_ORDER = ['files', 'symbols', 'infra', 'docs'];
+
+  function viewKeys(data) {
+    return VIEW_ORDER.filter(function (k) {
+      return data.views && data.views[k] && data.views[k].nodes.length;
     });
-    return finishGraph('files', nodes,
-      Int32Array.from(data.imports.map(function (e) { return e[0]; })),
-      Int32Array.from(data.imports.map(function (e) { return e[1]; })),
-      { noun: ['file', 'files'], edge: ['import', 'imports'], outTitle: 'Imports', inTitle: 'Imported by' });
   }
 
-  function buildSymbols(data) {
-    var nodes = data.symbols.map(function (s) {
-      return { name: s.n, path: s.p, sub: s.g, lang: 'python', role: '', layer: '', fns: 0, classes: 0, line: s.s };
+  function buildView(data, key) {
+    var spec = data.views[key];
+    var nodes = spec.nodes.map(function (n) {
+      return {
+        name: n.n, path: n.p, sub: n.g, lang: n.l || '', role: n.r || '', layer: n.y || '',
+        fns: n.f || 0, classes: n.c || 0, line: n.s || 0, kind: n.k || 'file'
+      };
     });
-    return finishGraph('symbols', nodes,
-      Int32Array.from(data.calls.map(function (e) { return e[0]; })),
-      Int32Array.from(data.calls.map(function (e) { return e[1]; })),
-      { noun: ['function', 'functions'], edge: ['call', 'calls'], outTitle: 'Calls', inTitle: 'Called by' });
+    var m = spec.edges.length;
+    var ls = new Int32Array(m);
+    var lt = new Int32Array(m);
+    for (var e = 0; e < m; e++) { ls[e] = spec.edges[e][0]; lt[e] = spec.edges[e][1]; }
+    return finishGraph(key, nodes, ls, lt, {
+      label: spec.label, noun: spec.noun, edge: spec.edge, outTitle: spec.outTitle,
+      inTitle: spec.inTitle, cli: spec.cli || '', truncated: spec.truncated || 0
+    });
+  }
+
+  // A section's "line" field carries its heading level, not a line number.
+  function locationOf(nd) {
+    if (nd.kind === 'section' || !nd.line) return nd.path;
+    return nd.path + ':' + nd.line;
   }
 
   // ---- Barnes-Hut quadtree ------------------------------------------------
@@ -276,10 +287,13 @@
   function GraphView(data) {
     this.data = data;
     this.graphs = {};
-    var imports = (data.imports || []).length;
-    var calls = (data.calls || []).length;
+    var keys = viewKeys(data);
+    var start = keys[0] || 'files';
+    keys.forEach(function (k) {
+      if (data.views[k].edges.length > data.views[start].edges.length) start = k;
+    });
     this.state = {
-      view: !imports && calls ? 'symbols' : 'files', colorBy: 'folder', hidden: {}, showOrphans: true, minLinks: 0, arrows: false,
+      view: start, colorBy: 'folder', hidden: {}, showOrphans: true, minLinks: 0, arrows: false,
       textFade: 50, nodeSize: 50, linkWidth: 40, center: 30, repel: 50, linkStrength: 50, linkDist: 40,
       open: { groups: true, filters: true, display: false, forces: false },
       selected: null, localDepth: 0, query: '', table: false
@@ -310,7 +324,7 @@
 
   GraphView.prototype.graph = function () {
     var v = this.state.view;
-    if (!this.graphs[v]) this.graphs[v] = v === 'files' ? buildFiles(this.data) : buildSymbols(this.data);
+    if (!this.graphs[v]) this.graphs[v] = buildView(this.data, v);
     return this.graphs[v];
   };
 
@@ -857,7 +871,7 @@
     if (!tip) return;
     var nd = this.graph().nodes[i];
     this.el.tipName.textContent = nd.name;
-    this.el.tipMeta.textContent = (nd.line ? nd.path + ':' + nd.line : nd.path) + ' · ' + plural(nd.deg, 'link', 'links');
+    this.el.tipMeta.textContent = locationOf(nd) + ' · ' + plural(nd.deg, 'link', 'links');
     this.el.tipKey.style.background = this.groupOf(i, this.state.colorBy).color;
     var sz = this.size();
     var tw = tip.offsetWidth || 240;
@@ -918,16 +932,16 @@
   GraphView.prototype.renderHeader = function () {
     var self = this;
     var s = this.state;
-    var views = [
-      { key: 'files', label: 'Files · imports' },
-      { key: 'symbols', label: 'Symbols · calls' }
-    ];
+    var keys = viewKeys(this.data);
     var box = this.el.views;
     box.textContent = '';
-    views.forEach(function (vw, i) {
+    keys.forEach(function (key, i) {
+      var vw = { key: key, label: self.data.views[key].label };
       box.appendChild(el('button', {
         class: 'cg-btn' + (s.view === vw.key ? ' is-active' : ''),
-        style: i === 0 ? 'border-radius: 6px 0 0 6px' : 'border-radius: 0 6px 6px 0; margin-left: -1px',
+        style: i === 0 ? 'border-radius: 6px 0 0 6px'
+          : i === keys.length - 1 ? 'border-radius: 0 6px 6px 0; margin-left: -1px'
+            : 'border-radius: 0; margin-left: -1px',
         text: vw.label,
         onclick: function () { self.setState({ view: vw.key, selected: null, localDepth: 0, table: false }); }
       }));
@@ -1083,11 +1097,12 @@
     var grp = this.groupOf(s.selected, s.colorBy);
     this.el.detailDot.style.background = grp.color;
     this.el.detailName.textContent = nd.name;
-    this.el.detailLoc.textContent = nd.line ? nd.path + ':' + nd.line : nd.path;
+    this.el.detailLoc.textContent = locationOf(nd);
 
     var chips = this.el.detailChips;
     chips.textContent = '';
     var chipList = [];
+    if (nd.kind && nd.kind !== 'file') chipList.push(nd.kind);
     if (nd.lang) chipList.push(nd.lang);
     if (nd.role && nd.role !== 'other') chipList.push('role: ' + nd.role);
     if (nd.layer && nd.layer !== 'other' && nd.layer !== nd.role) chipList.push('layer: ' + nd.layer);
@@ -1098,9 +1113,11 @@
 
     var stats = this.el.detailStats;
     stats.textContent = '';
-    var rows = g.view === 'files'
-      ? [['Functions', String(nd.fns)], [g.outTitle, String(nd.out.length)], [g.inTitle, String(nd.inn.length)]]
-      : [['Line', String(nd.line)], [g.outTitle, String(nd.out.length)], [g.inTitle, String(nd.inn.length)]];
+    var lead = nd.kind === 'file' ? ['Functions', String(nd.fns)]
+      : nd.kind === 'function' ? ['Line', String(nd.line)]
+        : nd.kind === 'section' ? ['Level', String(nd.line)]
+          : ['Links', String(nd.deg)];
+    var rows = [lead, [g.outTitle, String(nd.out.length)], [g.inTitle, String(nd.inn.length)]];
     rows.forEach(function (row) {
       stats.appendChild(el('div', { style: 'background: ' + INK.panel + '; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px' }, [
         el('span', { style: 'font-size: 16px; font-weight: 600; color: ' + INK.text, text: row[1] }),
@@ -1148,9 +1165,8 @@
     lists.appendChild(listSection(g.outTitle, nd.out, g.view === 'symbols' ? 'Calls none of the functions shown' : 'No outgoing link'));
     lists.appendChild(listSection(g.inTitle, nd.inn, g.view === 'symbols' ? 'No caller among the functions shown' : 'No incoming link'));
 
-    this.el.detailCli.textContent = g.view === 'files'
-      ? 'cgh graph imports --file ' + nd.path
-      : 'cgh callers ' + nd.name;
+    this.el.detailCli.textContent = (g.cli || '')
+      .replace('{path}', nd.path).replace('{name}', nd.name) || '—';
   };
 
   GraphView.prototype.renderTable = function () {
@@ -1179,7 +1195,7 @@
         onclick: function () { self.setState({ table: false }); self.select(i, true); }
       }, [
         el('span', { style: 'grid-column: span 4; font-size: 12px; color: ' + INK.text + '; white-space: nowrap; overflow: hidden; text-overflow: ellipsis', text: nd.name }),
-        el('span', { class: 'cg-mono', style: 'grid-column: span 5; font-size: 11px; color: ' + INK.muted + '; white-space: nowrap; overflow: hidden; text-overflow: ellipsis', text: nd.line ? nd.path + ':' + nd.line : nd.path }),
+        el('span', { class: 'cg-mono', style: 'grid-column: span 5; font-size: 11px; color: ' + INK.muted + '; white-space: nowrap; overflow: hidden; text-overflow: ellipsis', text: locationOf(nd) }),
         el('span', { style: 'grid-column: span 2; display: flex; align-items: center; gap: 6px; font-size: 12px; color: ' + INK.text + '; overflow: hidden' }, [
           el('span', { style: 'width: 8px; height: 8px; border-radius: 50%; flex: none; background: ' + grp.color }),
           el('span', { style: 'overflow: hidden; text-overflow: ellipsis', text: grp.label })
@@ -1194,13 +1210,21 @@
     var g = this.graph();
     var v = this.visibility();
     var line = plural(v.idx.length, g.noun[0], g.noun[1]) + ' · ' + plural(v.ls.length, g.edge[0], g.edge[1]);
-    if (g.view === 'symbols') line += ' · the ' + num(g.nodes.length) + ' most connected';
+    if (g.truncated) line += ' · ' + num(g.truncated) + ' more not shown';
     if (s.localDepth > 0 && s.selected != null) line += ' · neighborhood';
     this.el.counts.textContent = line;
     this.el.empty.style.display = v.idx.length ? 'none' : 'flex';
-    if (g.view === 'files' && !g.ls.length && (this.data.calls || []).length) {
-      this.el.hint.textContent = 'No file imports in this index · Symbols · calls holds this repo\'s edges';
-      return;
+    if (!g.ls.length) {
+      var best = null;
+      var self2 = this;
+      viewKeys(this.data).forEach(function (k) {
+        var cand = self2.data.views[k];
+        if (k !== g.view && cand.edges.length && (!best || cand.edges.length > best.edges.length)) best = cand;
+      });
+      if (best) {
+        this.el.hint.textContent = 'No ' + g.edge[1] + ' in this index · ' + best.label + ' holds this repo\'s edges';
+        return;
+      }
     }
     this.el.hint.textContent = v.idx.length > 2000
       ? 'Large graph: labels appear as you zoom in · Search or raise Minimum links to focus'

@@ -183,7 +183,7 @@ def _symbols_view(conn, root, functions, max_symbols) -> dict:
         )
     edges = sorted({(at[s], at[d]) for s, d in calls if s in at and d in at and s != d})
     return _view(
-        "Symbols · calls",
+        "Functions · calls",
         ["function", "functions"],
         ["call", "calls"],
         "Calls",
@@ -206,7 +206,7 @@ def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> 
     )
     if not defines:
         return _view(
-            "Infra · Terraform",
+            "Terraform · resources",
             ["resource", "resources"],
             ["declaration", "declarations"],
             "Declares",
@@ -261,7 +261,7 @@ def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> 
             edges.append((src, dst))
 
     return _view(
-        "Infra · Terraform",
+        "Terraform · resources",
         ["node", "nodes"],
         ["link", "links"],
         "Declares",
@@ -275,9 +275,24 @@ def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> 
 
 def _docs_view(conn, root, files, fn_per_file, cls_per_file, max_sections) -> dict:
     """Section trees: the file, its headings, and the nesting between them."""
-    defines = conn.find_neighbors(
-        "DEFINES_SECTION", return_src=["path"], return_dst=["id", "title", "level"]
-    )
+    # Config files expose their keys through the same section model, which puts
+    # .mcp.json and pre-commit config in a view promising documentation. The
+    # discriminant is asked for and its absence tolerated: an index built
+    # before the column existed answers without it, and everything it holds is
+    # treated as documentation rather than dropped.
+    try:
+        defines = conn.find_neighbors(
+            "DEFINES_SECTION",
+            return_src=["path"],
+            return_dst=["id", "title", "level", "kind"],
+        )
+    except Exception:
+        defines = conn.find_neighbors(
+            "DEFINES_SECTION",
+            return_src=["path"],
+            return_dst=["id", "title", "level"],
+        )
+    defines = [e for e in defines if (e.get("dst_kind") or "doc") == "doc"]
     if not defines:
         return _view(
             "Docs · sections",

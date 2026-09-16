@@ -66,15 +66,19 @@ def _backend(repo_root: str | Path | None = None) -> str:
     """Pick which graph backend to use for ``repo_root``.
 
     Resolution order:
-      1. CGH_DB env var if set (``duckdb`` or ``kuzu``).
+      1. CGH_DB env var if set (``duckdb``, ``kuzu`` or ``sqlite``).
       2. Auto-detect from the files actually present in ``.codegraph/``:
-         ``graph.duckdb`` -> duckdb, ``graph.db`` -> kuzu.
-      3. Fall back to duckdb for a brand-new (no .codegraph/) repo.
+         ``graph.duckdb`` -> duckdb, ``graph.sqlite`` -> sqlite,
+         ``graph.db`` -> kuzu.
+      3. Fresh repo: DuckDB when its native library is importable,
+         otherwise SQLite. This makes the same code adapt to how it was
+         installed: a pip/uvx install bundles DuckDB and defaults to it,
+         while the standalone binary ships SQLite-only (no ~50 MB DuckDB
+         lib) and defaults to SQLite. Neither needs a build flag.
 
-    The fresh-repo default flipped from kuzu to duckdb in the 0.5
-    cycle. Repos with an existing ``graph.db`` keep being read as
-    Kuzu (via step 2) so existing installs aren't broken; the
-    `cgh init` auto-migration handles the transition.
+    The fresh-repo default flipped from kuzu to duckdb in the 0.5 cycle,
+    then to "duckdb if available else sqlite" for the binary. Repos with
+    an existing on-disk DB keep it (via step 2) so nothing breaks.
     """
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
     if env_value in ("duckdb", "kuzu", "sqlite"):
@@ -85,7 +89,16 @@ def _backend(repo_root: str | Path | None = None) -> str:
         if detected is not None:
             return detected[0]
 
-    return "duckdb"
+    return "duckdb" if duckdb_available() else "sqlite"
+
+
+def duckdb_available() -> bool:
+    """True if the DuckDB native library can be imported. False in the
+    SQLite-only standalone binary, which is what flips the fresh-repo
+    default to SQLite there."""
+    import importlib.util
+
+    return importlib.util.find_spec("duckdb") is not None
 
 
 # Connection caches, keyed by resolved repo root: one process can

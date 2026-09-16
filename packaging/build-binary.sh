@@ -29,6 +29,7 @@ uv run --with pyinstaller pyinstaller --noconfirm --onefile --strip --name cgh \
   --collect-submodules mcp.server --collect-submodules mcp.shared --collect-submodules mcp.types \
   --hidden-import sqlite3 --hidden-import _sqlite3 --hidden-import sqlite3.dbapi2 \
   --exclude-module duckdb \
+  --exclude-module cryptography --exclude-module numpy --exclude-module mlx \
   --exclude-module pytest --exclude-module _pytest --exclude-module pyinstaller \
   --exclude-module jedi --exclude-module tree_sitter_c_sharp --exclude-module tree_sitter_ruby \
   --exclude-module IPython --exclude-module tkinter --exclude-module test \

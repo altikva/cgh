@@ -80,6 +80,9 @@ class SectionDef:
     end_line: int
     body_preview: str = ""
     anchor: str = ""
+    # "doc" for prose headings, "config" for the keys config files expose
+    # through this same model. Without it a docs view is mostly YAML.
+    kind: str = "doc"
 
 
 @dataclass(slots=True)

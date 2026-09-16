@@ -20,8 +20,12 @@ from codegraph.indexer import index_file
 
 @pytest.fixture(autouse=True)
 def clean_db():
+    from codegraph.imports.resolver import reset_for_tests
+
+    reset_for_tests()
     reset_connection()
     yield
+    reset_for_tests()
     reset_connection()
 
 
@@ -54,6 +58,72 @@ class TestResolvePython:
         result = resolve_python("pkg.mod", importer, tmp_path)
         assert result is not None
         assert result.name == "mod.py"
+
+    def test_absolute_under_src_layout(self, tmp_path):
+        """A src/ layout resolved nothing at all: the repo root was the only
+        anchor tried, so `from pkg.mod import x` looked for <root>/pkg/mod.py."""
+        pkg = tmp_path / "src" / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
+        (pkg / "mod.py").write_text("z = 3\n")
+        importer = pkg / "main.py"
+        importer.write_text("from pkg.mod import z\n")
+
+        result = resolve_python("pkg.mod", importer, tmp_path)
+
+        assert result == (pkg / "mod.py").resolve()
+
+    def test_absolute_under_nested_package_root(self, tmp_path):
+        """Packages living one directory down, imported as if that directory
+        were the root: `cluster/utilities/` imported as `utilities`."""
+        cluster = tmp_path / "cluster"
+        utils = cluster / "utilities"
+        utils.mkdir(parents=True)
+        (cluster / "__init__.py").write_text("")
+        (utils / "__init__.py").write_text("")
+        (utils / "action.py").write_text("def go(): pass\n")
+        importer = cluster / "bot.py"
+        importer.write_text("from utilities.action import go\n")
+
+        result = resolve_python("utilities.action", importer, tmp_path)
+
+        assert result == (utils / "action.py").resolve()
+
+    def test_absolute_beside_the_importer(self, tmp_path):
+        """A script run from its own folder sees its siblings as top level."""
+        tools = tmp_path / "tools"
+        tools.mkdir()
+        (tools / "helpers.py").write_text("def h(): pass\n")
+        importer = tools / "run.py"
+        importer.write_text("from helpers import h\n")
+
+        result = resolve_python("helpers", importer, tmp_path)
+
+        assert result == (tools / "helpers.py").resolve()
+
+    def test_repo_root_still_resolves_a_flat_layout(self, tmp_path):
+        """The package nearest the importer wins, but a flat layout keeps
+        resolving exactly as before."""
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "mod.py").write_text("z = 3\n")
+        importer = tmp_path / "main.py"
+        importer.write_text("from pkg.mod import z\n")
+
+        result = resolve_python("pkg.mod", importer, tmp_path)
+
+        assert result == (pkg / "mod.py").resolve()
+
+    def test_external_dependency_still_unresolved(self, tmp_path):
+        """More roots must not turn a third-party import into a false edge."""
+        src = tmp_path / "src" / "app"
+        src.mkdir(parents=True)
+        (src / "__init__.py").write_text("")
+        importer = src / "main.py"
+        importer.write_text("import fastapi\n")
+
+        assert resolve_python("fastapi", importer, tmp_path) is None
 
     def test_package_init(self, tmp_path):
         pkg = tmp_path / "pkg"
@@ -240,4 +310,86 @@ class TestImportsEdgesIndexed:
         assert "a" in symbols
         assert "b" not in symbols, (
             f"stale 'b' edge should have been purged, got {symbols}"
+        )
+
+
+class TestImportCoverage:
+    """A scan records how many imports it parsed and how many it resolved.
+
+    Without this, an empty import graph and a language with no resolver are
+    the same silent answer, which is how whole repos sat at zero import edges
+    without anyone noticing.
+    """
+
+    def _repo(self, tmp_path):
+        import subprocess
+
+        pkg = tmp_path / "src" / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text("def a():\n    return 1\n")
+        (pkg / "b.py").write_text("from pkg.a import a\nimport fastapi\n")
+        (tmp_path / "main.go").write_text(
+            'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println(1) }\n'
+        )
+        for args in (["init", "-q"], ["add", "-A"]):
+            subprocess.run(
+                ["git", *args], cwd=tmp_path, check=True, capture_output=True
+            )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "init",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        return tmp_path
+
+    def test_scan_records_resolved_and_unresolved_counts(self, tmp_path):
+        from codegraph.indexer import index_repo
+        from codegraph.state.scan_meta import scan_status
+
+        root = self._repo(tmp_path)
+        index_repo(str(root))
+
+        coverage = scan_status(root)["imports"]
+        assert coverage["python"]["seen"] == 2  # the sibling module and fastapi
+        assert coverage["python"]["resolved"] == 1  # fastapi is not ours
+
+    def test_a_language_without_a_resolver_reports_seen_but_unresolved(self, tmp_path):
+        from codegraph.imports.resolver import RESOLVABLE_LANGS
+        from codegraph.indexer import index_repo
+        from codegraph.state.scan_meta import scan_status
+
+        root = self._repo(tmp_path)
+        index_repo(str(root))
+
+        coverage = scan_status(root)["imports"]
+        assert "go" not in RESOLVABLE_LANGS
+        assert coverage["go"]["seen"] >= 1
+        assert coverage["go"]["resolved"] == 0
+
+    def test_a_src_layout_repo_does_not_come_back_empty(self, tmp_path):
+        """The regression this whole branch exists for: imports parsed, none
+        resolved, no error anywhere."""
+        from codegraph.indexer import index_repo
+        from codegraph.state.scan_meta import scan_status
+
+        root = self._repo(tmp_path)
+        index_repo(str(root))
+
+        python = scan_status(root)["imports"]["python"]
+        assert python["seen"] and python["resolved"], (
+            "a src/ layout resolved nothing: every absolute import was anchored "
+            "on the repo root alone"
         )

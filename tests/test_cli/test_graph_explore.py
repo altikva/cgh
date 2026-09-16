@@ -307,3 +307,67 @@ class TestMcpScope:
             _srv._root = None
             _srv._conn = None
             reset_connection()
+
+
+class TestDocsViewDiscriminant:
+    """The docs view keeps documentation and leaves config keys out.
+
+    JSON, TOML and YAML files expose their keys through the same section model
+    as Markdown headings, so a view promising documentation was serving
+    .mcp.json. The discriminant lives in the index (see the parser change); the
+    view asks for it and tolerates its absence, because an index built before
+    the column existed answers without it.
+    """
+
+    class _Conn:
+        def __init__(self, sections, *, knows_kind=True):
+            self.sections = sections
+            self.knows_kind = knows_kind
+
+        def find_neighbors(self, edge, return_src=None, return_dst=None, **kw):
+            if edge != "DEFINES_SECTION":
+                return []
+            if return_dst and "kind" in return_dst and not self.knows_kind:
+                raise RuntimeError('Table "b" does not have a column named "kind"')
+            rows = []
+            for title, kind in self.sections:
+                row = {
+                    "src_path": "/repo/README.md",
+                    "dst_id": f"/repo/README.md::{title}",
+                    "dst_title": title,
+                    "dst_level": 1,
+                }
+                if return_dst and "kind" in return_dst:
+                    row["dst_kind"] = kind
+                rows.append(row)
+            return rows
+
+    def _titles(self, view):
+        return [n["n"] for n in view["nodes"] if n["k"] == "section"]
+
+    def test_config_sections_are_left_out(self):
+        from codegraph.viz.graphdata import _docs_view
+
+        conn = self._Conn([("Guide", "doc"), ("mcpServers", "config")])
+
+        view = _docs_view(conn, "/repo", [], {}, {}, 100)
+
+        assert self._titles(view) == ["# Guide"]
+
+    def test_an_index_without_the_column_keeps_everything(self):
+        from codegraph.viz.graphdata import _docs_view
+
+        conn = self._Conn(
+            [("Guide", "doc"), ("mcpServers", "config")], knows_kind=False
+        )
+
+        view = _docs_view(conn, "/repo", [], {}, {}, 100)
+
+        assert self._titles(view) == ["# Guide", "# mcpServers"]
+
+    def test_view_labels_say_what_they_show(self, indexed_repo):
+        payload = _payload(indexed_repo)
+
+        labels = {k: v["label"] for k, v in payload["views"].items()}
+        assert labels["symbols"] == "Functions · calls"
+        assert labels["infra"] == "Terraform · resources"

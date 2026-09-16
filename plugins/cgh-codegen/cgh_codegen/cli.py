@@ -4,8 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI verbs `cgh codewrite pick` (report the reference to mirror)
-#              and `cgh codewrite gen` (generate the file from a spec plus that
+# Description: CLI verbs `cgh codegen pick` (report the reference to mirror)
+#              and `cgh codegen gen` (generate the file from a spec plus that
 #              reference, behind the egress gate, refusing to clobber without
 #              --force).
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def plugin_config_for_root(root: str | Path, fallback: dict) -> dict:
-    """The [plugin.codewrite] table resolved from ``root``.
+    """The [plugin.codegen] table resolved from ``root``.
 
     Plugins are loaded once at CLI startup against the current directory, so
     the config captured then belongs to the CWD, not to a --root passed on
@@ -26,12 +26,12 @@ def plugin_config_for_root(root: str | Path, fallback: dict) -> dict:
     """
     from codegraph.plugin_api import load_config
 
-    return load_config(root).plugin_tables.get("codewrite", fallback)
+    return load_config(root).plugin_tables.get("codegen", fallback)
 
 
 def make_cli_registrar(config: dict):
     def add_cli(sub) -> None:
-        p = sub.add_parser("codewrite", help="Pattern-matched code generation helpers")
+        p = sub.add_parser("codegen", help="Pattern-matched code generation helpers")
         actions = p.add_subparsers(dest="cw_action")
 
         pick = actions.add_parser(
@@ -123,7 +123,7 @@ def _cmd_gen(args, config: dict) -> None:
     if backend is None:
         console.print(
             "[red]no backend configured.[/red] Set a backend command under "
-            "plugin.codewrite in .codegraph/config.toml "
+            "plugin.codegen in .codegraph/config.toml "
             '(command = "claude -p").'
         )
         raise SystemExit(1)

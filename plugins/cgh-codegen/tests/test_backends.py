@@ -15,9 +15,9 @@ import urllib.error
 
 import pytest
 
-pytest.importorskip("cgh_codewrite")
+pytest.importorskip("cgh_codegen")
 
-from cgh_codewrite.backends import CliBackend, OllamaBackend, resolve_backend
+from cgh_codegen.backends import CliBackend, OllamaBackend, resolve_backend
 
 
 def test_resolve_cli_from_command():

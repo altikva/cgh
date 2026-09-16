@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cgh-codewrite"
+name = "cgh-codegen"
 version = "0.1.0"
 description = "Pattern-matched code generation for cgh: a cheap model writes boilerplate that mirrors a reference file cgh picks from the graph"
 readme = "README.md"
@@ -18,10 +18,10 @@ authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 dependencies = []
 
 [project.entry-points.cgh]
-codewrite = "cgh_codewrite"
+codegen = "cgh_codegen"
 
 [tool.setuptools.packages.find]
-include = ["cgh_codewrite*"]
+include = ["cgh_codegen*"]
 
 [tool.setuptools.package-data]
-cgh_codewrite = ["py.typed"]
+cgh_codegen = ["py.typed"]

@@ -30,9 +30,9 @@ The gap is widest on multi-file questions, where a graph beats text search. For 
 
 **What this is not.** The billed cost, once the model's prompt cache is counted, is roughly a wash: the cache dominates the invoice, so fewer turns do not cut it much. cgh's gain is a smaller working context and fewer turns, not a smaller bill. On a trivial one-file edit cgh adds nothing. Run-to-run variance is real (around 20%), so read these as ratios over a task set rather than a single guaranteed number, and rerun the benchmark on your own repo to see your figures.
 
-### Delegating writes: the cgh-codewrite plugin
+### Delegating writes: the cgh-codegen plugin
 
-The figures above are the read side. The [`cgh-codewrite`](plugins/cgh-codewrite) plugin does the same for writes: predictable, pattern-following code (tests, stubs, config, boilerplate) is handed to a cheap or local model that mirrors an existing file, and the reference and the generated file never enter the primary model's context. cgh picks the file to mirror from the graph, so selecting it costs zero model tokens.
+The figures above are the read side. The [`cgh-codegen`](plugins/cgh-codegen) plugin does the same for writes: predictable, pattern-following code (tests, stubs, config, boilerplate) is handed to a cheap or local model that mirrors an existing file, and the reference and the generated file never enter the primary model's context. cgh picks the file to mirror from the graph, so selecting it costs zero model tokens.
 
 Run against two write scenarios on `psf/requests`, generating with a cheap model:
 

@@ -1,4 +1,4 @@
-# cgh-codewrite
+# cgh-codegen
 
 A cgh plugin that delegates predictable, pattern-following code (tests,
 stubs, config, boilerplate) to a cheap model so the primary model spends
@@ -9,12 +9,12 @@ Installs through cgh's plugin entry point. Inert without cgh.
 
 ## Surfaces
 
-### `cgh codewrite pick`
+### `cgh codegen pick`
 
 Report the existing file a generator should mirror for a target, and why.
 
 ```
-cgh codewrite pick --target tests/test_user_service.py
+cgh codegen pick --target tests/test_user_service.py
 # reference: tests/test_order_service.py
 # defines a matching symbol, sibling in the same directory
 ```
@@ -25,12 +25,12 @@ kind in the target's directory). It degrades to a filesystem-only pick
 when the graph is not readable (no index yet, or an owner holds the write
 lock). Pass `--reference` to validate a specific file instead.
 
-### `cgh codewrite gen`
+### `cgh codegen gen`
 
 Generate a file from a spec, mirroring the reference, and write it.
 
 ```
-cgh codewrite gen --spec "pytest tests for UserService: create, update, delete" \
+cgh codegen gen --spec "pytest tests for UserService: create, update, delete" \
                   --target tests/test_user_service.py
 ```
 
@@ -42,7 +42,7 @@ never overwritten without `--force`; `--stdout` prints instead of writing.
 Configure the backend in `.codegraph/config.toml`:
 
 ```toml
-[plugin.codewrite]
+[plugin.codegen]
 command = "claude -p"   # any agent CLI, invoked with the prompt on stdin
 ```
 
@@ -51,10 +51,10 @@ linter, or tests, never by trusting that it is correct because a later check
 was green. This matters most for generated tests: a green run of tests you
 did not read proves nothing.
 
-### `codewrite_pick` and `code_write` (MCP tools)
+### `codegen_pick` and `codegen_write` (MCP tools)
 
-`codewrite_pick(target, reference?)` returns the selection as JSON.
-`code_write(spec, target, reference?, force?)` generates and writes the
+`codegen_pick(target, reference?)` returns the selection as JSON.
+`codegen_write(spec, target, reference?, force?)` generates and writes the
 file, returning what it wrote, the reference used, the egress decision, and
 the cost. Both run inside the owner, so the graph read reuses its
 connection.

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("cgh_codewrite")
+pytest.importorskip("cgh_codegen")
 
-from cgh_codewrite.flow import run_generation
-from cgh_codewrite.picker import CodeWriteError
+from cgh_codegen.flow import run_generation
+from cgh_codegen.picker import CodeWriteError
 
 from codegraph.plugin_api import ScanFinding
 from codegraph.state import findings as store

@@ -66,7 +66,7 @@ def run_generation(
     else:
         allowed, reason = egress_decision(root, ref_path, config)
         if not allowed:
-            _audit(root, "codewrite_egress_denied", f"{ref_rel}: {reason}")
+            _audit(root, "codegen_egress_denied", f"{ref_rel}: {reason}")
             raise CodeWriteError(f"egress refused for reference {ref_rel}: {reason}")
         egress = reason
 
@@ -113,7 +113,7 @@ def run_generation(
         raise CodeWriteError("generation produced no result")
     _audit(
         root,
-        "codewrite_generated",
+        "codegen_generated",
         f"{target} <- {ref_rel} ({backend.name}, {attempts} attempt(s), "
         f"verified={verified})",
     )

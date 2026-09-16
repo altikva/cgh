@@ -4,8 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: cgh plugin entry point. Registers the `cgh codewrite` CLI
-#              verbs (pick, gen) and the codewrite_pick / code_write MCP
+# Description: cgh plugin entry point. Registers the `cgh codegen` CLI
+#              verbs (pick, gen) and the codegen_pick / codegen_write MCP
 #              tools: pick the file to mirror, then generate the target from
 #              a spec with a cheap model, behind the egress gate.
 

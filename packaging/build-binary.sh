@@ -14,9 +14,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
 OUT="${1:-$ROOT/dist-binary}"
 cd "$ROOT"
 
+# --strip needs the `strip` tool and a symbol table it understands. It is
+# present on the macOS/Linux runners but not on Windows (the PE symbols are
+# elsewhere anyway), so only pass it where it exists. A missing strip would
+# otherwise abort the whole build.
+STRIP_FLAG="--strip"
+case "${OS:-}${OSTYPE:-}" in
+  *[Ww]indows*|*msys*|*cygwin*) STRIP_FLAG="" ;;
+esac
+
 # cgh imports its dependencies lazily (a startup-speed choice), so static
 # analysis misses most of them: collect each declared runtime dependency whole.
-uv run --with pyinstaller pyinstaller --noconfirm --onefile --strip --name cgh \
+uv run --with pyinstaller pyinstaller --noconfirm --onefile $STRIP_FLAG --name cgh \
   --distpath "$OUT/dist" --workpath "$OUT/work" --specpath "$OUT" \
   --collect-all codegraph --collect-all tree_sitter \
   --collect-all tree_sitter_python --collect-all tree_sitter_typescript \

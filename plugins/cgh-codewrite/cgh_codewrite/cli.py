@@ -58,6 +58,18 @@ def make_cli_registrar(config: dict):
         gen.add_argument(
             "--stdout", action="store_true", help="Print the code, do not write a file"
         )
+        gen.add_argument(
+            "--verify",
+            default="",
+            help="Shell check (exit 0 = pass) run after writing; drives the "
+            "self-correct loop",
+        )
+        gen.add_argument(
+            "--max-attempts",
+            type=int,
+            default=1,
+            help="With --verify, regenerate up to N times feeding the failure back",
+        )
         gen.add_argument("--root", default=os.getcwd())
         gen.set_defaults(func=lambda args: _cmd_gen(args, config))
 
@@ -126,6 +138,8 @@ def _cmd_gen(args, config: dict) -> None:
             backend=backend,
             force=args.force,
             to_stdout=args.stdout,
+            verify=args.verify or None,
+            max_attempts=max(1, args.max_attempts),
         )
     except (CodeWriteError, GenerationError) as exc:
         console.print(f"[red]{exc}[/red]")
@@ -144,6 +158,17 @@ def _cmd_gen(args, config: dict) -> None:
         f"[green]wrote[/green] {result['target']}  "
         f"[dim]({result['lines']} lines, mirror of {result['reference']})[/dim]"
     )
+    v = result.get("verified")
+    if v is True:
+        console.print(
+            f"[green]check passed[/green] "
+            f"[dim]after {result['attempts']} attempt(s)[/dim]"
+        )
+    elif v is False:
+        console.print(
+            f"[yellow]check still failing[/yellow] after {result['attempts']} "
+            "attempt(s); the written file is the last try, review it."
+        )
     console.print(
         f"[dim]backend: {result['backend']}  egress: {result['egress']}  "
         "verify by running the checks, not by trusting this output.[/dim]"

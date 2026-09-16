@@ -31,13 +31,21 @@ def run_generation(
     backend: Backend,
     force: bool = False,
     to_stdout: bool = False,
+    verify: str | None = None,
+    max_attempts: int = 1,
 ) -> dict:
     """Generate the code for ``target`` and, unless ``to_stdout``, write it.
 
+    With ``verify`` (a shell check, exit 0 = pass) and ``max_attempts`` > 1,
+    it self-corrects: write, run the check, and on failure feed the check's
+    output plus the previous attempt back to the model and regenerate, up to
+    ``max_attempts``. That is how the loop catches what a first pass misses
+    (a generated backend that forgot to commit fails the check, and the
+    failure text drives the fix), turning "verify, don't trust" into a
+    closed loop instead of a manual review.
+
     Returns a result dict. Raises CodeWriteError for a bad target, a gated
-    reference, or a refused overwrite, so a caller never silently produces or
-    clobbers a file. The generated code is returned/written as-is; callers
-    verify it by running the checks, never by trusting it.
+    reference, or a refused overwrite.
     """
     root = Path(repo_root).resolve()
 
@@ -63,9 +71,10 @@ def run_generation(
         egress = reason
 
     ref_text = ref_path.read_text(encoding="utf-8", errors="replace")
-    result = generate_code(spec, [(ref_rel, ref_text)], backend, target=target)
 
-    written = False
+    # Clobber check once, up front; the retry loop then overwrites its own
+    # attempts freely (verify needs the file on disk to check it).
+    tgt = None
     if not to_stdout:
         tgt = _confine(root, target)
         if tgt is None:
@@ -74,15 +83,40 @@ def run_generation(
             raise CodeWriteError(
                 f"target {target} already exists; pass force to overwrite"
             )
-        tgt.parent.mkdir(parents=True, exist_ok=True)
+
+    do_verify = bool(verify) and not to_stdout
+    prior: tuple[str, str] | None = None
+    verified: bool | None = None
+    written = False
+    attempts = 0
+    result = None
+    while attempts < max(1, max_attempts):
+        attempts += 1
+        result = generate_code(
+            spec, [(ref_rel, ref_text)], backend, target=target, prior=prior
+        )
+        if to_stdout or tgt is None:
+            break
         body = result.code if result.code.endswith("\n") else result.code + "\n"
+        tgt.parent.mkdir(parents=True, exist_ok=True)
         tgt.write_text(body, encoding="utf-8")
         written = True
-        _audit(
-            root,
-            "codewrite_generated",
-            f"{target} <- {ref_rel} ({backend.name}, {len(body.splitlines())} lines)",
-        )
+        if not do_verify:
+            break
+        ok, output = _run_verify(root, verify)  # type: ignore[arg-type]
+        verified = ok
+        if ok:
+            break
+        prior = (result.code, output)
+
+    if result is None:  # unreachable: the loop always runs at least once
+        raise CodeWriteError("generation produced no result")
+    _audit(
+        root,
+        "codewrite_generated",
+        f"{target} <- {ref_rel} ({backend.name}, {attempts} attempt(s), "
+        f"verified={verified})",
+    )
 
     return {
         "target": target,
@@ -94,8 +128,36 @@ def run_generation(
         "egress": egress,
         "written": written,
         "graph_available": pick["graph_available"],
+        "attempts": attempts,
+        "verified": verified,
         "code": result.code if to_stdout else "",
     }
+
+
+def _run_verify(root: Path, command: str) -> tuple[bool, str]:
+    """Run the verify command in ``root``; True on exit 0. The captured output
+    (capped) is fed back to the model on failure. argv-only, timed, no shell."""
+    import shlex
+    import subprocess
+
+    from codegraph.plugin_api import quiet_subprocess_kwargs
+
+    argv = shlex.split(command)
+    if not argv:
+        return True, ""
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+            **quiet_subprocess_kwargs(),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return False, f"the verify command could not run: {exc}"
+    return proc.returncode == 0, (proc.stdout + proc.stderr)[-4000:]
 
 
 def _audit(root: Path, event: str, detail: str) -> None:

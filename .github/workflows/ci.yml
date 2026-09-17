@@ -50,9 +50,8 @@ jobs:
         working-directory: packaging/npm
         run: node --test test/*.test.js
 
-  # Gating job: lint + the full supported Python matrix. Kuzu has no cp3.14
-  # wheel, so the kuzu extra is installed only on 3.11-3.13; 3.14 runs the
-  # default DuckDB-only install and the Kuzu tests skip themselves.
+  # Gating job: lint + the full supported Python matrix. The default
+  # DuckDB backend ships wheels on every supported Python.
   test:
     name: Lint + tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -91,11 +90,7 @@ jobs:
         # First-party plugins from plugins/ join the test env so their
         # suites run end to end instead of import-skipping.
         run: |
-          if [ "$PYTHON_VERSION" = "3.14" ]; then
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision --with ./plugins/cgh-codegen pytest -q
-          else
-            uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision --with ./plugins/cgh-codegen --extra kuzu pytest -q
-          fi
+          uv run --python "$PYTHON_VERSION" --with pytest --with ./plugins/cgh-docs --with ./plugins/cgh-pii --with ./plugins/cgh-summarize --with ./plugins/cgh-classify --with ./plugins/cgh-bugreport --with ./plugins/cgh-vision --with ./plugins/cgh-codegen pytest -q
 
   # Advisory early-warning job: resolve the newest deps allowed by the
   # pyproject floors instead of the locked versions. Catches "an upstream
@@ -122,11 +117,7 @@ jobs:
 
       - name: Test on newest deps within floors
         run: |
-          if [ "$PYTHON_VERSION" = "3.14" ]; then
-            uv run --python "$PYTHON_VERSION" --upgrade --with pytest pytest -q
-          else
-            uv run --python "$PYTHON_VERSION" --upgrade --with pytest --extra kuzu pytest -q
-          fi
+          uv run --python "$PYTHON_VERSION" --upgrade --with pytest pytest -q
 
   test-oldest:
     name: Oldest direct deps, advisory (Python 3.11)

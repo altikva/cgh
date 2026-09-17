@@ -7,10 +7,9 @@
 # Description: The graph visualization generators, one implementation
 #              for both entry points (the visualize_graph MCP tool and
 #              `cgh graph`). Every generator speaks the GraphDB
-#              protocol only, so DuckDB and Kuzu render identically;
-#              the raw-Cypher ancestors in viz/mermaid.py were
-#              Kuzu-only and are retired. Each function takes the repo
-#              root explicitly (no server-global reach-through).
+#              protocol only, so DuckDB and SQLite render identically.
+#              Each function takes the repo root explicitly (no
+#              server-global reach-through).
 
 from __future__ import annotations
 

@@ -49,8 +49,8 @@ def cmd_index(args: argparse.Namespace) -> None:
     console.print(LOGO)
     console.print(f"[dim]Repository:[/dim] [bold]{root}[/bold]\n")
 
-    # Owner-aware routing: when an owner is alive it holds Kuzu's write lock
-    # for its entire lifetime, so a direct index_repo() call would race the
+    # Owner-aware routing: when an owner is alive it holds the graph DB write
+    # lock for its entire lifetime, so a direct index_repo() call would race the
     # lock and fail. Route through the owner's incremental_reindex MCP tool
     # instead, it re-checks every File node's blob SHA against HEAD,
     # re-indexes drifted files, and advances scan_meta.git_head. The --force
@@ -142,7 +142,7 @@ def cmd_index(args: argparse.Namespace) -> None:
                 console.print(
                     Panel(
                         "[yellow]Database is locked by another cgh process.[/yellow]\n\n"
-                        "An MCP owner is holding the Kuzu write lock for this repo.\n"
+                        "An MCP owner is holding the graph DB write lock for this repo.\n"
                         "Default [cyan]cgh index[/cyan] routes through the owner via MCP, "
                         "[cyan]--force[/cyan] was passed, which skips that path.\n\n"
                         "Either drop [cyan]--force[/cyan], or stop the owner first:\n"

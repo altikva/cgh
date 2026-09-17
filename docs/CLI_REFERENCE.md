@@ -144,7 +144,7 @@ cgh setup all        # writes configs for all tools
 
 ### `index`
 
-Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, Kuzu via `CGH_DB=kuzu`) and BM25 FTS index.
+Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, SQLite via `CGH_DB=sqlite`) and BM25 FTS index.
 
 ```
 cgh index [--verbose | -v] [--root DIR]
@@ -496,30 +496,6 @@ Vacuum SQLite databases (`fts.db`, `call_log.db`) to reclaim space. Shows before
 ```
 cgh compact [--root DIR]
 ```
-
----
-
-### `migrate-to-duckdb`
-
-Re-index a repo currently on the Kuzu backend into DuckDB, verify counts match, and optionally delete `graph.db`. Safe to run mid-flight: keeps the old DB around until you confirm.
-
-```
-cgh migrate-to-duckdb [--yes | -y] [--keep-kuzu] [--force] [--root DIR]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--yes`, `-y` | Skip the "delete graph.db?" prompt and delete on success |
-| `--keep-kuzu` | Never delete `graph.db`, even on exact count match |
-| `--force` | Overwrite an existing `graph.duckdb` before re-indexing |
-
-The verifier compares per-label node + per-type edge counts between the two backends and classifies the diff:
-
-- **matched**: exact counts; swap proceeds.
-- **stale_kuzu**: every diff is explained by a fix shipped after the Kuzu DB was written (`IMPORTS` going from `0` to N, or any metric where DuckDB ≤ Kuzu, i.e. ghost rows from deleted files). DuckDB is accepted as canonical and the swap proceeds.
-- **mismatched**: DuckDB gained rows that aren't explained by a known post-fix signature. Both files are kept and the command exits non-zero so you can inspect manually.
-
-`cgh init` runs this automatically when it detects only `graph.db` is present.
 
 ---
 

@@ -5,9 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: cgh reset must remove the DuckDB graph (graph.duckdb), the
-#              default backend since v0.4. A stale name filter only matched
-#              the Kuzu graph.db, so reset left a corrupt DuckDB graph in
-#              place and could not recover it.
+#              default backend. A stale name filter could leave a corrupt
+#              DuckDB graph in place and fail to recover it.
 
 from __future__ import annotations
 

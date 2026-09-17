@@ -28,7 +28,7 @@ class DuckDBQueryResult:
 
     DuckDB returns column names + rows on the cursor itself rather than on
     a separate result object; we materialise both up front so the
-    iterator interface mirrors Kuzu's exactly.
+    iterator interface matches the QueryResult protocol exactly.
     """
 
     def __init__(
@@ -90,7 +90,7 @@ class DuckDBGraphDB:
         key_value: Any,
         props: dict[str, Any],
     ) -> None:
-        """``INSERT ... ON CONFLICT DO UPDATE`` to match Kuzu's MERGE+SET."""
+        """``INSERT ... ON CONFLICT DO UPDATE`` upsert of one node."""
         from codegraph.core.graph_model import NODES
 
         if label not in NODES:
@@ -181,8 +181,8 @@ class DuckDBGraphDB:
                 # Also purge the inbound side. For self-referential edges
                 # (CALLS/INHERITS Function->Function) src and dst share a label
                 # but use different columns (from_id/to_id), so this removes
-                # stale callers pointing INTO this file's symbols, matching
-                # Kuzu's DETACH DELETE. Without it, find_callers keeps ghosts.
+                # stale callers pointing INTO this file's symbols. Without
+                # it, find_callers keeps ghosts.
                 if edge.dst_label == spec.label:
                     column = edge.dst_column
                     if column.endswith("_path"):
@@ -490,8 +490,7 @@ class DuckDBGraphDB:
         return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
     # Escape hatch for tooling that needs the raw DuckDB connection
-    # (e.g. ATTACH for federation, EXPLAIN ANALYZE). Symmetric with
-    # KuzuGraphDB.raw, both go away when the Kuzu code path is deleted.
+    # (e.g. ATTACH for federation, EXPLAIN ANALYZE).
     @property
     def raw(self) -> duckdb.DuckDBPyConnection:
         return self._conn

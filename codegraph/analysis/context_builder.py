@@ -399,7 +399,7 @@ def _keyword_query(task: str, min_len: int = 3) -> str:
 
 def context_for_task(
     task: str,
-    kuzu_conn,
+    graph_conn,
     fts_conn: sqlite3.Connection,
     max_nodes: int = 15,
 ) -> TaskContext:
@@ -451,7 +451,7 @@ def context_for_task(
 
         # Step 3: Expand via graph, find callers/callees (up to 3 each)
         if r.kind == "function":
-            callers = kuzu_conn.find_neighbors(
+            callers = graph_conn.find_neighbors(
                 "CALLS",
                 dst_where={"name": r.name},
                 return_src=["name"],
@@ -459,7 +459,7 @@ def context_for_task(
             for c in callers:
                 node.relationships.append(f"called by {c['src_name']}")
 
-            callees = kuzu_conn.find_neighbors(
+            callees = graph_conn.find_neighbors(
                 "CALLS",
                 src_where={"name": r.name},
                 return_dst=["name"],
@@ -468,7 +468,7 @@ def context_for_task(
                 node.relationships.append(f"calls {c['dst_name']}")
 
         elif r.kind == "class":
-            parents = kuzu_conn.find_neighbors(
+            parents = graph_conn.find_neighbors(
                 "INHERITS",
                 src_where={"name": r.name},
                 return_dst=["name"],

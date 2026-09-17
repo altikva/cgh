@@ -523,6 +523,25 @@ The verifier compares per-label node + per-type edge counts between the two back
 
 ---
 
+### `backend`
+
+Show the graph backend in use, or switch between DuckDB and SQLite by
+re-indexing. The pip and uvx installs default to DuckDB; the standalone binary
+ships with SQLite only and defaults to it. When a graph outgrows SQLite the
+command suggests moving to `uvx cgh`, which bundles DuckDB.
+
+```
+cgh backend                 # show the current and available backends
+cgh backend duckdb          # switch to DuckDB (reindexes, drops the old file)
+cgh backend sqlite          # switch to SQLite
+```
+
+Switching reindexes the repo into the new backend and removes the previous
+graph file once the new one is written. On a SQLite-only binary, `cgh backend
+duckdb` prints how to get a DuckDB-capable build instead of failing.
+
+---
+
 ## Advanced
 
 ### `add-dir`

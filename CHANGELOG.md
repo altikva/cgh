@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-17
+
 ### Changed
 - **A federated child with no owner reads as `idle`, not `down`**: `cgh status`
   and `cgh federate list` labelled the normal resting state of every child as
@@ -59,6 +61,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   such file. They count as skipped, like any other unparsed file.
 
 ### Added
+- **A no-Python standalone binary**: cgh now ships as a self-contained
+  executable per operating system, so a machine without Python can run it.
+  `npx @altikva/cgh` fetches the right build, verifies its checksum and runs
+  it, and the same binaries are attached to every GitHub release. There are two
+  variants: the default `cgh` is sealed, carrying the core plus the local-only
+  `pii` and `classify` plugins and nothing that can reach the network, so it
+  cannot phone home; `cgh-egress` adds the plugins that can call a model
+  (`codegen`, `summarize`, `bugreport`), which stay behind the egress gate and
+  do nothing until configured.
+- **A SQLite graph backend, with an adaptive default in the binary**: alongside
+  DuckDB, cgh can store the graph in SQLite. The standalone binary defaults to
+  SQLite, which keeps the download small and needs no native database, while
+  the pip and uvx installs keep DuckDB. `cgh backend` shows the backend in use,
+  switches between them by reindexing, and points to `uvx cgh` when a graph
+  outgrows SQLite.
+- **A Claude Code plugin manifest**: `.claude-plugin/` lets cgh install as a
+  Claude Code plugin with `/plugin marketplace add altikva/cgh`, wiring the MCP
+  server, the bundled skills and the Read, Grep and post-commit hooks in one
+  step. It assumes the `cgh` binary is on PATH.
 - **`cgh index` refreshes the Claude Code memory and plans**: both live under
   `~/.claude`, outside the repository, so the file walk never reached them and
   a `cgh reset` left the index without either until someone remembered the two
@@ -1408,7 +1429,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.8...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0
 [0.11.8]: https://github.com/altikva/cgh/compare/v0.11.7...v0.11.8
 [0.11.7]: https://github.com/altikva/cgh/compare/v0.11.6...v0.11.7
 [0.11.6]: https://github.com/altikva/cgh/compare/v0.11.5...v0.11.6

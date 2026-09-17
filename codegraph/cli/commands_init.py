@@ -267,7 +267,10 @@ def _detect_existing_state(root: Path) -> dict:
     choose the right index strategy and warn about stale artifacts.
     """
     cg_dir = root / ".codegraph"
-    graph_db = cg_dir / "graph.db"
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    graph_db = detected[1] if detected else cg_dir / "graph.duckdb"
     fts_db = cg_dir / "fts.db"
 
     state = {
@@ -394,84 +397,6 @@ def _detect_existing_state(root: Path) -> dict:
     return state
 
 
-# ---------------------------------------------------------------------------
-# Auto-migration: detect a Kuzu graph.db and re-index it into DuckDB
-# ---------------------------------------------------------------------------
-
-
-def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
-    """If ``root/.codegraph/graph.db`` exists and no graph.duckdb is there
-    yet, re-index into DuckDB transparently. cgh init is a deliberate
-    user action that signals "set this repo up properly", so we don't
-    prompt, we just do it and report.
-
-    Mismatch handling: if the verify step finds drift between the two
-    backends, both files are kept and we print a warning. cgh status will
-    show the "both files" state; the user can re-run ``cgh migrate-to-duckdb
-    --force`` once they understand the cause. We do NOT exit cgh init
-    on mismatch, the rest of the install flow (MCP server, skills,
-    indexing) should still proceed.
-    """
-    cg = root / ".codegraph"
-    kuzu_path = cg / "graph.db"
-    duckdb_path = cg / "graph.duckdb"
-
-    if not kuzu_path.exists() or duckdb_path.exists():
-        return  # nothing to do, fresh repo or already migrated
-
-    from codegraph.cli.commands_migrate import do_migrate_to_duckdb
-
-    console.print(
-        "  [bold]Auto-migrating from Kuzu to DuckDB[/bold]  "
-        "[dim](DuckDB is the v0.5 default, ~18× faster index, ~5× smaller DB)[/dim]"
-    )
-    try:
-        result = do_migrate_to_duckdb(root, delete_kuzu=True, force=False)
-    except Exception as exc:
-        console.print(
-            f"    [yellow]Migration failed: {type(exc).__name__}: {exc}[/yellow]"
-        )
-        console.print(
-            "    [dim]Continuing with the existing Kuzu graph. "
-            "Run [cyan]cgh migrate-to-duckdb[/cyan] manually to retry.[/dim]\n"
-        )
-        return
-
-    if result.status == "skipped":
-        return
-    if result.status == "aborted":
-        console.print(f"    [dim]{result.message}[/dim]\n")
-        return
-    if result.status == "matched":
-        console.print(
-            f"    [green]+[/green] re-indexed into graph.duckdb "
-            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            "graph.db deleted.\n"
-        )
-        return
-    if result.status in ("stale_kuzu", "kuzu_unreadable"):
-        console.print(
-            f"    [green]+[/green] re-indexed into graph.duckdb "
-            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            + ("graph.db deleted." if result.kuzu_deleted else "graph.db kept.")
-        )
-        console.print(
-            f"    [dim]Note: {result.message.rstrip('.')}. "
-            "DuckDB accepted as canonical.[/dim]\n"
-        )
-        return
-    # mismatched
-    console.print(
-        f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
-        f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
-    )
-    console.print(f"    [dim]{result.message}[/dim]")
-    console.print(
-        "    [dim]Inspect with [cyan]cgh status[/cyan], then "
-        "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
-    )
-
-
 def _install_git_reindex_hooks(root: Path) -> None:
     """Install the git hooks that refresh the graph after a pull, merge,
     branch switch, or rebase. Quiet and safe: skips a non-git repo, and skips
@@ -512,7 +437,7 @@ def _print_prior_state(prior_state: dict) -> None:
     if prior_state["indexed_files"] > 0:
         bits.append(f"{prior_state['indexed_files']:,} files indexed")
     if prior_state["graph_db_bytes"] > 0:
-        bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
+        bits.append(f"graph DB {prior_state['graph_db_bytes'] // 1024} KB")
     if prior_state["owner_alive"]:
         bits.append(
             f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
@@ -1027,9 +952,6 @@ def cmd_init(args: argparse.Namespace) -> None:
         prior_state = _detect_existing_state(root)
     _print_prior_state(prior_state)
 
-    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
-    _auto_migrate_kuzu_to_duckdb(root)
-
     # -- Step 1: Create .codegraph/ --
     with phase_status("[bold cyan]Setting up codegraph..."):
         result = init_project(root)
@@ -1172,8 +1094,8 @@ def _init_children(root: Path, assume_yes: bool) -> None:
 
     A parent that upgrades cgh, or re-runs init, propagates to its
     children: uninitialized ones get a full init + index, initialized
-    ones get the idempotent refresh (Kuzu auto-migration, hooks, missing
-    config, auth key). Each child runs in its own subprocess with
+    ones get the idempotent refresh (hooks, missing config, auth key).
+    Each child runs in its own subprocess with
     --no-children, so propagation stays single-level and a federation
     cycle cannot loop. Failures are per-child and never abort the
     parent's init.

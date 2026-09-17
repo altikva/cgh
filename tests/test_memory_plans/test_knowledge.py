@@ -21,18 +21,18 @@ class TestKnowledgeRecord:
         from codegraph.state.call_log import knowledge_record, knowledge_search
 
         eid = knowledge_record(
-            title="Avoid Kuzu double-open",
-            body="Kuzu holds an OS lock; release via reset_connection() before opening again.",
+            title="Avoid DuckDB double-open",
+            body="DuckDB rejects a RO open while a RW conn is live; reset_connection() before reopening.",
             kind="gotcha",
-            tags=["kuzu", "db", "lock"],
+            tags=["duckdb", "db", "lock"],
         )
         assert eid > 0
 
-        hits = knowledge_search("Kuzu lock")
+        hits = knowledge_search("DuckDB lock")
         assert hits
-        assert hits[0]["title"] == "Avoid Kuzu double-open"
+        assert hits[0]["title"] == "Avoid DuckDB double-open"
         assert hits[0]["kind"] == "gotcha"
-        assert "kuzu" in hits[0]["tags"]
+        assert "duckdb" in hits[0]["tags"]
 
     def test_kind_filter(self, _fresh_call_log):
         from codegraph.state.call_log import knowledge_record, knowledge_search
@@ -77,12 +77,12 @@ class TestGlossary:
     def test_terms_aggregation(self, _fresh_call_log):
         from codegraph.state.call_log import knowledge_record, knowledge_terms
 
-        knowledge_record("A", "x", tags=["kuzu", "db"])
-        knowledge_record("B", "y", tags=["kuzu", "lock"])
-        knowledge_record("C", "z", tags=["kuzu"])
+        knowledge_record("A", "x", tags=["duckdb", "db"])
+        knowledge_record("B", "y", tags=["duckdb", "lock"])
+        knowledge_record("C", "z", tags=["duckdb"])
 
         terms = dict(knowledge_terms())
-        assert terms["kuzu"] == 3
+        assert terms["duckdb"] == 3
         assert terms["db"] == 1
 
     def test_min_count_filter(self, _fresh_call_log):

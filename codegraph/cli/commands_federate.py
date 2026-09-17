@@ -72,7 +72,7 @@ def _cmd_add(args: argparse.Namespace) -> None:
         elif not status.has_graphdb:
             console.print(
                 f"[yellow]⚠ {child}:[/yellow] .codegraph/ exists but no graph DB "
-                f"(graph.duckdb / graph.db) found.\n"
+                f"(graph.duckdb / graph.sqlite) found.\n"
                 f"  Run [cyan]cgh index[/cyan] inside the subrepo."
             )
         else:
@@ -235,7 +235,7 @@ def _render_status_table(
         elif not status.has_graphdb:
             badge = "[yellow]no graph DB[/yellow]"
         else:
-            backend = "duckdb" if status.has_duckdb else "kuzu"
+            backend = "duckdb" if status.has_duckdb else "sqlite"
             badge = f"[green]ok[/green] [dim]({backend})[/dim]"
 
         if status.ok:

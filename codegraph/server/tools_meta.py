@@ -197,7 +197,7 @@ def register(mcp) -> None:
 
         ctx = _ctx(
             task=task,
-            kuzu_conn=_get_conn(),
+            graph_conn=_get_conn(),
             fts_conn=_get_fts(),
             max_nodes=max_nodes,
         )

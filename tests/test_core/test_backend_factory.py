@@ -44,13 +44,13 @@ class TestDetectBackendFile:
     def test_duckdb_wins_the_tie(self, tmp_path):
         root = _repo(tmp_path)
         (root / ".codegraph" / "graph.duckdb").write_bytes(b"")
-        (root / ".codegraph" / "graph.db").write_bytes(b"")
+        (root / ".codegraph" / "graph.sqlite").write_bytes(b"")
         assert core_db.detect_backend_file(root)[0] == "duckdb"
 
-    def test_kuzu_alone_detected(self, tmp_path):
+    def test_sqlite_alone_detected(self, tmp_path):
         root = _repo(tmp_path)
-        (root / ".codegraph" / "graph.db").write_bytes(b"")
-        assert core_db.detect_backend_file(root)[0] == "kuzu"
+        (root / ".codegraph" / "graph.sqlite").write_bytes(b"")
+        assert core_db.detect_backend_file(root)[0] == "sqlite"
 
 
 class TestOpenGraphdbFileRo:

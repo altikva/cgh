@@ -98,12 +98,19 @@ def _kept_stats(repo_root: Path, stats: dict) -> dict:
             "method",
             "extra_dirs",
             "imports",
+            "imports_partial",
         )
     }
-    if not kept.get("imports"):
-        previous = ((read_meta(repo_root) or {}).get("stats") or {}).get("imports")
-        if previous:
-            kept["imports"] = previous
+    # A run that short-circuits unchanged files measures only what it parsed.
+    # Letting that smaller number land would replace a full measurement with a
+    # partial one, and nothing downstream could tell.
+    previous_stats = (read_meta(repo_root) or {}).get("stats") or {}
+    previous = previous_stats.get("imports")
+    previous_partial = bool(previous_stats.get("imports_partial"))
+    supersedes = kept.get("imports_partial") and not previous_partial
+    if previous and (not kept.get("imports") or supersedes):
+        kept["imports"] = previous
+        kept["imports_partial"] = previous_partial
     return kept
 
 
@@ -211,6 +218,7 @@ def scan_status(repo_root: str | Path) -> dict:
 
     return {
         "imports": (meta.get("stats") or {}).get("imports") or {},
+        "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
         "indexed_sha": indexed_sha,
         "indexed_branch": indexed_branch,
         "indexed_at": indexed_at,

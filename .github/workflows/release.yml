@@ -91,7 +91,7 @@ jobs:
           uvx twine check dist/*
 
       - name: Smoke-test the built wheel
-        # Install the wheel into a clean venv (default extras, no kuzu) and run
+        # Install the wheel into a clean venv (default extras) and run
         # the CLI, so a broken entry point or missing data file fails here
         # rather than in a user's terminal.
         run: |

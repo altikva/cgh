@@ -79,6 +79,41 @@ def changed_files(repo_root: str | Path, base: str, head: str = "HEAD") -> list[
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def _kept_stats(repo_root: Path, stats: dict) -> dict:
+    """The subset of scan stats worth persisting.
+
+    Import coverage is carried over when a run recorded none: an incremental
+    scan that re-parses nothing would otherwise erase the measurement taken by
+    the last full scan, and `cgh status` would go back to saying nothing.
+    """
+    kept = {
+        k: v
+        for k, v in stats.items()
+        if k
+        in (
+            "indexed",
+            "skipped",
+            "errors",
+            "elapsed_s",
+            "method",
+            "extra_dirs",
+            "imports",
+            "imports_partial",
+        )
+    }
+    # A run that short-circuits unchanged files measures only what it parsed.
+    # Letting that smaller number land would replace a full measurement with a
+    # partial one, and nothing downstream could tell.
+    previous_stats = (read_meta(repo_root) or {}).get("stats") or {}
+    previous = previous_stats.get("imports")
+    previous_partial = bool(previous_stats.get("imports_partial"))
+    supersedes = kept.get("imports_partial") and not previous_partial
+    if previous and (not kept.get("imports") or supersedes):
+        kept["imports"] = previous
+        kept["imports_partial"] = previous_partial
+    return kept
+
+
 def write_meta(repo_root: str | Path, stats: dict) -> None:
     """Persist scan metadata after index_repo completes."""
     repo_root = Path(repo_root)
@@ -93,12 +128,7 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "root": str(repo_root.resolve()),
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
-        "stats": {
-            k: v
-            for k, v in stats.items()
-            if k
-            in ("indexed", "skipped", "errors", "elapsed_s", "method", "extra_dirs")
-        },
+        "stats": _kept_stats(repo_root, stats),
     }
     try:
         path = _meta_path(repo_root)
@@ -187,6 +217,8 @@ def scan_status(repo_root: str | Path) -> dict:
     )
 
     return {
+        "imports": (meta.get("stats") or {}).get("imports") or {},
+        "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
         "indexed_sha": indexed_sha,
         "indexed_branch": indexed_branch,
         "indexed_at": indexed_at,

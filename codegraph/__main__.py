@@ -19,6 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
+from codegraph.cli.commands_backend import cmd_backend, register_backend_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_findings import cmd_findings
@@ -125,6 +126,7 @@ def _print_help():
             [
                 ("stats", "Graph nodes, edges, call stats, storage"),
                 ("status", "Owner / workers state, scan freshness (--workers)"),
+                ("backend", "Show or switch the graph backend (sqlite/duckdb)"),
                 ("logs", "View MCP tool call history"),
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
@@ -189,17 +191,32 @@ def _print_help():
     console.print("  [bold]Help:[/bold]   cgh [cyan]<command>[/cyan] --help")
     console.print()
 
+    # A table, like the command sections above: the description column was
+    # aligned by hand with literal spaces, and four of the nine rows were off
+    # by one or two, which shows up in the landing screen and in the README
+    # capture of it. Rich measures the rendered width, so it cannot drift.
+    examples = Table(box=None, show_header=False, padding=(0, 2))
+    examples.add_column()
+    examples.add_column(style="dim")
+    for command, purpose in (
+        ("[cyan]cgh init[/cyan]", "Setup in any project"),
+        ('[cyan]cgh search[/cyan] [white]"Handler"[/white]', "Find symbols"),
+        ("[cyan]cgh callers[/cyan] [white]verify_token[/white]", "Call graph (tree)"),
+        ("[cyan]cgh outline[/cyan] [white]README.md[/white]", "Doc structure (tree)"),
+        ("[cyan]cgh stats[/cyan]", "Full statistics"),
+        (
+            "[cyan]cgh graph[/cyan] [white]calls[/white] -s verify",
+            "Call graph in browser",
+        ),
+        ("[cyan]cgh add-dir[/cyan] [white]add ../frontend[/white]", "Multi-repo graph"),
+        ("[cyan]cgh doctor[/cyan]", "Health check"),
+        ("[cyan]cgh serve[/cyan] --watch --reindex", "MCP server"),
+    ):
+        examples.add_row(command, purpose)
+
     console.print(
         Panel(
-            "[cyan]cgh init[/cyan]                       [dim]Setup in any project[/dim]\n"
-            '[cyan]cgh search[/cyan] [white]"Handler"[/white]           [dim]Find symbols[/dim]\n'
-            "[cyan]cgh callers[/cyan] [white]verify_token[/white]       [dim]Call graph (tree)[/dim]\n"
-            "[cyan]cgh outline[/cyan] [white]README.md[/white]          [dim]Doc structure (tree)[/dim]\n"
-            "[cyan]cgh stats[/cyan]                       [dim]Full statistics[/dim]\n"
-            "[cyan]cgh graph[/cyan] [white]calls[/white] -s verify    [dim]Call graph in browser[/dim]\n"
-            "[cyan]cgh add-dir[/cyan] [white]add ../frontend[/white]  [dim]Multi-repo graph[/dim]\n"
-            "[cyan]cgh doctor[/cyan]                      [dim]Health check[/dim]\n"
-            "[cyan]cgh serve[/cyan] --watch --reindex     [dim]MCP server[/dim]",
+            examples,
             title="[bold]Examples[/bold]",
             border_style="dim",
             padding=(1, 3),
@@ -292,6 +309,14 @@ def _register_setup_and_serve(sub) -> None:
             "Bypass the running owner and grab the Kuzu write lock directly. "
             "Fails with a clear error if another cgh process holds it. "
             "Default behavior routes through the owner via MCP when one is alive."
+        ),
+    )
+    p.add_argument(
+        "--no-claude-state",
+        action="store_true",
+        help=(
+            "Skip the memory and plan scans that otherwise run with every "
+            "index. They read ~/.claude, not the repository."
         ),
     )
 
@@ -537,6 +562,7 @@ def _register_analysis(sub) -> None:
 
     # --- graph + add-dir ---
     register_graph_parser(sub)
+    register_backend_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -729,6 +755,7 @@ def main() -> None:
         "migrate-to-duckdb": cmd_migrate_to_duckdb,
         "stats": cmd_stats,
         "status": cmd_status,
+        "backend": cmd_backend,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

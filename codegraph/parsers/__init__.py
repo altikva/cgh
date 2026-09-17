@@ -104,11 +104,19 @@ def register_by_name(filenames: list[str], ext_key: str):
 
 
 def is_supported(path: str | Path) -> bool:
-    """Check if a file can be parsed (by extension or by filename)."""
+    """Check if a file can actually be parsed.
+
+    A filename mapping alone is not enough. ``Dockerfile`` maps to
+    ``.dockerfile`` and ``Makefile`` to ``.sh``, and neither key has a parser
+    registered, so these files answered "supported" here and "no parser" at
+    ``get_parser_for_path``. The indexer then counted every one of them as an
+    error instead of a skip.
+    """
     p = Path(path)
     if p.suffix.lower() in _REGISTRY:
         return True
-    return p.name.lower() in _NAME_REGISTRY
+    ext_key = _NAME_REGISTRY.get(p.name.lower())
+    return bool(ext_key and ext_key in _REGISTRY)
 
 
 def get_parser_for_path(path: str | Path) -> BaseParser | None:

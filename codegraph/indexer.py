@@ -461,6 +461,46 @@ def _ingest_code(
     _resolve_inherits(conn, idx.classes)
 
 
+# Import resolution coverage for the current scan, keyed by language. Without
+# it, "this file imports nothing" and "no resolver for this language" are the
+# same empty answer, which is how 13 repos sat at zero import edges unnoticed.
+_IMPORT_COVERAGE: dict[str, dict[str, int]] = {}
+# Files the scan short-circuited as unchanged. They never reach a parser, so
+# their imports never reach the counter: a measurement taken while any file
+# was skipped describes part of the repo, not the repo. Counting them is what
+# lets a partial run be told apart from a full one, which `indexed` cannot do
+# (an unchanged file still counts as indexed).
+_IMPORT_COVERAGE_SKIPPED = 0
+
+
+def take_import_coverage() -> dict[str, dict[str, int]]:
+    """Return the coverage gathered since the last call, and clear it."""
+    snapshot = {lang: dict(counts) for lang, counts in _IMPORT_COVERAGE.items()}
+    _IMPORT_COVERAGE.clear()
+    return snapshot
+
+
+def take_import_coverage_partial() -> bool:
+    """Whether the coverage gathered since the last call missed any file."""
+    global _IMPORT_COVERAGE_SKIPPED
+    partial = _IMPORT_COVERAGE_SKIPPED > 0
+    _IMPORT_COVERAGE_SKIPPED = 0
+    return partial
+
+
+def _note_unparsed_file() -> None:
+    """Record that a file was skipped before reaching its parser."""
+    global _IMPORT_COVERAGE_SKIPPED
+    _IMPORT_COVERAGE_SKIPPED += 1
+
+
+def _count_import(lang: str, resolved: bool) -> None:
+    bucket = _IMPORT_COVERAGE.setdefault(lang or "unknown", {"seen": 0, "resolved": 0})
+    bucket["seen"] += 1
+    if resolved:
+        bucket["resolved"] += 1
+
+
 def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
     """
     Wire IMPORTS edges from idx.imports into Kuzu.
@@ -478,6 +518,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
     seen_targets: set[str] = set()
     for imp in idx.imports:
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
+        _count_import(idx.lang, target is not None)
         if target is None:
             continue
         target_str = str(target)
@@ -597,6 +638,7 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
                 "end_line": sec.end_line,
                 "body_preview": sec.body_preview,
                 "anchor": sec.anchor,
+                "kind": getattr(sec, "kind", "doc"),
             },
         )
         conn.ensure_edge("DEFINES_SECTION", sec.file_path, sec.id)
@@ -722,6 +764,7 @@ def index_file(
         try:
             stored_mtime = conn.query_node_field("File", "path", str(path), "mtime")
             if stored_mtime is not None and abs(float(stored_mtime) - mtime) < 0.01:
+                _note_unparsed_file()
                 return True  # unchanged
         except Exception:
             pass
@@ -1299,6 +1342,8 @@ def _index_repo(
         )
 
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
+    take_import_coverage()  # drop anything a watcher left behind
+    take_import_coverage_partial()
     t0 = time.time()
 
     rotate_if_needed(repo_root)
@@ -1365,6 +1410,8 @@ def _index_repo(
     extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
+    stats["imports"] = take_import_coverage()
+    stats["imports_partial"] = take_import_coverage_partial()
     stats["method"] = actual_method
     stats["method_requested"] = method
     stats["extra_dirs"] = extra_dirs

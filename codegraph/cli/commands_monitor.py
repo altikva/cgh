@@ -424,6 +424,72 @@ def _status_via_fts(root: str) -> dict:
     return src
 
 
+def _imports_coverage_line(imports: dict, partial: bool = False) -> str:
+    """One line per scan: how many imports were parsed, how many resolved.
+
+    An empty import graph used to be indistinguishable from a language with no
+    resolver behind it. Now the language says which one it is.
+    """
+    from codegraph.imports.resolver import RESOLVABLE_LANGS
+
+    if not imports:
+        return "[dim]not recorded, re-run cgh index[/dim]"
+    parts: list[str] = []
+    for lang in sorted(imports):
+        counts = imports[lang] or {}
+        seen = counts.get("seen", 0)
+        resolved = counts.get("resolved", 0)
+        if lang not in RESOLVABLE_LANGS:
+            parts.append(f"[dim]{lang} {seen:,} seen, no resolver[/dim]")
+        elif seen and not resolved:
+            parts.append(f"[yellow]{lang} 0/{seen:,}[/yellow]")
+        else:
+            parts.append(f"{lang} {resolved:,}/{seen:,}")
+    if partial:
+        parts.append("[yellow](partial scan)[/yellow]")
+    return "  ".join(parts)
+
+
+def _scan_line(scan: dict, ss: dict) -> str:
+    """The Scan row: what was indexed, and whether it still matches the tree.
+
+    A repository with no git HEAD still gets scanned: it may not be a git
+    repository at all, which is the normal shape of a federation parent.
+    Telling its owner "no scan recorded, run cgh index" sends them to re-run
+    something that changes nothing. The recorded timestamp is what tells an
+    absent scan apart from one that has no commit to compare against.
+    """
+    when = _format_indexed_at(scan.get("indexed_at"))
+    when_suffix = f"  [dim]· {when}[/dim]" if when else ""
+    if ss.get("fresh"):
+        return (
+            f"[green]fresh[/green]  indexed [bold]{scan['indexed_sha']}[/bold] "
+            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]{when_suffix}"
+        )
+    if scan.get("indexed_sha"):
+        drift = []
+        if ss.get("behind_by"):
+            drift.append(
+                f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind"
+            )
+        if ss.get("dirty"):
+            drift.append("working tree dirty")
+        return (
+            f"[yellow]stale[/yellow]  indexed [bold]{scan['indexed_sha']}[/bold] → "
+            f"HEAD [bold]{scan['current_sha']}[/bold]"
+            + (f"  ({', '.join(drift)})" if drift else "")
+            + when_suffix
+        )
+    if scan.get("indexed_at"):
+        why = (
+            "not a git repository"
+            if not scan.get("current_sha")
+            else "no recorded HEAD"
+        )
+        return f"[green]indexed[/green]  {why}{when_suffix}"
+    return "[dim]no scan recorded, run cgh index[/dim]"
+
+
 def _format_indexed_at(iso: str | None) -> str:
     """Render a scan_meta ``indexed_at`` ISO timestamp as a local wall-clock
     time plus a relative age (``2026-08-15 14:32 · 3h ago``). Returns "" when
@@ -595,6 +661,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
             "indexed_branch": ss.get("indexed_branch"),
             "indexed_at": ss.get("indexed_at"),
+            "imports": ss.get("imports") or {},
             "current_sha": (ss.get("current_sha") or "")[:8] or None,
             "dirty": ss.get("dirty"),
             "behind_by": ss.get("behind_by"),
@@ -622,29 +689,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         owner_line = "[dim]not running[/dim]"
 
     # Freshness
-    when = _format_indexed_at(payload["scan"]["indexed_at"])
-    when_suffix = f"  [dim]· {when}[/dim]" if when else ""
-    if ss.get("fresh"):
-        scan_line = (
-            f"[green]fresh[/green]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] "
-            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]{when_suffix}"
-        )
-    elif payload["scan"]["indexed_sha"]:
-        drift = []
-        if ss.get("behind_by"):
-            drift.append(
-                f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind"
-            )
-        if ss.get("dirty"):
-            drift.append("working tree dirty")
-        scan_line = (
-            f"[yellow]stale[/yellow]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] → "
-            f"HEAD [bold]{payload['scan']['current_sha']}[/bold]"
-            + (f"  ({', '.join(drift)})" if drift else "")
-            + when_suffix
-        )
-    else:
-        scan_line = "[dim]no scan recorded, run cgh index[/dim]"
+    scan_line = _scan_line(payload["scan"], ss)
 
     table = Table(
         box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan"
@@ -655,6 +700,12 @@ def cmd_status(args: argparse.Namespace) -> None:
     table.add_row("Backend", _backend_status_line(root))
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
+    table.add_row(
+        "Imports",
+        _imports_coverage_line(
+            ss.get("imports") or {}, bool(ss.get("imports_partial"))
+        ),
+    )
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
     if counts_source == "owner":
         files_cell = f"{file_count:,}{fts_suffix}  [dim](via owner)[/dim]"
@@ -783,7 +834,7 @@ def _backend_status_line(root: str) -> str:
 def _format_subrepos_cell(subrepos: list[dict]) -> str:
     """One-liner for the Subrepos row in `cgh status`.
 
-    Compact: `2 federated · ondonne-frontend [up :54052], ondonne-infra [down]`.
+    Compact: `2 federated · ondonne-frontend [up :54052], ondonne-infra [idle]`.
     Empty: dim "none".
     """
     if not subrepos:
@@ -796,7 +847,10 @@ def _format_subrepos_cell(subrepos: list[dict]) -> str:
         elif s["owner_alive"]:
             badge = f"[green]up :{s['owner_port']}[/green]"
         else:
-            badge = "[dim]down[/dim]"
+            # "idle", not "down": a child with no owner attached is the normal
+            # resting state, and federated reads open its database read-only
+            # without one. "down" read as a fault nobody needed to fix.
+            badge = "[dim]idle[/dim]"
         parts.append(f"{name} {badge}")
     return f"{len(subrepos)} federated · " + ", ".join(parts)
 

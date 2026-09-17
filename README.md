@@ -2,6 +2,14 @@
   <img src="https://raw.githubusercontent.com/altikva/cgh/main/assets/img/cgh-cli.svg" alt="The cgh CLI landing screen: banner, command list, and examples" width="820">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/cgh/"><img src="https://img.shields.io/pypi/v/cgh?color=3775A9&label=PyPI" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/cgh/"><img src="https://img.shields.io/pypi/pyversions/cgh" alt="Python versions"></a>
+  <a href="https://www.npmjs.com/package/@altikva/cgh"><img src="https://img.shields.io/npm/v/%40altikva%2Fcgh?color=CB3837&label=npx" alt="npx"></a>
+  <a href="https://github.com/altikva/cgh/actions/workflows/ci.yml"><img src="https://github.com/altikva/cgh/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%26%20CC%20BY--NC--SA-3DA639" alt="License: MIT and CC BY-NC-SA"></a>
+</p>
+
 **Local code graph, shared memory and guardrails for AI coding assistants.**
 
 Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
@@ -109,8 +117,7 @@ AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
 MCP server (codegraph)          <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
-DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based (default)
-                                            -- or SQLite graph.sqlite via CGH_DB=sqlite
+DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based
 SQLite FTS5 (.codegraph/fts.db)       <-- BM25 full-text search
     |  indexed from
     v

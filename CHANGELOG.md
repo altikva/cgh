@@ -32,6 +32,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   such file. They count as skipped, like any other unparsed file.
 
 ### Added
+- **`cgh graph` opens an interactive view of the whole graph**: a force-directed
+  canvas instead of a 40-node Mermaid diagram. Hovering a node lights it and its
+  neighbours, clicking opens a detail panel with its imports, callers and the
+  matching `cgh` command, and a double-click narrows the canvas to its
+  neighbourhood. Colour groups (folder, language, role), filters, label density
+  and the forces themselves are adjustable, with a search box and a table view.
+  The page is self-contained: no CDN, no network access, works from `file://`.
+  The former diagrams stay available as `cgh graph overview|imports|calls|classes|docs|layers`.
+  The view opens on whichever side of the graph carries edges: most indexed
+  repos resolve no file imports, so those open on `Symbols · calls` instead of
+  a cloud of unconnected files. Measured in Chrome on a synthetic repo: about
+  33 frames per second while laying out 3,000 files, and 9 while laying out
+  8,500, which then pans at about 30 once settled.
+- **The graph view carries Terraform resources and documentation sections**,
+  not just imports and calls. An infrastructure repo shows each resource
+  hanging off the file that declares it, and any repo shows its heading trees,
+  including the links between documents. The payload ships one entry per view
+  and the page only offers the views a repo actually has, so a Terraform stack
+  no longer opens on an empty file graph.
 - **Import coverage is recorded and shown**: each scan counts imports parsed
   against imports resolved, per language, keeps it in `scan_meta` and prints it
   in `cgh status`. An empty import graph is no longer indistinguishable from a

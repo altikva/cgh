@@ -134,6 +134,8 @@ include = ["codegraph", "codegraph.*", "cgh"]
 [tool.setuptools.package-data]
 codegraph = [
     "py.typed",
+    # The interactive graph view's JS, inlined into the generated HTML.
+    "viz/*.js",
     "skills/*/SKILL.md",
     "skills/*/*.md",
     # Bundled examples, shipped in the wheel so `cgh examples install` works

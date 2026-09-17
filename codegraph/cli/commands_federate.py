@@ -243,7 +243,7 @@ def _render_status_table(
             if owner.alive:
                 owner_cell = f"[green]up[/green] [dim]:{owner.port}[/dim]"
             else:
-                owner_cell = "[dim]down[/dim]"
+                owner_cell = "[dim]idle[/dim]"
         else:
             owner_cell = "[dim], [/dim]"
 

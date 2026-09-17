@@ -834,7 +834,7 @@ def _backend_status_line(root: str) -> str:
 def _format_subrepos_cell(subrepos: list[dict]) -> str:
     """One-liner for the Subrepos row in `cgh status`.
 
-    Compact: `2 federated · ondonne-frontend [up :54052], ondonne-infra [down]`.
+    Compact: `2 federated · ondonne-frontend [up :54052], ondonne-infra [idle]`.
     Empty: dim "none".
     """
     if not subrepos:
@@ -847,7 +847,10 @@ def _format_subrepos_cell(subrepos: list[dict]) -> str:
         elif s["owner_alive"]:
             badge = f"[green]up :{s['owner_port']}[/green]"
         else:
-            badge = "[dim]down[/dim]"
+            # "idle", not "down": a child with no owner attached is the normal
+            # resting state, and federated reads open its database read-only
+            # without one. "down" read as a fault nobody needed to fix.
+            badge = "[dim]idle[/dim]"
         parts.append(f"{name} {badge}")
     return f"{len(subrepos)} federated · " + ", ".join(parts)
 

@@ -108,20 +108,36 @@ npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can
                                   # bug reports), gated and inert until configured
 ```
 
-Prefer a direct download? Grab the asset for your platform from the
-[latest release](https://github.com/altikva/cgh/releases/latest) (each has a
-`.sha256` next to it), make it executable, and run it:
+Prefer a direct download? Each release ships one asset per platform (with a
+`.sha256` next to it). Pick yours from the
+[latest release](https://github.com/altikva/cgh/releases/latest):
+
+| Platform | Sealed asset | Egress asset |
+|---|---|---|
+| macOS (Apple Silicon) | [`cgh-macos-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-macos-arm64) | [`cgh-egress-macos-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-macos-arm64) |
+| Linux x64 | [`cgh-linux-x64`](https://github.com/altikva/cgh/releases/latest/download/cgh-linux-x64) | [`cgh-egress-linux-x64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-linux-x64) |
+| Linux arm64 | [`cgh-linux-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-linux-arm64) | [`cgh-egress-linux-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-linux-arm64) |
+| Windows x64 | [`cgh-windows-x64.exe`](https://github.com/altikva/cgh/releases/latest/download/cgh-windows-x64.exe) | [`cgh-egress-windows-x64.exe`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-windows-x64.exe) |
+
+macOS and Linux (download, mark executable, run):
 
 ```bash
-curl -fsSL -o cgh https://github.com/altikva/cgh/releases/latest/download/cgh-macos-arm64
+# swap the filename for your platform from the table above
+curl -fsSL -o cgh https://github.com/altikva/cgh/releases/latest/download/cgh-linux-x64
 chmod +x cgh && ./cgh --version
 ```
 
-Prebuilt binaries cover macOS (Apple Silicon), Linux (x64, arm64) and Windows
-(x64). The binary uses the SQLite backend; if you want DuckDB's analytical
-speed or the heavier `docs` and `vision` plugins, install with Python instead
+Windows (PowerShell, no chmod needed):
+
+```powershell
+curl.exe -fsSL -o cgh.exe https://github.com/altikva/cgh/releases/latest/download/cgh-windows-x64.exe
+.\cgh.exe --version
+```
+
+The binary uses the SQLite backend; if you want DuckDB's analytical speed or
+the heavier `docs` and `vision` plugins, install with Python instead
 (`uvx cgh`, or `pip install "cgh[full]"`). On an Intel Mac or any platform
-without a prebuilt binary, `npx` points you to `uvx cgh`.
+without a prebuilt binary, `npx @altikva/cgh` points you to `uvx cgh`.
 
 ### If `cgh` is not found after install
 

@@ -90,6 +90,7 @@ NODE_TABLES = [
         end_line        INT64,
         body_preview    STRING,
         anchor          STRING,
+        kind            STRING,
         PRIMARY KEY (id)
     )""",
 ]
@@ -143,6 +144,16 @@ def _migrate_file_git_blob_sha(conn: kuzu.Connection) -> None:
             pass
 
 
+def _migrate_mdsection_kind(conn: kuzu.Connection) -> None:
+    """Add MdSection.kind to graphs built before config sections were told
+    apart from documentation. Already-present column raises, which is the
+    signal that nothing is left to do."""
+    try:
+        conn.execute("ALTER TABLE MdSection ADD kind STRING")
+    except Exception:
+        pass
+
+
 def _migrate_file_role_layer_doc(conn: kuzu.Connection) -> None:
     """Add File.role, File.layer, File.module_doc columns (migration)."""
     for column in ("role", "layer", "module_doc"):
@@ -165,3 +176,4 @@ def init_schema(conn: kuzu.Connection) -> None:
         conn.execute(ddl)
     _migrate_file_git_blob_sha(conn)
     _migrate_file_role_layer_doc(conn)
+    _migrate_mdsection_kind(conn)

@@ -424,6 +424,30 @@ def _status_via_fts(root: str) -> dict:
     return src
 
 
+def _imports_coverage_line(imports: dict) -> str:
+    """One line per scan: how many imports were parsed, how many resolved.
+
+    An empty import graph used to be indistinguishable from a language with no
+    resolver behind it. Now the language says which one it is.
+    """
+    from codegraph.imports.resolver import RESOLVABLE_LANGS
+
+    if not imports:
+        return "[dim]not recorded, re-run cgh index[/dim]"
+    parts: list[str] = []
+    for lang in sorted(imports):
+        counts = imports[lang] or {}
+        seen = counts.get("seen", 0)
+        resolved = counts.get("resolved", 0)
+        if lang not in RESOLVABLE_LANGS:
+            parts.append(f"[dim]{lang} {seen:,} seen, no resolver[/dim]")
+        elif seen and not resolved:
+            parts.append(f"[yellow]{lang} 0/{seen:,}[/yellow]")
+        else:
+            parts.append(f"{lang} {resolved:,}/{seen:,}")
+    return "  ".join(parts)
+
+
 def _format_indexed_at(iso: str | None) -> str:
     """Render a scan_meta ``indexed_at`` ISO timestamp as a local wall-clock
     time plus a relative age (``2026-08-15 14:32 · 3h ago``). Returns "" when
@@ -595,6 +619,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
             "indexed_branch": ss.get("indexed_branch"),
             "indexed_at": ss.get("indexed_at"),
+            "imports": ss.get("imports") or {},
             "current_sha": (ss.get("current_sha") or "")[:8] or None,
             "dirty": ss.get("dirty"),
             "behind_by": ss.get("behind_by"),
@@ -655,6 +680,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     table.add_row("Backend", _backend_status_line(root))
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
+    table.add_row("Imports", _imports_coverage_line(ss.get("imports") or {}))
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
     if counts_source == "owner":
         files_cell = f"{file_count:,}{fts_suffix}  [dim](via owner)[/dim]"

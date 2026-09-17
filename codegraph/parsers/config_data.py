@@ -66,6 +66,7 @@ def _add_section(
             end_line=line,
             body_preview=body,
             anchor=title,
+            kind="config",
         )
     )
 

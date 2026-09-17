@@ -424,7 +424,7 @@ def _status_via_fts(root: str) -> dict:
     return src
 
 
-def _imports_coverage_line(imports: dict) -> str:
+def _imports_coverage_line(imports: dict, partial: bool = False) -> str:
     """One line per scan: how many imports were parsed, how many resolved.
 
     An empty import graph used to be indistinguishable from a language with no
@@ -445,6 +445,8 @@ def _imports_coverage_line(imports: dict) -> str:
             parts.append(f"[yellow]{lang} 0/{seen:,}[/yellow]")
         else:
             parts.append(f"{lang} {resolved:,}/{seen:,}")
+    if partial:
+        parts.append("[yellow](partial scan)[/yellow]")
     return "  ".join(parts)
 
 
@@ -680,7 +682,12 @@ def cmd_status(args: argparse.Namespace) -> None:
     table.add_row("Backend", _backend_status_line(root))
     table.add_row("Owner", owner_line)
     table.add_row("Scan", scan_line)
-    table.add_row("Imports", _imports_coverage_line(ss.get("imports") or {}))
+    table.add_row(
+        "Imports",
+        _imports_coverage_line(
+            ss.get("imports") or {}, bool(ss.get("imports_partial"))
+        ),
+    )
     fts_suffix = f"  [dim]· FTS {fts_symbols:,} symbols[/dim]" if fts_symbols else ""
     if counts_source == "owner":
         files_cell = f"{file_count:,}{fts_suffix}  [dim](via owner)[/dim]"

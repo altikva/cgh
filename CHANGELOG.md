@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **A partial scan no longer overwrites the import coverage of a full one**: a
+  file whose content has not changed is short-circuited before it reaches a
+  parser, yet still counts as indexed, so a re-scan could report `31/190` where
+  the repo really holds `217` imports and `cgh status` would show that smaller
+  number as the truth. A run now records whether it skipped any file, keeps the
+  previous complete measurement instead of replacing it with a partial one, and
+  says `(partial scan)` when only a partial one exists.
 - **Python imports resolve outside a flat layout**: an absolute import was only
   ever tried against the repo root, so a `src/` layout or a package nested one
   directory down resolved nothing at all, and those repos showed an import

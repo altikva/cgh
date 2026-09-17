@@ -4,8 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: MCP tools codewrite_pick(target, reference?) and
-#              code_write(spec, target, ...): pick the reference to mirror, and
+# Description: MCP tools codegen_pick(target, reference?) and
+#              codegen_write(spec, target, ...): pick the reference to mirror, and
 #              generate the file from a spec behind the egress gate. Both run
 #              inside the owner, so the graph read reuses the owner's
 #              connection.
@@ -20,7 +20,7 @@ def make_mcp_registrar(config: dict):
         from codegraph.plugin_api import server_root
 
         @mcp.tool()
-        def codewrite_pick(target: str, reference: str = "") -> str:
+        def codegen_pick(target: str, reference: str = "") -> str:
             """
             Pick the existing file to mirror when generating `target`
             (a path you intend to write, e.g. tests/test_user_service.py).
@@ -43,7 +43,7 @@ def make_mcp_registrar(config: dict):
             return json.dumps(result, indent=2)
 
         @mcp.tool()
-        def code_write(
+        def codegen_write(
             spec: str, target: str, reference: str = "", force: bool = False
         ) -> str:
             """
@@ -71,9 +71,11 @@ def make_mcp_registrar(config: dict):
             backend = resolve_backend(config)
             if backend is None:
                 return json.dumps(
-                    {"error": "no backend configured ([plugin.codewrite] command)"}
+                    {"error": "no backend configured ([plugin.codegen] command)"}
                 )
             try:
+                # The verify check comes from config, never the caller: an
+                # agent-supplied shell command would be an injection surface.
                 result = run_generation(
                     root,
                     spec,
@@ -82,6 +84,8 @@ def make_mcp_registrar(config: dict):
                     config=config,
                     backend=backend,
                     force=force,
+                    verify=config.get("verify") or None,
+                    max_attempts=max(1, int(config.get("max_attempts", 1))),
                 )
             except (CodeWriteError, GenerationError) as exc:
                 return json.dumps({"error": str(exc)})

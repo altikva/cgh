@@ -5,9 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Backend-neutral graph database protocols. The concrete
-# implementation today is Kuzu (KuzuGraphDB in core/db_kuzu.py); a
-# DuckDB backend is being added in follow-up PRs to drop the Kuzu
-# dependency entirely.
+# implementations are DuckDB (DuckDBGraphDB in core/db_duckdb.py) and
+# SQLite (SQLiteGraphDB in core/db_sqlite.py).
 
 from __future__ import annotations
 
@@ -41,17 +40,14 @@ class GraphDB(Protocol):
     and CLI commands open read-only connections via the same interface.
 
     Concrete implementations:
-      - KuzuGraphDB     (current, see core/db_kuzu.py)
-      - DuckDBGraphDB   (planned, see core/db_duckdb.py)
+      - DuckDBGraphDB   (default, see core/db_duckdb.py)
+      - SQLiteGraphDB   (standalone binary, see core/db_sqlite.py)
     """
 
     def execute(self, query: str, params: dict | None = None) -> QueryResult:
-        """Execute a backend-native query and return a row-iterable result.
-
-        ``query`` is Cypher for Kuzu, SQL for DuckDB. Most write paths
-        should use the higher-level helpers below; ``execute`` stays the
-        escape hatch for read queries and Kuzu-specific work until the
-        full query layer is ported.
+        """Execute a backend-native SQL query and return a row-iterable
+        result. Most write paths should use the higher-level helpers
+        below; ``execute`` stays the escape hatch for read queries.
         """
 
     def close(self) -> None:
@@ -68,7 +64,6 @@ class GraphDB(Protocol):
     ) -> None:
         """Insert or update a node identified by (label, key_field=key_value).
 
-        On Kuzu this becomes ``MERGE (n:Label {key_field: $k}) SET <props>``.
         On DuckDB it's ``INSERT INTO label_table (...) VALUES (...) ON
         CONFLICT (key_field) DO UPDATE SET ...``.
         """
@@ -90,9 +85,9 @@ class GraphDB(Protocol):
     def purge_file_data(self, file_path: str) -> None:
         """Delete every node + edge associated with ``file_path``.
 
-        Equivalent to Kuzu's DETACH DELETE across all node labels keyed
-        on file_path, plus the File-keyed IMPORTS edges. Used by the
-        indexer before re-indexing a changed file.
+        Deletes across all node labels keyed on file_path, plus the
+        File-keyed IMPORTS edges. Used by the indexer before re-indexing
+        a changed file.
         """
 
     def find_node_keys(

@@ -7,7 +7,7 @@
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Orchestrates parsing + Kuzu ingestion.
+# Description: Orchestrates parsing + graph ingestion.
 #              Supports full index (scan all files) and incremental update
 #              (re-index a single changed file, purge stale nodes first).
 
@@ -141,7 +141,7 @@ def _is_cghignored(file_path: Path, repo_root: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Kuzu upsert helpers
+# Graph upsert helpers
 # ---------------------------------------------------------------------------
 
 
@@ -503,7 +503,7 @@ def _count_import(lang: str, resolved: bool) -> None:
 
 def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
     """
-    Wire IMPORTS edges from idx.imports into Kuzu.
+    Wire IMPORTS edges from idx.imports into the graph.
 
     Resolves each ImportRef.source_module to a target file via
     import_resolver, then MERGEs a File → File IMPORTS edge. Unresolved
@@ -614,7 +614,7 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
         if ep.handler_name:
             # Link to the handler Function in this same file. Use the
             # backend's find_node_keys + ensure_edge so name resolution
-            # works on both Kuzu and DuckDB.
+            # works on both DuckDB and SQLite.
             for fn_id in conn.find_node_keys("Function", "name", ep.handler_name):
                 # find_node_keys returns *all* matches; filter to this file
                 # by checking the id prefix (id = file_path + '::' + name).

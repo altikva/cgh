@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Single-writer lock for `cgh serve`. Prevents Kuzu
+# Description: Single-writer lock for `cgh serve`. Prevents graph DB
 #              write-lock contention when multiple Claude Code sessions
 #              or reloads try to start competing MCP servers for the
 #              same repo.

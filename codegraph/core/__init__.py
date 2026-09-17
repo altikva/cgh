@@ -15,10 +15,9 @@ from codegraph.core.db import (
 
 from .utils import lang_color, normalize_identifier, rows, safe_id, short_path
 
-# init_schema lives in codegraph.core.schema (Kuzu) or codegraph.core.schema_duckdb
-# (DuckDB). Import the right one directly, re-exporting from here would force
-# `import codegraph.core` to load the Kuzu schema and trip an ImportError for
-# users who installed cgh without the `kuzu` extra.
+# init_schema lives in codegraph.core.schema_duckdb; the SQLite backend
+# builds its own schema in codegraph.core.db_sqlite. Import the right one
+# directly rather than re-exporting from here.
 
 __all__ = [
     "get_connection",

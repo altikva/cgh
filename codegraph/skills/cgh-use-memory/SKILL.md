@@ -25,7 +25,7 @@ or before ignoring context you already have access to.
 Call `mcp__codegraph__knowledge_record` when you notice:
 - A **pattern** the codebase follows (*"all handlers return HTTPException on 404"*)
 - A **decision** with rationale (*"chose Stripe over PayPal because SEPA coverage"*)
-- A **gotcha** worth saving (*"Kuzu holds the lock until Python GC runs"*)
+- A **gotcha** worth saving (*"DuckDB rejects a RO open while a RW conn is live"*)
 - A **style** preference (*"user prefers French in commit bodies"*)
 - A **glossary** term (*"RFM = Recency, Frequency, Monetary"*)
 

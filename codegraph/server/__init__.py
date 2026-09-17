@@ -244,7 +244,7 @@ def main() -> None:
     spawns the owner; subsequent callers reuse it.
 
     This is what Claude Code launches per session. The owner holds the
-    Kuzu write lock; proxies are stateless bridges with no DB access.
+    graph DB write lock; proxies are stateless bridges with no DB access.
     """
     global _root
 
@@ -514,7 +514,7 @@ def owner_main(
             _cleanup()
         except Exception:
             pass
-        # Release Kuzu lock so a subsequent owner can start immediately.
+        # Release the graph DB lock so a subsequent owner can start immediately.
         try:
             from codegraph.core.db import reset_connection
 

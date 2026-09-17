@@ -5,10 +5,9 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The SQLite graph backend indexes and queries correctly, and is
-#              graph-equivalent to DuckDB on the same source (the parity gate
-#              that settled Kuzu->DuckDB, now DuckDB<->SQLite). CGH_DB=sqlite
-#              selects it; graph.sqlite is written; counts and a call traversal
-#              match DuckDB exactly.
+#              graph-equivalent to DuckDB on the same source (the DuckDB<->SQLite
+#              parity gate). CGH_DB=sqlite selects it; graph.sqlite is written;
+#              counts and a call traversal match DuckDB exactly.
 
 from __future__ import annotations
 

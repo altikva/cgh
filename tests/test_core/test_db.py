@@ -54,6 +54,5 @@ class TestResetConnection:
         reset_connection()
         conn2 = get_connection(tmp_path)
         # After reset, should get a new connection object
-        # (may or may not be the same object depending on Kuzu internals)
         assert conn2 is not None
         reset_connection()

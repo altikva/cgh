@@ -70,7 +70,7 @@ LOGO = r"""[bold cyan]
 
 def _get_conn(root, readonly=False):
     """
-    Get a Kuzu connection. If readonly=True and DB is locked,
+    Get a graph DB connection. If readonly=True and DB is locked,
     returns None instead of crashing, caller must handle.
     """
     if readonly:

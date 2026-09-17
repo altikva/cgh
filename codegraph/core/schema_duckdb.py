@@ -4,21 +4,20 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: DuckDB schema for the code graph. Mirrors core/schema.py
-# table-for-table so MCP tools can query the same graph in either backend.
+# Description: DuckDB schema for the code graph. Defines the node and
+# edge tables so MCP tools can query the graph.
 #
-# Naming convention vs Kuzu:
-#   - Node tables keep their Kuzu names lowercased: file, function, class, ...
+# Naming convention:
+#   - Node tables are lowercased label names: file, function, class, ...
 #   - Edge tables become `edge_<rel>` with from_<pk> / to_<pk> columns so a
-#     JOIN reads almost like Cypher's MATCH a)-[:CALLS]->(b).
+#     JOIN reads almost like a graph MATCH a)-[:CALLS]->(b).
 #
 # Edge tables don't declare FOREIGN KEY constraints. DuckDB rejects
 # `ON DELETE CASCADE`, and emulating it via a plain FK would force the
 # indexer to delete edges before nodes anyway. Since the indexer's
 # _purge_file() already issues DELETE statements for every node type
 # touching a file, we match that pattern: edges are plain TEXT columns
-# that the indexer cleans up explicitly. Same end state as Kuzu's
-# DETACH DELETE without the constraint dance.
+# that the indexer cleans up explicitly.
 
 from __future__ import annotations
 
@@ -94,8 +93,8 @@ NODE_TABLES = [
 # Edge tables
 # ---------------------------------------------------------------------------
 # Each row is one (from, to) tuple plus any edge properties. Composite
-# primary key prevents duplicate edges, mirroring Kuzu's MERGE semantics
-# when the indexer issues "MERGE (a)-[:X]->(b)".
+# primary key prevents duplicate edges, so re-ingesting the same edge is
+# idempotent.
 EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_imports (
         from_path  TEXT,

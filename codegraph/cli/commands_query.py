@@ -7,7 +7,7 @@
 # Description: CLI commands: search, lookup, callers, callees, outline.
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
-#              Kuzu alike, and federate across subrepos with a scope tag.
+#              SQLite alike, and federate across subrepos with a scope tag.
 
 from __future__ import annotations
 

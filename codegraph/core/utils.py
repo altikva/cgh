@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 def rows(result) -> list[dict]:
-    """Convert a Kuzu query result to a list of dicts.
+    """Convert a graph query result to a list of dicts.
 
     Stays resilient (returns whatever rows were read) but no longer fails
     silently: an unexpected error here used to masquerade as an empty result

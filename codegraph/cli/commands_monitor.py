@@ -450,6 +450,46 @@ def _imports_coverage_line(imports: dict, partial: bool = False) -> str:
     return "  ".join(parts)
 
 
+def _scan_line(scan: dict, ss: dict) -> str:
+    """The Scan row: what was indexed, and whether it still matches the tree.
+
+    A repository with no git HEAD still gets scanned: it may not be a git
+    repository at all, which is the normal shape of a federation parent.
+    Telling its owner "no scan recorded, run cgh index" sends them to re-run
+    something that changes nothing. The recorded timestamp is what tells an
+    absent scan apart from one that has no commit to compare against.
+    """
+    when = _format_indexed_at(scan.get("indexed_at"))
+    when_suffix = f"  [dim]· {when}[/dim]" if when else ""
+    if ss.get("fresh"):
+        return (
+            f"[green]fresh[/green]  indexed [bold]{scan['indexed_sha']}[/bold] "
+            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]{when_suffix}"
+        )
+    if scan.get("indexed_sha"):
+        drift = []
+        if ss.get("behind_by"):
+            drift.append(
+                f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind"
+            )
+        if ss.get("dirty"):
+            drift.append("working tree dirty")
+        return (
+            f"[yellow]stale[/yellow]  indexed [bold]{scan['indexed_sha']}[/bold] → "
+            f"HEAD [bold]{scan['current_sha']}[/bold]"
+            + (f"  ({', '.join(drift)})" if drift else "")
+            + when_suffix
+        )
+    if scan.get("indexed_at"):
+        why = (
+            "not a git repository"
+            if not scan.get("current_sha")
+            else "no recorded HEAD"
+        )
+        return f"[green]indexed[/green]  {why}{when_suffix}"
+    return "[dim]no scan recorded, run cgh index[/dim]"
+
+
 def _format_indexed_at(iso: str | None) -> str:
     """Render a scan_meta ``indexed_at`` ISO timestamp as a local wall-clock
     time plus a relative age (``2026-08-15 14:32 · 3h ago``). Returns "" when
@@ -649,29 +689,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         owner_line = "[dim]not running[/dim]"
 
     # Freshness
-    when = _format_indexed_at(payload["scan"]["indexed_at"])
-    when_suffix = f"  [dim]· {when}[/dim]" if when else ""
-    if ss.get("fresh"):
-        scan_line = (
-            f"[green]fresh[/green]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] "
-            f"on [bold]{ss.get('indexed_branch') or '?'}[/bold]{when_suffix}"
-        )
-    elif payload["scan"]["indexed_sha"]:
-        drift = []
-        if ss.get("behind_by"):
-            drift.append(
-                f"{ss['behind_by']} commit{'s' if ss['behind_by'] != 1 else ''} behind"
-            )
-        if ss.get("dirty"):
-            drift.append("working tree dirty")
-        scan_line = (
-            f"[yellow]stale[/yellow]  indexed [bold]{payload['scan']['indexed_sha']}[/bold] → "
-            f"HEAD [bold]{payload['scan']['current_sha']}[/bold]"
-            + (f"  ({', '.join(drift)})" if drift else "")
-            + when_suffix
-        )
-    else:
-        scan_line = "[dim]no scan recorded, run cgh index[/dim]"
+    scan_line = _scan_line(payload["scan"], ss)
 
     table = Table(
         box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan"

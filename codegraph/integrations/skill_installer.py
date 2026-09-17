@@ -295,12 +295,15 @@ def install_gemini(project_root: Path) -> list[str]:
 
 
 def install_bob(project_root: Path) -> list[str]:
-    """Copy skills verbatim to <project>/.bob/skills/<name>/. Bob speaks
-    the same Agent Skills standard as Claude Code (a SKILL.md with YAML
-    front matter per folder, activated on demand), so the bundled skills
-    install unchanged, supporting files included."""
+    """Copy skills verbatim to <project>/.claude/skills/<name>/.
+
+    Bob speaks the same Agent Skills standard as Claude Code (a SKILL.md
+    with YAML front matter per folder, activated on demand) and scans
+    .claude/skills, .github/skills, .agents/skills and .copilot/skills.
+    It does not scan .bob/skills, which this function used to write, so
+    those files were never loaded."""
     project_root = Path(project_root)
-    dest_root = project_root / ".bob" / "skills"
+    dest_root = project_root / ".claude" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
 
     installed: list[str] = []
@@ -475,7 +478,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
       codex   → ./AGENTS.md
       gemini  → ./GEMINI.md
       cursor  → ./.cursor/rules/codegraph-usage.mdc
-      bob     → ./.bob/rules/00-codegraph-usage.md
+      bob     → ./.claude/rules/cgh-usage.md
 
     Returns the path written (as str) or None if skipped.
     """
@@ -493,8 +496,8 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         return str(target)
 
     if tool == "bob":
-        # 00- prefix so the alphabetical rules loading reads it first.
-        target = project_root / ".bob" / "rules" / "00-codegraph-usage.md"
+        # Bob loads rules from .claude/rules, not .bob/rules.
+        target = project_root / ".claude" / "rules" / "cgh-usage.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,

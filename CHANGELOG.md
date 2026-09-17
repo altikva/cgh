@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh setup bob` wrote three files Bob never reads**: Bob IDE is a VS Code
+  fork. It takes project MCP servers from the repo-root `.mcp.json` and scans
+  `.claude/skills` and `.claude/rules`, so the `.bob/mcp.json`, `.bob/skills/`
+  and `.bob/rules/` this command created sat inert and the graph never reached
+  the IDE. They now go where Bob looks. The MCP command is resolved to an
+  absolute path too, and to `cghw.exe` on Windows: an IDE launched from the
+  Dock or the Start menu inherits none of the login shell PATH, so a bare
+  `cgh` never spawns, and `cgh.exe` is a console application whose window
+  would flash on every start.
+
 ### Changed
 - **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the
   Intel macOS hosted runner and PyInstaller cannot cross-compile one, so `npx

@@ -735,7 +735,7 @@ cgh federate remove ./apps/api            # un-federate
 | subrepo          | status | owner     | git | path             |
 +------------------+--------+-----------+-----+------------------+
 | ondonne-frontend | ok     | up :54052 | yes | ./ondonne-frontend |
-| ondonne-infra    | ok     | down      | yes | ./ondonne-infra    |
+| ondonne-infra    | ok     | idle      | yes | ./ondonne-infra    |
 +------------------+--------+-----------+-----+------------------+
 ```
 

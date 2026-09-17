@@ -15,7 +15,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   graph with zero edges. `subgraph`, `impact_of` and the import neighbourhood
   answered empty for them without a word. Absolute imports are now tried
   against the importer's own package root, `src/`, the repo root, then every
-  directory from the importer up to the repo root, nearest first — the last
+  directory from the importer up to the repo root, nearest first: the last
   of those covers a service whose code lives in `app/` and runs from there,
   a convention no file on disk records. On one 310-file repo this took the
   import graph from 0 to 760 edges. Re-index (`cgh reset`) to pick it up.

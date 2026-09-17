@@ -53,8 +53,10 @@ def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...
       2. `<repo>/src`, for a src layout whose packages carry no
          `__init__.py` (namespace packages),
       3. the repo root itself,
-      4. the importer's own directory, which is what a script run from
-         its own folder sees.
+      4. the importer's own directory and every directory up to the repo
+         root, nearest first: what a script run from its own folder sees,
+         and what a service running with its package directory as the
+         working directory sees.
     """
     key = str(importer_dir)
     cached = _PY_ROOTS_CACHE.get(key)
@@ -67,7 +69,18 @@ def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...
     ).is_file() and package_root.parent != package_root:
         package_root = package_root.parent
 
-    roots: list[Path] = [package_root, repo_root / "src", repo_root, importer_dir]
+    # Directories between the importer and the repo root, nearest first. A
+    # service whose code lives in `app/` and runs with `app/` as its working
+    # directory writes `from providers import x`, and nothing on disk says so.
+    ancestors: list[Path] = []
+    walker = importer_dir
+    while True:
+        ancestors.append(walker)
+        if walker == repo_root or walker.parent == walker:
+            break
+        walker = walker.parent
+
+    roots: list[Path] = [package_root, repo_root / "src", repo_root, *ancestors]
     seen: set[str] = set()
     ordered: list[Path] = []
     for root in roots:

@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: cgh-codewrite reference picker: name tokenization across snake
+# Description: cgh-codegen reference picker: name tokenization across snake
 #              and camel case, path confinement, the graph-plus-filesystem
 #              ranking, the graph-unavailable filesystem fallback, and
 #              explicit-reference validation.
@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("cgh_codewrite")
+pytest.importorskip("cgh_codegen")
 
-from cgh_codewrite.picker import CodeWriteError, name_tokens, pick_reference
+from cgh_codegen.picker import CodeWriteError, name_tokens, pick_reference
 
 
 def test_name_tokens_drops_noise_and_makes_case_variants():

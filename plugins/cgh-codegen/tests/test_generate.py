@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("cgh_codewrite")
+pytest.importorskip("cgh_codegen")
 
-from cgh_codewrite.generate import (
+from cgh_codegen.generate import (
     Backend,
     GenerationError,
     build_prompt,

@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The egress decision for cgh-codewrite. A reference file is
+# Description: The egress decision for cgh-codegen. A reference file is
 #              source that leaves the machine to reach a cloud model, so it
 #              must clear the same confidentiality / PII / severity checks the
 #              rest of cgh applies. The whole verdict lives in ONE function,

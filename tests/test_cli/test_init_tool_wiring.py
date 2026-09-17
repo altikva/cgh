@@ -46,25 +46,27 @@ def test_yes_selects_detected_only():
     assert keys == ["bob"]
 
 
-def test_bob_usage_guidelines_land_in_bob_rules(tmp_path):
+def test_bob_usage_guidelines_land_where_bob_loads_them(tmp_path):
+    """Bob scans .claude/rules, never .bob/rules."""
     written = install_usage_guidelines(tmp_path, "bob")
     assert written is not None
-    rules = tmp_path / ".bob" / "rules" / "00-codegraph-usage.md"
+    rules = tmp_path / ".claude" / "rules" / "cgh-usage.md"
     assert rules.is_file()
     assert "codegraph" in rules.read_text(encoding="utf-8").lower()
 
 
 def test_bob_mcp_server_uses_absolute_command_and_cwd(tmp_path):
     """Bob is an IDE agent whose GUI process does not inherit the login
-    shell PATH, so a bare `cgh` command never spawns. The .bob/mcp.json
-    must carry an absolute command and a cwd pinned to the project root."""
+    shell PATH, so a bare `cgh` command never spawns. It reads the
+    repo-root .mcp.json, which must carry an absolute command and a cwd
+    pinned to the project root."""
     import json
     import os
 
     from codegraph.cli.commands_init import _install_integration
 
     _install_integration(tmp_path, "bob")
-    entry = json.loads((tmp_path / ".bob" / "mcp.json").read_text(encoding="utf-8"))[
+    entry = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))[
         "mcpServers"
     ]["codegraph"]
 

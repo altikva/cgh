@@ -191,17 +191,32 @@ def _print_help():
     console.print("  [bold]Help:[/bold]   cgh [cyan]<command>[/cyan] --help")
     console.print()
 
+    # A table, like the command sections above: the description column was
+    # aligned by hand with literal spaces, and four of the nine rows were off
+    # by one or two, which shows up in the landing screen and in the README
+    # capture of it. Rich measures the rendered width, so it cannot drift.
+    examples = Table(box=None, show_header=False, padding=(0, 2))
+    examples.add_column()
+    examples.add_column(style="dim")
+    for command, purpose in (
+        ("[cyan]cgh init[/cyan]", "Setup in any project"),
+        ('[cyan]cgh search[/cyan] [white]"Handler"[/white]', "Find symbols"),
+        ("[cyan]cgh callers[/cyan] [white]verify_token[/white]", "Call graph (tree)"),
+        ("[cyan]cgh outline[/cyan] [white]README.md[/white]", "Doc structure (tree)"),
+        ("[cyan]cgh stats[/cyan]", "Full statistics"),
+        (
+            "[cyan]cgh graph[/cyan] [white]calls[/white] -s verify",
+            "Call graph in browser",
+        ),
+        ("[cyan]cgh add-dir[/cyan] [white]add ../frontend[/white]", "Multi-repo graph"),
+        ("[cyan]cgh doctor[/cyan]", "Health check"),
+        ("[cyan]cgh serve[/cyan] --watch --reindex", "MCP server"),
+    ):
+        examples.add_row(command, purpose)
+
     console.print(
         Panel(
-            "[cyan]cgh init[/cyan]                       [dim]Setup in any project[/dim]\n"
-            '[cyan]cgh search[/cyan] [white]"Handler"[/white]           [dim]Find symbols[/dim]\n'
-            "[cyan]cgh callers[/cyan] [white]verify_token[/white]       [dim]Call graph (tree)[/dim]\n"
-            "[cyan]cgh outline[/cyan] [white]README.md[/white]          [dim]Doc structure (tree)[/dim]\n"
-            "[cyan]cgh stats[/cyan]                       [dim]Full statistics[/dim]\n"
-            "[cyan]cgh graph[/cyan] [white]calls[/white] -s verify    [dim]Call graph in browser[/dim]\n"
-            "[cyan]cgh add-dir[/cyan] [white]add ../frontend[/white]  [dim]Multi-repo graph[/dim]\n"
-            "[cyan]cgh doctor[/cyan]                      [dim]Health check[/dim]\n"
-            "[cyan]cgh serve[/cyan] --watch --reindex     [dim]MCP server[/dim]",
+            examples,
             title="[bold]Examples[/bold]",
             border_style="dim",
             padding=(1, 3),

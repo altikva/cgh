@@ -86,6 +86,43 @@ cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini /
 cgh stop           # stop this repo's owner + worker (alias of serve --stop)
 ```
 
+### No Python: the standalone binary
+
+cgh also ships as a self-contained executable, so a machine with no Python can
+run it. The quickest path is npm, which fetches the right build for your OS,
+verifies its checksum, caches it, and runs it:
+
+```bash
+npx @altikva/cgh serve          # start the MCP server for this repo
+npx @altikva/cgh --version
+npm install -g @altikva/cgh     # or install the `cgh` command globally
+```
+
+The binary comes in two variants. The default is **sealed**: the core graph,
+the MCP tools, memory, plans and knowledge, plus the local-only plugins (PII
+scrubbing and classification). It contains no code that can reach the network.
+
+```bash
+npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can
+                                  # call a model (code generation, summarization,
+                                  # bug reports), gated and inert until configured
+```
+
+Prefer a direct download? Grab the asset for your platform from the
+[latest release](https://github.com/altikva/cgh/releases/latest) (each has a
+`.sha256` next to it), make it executable, and run it:
+
+```bash
+curl -fsSL -o cgh https://github.com/altikva/cgh/releases/latest/download/cgh-macos-arm64
+chmod +x cgh && ./cgh --version
+```
+
+Prebuilt binaries cover macOS (Apple Silicon), Linux (x64, arm64) and Windows
+(x64). The binary uses the SQLite backend; if you want DuckDB's analytical
+speed or the heavier `docs` and `vision` plugins, install with Python instead
+(`uvx cgh`, or `pip install "cgh[full]"`). On an Intel Mac or any platform
+without a prebuilt binary, `npx` points you to `uvx cgh`.
+
 ### If `cgh` is not found after install
 
 `pip install` drops the `cgh` executable in a Scripts directory that is not

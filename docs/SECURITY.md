@@ -1,4 +1,6 @@
-# Findings, modes and the guard
+# Security
+
+## Findings, modes and the guard
 
 Scanner plugins attach **findings** to files (`pii.email`,
 `secret.aws_key`, `confidential`, `summary`, ...), stored in SQLite next

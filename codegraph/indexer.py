@@ -465,6 +465,12 @@ def _ingest_code(
 # it, "this file imports nothing" and "no resolver for this language" are the
 # same empty answer, which is how 13 repos sat at zero import edges unnoticed.
 _IMPORT_COVERAGE: dict[str, dict[str, int]] = {}
+# Files the scan short-circuited as unchanged. They never reach a parser, so
+# their imports never reach the counter: a measurement taken while any file
+# was skipped describes part of the repo, not the repo. Counting them is what
+# lets a partial run be told apart from a full one, which `indexed` cannot do
+# (an unchanged file still counts as indexed).
+_IMPORT_COVERAGE_SKIPPED = 0
 
 
 def take_import_coverage() -> dict[str, dict[str, int]]:
@@ -472,6 +478,20 @@ def take_import_coverage() -> dict[str, dict[str, int]]:
     snapshot = {lang: dict(counts) for lang, counts in _IMPORT_COVERAGE.items()}
     _IMPORT_COVERAGE.clear()
     return snapshot
+
+
+def take_import_coverage_partial() -> bool:
+    """Whether the coverage gathered since the last call missed any file."""
+    global _IMPORT_COVERAGE_SKIPPED
+    partial = _IMPORT_COVERAGE_SKIPPED > 0
+    _IMPORT_COVERAGE_SKIPPED = 0
+    return partial
+
+
+def _note_unparsed_file() -> None:
+    """Record that a file was skipped before reaching its parser."""
+    global _IMPORT_COVERAGE_SKIPPED
+    _IMPORT_COVERAGE_SKIPPED += 1
 
 
 def _count_import(lang: str, resolved: bool) -> None:
@@ -744,6 +764,7 @@ def index_file(
         try:
             stored_mtime = conn.query_node_field("File", "path", str(path), "mtime")
             if stored_mtime is not None and abs(float(stored_mtime) - mtime) < 0.01:
+                _note_unparsed_file()
                 return True  # unchanged
         except Exception:
             pass
@@ -1322,6 +1343,7 @@ def _index_repo(
 
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     take_import_coverage()  # drop anything a watcher left behind
+    take_import_coverage_partial()
     t0 = time.time()
 
     rotate_if_needed(repo_root)
@@ -1389,6 +1411,7 @@ def _index_repo(
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["imports"] = take_import_coverage()
+    stats["imports_partial"] = take_import_coverage_partial()
     stats["method"] = actual_method
     stats["method_requested"] = method
     stats["extra_dirs"] = extra_dirs

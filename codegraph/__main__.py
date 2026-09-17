@@ -296,6 +296,14 @@ def _register_setup_and_serve(sub) -> None:
             "Default behavior routes through the owner via MCP when one is alive."
         ),
     )
+    p.add_argument(
+        "--no-claude-state",
+        action="store_true",
+        help=(
+            "Skip the memory and plan scans that otherwise run with every "
+            "index. They read ~/.claude, not the repository."
+        ),
+    )
 
     # --- watch ---
     p = sub.add_parser("watch", help="Index then watch for file changes")

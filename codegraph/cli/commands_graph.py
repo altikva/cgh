@@ -16,7 +16,9 @@ from rich.panel import Panel
 
 from codegraph.cli import console
 
-SCOPES = ["imports", "calls", "classes", "docs", "overview", "layers"]
+# "explore" is the interactive whole-graph view; the others render a
+# Mermaid diagram, which stays readable only at a few dozen nodes.
+SCOPES = ["explore", "imports", "calls", "classes", "docs", "overview", "layers"]
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +35,33 @@ def _fetch_mermaid_via_owner(
     own readonly connection). Returns None if the owner isn't running
     or the call fails.
     """
+    # CLI scope names differ from the MCP tool's, translate
+    scope_map = {
+        "imports": "file_imports",
+        "calls": "call_graph",
+        "classes": "class_hierarchy",
+        "docs": "doc_structure",
+        "overview": "full_overview",
+        "layers": "layers",
+    }
+    result = _call_owner_visualize(
+        root,
+        {
+            "scope": scope_map.get(scope, scope),
+            "symbol_name": symbol,
+            "file_path": file,
+            "max_nodes": max_nodes,
+            "format": "mermaid",
+        },
+    )
+    if isinstance(result, dict):
+        return result.get("diagram") or None
+    return result
+
+
+def _call_owner_visualize(root: str, args_payload: dict):
+    """POST one visualize_graph call to the owner, return its parsed JSON
+    result (a dict), the raw text when it is not JSON, or None."""
     import http.client
     import json as _json
 
@@ -45,23 +74,6 @@ def _fetch_mermaid_via_owner(
     if not port:
         return None
     token = ensure_auth_key(root)
-
-    # CLI scope names differ from the MCP tool's, translate
-    scope_map = {
-        "imports": "file_imports",
-        "calls": "call_graph",
-        "classes": "class_hierarchy",
-        "docs": "doc_structure",
-        "overview": "full_overview",
-        "layers": "layers",
-    }
-    args_payload = {
-        "scope": scope_map.get(scope, scope),
-        "symbol_name": symbol,
-        "file_path": file,
-        "max_nodes": max_nodes,
-        "format": "mermaid",
-    }
     body = _json.dumps(
         {
             "jsonrpc": "2.0",
@@ -90,17 +102,29 @@ def _fetch_mermaid_via_owner(
         content = result.get("content") or []
         for block in content:
             if block.get("type") == "text" and block.get("text"):
-                # The tool returns a JSON blob {scope, format, diagram, ...}
+                # The tool returns a JSON blob {scope, format, diagram|payload}
                 try:
-                    inner = _json.loads(block["text"])
-                    diagram = inner.get("diagram")
-                    if diagram:
-                        return diagram
+                    return _json.loads(block["text"])
                 except Exception:
                     return block["text"]
     except Exception:
         return None
     return None
+
+
+def _fetch_payload_via_owner(root: str, max_symbols: int) -> dict | None:
+    """Ask a running owner for the whole-graph payload.
+
+    Same reason as _fetch_mermaid_via_owner: the owner holds the write lock,
+    which blocks our own read-only open.
+    """
+    result = _call_owner_visualize(
+        root, {"scope": "explore", "max_nodes": max_symbols, "format": "json"}
+    )
+    if not isinstance(result, dict):
+        return None
+    payload = result.get("payload")
+    return payload if isinstance(payload, dict) else None
 
 
 def cmd_graph(args: argparse.Namespace) -> None:
@@ -122,6 +146,10 @@ def cmd_graph(args: argparse.Namespace) -> None:
     symbol = getattr(args, "symbol", "") or ""
     file = getattr(args, "file", "") or ""
     max_nodes = args.max_nodes
+
+    if scope == "explore":
+        _graph_explore(args, root)
+        return
 
     # Try the owner's HTTP endpoint first, it works even when the
     # graph DB write lock is held (which blocks readonly CLI opens).
@@ -196,6 +224,58 @@ def cmd_graph(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # cmd_add_dir
 # ---------------------------------------------------------------------------
+
+
+def _graph_explore(args: argparse.Namespace, root: str) -> None:
+    """The interactive view: whole graph, canvas force layout, in a browser."""
+    from codegraph.core.db import get_readonly_connection
+    from codegraph.viz import generate_graph_view_html, open_in_browser
+    from codegraph.viz.graphdata import build_graph_payload
+
+    max_symbols = getattr(args, "max_symbols", 400)
+    if args.mermaid:
+        console.print(
+            "[yellow]--mermaid needs a diagram scope.[/yellow]\n"
+            "[dim]Try:[/dim] cgh graph overview --mermaid"
+        )
+        return
+
+    payload = _fetch_payload_via_owner(root, max_symbols)
+    if payload is None:
+        conn = get_readonly_connection(root)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"
+                "[dim]Start one with:[/dim] cgh serve  [dim]or free the lock:[/dim] "
+                "pkill -f 'cgh serve'"
+            )
+            return
+        payload = build_graph_payload(conn, root, max_symbols)
+
+    totals = payload.get("totals", {})
+    html_content = generate_graph_view_html(payload, root)
+
+    if args.html:
+        out_path = Path(args.html)
+        out_path.write_text(html_content, encoding="utf-8")
+        console.print(
+            f"  [green]+[/green] {out_path} [dim]({len(html_content):,} bytes)[/dim]"
+        )
+        return
+
+    out = open_in_browser(html_content, "codegraph-graph.html")
+    console.print(
+        Panel(
+            f"  [green]Opened in browser[/green]\n"
+            f"  [dim]File:[/dim] {out}\n"
+            f"  [dim]Files:[/dim] {len(payload.get('files', [])):,} "
+            f"[dim]with[/dim] {len(payload.get('imports', [])):,} [dim]imports[/dim]\n"
+            f"  [dim]Symbols:[/dim] {totals.get('symbols_shown', 0):,} "
+            f"[dim]most-called of[/dim] {totals.get('functions', 0):,}",
+            title="[bold cyan]codegraph[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
 
 def cmd_add_dir(args: argparse.Namespace) -> None:
@@ -317,14 +397,20 @@ def register_graph_parser(sub) -> None:
     p.add_argument(
         "scope",
         nargs="?",
-        default="overview",
+        default="explore",
         choices=SCOPES,
-        help="What to visualize (default: overview)",
+        help="What to visualize (default: explore, the interactive whole graph)",
     )
     p.add_argument("--symbol", "-s", help="Filter to a symbol (for calls/classes)")
     p.add_argument("--file", "-f", help="Filter to a file (for imports/docs)")
     p.add_argument(
         "--max-nodes", "-n", type=int, default=40, help="Max nodes (default: 40)"
+    )
+    p.add_argument(
+        "--max-symbols",
+        type=int,
+        default=400,
+        help="Functions carried into the explore view, by call degree (default: 400)",
     )
     p.add_argument(
         "--mermaid", action="store_true", help="Output raw Mermaid to stdout"

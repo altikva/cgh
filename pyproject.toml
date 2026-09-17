@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.11.8"
+version = "0.12.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, Kuzu opt-in) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -134,6 +134,8 @@ include = ["codegraph", "codegraph.*", "cgh"]
 [tool.setuptools.package-data]
 codegraph = [
     "py.typed",
+    # The interactive graph view's JS, inlined into the generated HTML.
+    "viz/*.js",
     "skills/*/SKILL.md",
     "skills/*/*.md",
     # Bundled examples, shipped in the wheel so `cgh examples install` works
@@ -192,6 +194,7 @@ ignore = [
 # (allow-list gate); the sidecar SQLite modules build clause lists from
 # constants. S608 cannot see the gate.
 "codegraph/core/db_duckdb.py" = ["S608"]
+"codegraph/core/db_sqlite.py" = ["S608"]
 "codegraph/core/db_kuzu.py" = ["S608"]
 "codegraph/core/fts.py" = ["S608"]
 "codegraph/state/*.py" = ["S608"]
@@ -201,6 +204,7 @@ ignore = [
 "codegraph/**" = ["S310"]
 "plugins/cgh-vision/**" = ["S310"]
 "plugins/cgh-summarize/**" = ["S310"]
+"plugins/cgh-codegen/**" = ["S310"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"

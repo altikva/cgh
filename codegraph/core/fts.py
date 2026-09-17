@@ -106,9 +106,11 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     db_dir.mkdir(parents=True, exist_ok=True)
 
     db_path = db_dir / _FTS_FILE
-    # check_same_thread=False because this connection is cached and reused
-    # from watcher Timer threads + MCP tool threads. We serialize writes
-    # ourselves via _FTS_LOCK.
+    # check_same_thread=False because callers cache this connection and reuse
+    # it from watcher Timer threads + MCP tool threads; writes are serialised
+    # via _FTS_LOCK. Note this factory opens a NEW connection every call: the
+    # caching lives in the callers, so anything writing during an index must
+    # reuse theirs rather than call this again.
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""

@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_precheck_read"
+          }
+        ]
+      },
+      {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_precheck_grep"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh index --root . 2>/dev/null || true",
+            "async": true,
+            "statusMessage": "cgh: indexing changes"
+          }
+        ]
+      }
+    ]
+  }
+}

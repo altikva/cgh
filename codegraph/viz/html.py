@@ -179,6 +179,203 @@ def generate_html(
     )
 
 
+# ---------------------------------------------------------------------------
+# Interactive whole-graph view (canvas force layout, no network access)
+# ---------------------------------------------------------------------------
+
+_VIEW_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0d1117; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #c9d1d9;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; color: #58a6ff; }
+  header .scope {
+    background: #1f6feb33; color: #58a6ff; padding: 2px 10px;
+    border-radius: 12px; font-size: 12px; font-weight: 500;
+  }
+  /* four view buttons leave little room: the meta line truncates rather
+     than wrapping the header onto a second line */
+  header .meta {
+    font-size: 13px; color: #8b949e; min-width: 0; flex: 0 1 auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  header h1, header .scope { flex: none; }
+  .cg-btn {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    font-family: inherit; line-height: 16px; display: inline-flex;
+    align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
+  }
+  .cg-btn:hover { background: #30363d; }
+  .cg-btn.is-active, .cg-btn.is-active:hover { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .cg-icon-btn { padding: 5px 7px; }
+  .cg-row { cursor: pointer; border-radius: 6px; }
+  .cg-row:hover { background: #21262d; }
+  .cg-head { cursor: pointer; user-select: none; }
+  .cg-head:hover { background: #1c2128; }
+  .cg-mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
+  .cg-range { width: 100%; margin: 0; height: 16px; accent-color: #58a6ff; cursor: pointer; }
+  .cg-search::placeholder { color: #8b949e; }
+  .cg-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .cg-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+  .cg-scroll::-webkit-scrollbar-track { background: transparent; }
+  .cg-panel {
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(1, 4, 9, 0.5);
+  }
+  footer {
+    background: #161b22; border-top: 1px solid #30363d; padding: 8px 24px;
+    font-size: 11px; color: #8b949e; text-align: center;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>codegraph</h1>
+  <span class="scope">graph</span>
+  <span class="meta" id="cg-meta"></span>
+  <div style="display: flex; align-items: center; gap: 12px; margin-left: auto">
+    <div id="cg-views" style="display: flex"></div>
+    <label style="display: flex; align-items: center; gap: 8px; width: 300px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 5px 10px">
+      <svg width="14" height="14" viewBox="0 0 16 16" style="flex: none"><circle cx="7" cy="7" r="4.5" fill="none" stroke="#8b949e" stroke-width="1.5"></circle><path d="M10.5 10.5L14 14" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round"></path></svg>
+      <input class="cg-search" id="cg-search" placeholder="Search files and symbols" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: #c9d1d9; font-size: 12px; font-family: inherit; line-height: 16px">
+      <span class="cg-mono" id="cg-matches" style="font-size: 11px; color: #8b949e; white-space: nowrap"></span>
+    </label>
+  </div>
+</header>
+
+<main id="cg-stage" style="position: relative; flex: 1; min-height: 0; overflow: hidden">
+  <canvas id="cg-canvas" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none"></canvas>
+
+  <div id="cg-tip" style="position: absolute; left: 0; top: 0; pointer-events: none; opacity: 0; transition: opacity 120ms ease; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.6); max-width: 380px">
+    <div style="display: flex; align-items: center; gap: 8px">
+      <span id="cg-tip-key" style="width: 12px; height: 2px; border-radius: 1px; flex: none; background: #8b949e"></span>
+      <span id="cg-tip-name" style="font-size: 13px; font-weight: 600; color: #c9d1d9"></span>
+    </div>
+    <div id="cg-tip-meta" class="cg-mono" style="margin-top: 4px; font-size: 11px; color: #8b949e"></div>
+  </div>
+
+  <div id="cg-empty" style="display: none; position: absolute; left: 0; right: 0; top: 40%; flex-direction: column; align-items: center; gap: 12px">
+    <span style="font-size: 14px; color: #c9d1d9">No nodes match these filters</span>
+    <button class="cg-btn" id="cg-reset">Reset filters</button>
+  </div>
+
+  <aside class="cg-panel" id="cg-detail" style="display: none; position: absolute; top: 16px; left: 16px; bottom: 72px; width: 320px; flex-direction: column; overflow: hidden">
+    <div style="padding: 14px 14px 12px; border-bottom: 1px solid #30363d; display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; align-items: center; gap: 8px">
+        <span id="cg-detail-dot" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: #8b949e"></span>
+        <span id="cg-detail-name" style="flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"></span>
+        <button class="cg-btn cg-icon-btn" id="cg-detail-close" aria-label="Close" title="Close">
+          <svg width="12" height="12" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="#c9d1d9" stroke-width="1.5" stroke-linecap="round"></path></svg>
+        </button>
+      </div>
+      <div id="cg-detail-loc" class="cg-mono" style="font-size: 11px; color: #8b949e; word-break: break-all"></div>
+      <div id="cg-detail-chips" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px"></div>
+    </div>
+    <div id="cg-detail-stats" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #30363d; border-bottom: 1px solid #30363d"></div>
+    <div style="padding: 10px 14px; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 8px">
+      <span style="flex: 1; font-size: 12px; color: #8b949e">Neighborhood</span>
+      <div id="cg-depth" style="display: flex"></div>
+    </div>
+    <div id="cg-detail-lists" class="cg-scroll" style="flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 10px"></div>
+    <div style="padding: 10px 14px; border-top: 1px solid #30363d; background: #0d1117">
+      <div style="font-size: 11px; color: #8b949e; margin-bottom: 4px">From the terminal</div>
+      <div id="cg-detail-cli" class="cg-mono" style="font-size: 11px; color: #c9d1d9; word-break: break-all"></div>
+    </div>
+  </aside>
+
+  <section class="cg-panel" id="cg-table" style="display: none; position: absolute; top: 16px; bottom: 72px; right: 304px; left: 16px; flex-direction: column; overflow: hidden">
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #30363d">
+      <span id="cg-table-title" style="font-size: 12px; font-weight: 600; color: #c9d1d9"></span>
+      <button class="cg-btn cg-icon-btn" id="cg-table-close" aria-label="Close table" title="Close table">
+        <svg width="12" height="12" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="#c9d1d9" stroke-width="1.5" stroke-linecap="round"></path></svg>
+      </button>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; padding: 8px 14px; border-bottom: 1px solid #30363d; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #8b949e">
+      <span style="grid-column: span 4">Name</span>
+      <span style="grid-column: span 5">Location</span>
+      <span style="grid-column: span 2">Group</span>
+      <span style="grid-column: span 1; text-align: right">Links</span>
+    </div>
+    <div id="cg-table-rows" class="cg-scroll" style="flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px"></div>
+  </section>
+
+  <aside class="cg-panel cg-scroll" id="cg-panels" style="position: absolute; top: 16px; right: 16px; width: 272px; max-height: calc(100% - 88px); overflow-y: auto"></aside>
+
+  <div style="position: absolute; left: 16px; bottom: 16px; right: 304px; display: flex; align-items: center; gap: 12px; pointer-events: none">
+    <div style="pointer-events: auto; display: flex; align-items: center; gap: 6px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 4px 4px 4px 10px">
+      <span id="cg-counts" style="font-size: 12px; color: #8b949e; white-space: nowrap"></span>
+      <span id="cg-layout" class="cg-mono" style="font-size: 11px; color: #58a6ff; white-space: nowrap"></span>
+      <span style="width: 1px; height: 18px; margin: 0 4px; background: #30363d"></span>
+      <button class="cg-btn cg-icon-btn" id="cg-zoom-out" aria-label="Zoom out" title="Zoom out">
+        <svg width="12" height="12" viewBox="0 0 16 16"><path d="M3 8h10" fill="none" stroke="#c9d1d9" stroke-width="1.5" stroke-linecap="round"></path></svg>
+      </button>
+      <span id="cg-zoom" class="cg-mono" style="min-width: 40px; text-align: center; font-size: 11px; color: #8b949e">100%</span>
+      <button class="cg-btn cg-icon-btn" id="cg-zoom-in" aria-label="Zoom in" title="Zoom in">
+        <svg width="12" height="12" viewBox="0 0 16 16"><path d="M3 8h10M8 3v10" fill="none" stroke="#c9d1d9" stroke-width="1.5" stroke-linecap="round"></path></svg>
+      </button>
+      <button class="cg-btn" id="cg-fit">Fit</button>
+      <button class="cg-btn" id="cg-table-btn">Table</button>
+    </div>
+    <span id="cg-hint" style="font-size: 12px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis"></span>
+  </div>
+</main>
+
+<footer>Generated by <a href="https://github.com/altikva/codegraph">codegraph</a>, __TIMESTAMP__</footer>
+
+<script>window.__CGH_GRAPH__ = __PAYLOAD__;</script>
+<script>__SCRIPT__</script>
+<script>window.__cghView = window.CGHGraph.mount(window.__CGH_GRAPH__);</script>
+</body>
+</html>"""
+
+
+def _view_script() -> str:
+    """The viewer source, shipped next to this module in the wheel."""
+    return (Path(__file__).parent / "graph_view.js").read_text(encoding="utf-8")
+
+
+def generate_graph_view_html(payload: dict, root: str) -> str:
+    """Self-contained HTML for the interactive graph view.
+
+    Everything is inlined: no CDN, no fetch, so the file works offline and
+    from a file:// URL. The payload is embedded as JSON with "</" escaped so
+    a path can never close the script element.
+    """
+    import json as _json
+    from datetime import datetime
+
+    data = _json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+    repo_name = Path(root).name
+    return (
+        _VIEW_TEMPLATE.replace("__TITLE__", html.escape(f"{repo_name}: graph"))
+        .replace("__TIMESTAMP__", datetime.now().strftime("%Y-%m-%d %H:%M"))
+        .replace("__PAYLOAD__", data)
+        .replace("__SCRIPT__", _view_script())
+    )
+
+
 def open_in_browser(html_content: str, filename: str = "codegraph.html") -> Path:
     """Write HTML to a temp file and open in default browser."""
     import webbrowser

@@ -84,6 +84,8 @@ def cmd_index(args: argparse.Namespace) -> None:
                 )
                 return
             _print_index_summary(stats)
+            if not getattr(args, "no_claude_state", False):
+                _scan_claude_state(root)
             return
 
     task_id = None
@@ -153,6 +155,32 @@ def cmd_index(args: argparse.Namespace) -> None:
             raise
 
     _print_index_summary(stats)
+    if not getattr(args, "no_claude_state", False):
+        _scan_claude_state(root)
+
+
+def _scan_claude_state(root: str) -> None:
+    """Refresh the Claude Code memory and plan entries in the FTS index.
+
+    Both live under ``~/.claude``, outside the repository, so the file walk
+    never reaches them. Without this step a `cgh reset` leaves the index
+    without them until someone remembers the two extra verbs, and a
+    `memory_search` comes back empty with nothing to say why.
+    """
+    from codegraph.claude_state.memory import scan_memory_dir
+    from codegraph.claude_state.plans import scan_plan_dir
+
+    parts: list[str] = []
+    for label, scan in (("memory", scan_memory_dir), ("plans", scan_plan_dir)):
+        try:
+            stats = scan(root)
+        except (OSError, ValueError) as exc:
+            # Best effort: an unreadable ~/.claude must never fail the index
+            # of the repository itself, but it does not get to be silent.
+            parts.append(f"{label} unavailable ({exc.__class__.__name__})")
+            continue
+        parts.append(f"{label} {stats.get('indexed', 0)}")
+    console.print(f"[dim]Claude state: {', '.join(parts)}[/dim]")
 
 
 def _print_index_summary(stats: dict) -> None:

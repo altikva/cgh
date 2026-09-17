@@ -8,6 +8,121 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-17
+
+### Changed
+- **A federated child with no owner reads as `idle`, not `down`**: `cgh status`
+  and `cgh federate list` labelled the normal resting state of every child as
+  `down`, which reads as a fault. Nothing is wrong and nothing needs starting:
+  the parent opens each child's database read-only, so federated queries work
+  with every child idle. The `cgh federate up` and `cgh federate down` verbs
+  are unchanged.
+
+### Fixed
+- **A deferred scanner no longer locks the index out of its own database**: the
+  scan queue runs on a worker thread and opened its own SQLite connection to
+  write findings, while the index loop wrote through the cached one. The
+  module lock serialises the helpers but cannot serialise two transactions on
+  two connections, so the loop's `DELETE FROM symbols` died with `database is
+  locked` and took the whole scan with it. It reuses the cached connection.
+  A workspace whose scanners actually fire could not be re-indexed at all.
+- **`cgh status` no longer claims a scanned repository was never scanned**: a
+  repository with no git HEAD, which is the normal shape of a federation
+  parent, showed `no scan recorded, run cgh index` however recently it had
+  been indexed, and re-running changed nothing. It now reports the scan and
+  says there is no commit to compare against.
+- **A partial scan no longer overwrites the import coverage of a full one**: a
+  file whose content has not changed is short-circuited before it reaches a
+  parser, yet still counts as indexed, so a re-scan could report `31/190` where
+  the repo really holds `217` imports and `cgh status` would show that smaller
+  number as the truth. A run now records whether it skipped any file, keeps the
+  previous complete measurement instead of replacing it with a partial one, and
+  says `(partial scan)` when only a partial one exists.
+- **Python imports resolve outside a flat layout**: an absolute import was only
+  ever tried against the repo root, so a `src/` layout or a package nested one
+  directory down resolved nothing at all, and those repos showed an import
+  graph with zero edges. `subgraph`, `impact_of` and the import neighbourhood
+  answered empty for them without a word. Absolute imports are now tried
+  against the importer's own package root, `src/`, the repo root, then every
+  directory from the importer up to the repo root, nearest first: the last
+  of those covers a service whose code lives in `app/` and runs from there,
+  a convention no file on disk records. On one 310-file repo this took the
+  import graph from 0 to 760 edges. Re-index (`cgh reset`) to pick it up.
+- **`~/` and `@/` imports resolve in Nuxt and Vite projects**: both mean "the
+  app source root", and neither is written down anywhere the indexer could
+  read it, because Nuxt generates its tsconfig into `.nuxt/`, a build artifact
+  nobody commits. They are now tried against the nearest project directory
+  (the one holding `nuxt.config.*`, `vite.config.*` or `package.json`), its
+  `app/` and `src/`, then the same three at the repo root. A scoped package
+  such as `@nuxt/ui` is still a package, not an alias.
+- **`Dockerfile` and `Makefile` no longer count as scan errors**: they were
+  mapped to extension keys with no parser behind them, so `is_supported` said
+  yes and `get_parser_for_path` said no, and every scan reported an error per
+  such file. They count as skipped, like any other unparsed file.
+
+### Added
+- **A no-Python standalone binary**: cgh now ships as a self-contained
+  executable per operating system, so a machine without Python can run it.
+  `npx @altikva/cgh` fetches the right build, verifies its checksum and runs
+  it, and the same binaries are attached to every GitHub release. There are two
+  variants: the default `cgh` is sealed, carrying the core plus the local-only
+  `pii` and `classify` plugins and nothing that can reach the network, so it
+  cannot phone home; `cgh-egress` adds the plugins that can call a model
+  (`codegen`, `summarize`, `bugreport`), which stay behind the egress gate and
+  do nothing until configured.
+- **A SQLite graph backend, with an adaptive default in the binary**: alongside
+  DuckDB, cgh can store the graph in SQLite. The standalone binary defaults to
+  SQLite, which keeps the download small and needs no native database, while
+  the pip and uvx installs keep DuckDB. `cgh backend` shows the backend in use,
+  switches between them by reindexing, and points to `uvx cgh` when a graph
+  outgrows SQLite.
+- **A Claude Code plugin manifest**: `.claude-plugin/` lets cgh install as a
+  Claude Code plugin with `/plugin marketplace add altikva/cgh`, wiring the MCP
+  server, the bundled skills and the Read, Grep and post-commit hooks in one
+  step. It assumes the `cgh` binary is on PATH.
+- **`cgh index` refreshes the Claude Code memory and plans**: both live under
+  `~/.claude`, outside the repository, so the file walk never reached them and
+  a `cgh reset` left the index without either until someone remembered the two
+  separate verbs. They now run with every index. `cgh index --no-claude-state`
+  skips them, and `cgh memory-index` / `cgh plan-index` still work on their own.
+- **`cgh graph` opens an interactive view of the whole graph**: a force-directed
+  canvas instead of a 40-node Mermaid diagram. Hovering a node lights it and its
+  neighbours, clicking opens a detail panel with its imports, callers and the
+  matching `cgh` command, and a double-click narrows the canvas to its
+  neighbourhood. Colour groups (folder, language, role), filters, label density
+  and the forces themselves are adjustable, with a search box and a table view.
+  The page is self-contained: no CDN, no network access, works from `file://`.
+  The former diagrams stay available as `cgh graph overview|imports|calls|classes|docs|layers`.
+  The view opens on whichever side of the graph carries edges: most indexed
+  repos resolve no file imports, so those open on `Symbols · calls` instead of
+  a cloud of unconnected files. Measured in Chrome on a synthetic repo: about
+  33 frames per second while laying out 3,000 files, and 9 while laying out
+  8,500, which then pans at about 30 once settled.
+- **The graph view carries Terraform resources and documentation sections**,
+  not just imports and calls. An infrastructure repo shows each resource
+  hanging off the file that declares it, and any repo shows its heading trees,
+  including the links between documents. The payload ships one entry per view
+  and the page only offers the views a repo actually has, so a Terraform stack
+  no longer opens on an empty file graph.
+- **Import coverage is recorded and shown**: each scan counts imports parsed
+  against imports resolved, per language, keeps it in `scan_meta` and prints it
+  in `cgh status`. An empty import graph is no longer indistinguishable from a
+  language with no resolver: Go, Rust, Java and Terraform parse their imports
+  and say so, instead of silently reporting nothing. An incremental scan keeps
+  the last full scan's measurement rather than erasing it.
+- **Documentation sections are told apart from config keys**: JSON, TOML and
+  YAML files expose their keys through the same section model as Markdown
+  headings, which mixed `.mcp.json` in with real documentation. Sections now
+  carry a `kind` (`doc` or `config`), set by the parser that creates them, so
+  both the graph view and the MCP tools can tell which is which. Existing
+  indexes gain the column on open.
+- **Plugins can read the graph**: the public plugin API now exposes
+  `find_symbol_files`, a read-only, parent-scope query returning the files
+  that define a symbol by name. It returns `None` when the graph cannot be
+  read (no index, or an owner holds the write lock) so a plugin can fall back
+  rather than fail. Enables graph-aware plugins such as reference selection
+  for code generation.
+
 ## [0.11.8] - 2026-09-01
 
 ### Fixed
@@ -1314,7 +1429,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.11.8...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0
 [0.11.8]: https://github.com/altikva/cgh/compare/v0.11.7...v0.11.8
 [0.11.7]: https://github.com/altikva/cgh/compare/v0.11.6...v0.11.7
 [0.11.6]: https://github.com/altikva/cgh/compare/v0.11.5...v0.11.6

@@ -360,7 +360,22 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     # Rotate the log if it grew too large since the last owner exit.
     rotate_owner_log(repo_root)
 
-    cmd = [sys.executable, "-m", "codegraph", "_serve_owner", "--root", str(repo_root)]
+    # In a frozen build (PyInstaller/Nuitka one-file or one-dir binary),
+    # sys.executable is the cgh binary itself, not a Python interpreter, so
+    # "-m codegraph" cannot be run. The binary routes its own argv through the
+    # same CLI, so invoke the hidden _serve_owner subcommand directly. A normal
+    # install keeps the "python -m codegraph" form.
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "_serve_owner", "--root", str(repo_root)]
+    else:
+        cmd = [
+            sys.executable,
+            "-m",
+            "codegraph",
+            "_serve_owner",
+            "--root",
+            str(repo_root),
+        ]
     if watch:
         cmd.append("--watch")
     if reindex:

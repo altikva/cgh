@@ -32,6 +32,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   such file. They count as skipped, like any other unparsed file.
 
 ### Added
+- **`cgh index` refreshes the Claude Code memory and plans**: both live under
+  `~/.claude`, outside the repository, so the file walk never reached them and
+  a `cgh reset` left the index without either until someone remembered the two
+  separate verbs. They now run with every index. `cgh index --no-claude-state`
+  skips them, and `cgh memory-index` / `cgh plan-index` still work on their own.
 - **`cgh graph` opens an interactive view of the whole graph**: a force-directed
   canvas instead of a 40-node Mermaid diagram. Hovering a node lights it and its
   neighbours, clicking opens a detail panel with its imports, callers and the

@@ -15,10 +15,15 @@ from codegraph.viz.graphviews import (
     viz_full_overview,
     viz_layers,
 )
-from codegraph.viz.html import generate_html, open_in_browser
+from codegraph.viz.html import (
+    generate_graph_view_html,
+    generate_html,
+    open_in_browser,
+)
 from codegraph.viz.mermaid import mermaid_layers
 
 __all__ = [
+    "generate_graph_view_html",
     "generate_html",
     "mermaid_layers",
     "open_in_browser",

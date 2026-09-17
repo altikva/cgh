@@ -24,15 +24,16 @@ const { spawn } = require('node:child_process');
 
 const { targetFor, assetName, selectVariant, downloadUrl } = require('../lib/resolve');
 
-test('targetFor maps the five supported platforms', () => {
+test('targetFor maps the supported platforms', () => {
   assert.equal(targetFor('darwin', 'arm64'), 'macos-arm64');
-  assert.equal(targetFor('darwin', 'x64'), 'macos-x64');
   assert.equal(targetFor('linux', 'x64'), 'linux-x64');
   assert.equal(targetFor('linux', 'arm64'), 'linux-arm64');
   assert.equal(targetFor('win32', 'x64'), 'windows-x64');
 });
 
-test('targetFor rejects an unsupported platform with a helpful hint', () => {
+test('targetFor rejects unsupported platforms with a helpful hint', () => {
+  // macOS x64 (Intel) has no prebuilt binary: retired GitHub runner, no cross-compile.
+  assert.throws(() => targetFor('darwin', 'x64'), /no prebuilt cgh binary.*uvx cgh/s);
   assert.throws(() => targetFor('freebsd', 'x64'), /no prebuilt cgh binary.*uvx cgh/s);
 });
 

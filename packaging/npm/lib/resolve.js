@@ -16,11 +16,13 @@
 
 'use strict';
 
-// Node (platform, arch) -> the release asset target. These are the same five
-// targets the release matrix builds; anything else has no prebuilt binary.
+// Node (platform, arch) -> the release asset target. These are the targets the
+// release matrix builds; anything else has no prebuilt binary. macOS x64
+// (Intel) is absent on purpose: GitHub retired the Intel macOS hosted runner
+// and PyInstaller cannot cross-compile one, so Intel-Mac users get the
+// install-with-Python hint below instead of a download that 404s.
 const PLATFORM_MAP = {
   'darwin arm64': 'macos-arm64',
-  'darwin x64': 'macos-x64',
   'linux x64': 'linux-x64',
   'linux arm64': 'linux-arm64',
   'win32 x64': 'windows-x64',

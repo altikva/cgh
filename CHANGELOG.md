@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the
+  Intel macOS hosted runner and PyInstaller cannot cross-compile one, so `npx
+  @altikva/cgh` on an Intel Mac now points to `uvx cgh` instead of trying to
+  download a binary that does not exist. Apple Silicon, Linux and Windows are
+  unchanged.
+
 ## [0.12.0] - 2026-09-17
 
 ### Changed

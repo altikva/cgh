@@ -115,6 +115,23 @@ class TestResolvePython:
 
         assert result == (pkg / "mod.py").resolve()
 
+    def test_package_directory_used_as_the_working_directory(self, tmp_path):
+        """A service whose code lives in `app/` and runs from there imports
+        its siblings by bare name, from a file nested one level deeper."""
+        app = tmp_path / "app"
+        (app / "providers").mkdir(parents=True)
+        (app / "handlers").mkdir()
+        (app / "__init__.py").write_text("")
+        (app / "providers" / "__init__.py").write_text("")
+        (app / "providers" / "apple.py").write_text("class Pass: pass\n")
+        (app / "handlers" / "__init__.py").write_text("")
+        importer = app / "handlers" / "apple_handler.py"
+        importer.write_text("from providers.apple import Pass\n")
+
+        result = resolve_python("providers.apple", importer, tmp_path)
+
+        assert result == (app / "providers" / "apple.py").resolve()
+
     def test_external_dependency_still_unresolved(self, tmp_path):
         """More roots must not turn a third-party import into a false edge."""
         src = tmp_path / "src" / "app"

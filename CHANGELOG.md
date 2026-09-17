@@ -14,9 +14,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   directory down resolved nothing at all, and those repos showed an import
   graph with zero edges. `subgraph`, `impact_of` and the import neighbourhood
   answered empty for them without a word. Absolute imports are now tried
-  against the importer's own package root, `src/`, the repo root and the
-  importer's directory, nearest first. On one 310-file repo this took the
-  import graph from 0 to 599 edges. Re-index (`cgh reset`) to pick it up.
+  against the importer's own package root, `src/`, the repo root, then every
+  directory from the importer up to the repo root, nearest first — the last
+  of those covers a service whose code lives in `app/` and runs from there,
+  a convention no file on disk records. On one 310-file repo this took the
+  import graph from 0 to 760 edges. Re-index (`cgh reset`) to pick it up.
 - **`~/` and `@/` imports resolve in Nuxt and Vite projects**: both mean "the
   app source root", and neither is written down anywhere the indexer could
   read it, because Nuxt generates its tsconfig into `.nuxt/`, a build artifact

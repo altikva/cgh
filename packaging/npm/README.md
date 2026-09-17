@@ -55,8 +55,9 @@ pip install "cgh[full]"       # DuckDB + every first-party plugin
 
 ## Supported platforms
 
-macOS (arm64, x64), Linux (x64, arm64), Windows (x64). On anything else the
-launcher tells you to `uvx cgh` instead.
+macOS (Apple Silicon), Linux (x64, arm64), Windows (x64). Intel Macs and any
+other platform have no prebuilt binary, so the launcher tells you to `uvx cgh`
+instead.
 
 ## License
 

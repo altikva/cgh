@@ -66,9 +66,9 @@ jobs:
           uvx ruff@0.15.9 format --check .
 
       - name: Run pytest
-        # Validate on the default Python with the kuzu extra so both backends
-        # are exercised. The full 3.11-3.14 matrix runs in ci.yml on the PR.
-        run: uv run --with pytest --extra kuzu pytest -q
+        # Validate on the default Python. The full 3.11-3.14 matrix runs in
+        # ci.yml on the PR.
+        run: uv run --with pytest pytest -q
 
   build:
     name: Build sdist + wheel
@@ -91,8 +91,8 @@ jobs:
           uvx twine check dist/*
 
       - name: Smoke-test the built wheel
-        # Install the wheel into a clean venv (default extras, no kuzu) and run
-        # the CLI, so a broken entry point or missing data file fails here
+        # Install the wheel into a clean venv (default extras) and run the
+        # CLI, so a broken entry point or missing data file fails here
         # rather than in a user's terminal.
         run: |
           uv venv /tmp/smoke

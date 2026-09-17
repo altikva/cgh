@@ -19,7 +19,7 @@ Call `mcp__codegraph__knowledge_record` when you notice any of:
 |---|---|---|
 | A recurring pattern in the codebase | "All handlers return HTTPException on 404" | `pattern` |
 | A decision + its rationale | "Chose Stripe over PayPal because SEPA coverage" | `decision` |
-| A non-obvious gotcha | "Kuzu holds the OS lock until Python GC runs" | `gotcha` |
+| A non-obvious gotcha | "DuckDB rejects a RO open while a RW conn is live" | `gotcha` |
 | A user style preference | "User prefers French in commit bodies" | `style` |
 | A glossary term | "RFM = Recency, Frequency, Monetary" | `glossary` |
 | Any other reusable insight | "Watcher debounce is 300ms in codegraph" | `note` |

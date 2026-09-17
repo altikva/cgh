@@ -20,18 +20,18 @@ from codegraph.analysis.federation import (
 
 def _mk_repo(
     root: Path,
-    with_kuzu: bool = True,
-    with_duckdb: bool = False,
+    with_duckdb: bool = True,
+    with_sqlite: bool = False,
     with_fts: bool = False,
     git: bool = False,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     cg = root / ".codegraph"
     cg.mkdir(parents=True, exist_ok=True)
-    if with_kuzu:
-        (cg / "graph.db").write_bytes(b"fake")
     if with_duckdb:
         (cg / "graph.duckdb").write_bytes(b"fake")
+    if with_sqlite:
+        (cg / "graph.sqlite").write_bytes(b"fake")
     if with_fts:
         (cg / "fts.db").write_bytes(b"fake")
     if git:
@@ -129,30 +129,29 @@ class TestVerifyChild:
         assert not st.ok
 
     def test_initialized_no_graphdb(self, tmp_path):
-        # .codegraph/ but neither graph.db nor graph.duckdb.
-        _mk_repo(tmp_path / "p", with_kuzu=False)
+        # .codegraph/ but neither graph.duckdb nor graph.sqlite.
+        _mk_repo(tmp_path / "p", with_duckdb=False)
         st = verify_child(tmp_path / "p")
         assert st.exists and st.initialized
-        assert not st.has_kuzu
+        assert not st.has_sqlite
         assert not st.has_duckdb
         assert not st.has_graphdb
         assert not st.ok
 
     def test_full(self, tmp_path):
-        _mk_repo(tmp_path / "p", with_kuzu=True, with_fts=True, git=True)
+        _mk_repo(tmp_path / "p", with_duckdb=True, with_fts=True, git=True)
         st = verify_child(tmp_path / "p")
         assert st.ok
         assert st.has_fts
         assert st.is_git_repo
 
     def test_duckdb_only_subrepo_is_ok(self, tmp_path):
-        # The bug: a subrepo indexed on DuckDB (graph.duckdb, no graph.db)
-        # must verify as OK. Before the fix, federate add reported
-        # "graph.db missing" and treated it as broken.
-        _mk_repo(tmp_path / "p", with_kuzu=False, with_duckdb=True)
+        # A subrepo indexed on DuckDB (graph.duckdb, no graph.sqlite)
+        # must verify as OK.
+        _mk_repo(tmp_path / "p", with_duckdb=True)
         st = verify_child(tmp_path / "p")
         assert st.exists and st.initialized
-        assert not st.has_kuzu
+        assert not st.has_sqlite
         assert st.has_duckdb
         assert st.has_graphdb
         assert st.ok
@@ -204,11 +203,11 @@ class TestIterDbRoots:
     def test_skips_uninitialized_children(self, tmp_path):
         parent = _mk_repo(tmp_path / "p")
         good = _mk_repo(tmp_path / "good")
-        bad = _mk_repo(tmp_path / "bad", with_kuzu=False)
+        bad = _mk_repo(tmp_path / "bad", with_duckdb=False)
         add_subrepo(parent, good)
         add_subrepo(parent, bad)
         roots = iter_db_roots(parent)
-        # Parent + good only — bad has no graph.db
+        # Parent + good only, bad has no graph DB
         assert roots == [parent.resolve(), good.resolve()]
 
 

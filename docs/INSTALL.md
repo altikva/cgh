@@ -1,11 +1,9 @@
 # Install
 
-**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.4.2 Kuzu is an optional
-extra (`pip install cgh[kuzu]`), so the default install no longer pulls a
-package that lacks cp3.14 wheels. The DuckDB backend ships wheels on every
-supported Python and is the default everywhere. Existing Kuzu repos are
-auto-migrated to DuckDB on the next `cgh init`. Use `CGH_DB=kuzu` (with
-the extra installed) to keep using Kuzu if you have a reason to.
+**Python 3.11, 3.12, 3.13, or 3.14.** The DuckDB backend ships wheels on
+every supported Python and is the default everywhere. The standalone
+binary falls back to a bundled SQLite backend, selectable elsewhere with
+`CGH_DB=sqlite`.
 
 ### One-line install
 
@@ -71,12 +69,11 @@ Optional extras (none are required; the core install is lean and works on Python
 pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
 pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars, abi3 wheels)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
-pip install "cgh[kuzu]"    # the legacy Kuzu graph backend (DuckDB is the default)
 
 # Combine extras in one bracket, comma-separated:
 pip install "cgh[langs,lsp]"
 
-# Or everything above except kuzu, in one shot:
+# Or everything above, in one shot:
 pip install "cgh[full]"
 ```
 

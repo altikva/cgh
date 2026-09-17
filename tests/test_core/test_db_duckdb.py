@@ -113,11 +113,10 @@ class TestBackendSelection:
     auto-detection of what's on disk."""
 
     def test_default_backend_is_duckdb_for_fresh_repo(self, tmp_path, monkeypatch):
-        """No env var + no .codegraph/ files -> duckdb (v0.5 default).
+        """No env var + no .codegraph/ files -> duckdb (the default).
 
-        Existing repos with a graph.db on disk still resolve to Kuzu
-        via auto-detection (covered in test_auto_detect_kuzu_when_only_kuzu_on_disk);
-        only brand-new repos get the new default.
+        Existing repos keep whatever graph DB is on disk via auto-detection;
+        only brand-new repos get the default.
         """
         monkeypatch.delenv("CGH_DB", raising=False)
         from codegraph.core.db import get_connection, reset_connection
@@ -164,33 +163,23 @@ class TestBackendSelection:
         finally:
             reset_connection()
 
-    def test_auto_detect_kuzu_when_only_kuzu_on_disk(self, tmp_path, monkeypatch):
-        """No env var + a graph.db on disk -> pick Kuzu automatically.
-
-        This is the bug surfaced on wb-backend after we deleted the Kuzu
-        file: cgh status reported "graph locked" because the CLI defaulted
-        to Kuzu while the only file on disk was graph.duckdb. Auto-detect
-        prevents the symmetric case (graph.db only, env unset) from
-        causing the same mismatch.
-        """
-        pytest.importorskip("kuzu")  # kuzu is optional since v0.4.2
+    def test_auto_detect_sqlite_when_only_sqlite_on_disk(self, tmp_path, monkeypatch):
+        """No env var + a graph.sqlite on disk -> pick SQLite automatically."""
         monkeypatch.delenv("CGH_DB", raising=False)
         from codegraph.core.db import get_readonly_connection, reset_connection
-        from codegraph.core.db_kuzu import KuzuGraphDB
+        from codegraph.core.db_sqlite import SQLiteGraphDB
 
-        # Seed a Kuzu file via the normal API.
-        monkeypatch.setenv("CGH_DB", "kuzu")
-        from codegraph.core.db import get_connection
+        # Seed: create a sqlite-backed graph with the schema initialized.
+        cg = tmp_path / ".codegraph"
+        cg.mkdir()
+        seed = SQLiteGraphDB(str(cg / "graph.sqlite"))
+        seed.upsert_node("File", "path", "/a.py", {"lang": "python"})
+        seed.close()
 
         reset_connection()
-        seeded = get_connection(tmp_path)
-        seeded.upsert_node("File", "path", "/a.py", {"lang": "python"})
-        reset_connection()
-        monkeypatch.delenv("CGH_DB", raising=False)
-
         try:
             conn = get_readonly_connection(tmp_path)
-            assert isinstance(conn, KuzuGraphDB)
+            assert isinstance(conn, SQLiteGraphDB)
             assert conn.count_nodes("File") == 1
         finally:
             reset_connection()

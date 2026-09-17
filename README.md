@@ -110,7 +110,7 @@ MCP server (codegraph)          <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
 DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based (default)
-                                            -- or Kuzu graph.db via CGH_DB=kuzu
+                                            -- or SQLite graph.sqlite via CGH_DB=sqlite
 SQLite FTS5 (.codegraph/fts.db)       <-- BM25 full-text search
     |  indexed from
     v

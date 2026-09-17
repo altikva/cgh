@@ -13,7 +13,7 @@
       "name": "cgh",
       "source": "./",
       "description": "52 MCP tools for code navigation (symbol lookup, call graph, imports, docs) plus cross-session memory, plans, and knowledge. Tool execution is server-side, so responses cost near-zero model tokens. Requires the cgh binary on PATH.",
-      "version": "0.11.8",
+      "version": "0.12.0",
       "author": {
         "name": "Joy Ndjama",
         "email": "joy.ndjama@altikva.com"

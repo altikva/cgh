@@ -10,17 +10,22 @@
 # pip/uvx build (`uvx cgh serve`, which bundles DuckDB) and `cgh backend
 # duckdb`; there is deliberately no in-place binary self-upgrade.
 #
-# Two variants, chosen with CGH_VARIANT (default: core):
+# Two variants, chosen with CGH_VARIANT (default: sealed). The variant is
+# named for EGRESS, not for a plugin count: "full" was a lie (it never carried
+# the heavy docs/vision plugins). What actually differs is whether the binary
+# contains code that can leave the machine.
 #
-#   core  the default binary. Core plus the pure-Python, LOCAL-ONLY plugins
-#         (cgh-pii, cgh-classify). It bundles nothing that can reach the
-#         network, so "the core never phones home" stays verifiable by
-#         absence, not by trusting a gate inside a stripped binary.
+#   sealed  the default binary, shipped as `cgh`. Core plus the pure-Python,
+#           LOCAL-ONLY plugins (cgh-pii, cgh-classify). It contains NO code
+#           that can reach the network, so "the core never phones home" is
+#           verifiable by absence (strings / an import audit), not by trusting
+#           a gate inside a stripped binary.
 #
-#   full  adds the egress-capable plugins (cgh-codegen, cgh-summarize,
-#         cgh-bugreport). These sit behind the egress gate and do nothing
-#         until configured, but the code is present, so this build is named
-#         and shipped separately as the "includes cloud-assisted tools" one.
+#   egress  shipped as `cgh-egress`. Adds the egress-capable plugins
+#           (cgh-codegen, cgh-summarize, cgh-bugreport). They sit behind the
+#           egress gate and do nothing until configured, and can target a local
+#           model too, so the honest name is the capability (can egress), never
+#           a state ("connected"/"online" would overclaim the way "full" did).
 #
 # The heavy, native-dep plugins (cgh-docs -> lxml, cgh-vision -> pillow +
 # pypdfium2) are NOT bundled in either variant: a native wheel inside a onefile
@@ -28,19 +33,19 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
 OUT="${1:-$ROOT/dist-binary}"
-VARIANT="${CGH_VARIANT:-core}"
+VARIANT="${CGH_VARIANT:-sealed}"
 cd "$ROOT"
 
 # Plugins to bundle, as "<dist-name>:<import-name>". The dist name feeds
 # --copy-metadata (without which entry-point discovery returns EMPTY in a
 # frozen binary and the plugin silently never loads); the import name feeds
 # --collect-all. Keep both correct.
-CORE_PLUGINS=( "cgh-pii:cgh_pii" "cgh-classify:cgh_classify" )
-FULL_EXTRA=( "cgh-codegen:cgh_codegen" "cgh-summarize:cgh_summarize" "cgh-bugreport:cgh_bugreport" )
+SEALED_PLUGINS=( "cgh-pii:cgh_pii" "cgh-classify:cgh_classify" )
+EGRESS_EXTRA=( "cgh-codegen:cgh_codegen" "cgh-summarize:cgh_summarize" "cgh-bugreport:cgh_bugreport" )
 case "$VARIANT" in
-  core) PLUGINS=( "${CORE_PLUGINS[@]}" ) ;;
-  full) PLUGINS=( "${CORE_PLUGINS[@]}" "${FULL_EXTRA[@]}" ) ;;
-  *) echo "unknown CGH_VARIANT='$VARIANT' (expected: core | full)" >&2; exit 2 ;;
+  sealed) PLUGINS=( "${SEALED_PLUGINS[@]}" ) ;;
+  egress) PLUGINS=( "${SEALED_PLUGINS[@]}" "${EGRESS_EXTRA[@]}" ) ;;
+  *) echo "unknown CGH_VARIANT='$VARIANT' (expected: sealed | egress)" >&2; exit 2 ;;
 esac
 
 # Split the plugin set into the two flag streams: --with installs the local

@@ -209,13 +209,14 @@ jobs:
     # the release or the other legs. PyInstaller does not cross-compile, so
     # each target builds on its own native runner.
     #
-    # TWO variants per target (see packaging/build-binary.sh):
-    #   core  -> cgh-<target>       : core + the local-only plugins (pii,
-    #           classify). Provably egress-free, so "the core never phones
-    #           home" stays verifiable by absence.
-    #   full  -> cgh-full-<target>  : adds the egress-capable plugins (codegen,
-    #           summarize, bugreport), gated and inert until configured. The
-    #           separate name is the honest label for a build that carries them.
+    # TWO variants per target (see packaging/build-binary.sh), named for
+    # EGRESS, not a plugin count:
+    #   sealed -> cgh-<target>         : core + the local-only plugins (pii,
+    #             classify). Provably egress-free, so "the core never phones
+    #             home" stays verifiable by absence of the code, not a flag.
+    #   egress -> cgh-egress-<target>  : adds the egress-capable plugins
+    #             (codegen, summarize, bugreport), gated and inert until
+    #             configured. The name is the honest capability, not a state.
     # The heavy native-dep plugins (docs, vision) stay pip-only in both.
     needs: [validate, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -224,7 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [core, full]
+        variant: [sealed, egress]
         plat:
           - { target: macos-arm64, runner: macos-14 }
           - { target: macos-x64, runner: macos-13 }
@@ -252,8 +253,8 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           TARGET: ${{ matrix.plat.target }}
         run: |
-          # core -> cgh-<target>, full -> cgh-full-<target>; .exe on Windows.
-          prefix="cgh"; [ "$VARIANT" = full ] && prefix="cgh-full"
+          # sealed -> cgh-<target>, egress -> cgh-egress-<target>; .exe on Windows.
+          prefix="cgh"; [ "$VARIANT" = egress ] && prefix="cgh-egress"
           asset="$prefix-$TARGET"
           # PyInstaller writes cgh (cgh.exe on Windows) into dist-binary/dist.
           src="dist-binary/dist/cgh"
@@ -280,7 +281,7 @@ jobs:
           # the plugins vanish silently. Assert the expected set is ACTIVE in the
           # built binary itself, not in the source tree.
           expected="pii classify"
-          [ "$VARIANT" = full ] && expected="pii classify codegen summarize bugreport"
+          [ "$VARIANT" = egress ] && expected="pii classify codegen summarize bugreport"
           python3 - "out/$ASSET" $expected <<'PY'
           import json, subprocess, sys
           binp, expected = sys.argv[1], set(sys.argv[2:])

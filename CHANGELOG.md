@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **A federated child with no owner reads as `idle`, not `down`**: `cgh status`
+  and `cgh federate list` labelled the normal resting state of every child as
+  `down`, which reads as a fault. Nothing is wrong and nothing needs starting:
+  the parent opens each child's database read-only, so federated queries work
+  with every child idle. The `cgh federate up` and `cgh federate down` verbs
+  are unchanged.
+
 ### Fixed
 - **A deferred scanner no longer locks the index out of its own database**: the
   scan queue runs on a worker thread and opened its own SQLite connection to

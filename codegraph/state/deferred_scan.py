@@ -168,10 +168,14 @@ def _process(repo_root: str, path: str, blob_sha: str) -> None:
 def _feed_fts(repo_root: str, path: str, scanner: str, found: list) -> None:
     try:
         from codegraph.core.fts import commit as _commit
-        from codegraph.core.fts import get_fts_conn
-        from codegraph.indexer import _fts_ingest_findings
+        from codegraph.indexer import _fts_ingest_findings, _get_fts
 
-        fts_conn = get_fts_conn(repo_root)
+        # The cached connection, never a fresh one. This runs on the deferred
+        # worker thread while the index loop writes from the main thread:
+        # _FTS_LOCK serialises the helpers, but it cannot serialise two
+        # SQLite transactions on two connections, and the second one turns
+        # the index loop's DELETE into "database is locked".
+        fts_conn = _get_fts(repo_root)
         _fts_ingest_findings(fts_conn, path, scanner, found)
         _commit(fts_conn)
     except Exception:

@@ -170,6 +170,53 @@ class TestResolveJsTs:
         assert result is not None
         assert result.name == "shared.ts"
 
+    def test_tilde_alias_under_a_nuxt_app_directory(self, tmp_path):
+        """Nuxt writes its tsconfig into .nuxt/, a build artifact nobody
+        commits, so `~/x` has no alias on disk to resolve through."""
+        web = tmp_path / "web"
+        (web / "app" / "composables").mkdir(parents=True)
+        (web / "app" / "pages").mkdir(parents=True)
+        (web / "nuxt.config.ts").write_text("export default {}\n")
+        target = web / "app" / "composables" / "useSeo.ts"
+        target.write_text("export const useSeo = () => {}\n")
+        importer = web / "app" / "pages" / "about.vue"
+        importer.write_text(
+            "<script setup>\nimport { useSeo } from '~/composables/useSeo'\n</script>\n"
+        )
+
+        result = resolve_js_ts("~/composables/useSeo", importer, tmp_path)
+
+        assert result == target.resolve()
+
+    def test_at_alias_under_a_vite_src_directory(self, tmp_path):
+        (tmp_path / "src" / "utils").mkdir(parents=True)
+        (tmp_path / "vite.config.ts").write_text("export default {}\n")
+        target = tmp_path / "src" / "utils" / "format.ts"
+        target.write_text("export const f = 1\n")
+        importer = tmp_path / "src" / "main.ts"
+        importer.write_text("import { f } from '@/utils/format'\n")
+
+        result = resolve_js_ts("@/utils/format", importer, tmp_path)
+
+        assert result == target.resolve()
+
+    def test_scoped_package_is_not_treated_as_an_alias(self, tmp_path):
+        """`@nuxt/ui` is a dependency. Only `@/` is the alias."""
+        (tmp_path / "app").mkdir()
+        (tmp_path / "package.json").write_text("{}")
+        importer = tmp_path / "app" / "main.ts"
+        importer.write_text("import x from '@nuxt/ui'\n")
+
+        assert resolve_js_ts("@nuxt/ui", importer, tmp_path) is None
+
+    def test_alias_does_not_invent_a_target(self, tmp_path):
+        (tmp_path / "app").mkdir()
+        (tmp_path / "nuxt.config.ts").write_text("export default {}\n")
+        importer = tmp_path / "app" / "main.ts"
+        importer.write_text("import x from '~/composables/missing'\n")
+
+        assert resolve_js_ts("~/composables/missing", importer, tmp_path) is None
+
     def test_bare_specifier_returns_none(self, tmp_path):
         importer = tmp_path / "main.ts"
         importer.write_text("")

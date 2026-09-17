@@ -35,8 +35,9 @@ _PY_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
 
 
 def reset_for_tests() -> None:
-    """Drop the memoised Python source roots."""
+    """Drop the memoised source roots."""
     _PY_ROOTS_CACHE.clear()
+    _JS_ROOTS_CACHE.clear()
 
 
 def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
@@ -139,6 +140,65 @@ def _resolve_python_under(base: Path, parts: list[str]) -> Path | None:
     )
 
 
+# Project roots per importer directory, for the `~/` and `@/` conventions.
+_JS_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+# Files that mark the root of a JS/TS project inside a repo.
+_JS_PROJECT_MARKERS = (
+    "nuxt.config.ts",
+    "nuxt.config.js",
+    "nuxt.config.mjs",
+    "vite.config.ts",
+    "vite.config.js",
+    "package.json",
+)
+
+
+def _js_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
+    """Directories `~/x` and `@/x` may point at.
+
+    Both mean "the app source root" in Nuxt and Vite, and neither is written
+    down anywhere when the alias comes from the framework rather than a
+    tsconfig: Nuxt generates its tsconfig into `.nuxt/`, which is a build
+    artifact nobody commits. So walk up to the nearest project marker and try
+    that directory, its `app/` (Nuxt 4) and its `src/` (Vite), then the same
+    three at the repo root.
+    """
+    key = str(importer_dir)
+    cached = _JS_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    project = None
+    current = importer_dir
+    while True:
+        if any((current / marker).is_file() for marker in _JS_PROJECT_MARKERS):
+            project = current
+            break
+        if current == repo_root or current.parent == current:
+            break
+        current = current.parent
+
+    candidates: list[Path] = []
+    for base in (project, repo_root):
+        if base is None:
+            continue
+        candidates.extend([base / "app", base / "src", base])
+
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for cand in candidates:
+        text = str(cand)
+        if text in seen or not cand.is_dir():
+            continue
+        seen.add(text)
+        ordered.append(cand)
+
+    result = tuple(ordered)
+    _JS_ROOTS_CACHE[key] = result
+    return result
+
+
 def _resolve_target_with_exts(target: Path) -> Path | None:
     """Given a bare path, try common JS/TS extensions and directory index files."""
     if target.is_file():
@@ -161,11 +221,11 @@ def resolve_js_ts(
       1. Relative paths (``"./foo"``, ``"../utils/bar"``)
       2. Absolute paths from the repo root (``"/src/utils"``)
       3. tsconfig.json compilerOptions.paths aliases (``"@/utils"``)
+      4. the ``~/`` and ``@/`` framework convention (Nuxt, Vite)
+      5. workspace packages (npm, pnpm, yarn)
 
-    Bare specifiers without a tsconfig alias hit (``"react"``,
-    ``"lodash"``) return None, they're third-party deps, not user code.
-    Workspace packages are intentionally NOT handled here; see follow-up
-    PRs.
+    Bare specifiers (``"react"``, ``"h3"``, ``"node:crypto"``) return None:
+    they are third-party deps, not user code.
     """
     if not source_module:
         return None
@@ -190,7 +250,16 @@ def resolve_js_ts(
         if hit := _resolve_target_with_exts(cand):
             return hit
 
-    # 4. Workspace package (npm / pnpm / yarn). Imports of the form
+    # 4. Framework convention: `~/x` and `@/x` address the app source root in
+    # Nuxt and Vite. `@scope/pkg` is a package, not an alias, so the second
+    # character has to be a slash.
+    if source_module[:2] in ("~/", "@/"):
+        rest = source_module[2:]
+        for base in _js_source_roots(importer_dir, repo_root.resolve()):
+            if hit := _resolve_target_with_exts(base / rest):
+                return hit
+
+    # 5. Workspace package (npm / pnpm / yarn). Imports of the form
     # `@scope/pkg` or `bare-pkg/subpath` resolve to the package's entry
     # point or the named subpath inside the workspace directory.
     from codegraph.imports.workspaces import resolve_workspace_import

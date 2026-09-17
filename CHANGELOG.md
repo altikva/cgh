@@ -17,6 +17,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   against the importer's own package root, `src/`, the repo root and the
   importer's directory, nearest first. On one 310-file repo this took the
   import graph from 0 to 599 edges. Re-index (`cgh reset`) to pick it up.
+- **`~/` and `@/` imports resolve in Nuxt and Vite projects**: both mean "the
+  app source root", and neither is written down anywhere the indexer could
+  read it, because Nuxt generates its tsconfig into `.nuxt/`, a build artifact
+  nobody commits. They are now tried against the nearest project directory
+  (the one holding `nuxt.config.*`, `vite.config.*` or `package.json`), its
+  `app/` and `src/`, then the same three at the repo root. A scoped package
+  such as `@nuxt/ui` is still a package, not an alias.
 - **`Dockerfile` and `Makefile` no longer count as scan errors**: they were
   mapped to extension keys with no parser behind them, so `is_supported` said
   yes and `get_parser_for_path` said no, and every scan reported an error per

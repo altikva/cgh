@@ -35,6 +35,21 @@ jobs:
       - name: Check shipped prose for em/en dashes
         run: python3 scripts/check_no_em_dashes.py
 
+  # The npx wrapper (packaging/npm) is plain Node with no deps. Test its
+  # resolution logic and its download/checksum/cache/exec path against a local
+  # server, so a broken launcher fails here rather than in `npx @altikva/cgh`.
+  npm-wrapper:
+    name: npx wrapper (node test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test the wrapper
+        working-directory: packaging/npm
+        run: node --test test/*.test.js
+
   # Gating job: lint + the full supported Python matrix. Kuzu has no cp3.14
   # wheel, so the kuzu extra is installed only on 3.11-3.13; 3.14 runs the
   # default DuckDB-only install and the Kuzu tests skip themselves.

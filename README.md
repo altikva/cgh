@@ -63,6 +63,15 @@ pip install cgh                 # or: pipx install cgh / uv tool install cgh
 pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
 ```
 
+No Python? Run the standalone binary through npm, or download it from the
+[latest release](https://github.com/altikva/cgh/releases/latest):
+
+```bash
+npx @altikva/cgh serve          # fetches the binary for your OS, verifies it, runs it
+npx @altikva/cgh --egress serve # the egress build, with the model-calling plugins
+```
+
+The binary uses the SQLite backend; `uvx cgh` bundles DuckDB and every plugin.
 One-line installers for macOS, Linux, WSL, Git Bash and Windows PowerShell, corporate mirror
 settings, optional extras and the `cgh: command not found` fix are in
 **[docs/INSTALL.md](docs/INSTALL.md)**. Python 3.11 through 3.14.

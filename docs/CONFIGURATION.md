@@ -64,7 +64,7 @@ log_backup_count = 3
 # subrepos = ["./apps/api", "./apps/web", "../shared-lib"]
 
 # When this repo's owner starts, also start the owner of every initialized
-# subrepo whose owner is down (watcher included, so child indexes stay
+# subrepo whose owner is idle (watcher included, so child indexes stay
 # fresh). Children started this way stop on their own shortly after the
 # parent owner exits. Set to false to opt out.
 # federate_auto_up = true
@@ -112,7 +112,7 @@ reindex_on_start = true
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 | `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
 | `mode` | `str` | `"assist"` | Global posture. `assist` optimizes for token savings; `secure` is assist plus enforcement: egress gates switch to allowlist, guards fail closed, static deny rules sync. Nothing turns off in secure. |
-| `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is down. Those children live exactly as long as the parent owner. |
+| `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is idle. Those children live exactly as long as the parent owner. |
 
 **Default `ignore_dirs`:**
 
@@ -198,7 +198,7 @@ cgh index                          # parent indexes only its own files
 cgh serve --background --watch     # parent owner federates queries to children
 
 # Starting the parent owner also starts each child's owner (with its
-# watcher) if it is down, so child indexes stay fresh. Those children
+# watcher) if it is idle, so child indexes stay fresh. Those children
 # stop on their own once the parent owner exits. Opt out with
 # federate_auto_up = false in the parent's config.toml.
 #
@@ -210,7 +210,7 @@ cgh federate down                  # stops them all
 **Owner lifecycle**: the parent reads each child's `.codegraph/` files
 directly (read-only), children's owners exist only to keep their own index
 fresh. When the parent owner starts it also starts the owner (with watcher)
-of every initialized child whose owner is down, unless `federate_auto_up =
+of every initialized child whose owner is idle, unless `federate_auto_up =
 false`. Children started this way carry the parent owner's pid as a worker
 marker, so they stop on their own a few seconds after the parent owner
 exits. Children that were already up are left alone: they keep whatever

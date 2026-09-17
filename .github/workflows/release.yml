@@ -226,9 +226,14 @@ jobs:
       fail-fast: false
       matrix:
         variant: [sealed, egress]
+        # macOS x64 (Intel) is intentionally absent: GitHub retired the
+        # `macos-13` hosted image (the last Intel macOS runner), so those legs
+        # queue forever against a label no runner matches. PyInstaller does not
+        # cross-compile, so an arm64 runner cannot produce an Intel binary.
+        # Intel-Mac users install with Python instead (`uvx cgh` / `pip install
+        # cgh`); the npx wrapper tells them so rather than 404ing.
         plat:
           - { target: macos-arm64, runner: macos-14 }
-          - { target: macos-x64, runner: macos-13 }
           - { target: linux-x64, runner: ubuntu-latest }
           - { target: linux-arm64, runner: ubuntu-24.04-arm }
           - { target: windows-x64, runner: windows-latest }
@@ -307,13 +312,16 @@ jobs:
 
   publish-npm:
     name: Publish npx wrapper (@altikva/cgh)
-    # The wrapper downloads the binaries at runtime, so it must publish only
-    # after every binary asset is uploaded, or an early `npx @altikva/cgh` would
-    # 404. `needs: binaries` gives that ordering. Requires an NPM_TOKEN secret
-    # with publish rights to the @altikva scope (the maintainer configures it,
-    # like the PyPI publishers); until it exists this job fails alone and blocks
-    # nothing else.
-    needs: binaries
+    # Depends on github-release, NOT binaries: the wrapper fetches a binary at
+    # runtime, so it only needs the release to exist, and gating it on every
+    # binary leg means one stuck runner (a retired image, a queue backlog)
+    # blocks the npm publish indefinitely. Decoupled, the binaries upload in
+    # parallel; a platform whose asset is not up yet gets a clean "not found"
+    # from the launcher for the short window until it lands, rather than the
+    # whole package never publishing. Requires an NPM_TOKEN secret with publish
+    # rights to the @altikva scope (the maintainer configures it, like the PyPI
+    # publishers); until it exists this job fails alone and blocks nothing else.
+    needs: github-release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

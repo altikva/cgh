@@ -9,6 +9,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **A deferred scanner no longer locks the index out of its own database**: the
+  scan queue runs on a worker thread and opened its own SQLite connection to
+  write findings, while the index loop wrote through the cached one. The
+  module lock serialises the helpers but cannot serialise two transactions on
+  two connections, so the loop's `DELETE FROM symbols` died with `database is
+  locked` and took the whole scan with it. It reuses the cached connection.
+  A workspace whose scanners actually fire could not be re-indexed at all.
+- **`cgh status` no longer claims a scanned repository was never scanned**: a
+  repository with no git HEAD, which is the normal shape of a federation
+  parent, showed `no scan recorded, run cgh index` however recently it had
+  been indexed, and re-running changed nothing. It now reports the scan and
+  says there is no commit to compare against.
 - **A partial scan no longer overwrites the import coverage of a full one**: a
   file whose content has not changed is short-circuited before it reaches a
   parser, yet still counts as indexed, so a re-scan could report `31/190` where

@@ -837,7 +837,7 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
             "codex": "AGENTS.md",
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
-            "bob": ".bob/rules/00-codegraph-usage.md",
+            "bob": ".bob/rules/cgh-usage.md",
         }
         inject_targets = [
             (k, target_files[k]) for k in selected_keys if k in target_files
@@ -1394,6 +1394,38 @@ def _append_hook(settings: dict, spec: dict) -> None:
     bucket.append(wrapper)
 
 
+def _mcp_command() -> tuple[str, list[str]]:
+    """The command an IDE should spawn for the MCP server, resolved absolutely.
+
+    A GUI process does not inherit the login shell PATH: an IDE launched from
+    the Dock or the Start menu sees a bare `/usr/bin:/bin:/usr/sbin:/sbin`,
+    so a bare "cgh" never resolves. On Windows, prefer the windowless twin
+    for the same reason the hooks do: `cgh.exe` is a console application and
+    a GUI parent spawning it flashes a console window.
+    """
+    import shutil
+
+    if os.name == "nt":
+        for name in ("cghw", "cgh", "codegraph"):
+            found = shutil.which(name)
+            if found:
+                return found, ["serve", "--root", ".", "--watch", "--reindex"]
+    else:
+        for name in ("cgh", "codegraph"):
+            found = shutil.which(name)
+            if found:
+                return found, ["serve", "--root", ".", "--watch", "--reindex"]
+    return sys.executable, [
+        "-m",
+        "codegraph",
+        "serve",
+        "--root",
+        ".",
+        "--watch",
+        "--reindex",
+    ]
+
+
 def _hook_launcher(cli_prefix: str) -> str:
     """On Windows, point the hooks at the windowless launcher.
 
@@ -1772,8 +1804,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         _skills_line("GEMINI.md", install_gemini(root))
 
     elif tool == "bob":
-        # Bob reads project-level MCP servers from .bob/mcp.json (its
-        # global file is ~/.bob/mcp_settings.json; project wins).
+        # The Bob agent reads its MCP servers from .bob/mcp.json in the
+        # project, or ~/.bob/settings/mcp.json globally, the project file
+        # winning for a same-named server. Its own constants spell both:
+        # WORKSPACE_BOB_DIR ".bob" joined with "mcp.json", and with
+        # "settings"/"mcp.json" for the global one.
+        #
+        # The surrounding VS Code shell watches the repo-root .mcp.json as
+        # well, but that is the editor's generic MCP surface, not the Bob
+        # agent's. Writing both would leave two definitions of one server
+        # racing for the same repo's write lock, so only .bob/ is written.
         #
         # Bob is an IDE agent, and a GUI process does not inherit the login
         # shell PATH: a bare "cgh" command fails to spawn, so Bob never
@@ -1782,27 +1822,12 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         # the project root so the executable and `--root .` both resolve.
         # Bob's stdio schema is command/args with an optional cwd; there is
         # no "type" field for stdio.
-        cgh_abs = shutil.which("cgh") or shutil.which("codegraph")
-        if cgh_abs:
-            bob_entry = {
-                "command": cgh_abs,
-                "args": ["serve", "--root", ".", "--watch", "--reindex"],
-                "cwd": str(root.resolve()),
-            }
-        else:
-            bob_entry = {
-                "command": sys.executable,
-                "args": [
-                    "-m",
-                    "codegraph",
-                    "serve",
-                    "--root",
-                    ".",
-                    "--watch",
-                    "--reindex",
-                ],
-                "cwd": str(root.resolve()),
-            }
+        command, args = _mcp_command()
+        bob_entry = {
+            "command": command,
+            "args": args,
+            "cwd": str(root.resolve()),
+        }
         bob_dir = root / ".bob"
         bob_dir.mkdir(exist_ok=True)
         mcp_path = bob_dir / "mcp.json"
@@ -1814,6 +1839,10 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         _skills_line(".bob/skills/", install_bob(root))
+        console.print(
+            "    [dim]every workspace instead: copy that entry into "
+            "~/.bob/settings/mcp.json[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------

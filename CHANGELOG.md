@@ -18,6 +18,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   variable and the `ruflo_memory_hits` field of the `context_for_task`
   response. Claude Code memory, plans and knowledge are untouched: they come
   from the local FTS index and never went through this path.
+### Fixed
+- **`cgh setup bob` wrote a command Bob cannot spawn**: the MCP entry named
+  `cgh` bare, and an IDE launched from the Dock or the Start menu inherits
+  none of the login shell PATH, so the agent could never start the server.
+  The command is resolved to an absolute path at setup time now, and to
+  `cghw.exe` on Windows, where `cgh.exe` is a console application whose
+  window would flash each time a GUI parent starts it. Destinations are
+  unchanged and confirmed against the shipped agent: `.bob/mcp.json` for the
+  project, `.bob/skills/<name>/SKILL.md`, `.bob/rules/`, and
+  `~/.bob/settings/mcp.json` to cover every workspace.
 
 ### Changed
 - **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the

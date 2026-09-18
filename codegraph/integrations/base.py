@@ -246,10 +246,10 @@ class CodexIntegration:
 
 
 class BobIntegration:
-    """IBM Bob (BobShell + the Bob IDE): the bundled skills install
-    verbatim under .bob/skills/ (Bob speaks the same Agent Skills
-    standard as Claude Code), the usage guidelines land in .bob/rules/
-    where every mode loads them, and the guard mirrors barred paths
+    """IBM Bob (BobShell + the Bob IDE, whose CLI shim is `bobide`): the
+    bundled skills install verbatim under .bob/skills/, the usage
+    guidelines under .bob/rules/, and the MCP server in .bob/mcp.json,
+    the three locations the agent reads. The guard mirrors barred paths
     into a managed .bobignore block, the
     file Bob honors when deciding what it may access. Static denies
     only: Bob publishes no pre-tool hook with a veto, so the level is
@@ -263,7 +263,9 @@ class BobIntegration:
 
         return (
             (root / ".bob").exists()
+            or (root / ".bobide").exists()
             or (root / ".bobignore").exists()
+            or shutil.which("bobide") is not None
             or shutil.which("bob") is not None
         )
 

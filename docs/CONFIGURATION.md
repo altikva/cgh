@@ -307,16 +307,6 @@ Overrides where the `.codegraph/` directory is located. By default it is `<proje
 CODEGRAPH_DIR=/tmp/my-project-codegraph cgh index
 ```
 
-### `CODEGRAPH_RUFLO_ENABLED`
-
-Force-enable or force-disable the Ruflo integration, bypassing auto-detection:
-
-```bash
-CODEGRAPH_RUFLO_ENABLED=false cgh serve --watch
-```
-
----
-
 ## File Discovery
 
 codegraph discovers files to index using this strategy:

@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Removed
+- **The ruflo integration**: `context_for_task` shelled out to `npx ruflo` on
+  every call to merge an external memory store into its answer. The subprocess
+  ran with the repository as its working directory, so ruflo created its own
+  stores there: `ruvector.db` at 1.5 MB, `agentdb.rvf` and a lock file, none of
+  them ignored by git, in every repo where a task context was built. The bridge
+  is gone, along with the `[ruflo]` config table, the `CODEGRAPH_RUFLO_ENABLED`
+  variable and the `ruflo_memory_hits` field of the `context_for_task`
+  response. Claude Code memory, plans and knowledge are untouched: they come
+  from the local FTS index and never went through this path.
+
 ### Changed
 - **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the
   Intel macOS hosted runner and PyInstaller cannot cross-compile one, so `npx

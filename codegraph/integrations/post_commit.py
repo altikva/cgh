@@ -8,7 +8,7 @@
 # Description: Post-commit pipeline for Claude Code hook.
 #   1. Re-index changed files in codegraph
 #   2. Detect patterns (openapi regen needed, entity type changes, etc.)
-#   3. Store commit context in Ruflo memory
+#   3. Emit a JSON commit summary on stdout for the hook to capture
 #
 # Usage: python -m codegraph.integrations.post_commit [--since HEAD~1]
 
@@ -158,7 +158,7 @@ def main():
     for alert in alerts:
         print(f"[post-commit] ⚠ {alert}")
 
-    # 6. Output JSON for Ruflo memory (stdout, captured by hook)
+    # 6. Output the JSON summary on stdout, captured by the hook
     summary = {
         "commit": commit,
         "files_changed": files,

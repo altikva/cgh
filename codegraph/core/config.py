@@ -28,9 +28,6 @@
 #   [mcp]
 #   auto_watch = true
 #   reindex_on_start = true
-#
-#   [ruflo]
-#   enabled = false              # auto-detected if not set
 
 from __future__ import annotations
 
@@ -224,9 +221,6 @@ class CodegraphConfig:
     plugins_disabled: list[str] = field(default_factory=list)
     plugin_tables: dict[str, dict] = field(default_factory=dict)
 
-    # Ruflo
-    ruflo_enabled: bool | None = None  # None = auto-detect
-
     @property
     def codegraph_dir(self) -> Path:
         return self.project_root / CODEGRAPH_DIR
@@ -275,13 +269,6 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
 
     if os.environ.get("CODEGRAPH_ROOT"):
         config.project_root = Path(os.environ["CODEGRAPH_ROOT"]).resolve()
-
-    if os.environ.get("CODEGRAPH_RUFLO_ENABLED"):
-        config.ruflo_enabled = os.environ["CODEGRAPH_RUFLO_ENABLED"].lower() in (
-            "1",
-            "true",
-            "yes",
-        )
 
     if os.environ.get("CGH_PRECISE_CALLS"):
         config.precise_calls = os.environ["CGH_PRECISE_CALLS"].lower() in (
@@ -344,10 +331,6 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     for name, table in (data.get("plugin") or {}).items():
         if isinstance(table, dict):
             config.plugin_tables[name] = table
-
-    ruflo = data.get("ruflo", {})
-    if "enabled" in ruflo:
-        config.ruflo_enabled = ruflo["enabled"]
 
 
 def generate_default_config() -> str:
@@ -487,10 +470,6 @@ reindex_on_start = true
 # auto_extract_out = ".codegraph/vision"  # where the sidecars land; "beside"
 #                        # writes <file>.json next to the source instead, or
 #                        # give any directory (repo-relative or absolute)
-
-[ruflo]
-# Ruflo integration (auto-detected if not set)
-# enabled = true
 
 [paths]
 # Where to look for Claude Code memory and plan files. Default is the

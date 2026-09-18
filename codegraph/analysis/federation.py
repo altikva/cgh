@@ -674,7 +674,7 @@ def _write_config_toml(path: Path, data: dict) -> None:
             lines.append(_emit_toml_value(key, value))
         lines.append("")
 
-    # Pass-through other top-level tables (parsers, mcp, ruflo, paths, …)
+    # Pass-through other top-level tables (parsers, mcp, paths, …)
     for table, body in data.items():
         if table == "codegraph":
             continue

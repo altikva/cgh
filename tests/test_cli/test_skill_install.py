@@ -31,8 +31,7 @@ def test_source_dir_exists_and_has_skills():
 def test_install_populates_skill_dirs(tmp_path):
     installed = install_bob(tmp_path)
     assert installed, "install_bob returned no skills"
-    # Bob scans .claude/skills; .bob/skills was never loaded.
-    dest = tmp_path / ".claude" / "skills"
+    dest = tmp_path / ".bob" / "skills"
     assert dest.is_dir() and any(dest.iterdir())
     # A SKILL.md landed for at least one skill.
     assert list(dest.glob("*/SKILL.md"))

@@ -837,7 +837,7 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
             "codex": "AGENTS.md",
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
-            "bob": ".claude/rules/cgh-usage.md",
+            "bob": ".bob/rules/cgh-usage.md",
         }
         inject_targets = [
             (k, target_files[k]) for k in selected_keys if k in target_files
@@ -1804,15 +1804,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         _skills_line("GEMINI.md", install_gemini(root))
 
     elif tool == "bob":
-        # Bob IDE (a VS Code fork) reads project-level MCP servers from the
-        # repo-root .mcp.json, with the same "mcpServers" schema Claude and
-        # Codex use; it registers each entry as a "workspace-dot-mcp"
-        # server. It never reads .bob/mcp.json, which earlier versions of
-        # this branch wrote, so that file sat inert. Its user-level file is
-        # <userData>/User/mcp.json and uses a different schema ("servers"
-        # plus "inputs"); `bobide --add-mcp '<json>'` is the supported way
-        # to write it, and this command deliberately does not touch the
-        # user's IDE profile.
+        # The Bob agent reads its MCP servers from .bob/mcp.json in the
+        # project, or ~/.bob/settings/mcp.json globally, the project file
+        # winning for a same-named server. Its own constants spell both:
+        # WORKSPACE_BOB_DIR ".bob" joined with "mcp.json", and with
+        # "settings"/"mcp.json" for the global one.
+        #
+        # The surrounding VS Code shell watches the repo-root .mcp.json as
+        # well, but that is the editor's generic MCP surface, not the Bob
+        # agent's. Writing both would leave two definitions of one server
+        # racing for the same repo's write lock, so only .bob/ is written.
         #
         # Bob is an IDE agent, and a GUI process does not inherit the login
         # shell PATH: a bare "cgh" command fails to spawn, so Bob never
@@ -1827,18 +1828,20 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             "args": args,
             "cwd": str(root.resolve()),
         }
-        mcp_path = root / ".mcp.json"
+        bob_dir = root / ".bob"
+        bob_dir.mkdir(exist_ok=True)
+        mcp_path = bob_dir / "mcp.json"
         if mcp_path.exists():
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
         data.setdefault("mcpServers", {})["codegraph"] = bob_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        console.print("    [green]+[/green] .mcp.json [dim](MCP server for Bob)[/dim]")
-        _skills_line(".claude/skills/", install_bob(root))
+        console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
+        _skills_line(".bob/skills/", install_bob(root))
         console.print(
-            "    [dim]user-level alternative, writes your IDE profile: "
-            f'bobide --add-mcp \'{{"name":"codegraph","command":"{command}"}}\'[/dim]'
+            "    [dim]every workspace instead: copy that entry into "
+            "~/.bob/settings/mcp.json[/dim]"
         )
 
 

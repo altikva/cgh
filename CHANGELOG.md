@@ -9,15 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
-- **`cgh setup bob` wrote three files Bob never reads**: Bob IDE is a VS Code
-  fork. It takes project MCP servers from the repo-root `.mcp.json` and scans
-  `.claude/skills` and `.claude/rules`, so the `.bob/mcp.json`, `.bob/skills/`
-  and `.bob/rules/` this command created sat inert and the graph never reached
-  the IDE. They now go where Bob looks. The MCP command is resolved to an
-  absolute path too, and to `cghw.exe` on Windows: an IDE launched from the
-  Dock or the Start menu inherits none of the login shell PATH, so a bare
-  `cgh` never spawns, and `cgh.exe` is a console application whose window
-  would flash on every start.
+- **`cgh setup bob` wrote a command Bob cannot spawn**: the MCP entry named
+  `cgh` bare, and an IDE launched from the Dock or the Start menu inherits
+  none of the login shell PATH, so the agent could never start the server.
+  The command is resolved to an absolute path at setup time now, and to
+  `cghw.exe` on Windows, where `cgh.exe` is a console application whose
+  window would flash each time a GUI parent starts it. Destinations are
+  unchanged and confirmed against the shipped agent: `.bob/mcp.json` for the
+  project, `.bob/skills/<name>/SKILL.md`, `.bob/rules/`, and
+  `~/.bob/settings/mcp.json` to cover every workspace.
 
 ### Changed
 - **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the

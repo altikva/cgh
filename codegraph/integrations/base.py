@@ -246,11 +246,10 @@ class CodexIntegration:
 
 
 class BobIntegration:
-    """IBM Bob (BobShell + the Bob IDE): a VS Code fork whose CLI shim is
-    `bobide`. The bundled skills install verbatim under .claude/skills/
-    and the usage guidelines under .claude/rules/, both of which Bob
-    scans; its MCP servers come from the repo-root .mcp.json. The guard
-    mirrors barred paths
+    """IBM Bob (BobShell + the Bob IDE, whose CLI shim is `bobide`): the
+    bundled skills install verbatim under .bob/skills/, the usage
+    guidelines under .bob/rules/, and the MCP server in .bob/mcp.json,
+    the three locations the agent reads. The guard mirrors barred paths
     into a managed .bobignore block, the
     file Bob honors when deciding what it may access. Static denies
     only: Bob publishes no pre-tool hook with a veto, so the level is

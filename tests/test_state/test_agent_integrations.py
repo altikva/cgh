@@ -260,8 +260,7 @@ class TestBobAdapter:
         repo.mkdir()
         names = self._bob().install_instructions(repo)
         assert names == ["cgh-usage"]
-        # Bob scans .claude/skills; .bob/skills was never loaded.
-        dest = repo / ".claude" / "skills" / "cgh-usage"
+        dest = repo / ".bob" / "skills" / "cgh-usage"
         assert (dest / "SKILL.md").read_text(encoding="utf-8") == skill_md
         assert (dest / "extra.md").exists()
 

@@ -295,15 +295,15 @@ def install_gemini(project_root: Path) -> list[str]:
 
 
 def install_bob(project_root: Path) -> list[str]:
-    """Copy skills verbatim to <project>/.claude/skills/<name>/.
+    """Copy skills verbatim to <project>/.bob/skills/<name>/.
 
     Bob speaks the same Agent Skills standard as Claude Code (a SKILL.md
-    with YAML front matter per folder, activated on demand) and scans
-    .claude/skills, .github/skills, .agents/skills and .copilot/skills.
-    It does not scan .bob/skills, which this function used to write, so
-    those files were never loaded."""
+    with YAML front matter per folder, activated on demand), and its own
+    constants join WORKSPACE_BOB_DIR ".bob" with "skills", under a
+    SKILL_FILENAME of "SKILL.md". The global equivalent is
+    ~/.bob/skills/."""
     project_root = Path(project_root)
-    dest_root = project_root / ".claude" / "skills"
+    dest_root = project_root / ".bob" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
 
     installed: list[str] = []
@@ -478,7 +478,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
       codex   → ./AGENTS.md
       gemini  → ./GEMINI.md
       cursor  → ./.cursor/rules/codegraph-usage.mdc
-      bob     → ./.claude/rules/cgh-usage.md
+      bob     → ./.bob/rules/cgh-usage.md
 
     Returns the path written (as str) or None if skipped.
     """
@@ -496,8 +496,9 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         return str(target)
 
     if tool == "bob":
-        # Bob loads rules from .claude/rules, not .bob/rules.
-        target = project_root / ".claude" / "rules" / "cgh-usage.md"
+        # Workspace rules live under .bob/rules/; the mode-specific
+        # siblings (.bob/rules-agent, -ask, -plan) hold AGENTS.md.
+        target = project_root / ".bob" / "rules" / "cgh-usage.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,

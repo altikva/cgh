@@ -53,8 +53,8 @@ class TestMcpCommand:
         assert args[:3] == ["-m", "codegraph", "serve"]
 
 
-class TestSetupWritesTheRootMcpJson:
-    def test_root_mcp_json_not_dot_bob(self, tmp_path, monkeypatch):
+class TestSetupWritesTheBobMcpJson:
+    def test_writes_dot_bob_mcp_json(self, tmp_path, monkeypatch):
         from codegraph.cli.commands_init import _install_integration
 
         monkeypatch.setattr(
@@ -62,9 +62,8 @@ class TestSetupWritesTheRootMcpJson:
         )
         _install_integration(tmp_path, "bob")
 
-        mcp = tmp_path / ".mcp.json"
-        assert mcp.is_file(), "Bob reads the repo-root .mcp.json"
-        assert not (tmp_path / ".bob" / "mcp.json").exists()
+        mcp = tmp_path / ".bob" / "mcp.json"
+        assert mcp.is_file(), "the Bob agent reads .bob/mcp.json"
 
         entry = json.loads(mcp.read_text())["mcpServers"]["codegraph"]
         assert entry["command"] == "/opt/bin/cgh"

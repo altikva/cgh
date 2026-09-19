@@ -507,8 +507,10 @@ class TestImportCoverage:
         assert coverage["python"]["seen"] == 2  # the sibling module and fastapi
         assert coverage["python"]["resolved"] == 1  # fastapi is not ours
 
-    def test_a_language_without_a_resolver_reports_seen_but_unresolved(self, tmp_path):
-        from codegraph.imports.resolver import RESOLVABLE_LANGS
+    def test_an_import_outside_the_repo_is_seen_but_never_resolved(self, tmp_path):
+        """The fixture imports `fmt` and declares no module, so there is
+        nothing in the repo for it to point at. It still has to be counted:
+        an uncounted import and a repo that imports nothing read the same."""
         from codegraph.indexer import index_repo
         from codegraph.state.scan_meta import scan_status
 
@@ -516,7 +518,6 @@ class TestImportCoverage:
         index_repo(str(root))
 
         coverage = scan_status(root)["imports"]
-        assert "go" not in RESOLVABLE_LANGS
         assert coverage["go"]["seen"] >= 1
         assert coverage["go"]["resolved"] == 0
 

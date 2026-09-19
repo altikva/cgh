@@ -608,6 +608,22 @@ cgh findings src/billing.py       # everything known about one file
 cgh findings --severity block     # what the gates would stop
 ```
 
+### `papercut`
+
+Read and log **papercuts**: the tooling and environment time-sinks that slow a
+session down (a wedged process, a held lock, `SERVICE_DISABLED`, a stuck CI job,
+a stale token, a flag that misbehaves). A papercut is a knowledge entry of kind
+`gotcha` tagged `papercut`, so it is searchable and resurfaces in the resume
+bundle. This verb is mainly the human read surface; connected agents record and
+read through the knowledge MCP tools, guided by the bundled `cgh-papercuts`
+skill that `cgh init` installs.
+
+```
+cgh papercut                                   # list this repo's papercuts, newest first
+cgh papercut <query>                           # search them
+cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override the scope)
+```
+
 ### `guard`
 
 Agent-side confidentiality enforcement. A pre-tool-use hook installed in

@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-19
+
 ### Added
 - **`cgh papercut`, a native log of tooling and environment time-sinks**:
   record a papercut (a wedged tool, an auth gotcha, a CI job stuck for no
@@ -20,6 +22,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   session does not re-pay the same lost time.
 
 ### Removed
+- **The legacy Kuzu graph backend, entirely**: the `kuzu` extra
+  (`pip install cgh[kuzu]`), the `CGH_DB=kuzu` selection and the `graph.db`
+  on-disk detection, `db_kuzu.py`, and the `cgh migrate-to-duckdb` command are
+  all gone. The two backends are now DuckDB (the pip and uvx default) and
+  SQLite (the standalone binary's). Kuzu had been opt-in and non-default since
+  the 0.4 cycle; a repo still holding an old `graph.db` is simply reindexed
+  into DuckDB on the next `cgh index`, and if you set `CGH_DB=kuzu`, drop it.
 - **The ruflo integration**: `context_for_task` shelled out to `npx ruflo` on
   every call to merge an external memory store into its answer. The subprocess
   ran with the repository as its working directory, so ruflo created its own
@@ -1473,7 +1482,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0
 [0.11.8]: https://github.com/altikva/cgh/compare/v0.11.7...v0.11.8
 [0.11.7]: https://github.com/altikva/cgh/compare/v0.11.6...v0.11.7

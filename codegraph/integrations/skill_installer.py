@@ -67,6 +67,16 @@ than reading.
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
   1. `knowledge_record(title, body, kind, tags, file_refs?)`
+- **Tooling or the environment fails (NOT your code)**: a wedged process, a
+  held lock, `SERVICE_DISABLED`, a CI job stuck `queued`, a stale token while
+  another credential works, a flag that misbehaves. This is a *papercut*, and
+  handling it is not optional:
+  1. FIRST, before investigating: `knowledge_search("papercut <symptom>")`.
+     Someone may have already paid for the fix.
+  2. AFTER you lose time and find the fix: `knowledge_record(title="Papercut:
+     <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
+     <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
+     the no-MCP backup; `cgh papercut` lets the human read the list.
 - **After `git pull` / `checkout` / `rebase`**:
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)

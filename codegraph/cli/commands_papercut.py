@@ -28,7 +28,7 @@ _TAG = "papercut"
 def register_papercut_parser(sub) -> None:
     p = sub.add_parser(
         "papercut",
-        help="Log or search papercuts (tooling time-sinks) in this repo's knowledge",
+        help="Read this repo's papercuts (tooling time-sinks); agents log them via knowledge",
     )
     p.add_argument(
         "words",

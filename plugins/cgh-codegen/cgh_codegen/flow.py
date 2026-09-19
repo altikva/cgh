@@ -174,6 +174,7 @@ def run_generation(
     written = False
     attempts = 0
     result = None
+    code = ""
     while attempts < max(1, max_attempts):
         attempts += 1
         result = generate_code(
@@ -184,14 +185,22 @@ def run_generation(
             prior=prior,
             existing=existing_text,
         )
+        # Hand the cheap model's output through ruff so what lands on disk is
+        # already formatted and lint-clean, rather than leaving trailing
+        # whitespace and unused imports for a human to sweep up. Best-effort:
+        # a whole new file also gets the safe autofixes; an appended block is
+        # only reformatted, since ruff's unused-import view of a fragment out
+        # of its file's context is not reliable. No ruff on PATH, a non-Python
+        # target, or a syntax error ruff cannot parse leaves the code as-is.
+        code = _polish_code(result.code, target, root, full_module=not extend)
         if to_stdout or tgt is None:
             break
         if existing_text is not None:
             # Rebuild from the original every attempt, so a retry appends to
             # the file as it was rather than stacking onto its own last try.
-            body = _append_into(existing_text, result.code)
+            body = _append_into(existing_text, code)
         else:
-            body = result.code if result.code.endswith("\n") else result.code + "\n"
+            body = code if code.endswith("\n") else code + "\n"
         tgt.parent.mkdir(parents=True, exist_ok=True)
         tgt.write_text(body, encoding="utf-8")
         written = True
@@ -201,7 +210,7 @@ def run_generation(
         verified = ok
         if ok:
             break
-        prior = (result.code, output)
+        prior = (code, output)
 
     # Extending must never leave the file worse than it was found. A new file
     # that fails its check is a draft worth reading; an existing file that
@@ -227,7 +236,7 @@ def run_generation(
         "reference": ref_rel,
         "reason": ref_note or pick["reason"],
         "ref_fallback": ref_note,
-        "lines": len(result.code.splitlines()),
+        "lines": len(code.splitlines()),
         "cost": result.cost,
         "backend": result.backend,
         "egress": egress,
@@ -237,7 +246,7 @@ def run_generation(
         "verified": verified,
         "extended": extend,
         "rolled_back": rolled_back,
-        "code": result.code if to_stdout else "",
+        "code": code if to_stdout else "",
     }
 
 
@@ -265,6 +274,59 @@ def _append_into(existing: str, block: str) -> str:
     if tail:
         body += "\n" + tail + "\n"
     return body
+
+
+def _polish_code(code: str, target: str, root: Path, *, full_module: bool) -> str:
+    """Run generated Python through ruff so it lands formatted and lint-clean.
+
+    A whole new file (``full_module``) is both formatted and given ruff's safe
+    autofixes (drop an unused import, normalise quotes); an appended block is
+    only formatted, because ruff cannot judge an out-of-context fragment's
+    unused imports. A non-Python target, no ruff on PATH, or code ruff cannot
+    parse are returned unchanged, so this never blocks or corrupts a run.
+    """
+    import shutil
+
+    if not target.endswith(".py") or shutil.which("ruff") is None:
+        return code
+    formatted = _ruff_run(["format", "--stdin-filename", target, "-"], code, root, (0,))
+    code = formatted or code
+    if full_module:
+        fixed = _ruff_run(
+            ["check", "--fix", "--stdin-filename", target, "-"], code, root, (0, 1)
+        )
+        code = fixed or code
+    return code
+
+
+def _ruff_run(
+    args: list[str], code: str, root: Path, ok_codes: tuple[int, ...]
+) -> str | None:
+    """Feed ``code`` to ``ruff <args>`` on stdin and return the transformed
+    source, or None when ruff was not usable. ``check --fix`` exits 1 when lint
+    issues remain but still emits the fixed source, so its caller passes
+    ``(0, 1)``; ``format`` passes ``(0,)``. Any other exit (a parse error, ruff
+    missing) yields None so the caller keeps the input unchanged."""
+    import subprocess
+
+    from codegraph.plugin_api import quiet_subprocess_kwargs
+
+    try:
+        proc = subprocess.run(
+            ["ruff", *args],
+            input=code,
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            timeout=30,
+            check=False,
+            **quiet_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode in ok_codes and proc.stdout:
+        return proc.stdout
+    return None
 
 
 def _run_verify(root: Path, command: str) -> tuple[bool, str]:

@@ -618,6 +618,11 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
             for fn_id in conn.find_node_keys("Function", "name", ep.handler_name):
                 # find_node_keys returns *all* matches; filter to this file
                 # by checking the id prefix (id = file_path + '::' + name).
+                # A node id is TEXT by schema, but an older or drifted
+                # graph.duckdb can hand back a non-str key here (seen as an
+                # INT32 when re-indexing an existing index), so coerce before
+                # the prefix check instead of crashing the whole reindex on it.
+                fn_id = str(fn_id)
                 if fn_id.startswith(f"{path}::") or f"::{path}::" in fn_id:
                     conn.ensure_edge("IMPLEMENTED_BY", ep.id, fn_id)
     return len(eps)

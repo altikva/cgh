@@ -9,6 +9,24 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Go and Rust imports resolve to edges**: both parsed their imports and
+  resolved none, so their file graphs were nodes without edges. A Go import
+  names a package directory through the module path in `go.mod`, so only the
+  module's own packages resolve and the edge points at the file naming the
+  package. A Rust `use` path names a module, resolved as `<path>.rs` or
+  `<path>/mod.rs`, with `crate::` starting at the crate root and `self::` and
+  `super::` walking from the importing file; grouped imports and `as` aliases
+  are cut back to the path first. The standard library, third-party modules
+  and external crates stay unresolved, because an edge to code that is not in
+  the repo would be a lie about it.
+- **A Rust grouped import counts as one import per module it names**: the
+  parser collapsed `use crate::{a::X, b::Y}` into a single entry whose text
+  carried the braces, so the idiomatic form of the language resolved to
+  nothing. The use tree is walked now and each member becomes its own import,
+  which is also what makes them resolvable. On BurntSushi/ripgrep this took
+  the import graph from 9 to 99 edges.
+
+### Added
 - **Java imports resolve to edges**: a Java package maps to a directory chain
   under a source root, and that root is per module, so anchoring on the repo
   root missed every Maven and Gradle layout. The resolver climbs from the

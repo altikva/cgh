@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Rust `mod` declarations become import edges**: Rust has no import
+  statement for a crate's own files, the parent module declares the child with
+  `mod foo;`, and the parser ignored those. A crate's file tree stayed
+  disconnected whatever its `use` lines said. On ripgrep this is 87 more
+  resolved edges and internal import coverage rising from 28% to 35%. Inline
+  `mod foo { }` declares nothing outside its file and gets no edge.
+- **`cgh codegen gen --extend` adds to an existing file**: generation could
+  only create a file, so growing one meant writing it by hand. The target now
+  goes to the model as the text to add to and the model returns only the block
+  to append, so the existing content never passes through the model's output.
+  A failed `--verify` restores the original rather than leaving a damaged file.
 - **Go and Rust imports resolve to edges**: both parsed their imports and
   resolved none, so their file graphs were nodes without edges. A Go import
   names a package directory through the module path in `go.mod`, so only the
@@ -25,8 +36,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   nothing. The use tree is walked now and each member becomes its own import,
   which is also what makes them resolvable. On BurntSushi/ripgrep this took
   the import graph from 9 to 99 edges.
-
-### Added
 - **Java imports resolve to edges**: a Java package maps to a directory chain
   under a source root, and that root is per module, so anchoring on the repo
   root missed every Maven and Gradle layout. The resolver climbs from the
@@ -50,6 +59,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   re-read. `cgh artifact recall`/`list` is the human and external-agent surface;
   connected agents use the knowledge tools, guided by a bundled `cgh-artifacts`
   skill that `cgh init` installs.
+
+### Fixed
+- **Rust `self::` and `super::` resolved one level too high**: both walked from
+  the importing file's directory, which is only right for a crate root or a
+  `mod.rs`. A `src/foo.rs` declaring `mod bar;` means `src/foo/bar.rs`, and
+  Cargo also treats every file directly in `tests/`, `benches/`, `examples/`
+  and `src/bin/` as a crate root. Whole module trees pointed at the wrong
+  directory, and `super::` reached the crate root instead of the parent module.
+- **A generated file containing Markdown fences was silently truncated**: code
+  extraction stopped at the first closing fence, so a file with a fence of its
+  own (a test building a fenced model reply, a docs generator) was cut off,
+  often mid-string. Extraction now runs to the last fence when the reply holds
+  more than the outer pair.
 
 ## [0.13.0] - 2026-09-19
 

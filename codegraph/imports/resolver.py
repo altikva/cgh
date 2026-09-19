@@ -486,6 +486,27 @@ def _rust_module_file(base: Path, parts: list[str]) -> Path | None:
     return None
 
 
+def _rust_self_dir(importer: Path) -> Path:
+    """The directory holding a Rust module's children.
+
+    A crate root and a `mod.rs` own the directory they sit in, so their
+    submodules are siblings. Every other file owns a directory named after
+    it: `src/foo.rs` declaring `mod bar;` means `src/foo/bar.rs`, never
+    `src/bar.rs`. Getting this wrong points a whole module tree one level
+    too high.
+
+    Crate roots are not only `lib.rs` and `main.rs`. Cargo compiles every
+    file sitting directly in `tests/`, `benches/` and `examples/`, and in
+    `src/bin/`, as its own crate, so those are roots too and their modules
+    are siblings as well.
+    """
+    if importer.stem in ("lib", "main", "mod"):
+        return importer.parent
+    if importer.parent.name in ("tests", "benches", "examples", "bin"):
+        return importer.parent
+    return importer.parent / importer.stem
+
+
 def resolve_rust(
     source_module: str, importer_path: Path, repo_root: Path
 ) -> Path | None:
@@ -510,7 +531,7 @@ def resolve_rust(
     root = repo_root.resolve()
 
     if parts[0] in ("self", "super"):
-        base = importer_dir
+        base = _rust_self_dir(importer)
         rest = parts[:]
         while rest and rest[0] in ("self", "super"):
             if rest[0] == "super":

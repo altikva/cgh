@@ -77,6 +77,15 @@ than reading.
      <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
      <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
      the no-MCP backup; `cgh papercut` lets the human read the list.
+- **About to inspect a file cgh can't parse** (pdf, image, office doc) and
+  **after** you do: it is opaque, so treat it as a cache.
+  1. BEFORE reading: the Read hook surfaces any saved summary automatically;
+     outside Claude Code, `cgh artifact recall <path>` first. Use a fresh
+     summary instead of re-reading.
+  2. AFTER reading: `knowledge_record(title="<file>", body="<what it holds>",
+     kind="note", tags="artifact", file_refs=["<path>"])`, so the next session
+     does not re-pay the read. `cgh artifact note` is the no-MCP backup;
+     `cgh artifact recall`/`list` lets the human read them.
 - **After `git pull` / `checkout` / `rebase`**:
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)

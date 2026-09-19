@@ -19,6 +19,17 @@ import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+# Appended to both prompts. These are exactly the smells the in-flow ruff pass
+# cannot clean on its own: ruff classes the fixes as "unsafe" (renaming an
+# unused binding, rewriting % into an f-string), so `ruff check --fix` leaves
+# them and the file would need a hand pass. Steering the cheap model away from
+# them up front keeps generated code landing ruff-clean.
+_CLEAN_CODE_RULE = (
+    " Write clean code that a linter accepts with no edits: no unused imports "
+    "or variables (use _ for an intentionally unused unpacked value), and use "
+    "f-strings, never %-formatting or .format(), for string interpolation."
+)
+
 # The system instruction. Two things it has to get right, both learned from
 # dogfooding a cheap model: (1) the reference is a STYLE example, not content
 # to reproduce, or the model echoes the whole reference back with the change
@@ -31,7 +42,7 @@ SYSTEM_PROMPT = (
     "follow. Imitate their style, but do NOT reproduce their content: output "
     "only the new file the spec describes, never the reference itself. Return "
     "it as a single fenced code block (```) and nothing outside the fence. If "
-    "you cannot produce the file, return an empty fenced block."
+    "you cannot produce the file, return an empty fenced block." + _CLEAN_CODE_RULE
 )
 
 # The extend-mode twin. The instruction above is the wrong one when a file is
@@ -43,7 +54,7 @@ EXTEND_SYSTEM_PROMPT = (
     "it. Output only the new code, never the file's existing contents and "
     "never the whole file. Return it as a single fenced code block (```) and "
     "nothing outside the fence. If you cannot produce it, return an empty "
-    "fenced block."
+    "fenced block." + _CLEAN_CODE_RULE
 )
 
 _FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)

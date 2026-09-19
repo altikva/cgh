@@ -118,6 +118,74 @@ def test_cloud_backend_refused_on_gated_reference(tmp_path):
     assert not (root / "src" / "user_service.py").exists()
 
 
+def _repo_two_refs(tmp_path):
+    """A repo whose target directory holds two same-kind siblings, so the
+    auto-picker produces a ranked candidate list to fall through."""
+    root = tmp_path
+    src = root / "src"
+    src.mkdir()
+    (src / "order_service.py").write_text(
+        "class OrderService:\n    def run(self):\n        return 1\n", encoding="utf-8"
+    )
+    (src / "account_service.py").write_text(
+        "class AccountService:\n    def run(self):\n        return 2\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_cloud_backend_falls_back_to_next_clean_candidate(tmp_path):
+    root = _repo_two_refs(tmp_path)
+    # The top-ranked auto-pick (order_service.py, sorted ahead of account_) is
+    # gated; the next candidate is clean. The flow should mirror that instead
+    # of refusing, so an auto-pick is not stopped by one secret-bearing file.
+    store.record_findings(
+        root,
+        str(root / "src" / "order_service.py"),
+        "test",
+        [ScanFinding(key="confidential", value="true")],
+    )
+    backend = FakeBackend(
+        "```python\nclass UserService:\n    pass\n```", is_local=False
+    )
+    out = run_generation(
+        root,
+        "a UserService like the reference",
+        "src/user_service.py",  # no explicit reference: the picker ranks
+        config={"egress": "open"},
+        backend=backend,
+    )
+    assert out["written"] is True
+    assert out["reference"] == "src/account_service.py"
+    # the fallback is surfaced, not silent: the caller can tell the user the
+    # top pick was skipped and which reference was mirrored instead
+    assert out["ref_fallback"]
+    assert "order_service.py" in out["ref_fallback"]
+    assert "egress gate" in out["reason"]
+    assert (root / "src" / "user_service.py").exists()
+
+
+def test_cloud_backend_refused_when_all_candidates_gated(tmp_path):
+    root = _repo_two_refs(tmp_path)
+    for name in ("order_service.py", "account_service.py"):
+        store.record_findings(
+            root,
+            str(root / "src" / name),
+            "test",
+            [ScanFinding(key="confidential", value="true")],
+        )
+    backend = FakeBackend("```python\nx = 1\n```", is_local=False)
+    with pytest.raises(CodeWriteError, match="every candidate"):
+        run_generation(
+            root,
+            "spec",
+            "src/user_service.py",
+            config={"egress": "open"},
+            backend=backend,
+        )
+    assert not (root / "src" / "user_service.py").exists()
+
+
 def test_local_backend_skips_the_gate(tmp_path):
     root = _repo(tmp_path)
     store.record_findings(

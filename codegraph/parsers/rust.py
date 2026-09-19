@@ -131,22 +131,55 @@ class RustParser(BaseParser):
             )
             return name
 
+        def _use_paths(node: Node, prefix: str = "") -> list[str]:
+            """Every module path a use tree names.
+
+            `use crate::{a::X, b::Y}` names two modules, not one, and each is
+            its own edge. Collapsing the tree to a single string would leave
+            the grouped form, which is the idiomatic one in Rust, resolving
+            to nothing at all.
+            """
+            kind = node.type
+            if kind in ("identifier", "scoped_identifier", "crate", "super", "self"):
+                tail = _text(node, src).strip()
+                return [f"{prefix}{tail}" if prefix else tail]
+            if kind == "use_as_clause":
+                target = node.child_by_field_name("path")
+                return _use_paths(target, prefix) if target else []
+            if kind == "use_wildcard":
+                inner = node.child_by_field_name("path") or (
+                    node.children[0] if node.children else None
+                )
+                return _use_paths(inner, prefix) if inner else []
+            if kind == "scoped_use_list":
+                head = node.child_by_field_name("path")
+                lst = node.child_by_field_name("list")
+                base = prefix + (f"{_text(head, src).strip()}::" if head else "")
+                return _use_paths(lst, base) if lst else []
+            if kind == "use_list":
+                out: list[str] = []
+                for child in node.children:
+                    if child.type in (",", "{", "}"):
+                        continue
+                    out.extend(_use_paths(child, prefix))
+                return out
+            return []
+
         def _emit_use(use: Node) -> None:
             for child in use.children:
                 if child.type in (
+                    "identifier",
                     "scoped_identifier",
                     "scoped_use_list",
                     "use_as_clause",
                     "use_list",
+                    "use_wildcard",
                 ):
-                    text = _text(child, src).strip()
-                    if text:
-                        index.imports.append(ImportRef(source_module=text, symbols=[]))
-                    return
-                if child.type == "identifier":
-                    index.imports.append(
-                        ImportRef(source_module=_text(child, src), symbols=[])
-                    )
+                    for path in _use_paths(child):
+                        if path:
+                            index.imports.append(
+                                ImportRef(source_module=path, symbols=[])
+                            )
                     return
 
         def _walk_impl(impl: Node) -> None:

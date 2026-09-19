@@ -13,7 +13,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11"
 # No upper cap: DuckDB is the default backend and ships cp3.14 wheels;
 # the standalone binary falls back to the bundled SQLite backend.
-keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
+keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor",
+            "code-index", "symbol-lookup", "call-graph", "ai-agents",
+            "python", "typescript", "javascript", "java", "go", "rust", "vue", "markdown"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

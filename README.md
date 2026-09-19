@@ -121,12 +121,33 @@ DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based
 SQLite FTS5 (.codegraph/fts.db)       <-- BM25 full-text search
     |  indexed from
     v
-Your source files (.py / .ts / .tf / .md / .vue)
+Your source files (.py / .ts / .java / .go / .rs / .vue / .tf / .md)
     ^
 File watcher (watchdog)         <-- live incremental updates on save
 ```
 
 Instead of reading `services.py` (800 tokens) to find where `verify_token` is defined, your AI calls `symbol_lookup("verify_token")` and gets back the file, the line range, the kind and the docstring, then reads only those lines.
+
+## Languages
+
+Six languages get a full symbol graph, functions and classes and the calls
+between them, with their imports resolved into `File -> File` edges:
+
+| | | imports resolved |
+|---|---|---|
+| Python | `.py .pyw` | yes |
+| TypeScript, JavaScript | `.ts .tsx .js .jsx .mjs .cjs` | yes |
+| Java | `.java` | yes |
+| Go | `.go` | yes |
+| Rust | `.rs` | yes |
+| Vue SFC | `.vue` | yes |
+
+C# and Ruby parse too, behind `pip install "cgh[langs]"`.
+
+Alongside them, Markdown becomes a heading tree with its links and code
+references, Terraform yields resources, variables and outputs, and JSON,
+TOML, YAML and SQL expose their structure as sections. Every one of them is
+searchable and reachable from the graph.
 
 ---
 
@@ -153,7 +174,7 @@ Instead of reading `services.py` (800 tokens) to find where `verify_token` is de
 
 - **CALLS resolution is name-based by default.** A call is linked to a same-file function of that name, falling back to all repo functions with that name only when there is no same-file match, so cross-file call edges are best-effort. For Python you can opt into precise cross-file resolution with `pip install cgh[lsp]` and `precise_calls = true` (jedi-backed); other languages stay name-based.
 - **Terraform HCL uses regex, not a full grammar.** Complex meta-arguments may be missed.
-- **JS/TS imports resolve to local files only.** Relative imports, tsconfig `paths` aliases, `~/` and `@/` conventions, and workspace packages do create a `File -> File` IMPORTS edge. Bare external packages are not resolved to a node, and cross-repo edges are not inferred.
+- **Imports resolve to files in your repo, never to dependencies.** Python, JS/TS, Vue, Java, Go and Rust each map an import onto the file it names, following that language's own layout rules. Anything outside the repo stays unresolved on purpose: the standard library, a Go module you do not own, an external crate or npm package gets no node and no edge, because inventing one would be a lie about your code. Cross-repo edges are not inferred either, each federated scope is canonical for its own files.
 - **Markdown code refs are heuristic.** PascalCase and snake_case patterns are matched, so a ref can be a false positive.
 - **Large repos take minutes to index.** Incremental updates stay fast (well under a second per changed file), and a pull or merge reindexes only the changed files via the git hooks.
 

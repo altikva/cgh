@@ -31,12 +31,16 @@
   var NODE_DRAW_BUDGET = 4000;
   var LABEL_BUDGET = 60;
 
-  var LANG_GROUPS = [
-    { key: 'python', label: 'Python', color: SLOTS[0] },
-    { key: 'markdown', label: 'Markdown', color: SLOTS[1] },
-    { key: 'config', label: 'TOML, YAML, JSON', color: SLOTS[2] },
-    { key: 'other', label: 'Other', color: NEUTRAL }
-  ];
+  // Languages are coloured by how much of the repo they are, not by a
+  // fixed list: a Java repo would otherwise paint every node "Other".
+  // Three slots is the cap the palette validates for a node-link
+  // diagram, where any two nodes can sit side by side.
+  var LANG_LABELS = {
+    python: 'Python', java: 'Java', typescript: 'TypeScript',
+    javascript: 'JavaScript', vue: 'Vue', go: 'Go', rust: 'Rust',
+    ruby: 'Ruby', csharp: 'C#', terraform: 'Terraform',
+    markdown: 'Markdown', config: 'TOML, YAML, JSON'
+  };
   var ROLE_GROUPS = [
     { key: 'source', label: 'Source', color: SLOTS[0] },
     { key: 'doc', label: 'Docs', color: SLOTS[1] },
@@ -53,9 +57,9 @@
     return role === 'test' || path.indexOf('tests/') === 0 || path.indexOf('/tests/') !== -1;
   }
   function langOf(lang) {
-    if (lang === 'python' || lang === 'markdown') return lang;
+    if (!lang) return 'other';
     if (lang === 'toml' || lang === 'yaml' || lang === 'json') return 'config';
-    return 'other';
+    return lang;
   }
   function roleOf(role, path) {
     if (isTestPath(path, role)) return 'test';
@@ -131,7 +135,21 @@
     if (ranked.length > 3) folderGroups.push({ key: 'other', label: 'Other folders', color: NEUTRAL });
     var colored = {};
     folderGroups.slice(0, 3).forEach(function (gr) { colored[gr.key] = true; });
-    var modes = { folder: folderGroups, lang: LANG_GROUPS, role: ROLE_GROUPS };
+    var langCounts = {};
+    nodes.forEach(function (nd) {
+      var k = langOf(nd.lang);
+      if (k !== 'other') langCounts[k] = (langCounts[k] || 0) + 1;
+    });
+    var langRanked = Object.keys(langCounts).sort(function (a, b) {
+      return (langCounts[b] - langCounts[a]) || (a < b ? -1 : 1);
+    });
+    var langGroups = langRanked.slice(0, 3).map(function (key, i) {
+      return { key: key, label: LANG_LABELS[key] || key, color: SLOTS[i] };
+    });
+    langGroups.push({ key: 'other', label: 'Other', color: NEUTRAL });
+    var langColored = {};
+    langGroups.slice(0, 3).forEach(function (gr) { langColored[gr.key] = true; });
+    var modes = { folder: folderGroups, lang: langGroups, role: ROLE_GROUPS };
     var colorIdx = {};
     Object.keys(modes).forEach(function (mk) { colorIdx[mk] = new Uint8Array(n); });
     var deg = new Int32Array(n);
@@ -139,7 +157,7 @@
       nd.i = i;
       var keys = {
         folder: colored[nd.top] ? nd.top : 'other',
-        lang: langOf(nd.lang),
+        lang: langColored[langOf(nd.lang)] ? langOf(nd.lang) : 'other',
         role: roleOf(nd.role, nd.path)
       };
       Object.keys(modes).forEach(function (mk) {

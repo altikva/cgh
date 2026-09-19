@@ -71,6 +71,8 @@ def resolve_children(repo_root: str | Path) -> list[Path]:
     Skips paths that don't exist on disk (caller can use `verify_child` to
     surface those). Order preserved from config.
     """
+    from codegraph.integrations.worktree import worktree_sibling
+
     root = Path(repo_root).resolve()
     cfg = load_config(root)
     out: list[Path] = []
@@ -83,6 +85,13 @@ def resolve_children(repo_root: str | Path) -> list[Path]:
             p = p.resolve()
         except OSError:
             continue
+        # When this repo is a linked worktree, a child configured by its
+        # main-checkout path points at the wrong branch. Prefer the child's
+        # own worktree sitting beside this one, when it is cgh-indexed, so
+        # federation reads the matching branch instead of the main checkout.
+        sibling = worktree_sibling(root, p)
+        if sibling is not None:
+            p = sibling
         if p == root or p in seen:
             continue
         seen.add(p)

@@ -159,7 +159,7 @@ def _print_help():
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
-                ("papercut", "Log or search papercuts (tooling time-sinks)"),
+                ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),

@@ -272,6 +272,13 @@ def _register_setup_and_serve(sub) -> None:
         "(claude,cursor,codex,gemini,bob). For a fresh repo where cgh cannot "
         "detect the tool yet.",
     )
+    p.add_argument(
+        "--no-hide-footprint",
+        dest="hide_footprint",
+        action="store_false",
+        help="In a git worktree, do NOT keep cgh's own writes (usage block, MCP "
+        "wiring, skills, rule) out of git via skip-worktree + info/exclude.",
+    )
 
     # --- parsers ---
     sub.add_parser("parsers", help="List registered parsers and supported languages")

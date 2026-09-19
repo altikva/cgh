@@ -104,7 +104,7 @@ def build_graph_payload(
 
     views = {
         "files": _files_view(conn, root, files, file_at, fn_per_file, cls_per_file),
-        "symbols": _symbols_view(conn, root, functions, max_symbols),
+        "symbols": _symbols_view(conn, root, files, functions, max_symbols),
         "infra": _infra_view(
             conn, root, files, fn_per_file, cls_per_file, max_resources
         ),
@@ -150,8 +150,12 @@ def _files_view(conn, root, files, file_at, fn_per_file, cls_per_file) -> dict:
     )
 
 
-def _symbols_view(conn, root, functions, max_symbols) -> dict:
+def _symbols_view(conn, root, files, functions, max_symbols) -> dict:
     by_id = {r["id"]: r for r in functions if r.get("id")}
+    # The graph carries lang on File only, and a function row just points at
+    # its file. Without this lookup every symbol ships an empty language and
+    # the viewer's colour-by-language mode drops the whole view into "other".
+    lang_by_path = {f["path"]: f.get("lang") or "" for f in files}
     calls = [
         (e.get("src_id"), e.get("dst_id"))
         for e in conn.find_neighbors("CALLS", return_src=["id"], return_dst=["id"])
@@ -173,7 +177,7 @@ def _symbols_view(conn, root, functions, max_symbols) -> dict:
                 "n": row.get("name") or "",
                 "p": rel,
                 "g": _group(rel),
-                "l": "",
+                "l": lang_by_path.get(row.get("file_path") or "", ""),
                 "r": "",
                 "y": "",
                 "f": 0,

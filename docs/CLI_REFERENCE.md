@@ -624,6 +624,26 @@ cgh papercut <query>                           # search them
 cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override the scope)
 ```
 
+### `artifact`
+
+A read-through cache for files cgh cannot parse into the graph: PDFs, images,
+office documents. Opening one costs vision or extractor tokens, so the finding
+is saved once and recalled after. A summary is a knowledge entry of kind `note`
+tagged `artifact`, with the file's SHA-256 in the body, so `recall` can tell a
+still-accurate summary from one whose file has changed. The Read pre-hook
+surfaces a saved summary automatically before an agent re-opens the file; this
+verb is the human and external-agent surface.
+
+```
+cgh artifact                                    # list saved summaries in this repo
+cgh artifact recall <path>                      # show the summary and whether it is still fresh
+cgh artifact note <path> --summary "<what it holds>"   # save one (hashes the file)
+```
+
+Connected agents record and read through the knowledge MCP tools
+(`knowledge_record(..., kind="note", tags="artifact", file_refs=[path])`),
+guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
+
 ### `guard`
 
 Agent-side confidentiality enforcement. A pre-tool-use hook installed in

@@ -48,7 +48,19 @@ def make_cli_registrar(config: dict):
         gen = actions.add_parser(
             "gen", help="Generate a file from a spec, mirroring a reference"
         )
-        gen.add_argument("--spec", required=True, help="What to generate")
+        gen.add_argument(
+            "--spec",
+            default="",
+            help="What to generate. Use '-' to read the spec from stdin. "
+            "Single-quote it in the shell, or use --spec-file, to avoid the "
+            "shell running backticks or $(...) inside it.",
+        )
+        gen.add_argument(
+            "--spec-file",
+            default="",
+            help="Read the spec from this file ('-' for stdin), instead of "
+            "--spec. Sidesteps shell quoting for long or backtick-heavy specs.",
+        )
         gen.add_argument("--target", required=True, help="File to write")
         gen.add_argument(
             "--reference", default="", help="Force a reference instead of picking one"
@@ -161,6 +173,39 @@ def _cmd_pick(args, config: dict) -> None:
         console.print("[dim]graph unavailable; filesystem-only pick.[/dim]")
 
 
+def _resolve_spec(args, console) -> str:
+    """The spec text, from --spec, --spec-file, or stdin ('-' in either).
+
+    Reading from a file or stdin lets an agent pass a long or backtick-heavy
+    spec without the shell running command-substitution inside it (the reported
+    footgun of an unquoted --spec). Exits with a clear message on an empty or
+    missing spec.
+    """
+    import sys
+
+    spec_file = getattr(args, "spec_file", "") or ""
+    spec = getattr(args, "spec", "") or ""
+    text: str | None = None
+    if spec_file == "-" or spec == "-":
+        text = sys.stdin.read()
+    elif spec_file:
+        try:
+            text = Path(spec_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            console.print(f"[red]cannot read --spec-file {spec_file}: {exc}[/red]")
+            raise SystemExit(1) from exc
+    elif spec:
+        text = spec
+    text = (text or "").strip()
+    if not text:
+        console.print(
+            "[red]empty spec.[/red] Pass --spec '...' (single-quoted), "
+            "--spec-file <path>, or --spec - to read from stdin."
+        )
+        raise SystemExit(1)
+    return text
+
+
 def _cmd_gen(args, config: dict) -> None:
     from rich.console import Console
 
@@ -172,6 +217,8 @@ def _cmd_gen(args, config: dict) -> None:
     console = Console()
     root = Path(os.path.abspath(args.root))
     config = plugin_config_for_root(root, config)
+
+    spec = _resolve_spec(args, console)
 
     backend = resolve_backend(config)
     if backend is None:
@@ -185,7 +232,7 @@ def _cmd_gen(args, config: dict) -> None:
     try:
         result = run_generation(
             root,
-            args.spec,
+            spec,
             args.target,
             args.reference or None,
             config=config,

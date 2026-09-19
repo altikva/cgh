@@ -153,8 +153,11 @@ def _cmd_gen(args, config: dict) -> None:
         raise SystemExit(1) from exc
 
     if args.stdout:
-        # code to stdout stays clean; the note goes to stderr via rich stderr
-        Console(stderr=True).print(
+        # code to stdout stays clean; the notes go to stderr via rich stderr
+        stderr = Console(stderr=True)
+        if result.get("ref_fallback"):
+            stderr.print(f"[yellow]note:[/yellow] [dim]{result['ref_fallback']}[/dim]")
+        stderr.print(
             f"[dim]{result['reference']} -> {result['lines']} lines "
             f"({result['backend']}, egress: {result['egress']})[/dim]"
         )
@@ -168,6 +171,8 @@ def _cmd_gen(args, config: dict) -> None:
             "as it was."
         )
         raise SystemExit(1)
+    if result.get("ref_fallback"):
+        console.print(f"[yellow]note:[/yellow] [dim]{result['ref_fallback']}[/dim]")
     if result["extended"]:
         console.print(
             f"[green]appended to[/green] {result['target']}  "

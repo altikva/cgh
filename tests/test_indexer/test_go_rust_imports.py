@@ -114,12 +114,22 @@ class TestResolveRust:
 
         assert hit == (root / "src" / "config.rs").resolve()
 
-    def test_super_walks_up_from_the_importing_file(self, tmp_path):
+    def test_super_walks_up_to_the_parent_module(self, tmp_path):
+        """`super` is one module up, which is not one directory up.
+
+        `src/net/client.rs` is the module `net::client`, so its `super` is
+        `net`, whose files sit in `src/net/`. The crate root above it is
+        reached with `crate::`, never by walking `super` off the importing
+        file's own directory.
+        """
         root = self._crate(tmp_path)
+        client = root / "src" / "net" / "client.rs"
 
-        hit = resolve_rust("super::config", root / "src" / "net" / "client.rs", root)
-
-        assert hit == (root / "src" / "config.rs").resolve()
+        assert (
+            resolve_rust("super::client", client, root)
+            == (root / "src" / "net" / "client.rs").resolve()
+        )
+        assert resolve_rust("super::config", client, root) is None
 
     def test_self_stays_in_the_importing_directory(self, tmp_path):
         root = self._crate(tmp_path)

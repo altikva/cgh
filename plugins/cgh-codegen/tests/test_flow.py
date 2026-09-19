@@ -17,7 +17,7 @@ import pytest
 pytest.importorskip("cgh_codegen")
 
 from cgh_codegen.flow import run_generation
-from cgh_codegen.picker import CodeWriteError
+from cgh_codegen.picker import CodegenError
 
 from codegraph.plugin_api import ScanFinding
 from codegraph.state import findings as store
@@ -64,7 +64,7 @@ def test_refuses_to_clobber_without_force(tmp_path):
     root = _repo(tmp_path)
     (root / "src" / "user_service.py").write_text("# existing\n", encoding="utf-8")
     backend = FakeBackend("```python\nx = 1\n```")
-    with pytest.raises(CodeWriteError, match="already exists"):
+    with pytest.raises(CodegenError, match="already exists"):
         run_generation(
             root,
             "spec",
@@ -106,7 +106,7 @@ def test_cloud_backend_refused_on_gated_reference(tmp_path):
         [ScanFinding(key="confidential", value="true")],
     )
     backend = FakeBackend("```python\nx = 1\n```", is_local=False)
-    with pytest.raises(CodeWriteError, match="egress refused"):
+    with pytest.raises(CodegenError, match="egress refused"):
         run_generation(
             root,
             "spec",
@@ -159,7 +159,7 @@ def test_stdout_mode_writes_nothing(tmp_path):
 def test_target_outside_repo_is_refused(tmp_path):
     root = _repo(tmp_path)
     backend = FakeBackend("```python\nx = 1\n```")
-    with pytest.raises(CodeWriteError):
+    with pytest.raises(CodegenError):
         run_generation(
             root,
             "spec",
@@ -225,6 +225,111 @@ def test_self_correct_gives_up_after_max_attempts(tmp_path):
     )
     assert out["verified"] is False
     assert out["attempts"] == 2  # tried the cap, kept the last attempt
+
+
+class TestExtendMode:
+    def test_missing_target_is_refused(self, tmp_path):
+        root = _repo(tmp_path)
+        backend = FakeBackend("```python\ndef foo():\n    pass\n```")
+        with pytest.raises(CodegenError, match="does not exist"):
+            run_generation(
+                root,
+                "add a function",
+                "src/nonexistent.py",
+                "src/order_service.py",
+                config={},
+                backend=backend,
+                extend=True,
+            )
+
+    def test_existing_content_is_preserved(self, tmp_path):
+        root = _repo(tmp_path)
+        original = "# header\nclass Existing:\n    pass\n"
+        (root / "src" / "user_service.py").write_text(original, encoding="utf-8")
+        backend = FakeBackend("```python\ndef new_func():\n    return 42\n```")
+        out = run_generation(
+            root,
+            "extend with a function",
+            "src/user_service.py",
+            "src/order_service.py",
+            config={},
+            backend=backend,
+            extend=True,
+        )
+        assert out["written"] is True
+        content = (root / "src" / "user_service.py").read_text(encoding="utf-8")
+        assert "# header" in content
+        assert "class Existing:" in content
+        assert "def new_func():" in content
+
+    def test_extending_reports_itself(self, tmp_path):
+        root = _repo(tmp_path)
+        (root / "src" / "user_service.py").write_text("# existing\n", encoding="utf-8")
+        backend = FakeBackend("```python\nx = 1\n```")
+        out = run_generation(
+            root,
+            "extend",
+            "src/user_service.py",
+            None,
+            config={},
+            backend=backend,
+            extend=True,
+        )
+        assert out["extended"] is True
+        assert out["reference"] is None
+
+
+class TestExtendSafety:
+    def test_failed_check_restores_the_original(self, tmp_path):
+        root = _repo(tmp_path)
+        original = "# original\nclass Existing:\n    pass\n"
+        (root / "src" / "existing.py").write_text(original, encoding="utf-8")
+        backend = FakeBackend("```python\ndef new_func():\n    return 42\n```")
+        out = run_generation(
+            root,
+            "extend",
+            "src/existing.py",
+            None,
+            config={},
+            backend=backend,
+            extend=True,
+            verify="false",
+            max_attempts=2,
+        )
+        assert out["rolled_back"] is True
+        assert out["written"] is False
+        assert (root / "src" / "existing.py").read_text(encoding="utf-8") == original
+
+    def test_passing_check_keeps_the_addition(self, tmp_path):
+        root = _repo(tmp_path)
+        original = "# original\nclass Existing:\n    pass\n"
+        (root / "src" / "existing.py").write_text(original, encoding="utf-8")
+        backend = FakeBackend("```python\ndef new_func():\n    return 42\n```")
+        out = run_generation(
+            root,
+            "extend",
+            "src/existing.py",
+            None,
+            config={},
+            backend=backend,
+            extend=True,
+            verify="true",
+        )
+        assert out["rolled_back"] is False
+        content = (root / "src" / "existing.py").read_text(encoding="utf-8")
+        assert "# original" in content
+        assert "def new_func():" in content
+
+    def test_append_goes_before_the_main_guard(self):
+        from cgh_codegen.flow import _append_into
+
+        existing = 'class X:\n    pass\n\nif __name__ == "__main__":\n    pass\n'
+        block = "def foo():\n    pass\n"
+        result = _append_into(existing, block)
+        idx_foo = result.find("def foo")
+        idx_guard = result.find("if __name__")
+        assert idx_foo != -1 and idx_guard != -1
+        assert idx_foo < idx_guard
 
 
 if __name__ == "__main__":  # pragma: no cover

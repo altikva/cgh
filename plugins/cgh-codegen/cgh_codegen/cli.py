@@ -59,6 +59,12 @@ def make_cli_registrar(config: dict):
             "--stdout", action="store_true", help="Print the code, do not write a file"
         )
         gen.add_argument(
+            "--extend",
+            action="store_true",
+            help="Add to an existing target instead of writing a new file; "
+            "the model returns only the block to append",
+        )
+        gen.add_argument(
             "--verify",
             default="",
             help="Shell check (exit 0 = pass) run after writing; drives the "
@@ -79,13 +85,13 @@ def make_cli_registrar(config: dict):
 def _cmd_pick(args, config: dict) -> None:
     from rich.console import Console
 
-    from .picker import CodeWriteError, pick_reference
+    from .picker import CodegenError, pick_reference
 
     console = Console()
     root = Path(os.path.abspath(args.root))
     try:
         result = pick_reference(root, args.target, args.reference or None)
-    except CodeWriteError as exc:
+    except CodegenError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
@@ -113,7 +119,7 @@ def _cmd_gen(args, config: dict) -> None:
     from .backends import resolve_backend
     from .flow import run_generation
     from .generate import GenerationError
-    from .picker import CodeWriteError
+    from .picker import CodegenError
 
     console = Console()
     root = Path(os.path.abspath(args.root))
@@ -140,8 +146,9 @@ def _cmd_gen(args, config: dict) -> None:
             to_stdout=args.stdout,
             verify=args.verify or None,
             max_attempts=max(1, args.max_attempts),
+            extend=args.extend,
         )
-    except (CodeWriteError, GenerationError) as exc:
+    except (CodegenError, GenerationError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
@@ -154,10 +161,23 @@ def _cmd_gen(args, config: dict) -> None:
         print(result["code"])
         return
 
-    console.print(
-        f"[green]wrote[/green] {result['target']}  "
-        f"[dim]({result['lines']} lines, mirror of {result['reference']})[/dim]"
-    )
+    if result.get("rolled_back"):
+        console.print(
+            f"[red]not appended[/red] to {result['target']}: the check never "
+            f"passed in {result['attempts']} attempt(s), so the file was left "
+            "as it was."
+        )
+        raise SystemExit(1)
+    if result["extended"]:
+        console.print(
+            f"[green]appended to[/green] {result['target']}  "
+            f"[dim]({result['lines']} lines added)[/dim]"
+        )
+    else:
+        console.print(
+            f"[green]wrote[/green] {result['target']}  "
+            f"[dim]({result['lines']} lines, mirror of {result['reference']})[/dim]"
+        )
     v = result.get("verified")
     if v is True:
         console.print(

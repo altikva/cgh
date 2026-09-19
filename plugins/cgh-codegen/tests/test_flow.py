@@ -128,7 +128,8 @@ def _repo_two_refs(tmp_path):
         "class OrderService:\n    def run(self):\n        return 1\n", encoding="utf-8"
     )
     (src / "account_service.py").write_text(
-        "class AccountService:\n    def run(self):\n        return 2\n", encoding="utf-8"
+        "class AccountService:\n    def run(self):\n        return 2\n",
+        encoding="utf-8",
     )
     return root
 

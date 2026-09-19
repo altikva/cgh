@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import os
 import signal
+import subprocess
 from pathlib import Path
 
 _PID_FILE = "server.pid"
@@ -37,14 +38,61 @@ def process_alive(pid: int) -> bool:
         return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Process exists and belongs to someone else, still alive.
+        # Process exists and belongs to someone else, still alive. It is not
+        # our child, so we cannot reap it and its zombie state is not our
+        # concern; treat it as alive.
         return True
     except OSError:
         return False
+    # kill(pid, 0) also succeeds for a ZOMBIE: a process that has exited but
+    # not yet been reaped still occupies the table. A zombie owner is dead,
+    # not a running server, so a stale owner.pid pointing at one must not read
+    # as alive, or every later `cgh serve` refuses to start ("another owner is
+    # running") and the repo wedges until the pidfiles are deleted by hand.
+    return _process_state(pid) != "Z"
+
+
+def _parse_proc_stat_state(data: bytes) -> str | None:
+    """The one-char process state from the contents of a Linux
+    ``/proc/<pid>/stat`` line. Field 2 (comm) is wrapped in parentheses and
+    may itself contain spaces and parens, so scan from the LAST ``)``; the
+    state is the first non-space character after it. Returns None if the line
+    does not parse."""
+    rparen = data.rfind(b")")
+    if rparen == -1:
+        return None
+    rest = data[rparen + 1 :].lstrip()
+    return chr(rest[0]) if rest else None
+
+
+def _process_state(pid: int) -> str | None:
+    """Best-effort single-character process state ('R', 'S', 'D', 'Z', 'T',
+    ...), or None when it cannot be determined on this platform. Linux reads
+    ``/proc/<pid>/stat`` directly; elsewhere (macOS, BSD) it asks ``ps``, whose
+    state code also leads with 'Z' for a zombie. A None result means "unknown",
+    so callers must not treat it as proof of death."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            return _parse_proc_stat_state(fh.read())
+    except FileNotFoundError:
+        pass  # no procfs (macOS/BSD), or the pid vanished; fall through to ps
+    except OSError:
+        return None
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    state = (out.stdout or "").strip()
+    return state[0] if state else None
 
 
 def _windows_process_alive(pid: int) -> bool:

@@ -8,6 +8,52 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-19
+
+### Added
+- **`cgh papercut`, a native log of tooling and environment time-sinks**:
+  record a papercut (a wedged tool, an auth gotcha, a CI job stuck for no
+  obvious reason) with `cgh papercut add "<symptom>" --fix "<fix>"`, and find
+  it later with `cgh papercut <query>` or plain `cgh papercut`. Entries live in
+  the repo's knowledge store (kind `gotcha`, tag `papercut`), so they are
+  searchable and resurface in the resume bundle, and a bundled `cgh-papercuts`
+  skill that `cgh init` installs tells connected agents to read the log first
+  when tooling fails and to add one when they lose time to it. So the next
+  session does not re-pay the same lost time.
+
+### Removed
+- **The legacy Kuzu graph backend, entirely**: the `kuzu` extra
+  (`pip install cgh[kuzu]`), the `CGH_DB=kuzu` selection and the `graph.db`
+  on-disk detection, `db_kuzu.py`, and the `cgh migrate-to-duckdb` command are
+  all gone. The two backends are now DuckDB (the pip and uvx default) and
+  SQLite (the standalone binary's). Kuzu had been opt-in and non-default since
+  the 0.4 cycle; a repo still holding an old `graph.db` is simply reindexed
+  into DuckDB on the next `cgh index`, and if you set `CGH_DB=kuzu`, drop it.
+- **The ruflo integration**: `context_for_task` shelled out to `npx ruflo` on
+  every call to merge an external memory store into its answer. The subprocess
+  ran with the repository as its working directory, so ruflo created its own
+  stores there: `ruvector.db` at 1.5 MB, `agentdb.rvf` and a lock file, none of
+  them ignored by git, in every repo where a task context was built. The bridge
+  is gone, along with the `[ruflo]` config table, the `CODEGRAPH_RUFLO_ENABLED`
+  variable and the `ruflo_memory_hits` field of the `context_for_task`
+  response. Claude Code memory, plans and knowledge are untouched: they come
+  from the local FTS index and never went through this path.
+### Fixed
+- **The graph's call view carries the language again**: a function node
+  shipped an empty `l`, so colouring `Functions · calls` by language put
+  every node in the grey "Other" bucket and Python never appeared. The graph
+  keeps `lang` on File only, and the symbols view was the one view of four
+  that did not receive the file rows, so it could not look it up.
+- **`cgh setup bob` wrote a command Bob cannot spawn**: the MCP entry named
+  `cgh` bare, and an IDE launched from the Dock or the Start menu inherits
+  none of the login shell PATH, so the agent could never start the server.
+  The command is resolved to an absolute path at setup time now, and to
+  `cghw.exe` on Windows, where `cgh.exe` is a console application whose
+  window would flash each time a GUI parent starts it. Destinations are
+  unchanged and confirmed against the shipped agent: `.bob/mcp.json` for the
+  project, `.bob/skills/<name>/SKILL.md`, `.bob/rules/`, and
+  `~/.bob/settings/mcp.json` to cover every workspace.
+
 ### Changed
 - **The npx wrapper no longer offers an Intel-Mac binary**: GitHub retired the
   Intel macOS hosted runner and PyInstaller cannot cross-compile one, so `npx
@@ -1436,7 +1482,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0
 [0.11.8]: https://github.com/altikva/cgh/compare/v0.11.7...v0.11.8
 [0.11.7]: https://github.com/altikva/cgh/compare/v0.11.6...v0.11.7

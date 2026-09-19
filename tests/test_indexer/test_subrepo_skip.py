@@ -18,7 +18,7 @@ class TestOsWalkSubrepoSkip:
         sub.mkdir(parents=True)
         (sub / "secret.py").write_text("def child_only(): pass\n")
         (sub / ".codegraph").mkdir()
-        (sub / ".codegraph" / "graph.db").write_bytes(b"fake")
+        (sub / ".codegraph" / "graph.duckdb").write_bytes(b"fake")
 
         # Federate the subrepo
         cfg = parent / ".codegraph" / "config.toml"
@@ -54,7 +54,7 @@ class TestIncludeDirsSubrepoSkip:
         (inc / "util.py").write_text("# util")
         (inc / "subrepo").mkdir()
         (inc / "subrepo" / ".codegraph").mkdir()
-        (inc / "subrepo" / ".codegraph" / "graph.db").write_bytes(b"fake")
+        (inc / "subrepo" / ".codegraph" / "graph.duckdb").write_bytes(b"fake")
         (inc / "subrepo" / "private.py").write_text("# private")
 
         cfg = parent / ".codegraph" / "config.toml"

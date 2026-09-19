@@ -3,10 +3,9 @@ CLI-level tests for `cgh federate`.
 
 The federation model layer (ChildStatus.has_graphdb) is covered in
 tests/test_server/test_federation.py. These tests pin the CLI rendering
-on top of it — specifically that a DuckDB-only subrepo is accepted by
+on top of it, specifically that a DuckDB or SQLite subrepo is accepted by
 `federate add` and shown as OK by the status table, rather than wrongly
-reported as "graph.db missing" (the v0.4 regression where the CLI gated
-on has_kuzu instead of has_graphdb).
+reported as missing a graph DB.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ import codegraph.cli.commands_federate as fed
 def _mk_subrepo(root: Path, *, duckdb: bool) -> Path:
     cg = root / ".codegraph"
     cg.mkdir(parents=True, exist_ok=True)
-    (cg / ("graph.duckdb" if duckdb else "graph.db")).write_bytes(b"fake")
+    (cg / ("graph.duckdb" if duckdb else "graph.sqlite")).write_bytes(b"fake")
     (cg / "fts.db").write_bytes(b"fake")
     return root
 
@@ -48,10 +47,9 @@ class TestFederateAdd:
 
         out = captured_console.getvalue()
         assert "federated" in out
-        assert "graph.db missing" not in out
         assert "no graph DB" not in out
 
-    def test_add_kuzu_subrepo_still_succeeds(self, tmp_path, captured_console):
+    def test_add_sqlite_subrepo_succeeds(self, tmp_path, captured_console):
         parent = tmp_path / "parent"
         parent.mkdir()
         (parent / ".codegraph").mkdir()

@@ -153,6 +153,17 @@ class TestSymbolsView:
         assert all(n["k"] == "function" for n in view["nodes"])
         assert any(n["s"] > 0 for n in view["nodes"])
 
+    def test_functions_carry_the_language_of_their_file(self, indexed_repo):
+        """The graph stores lang on File only, and a function row just points
+        at its file. Without carrying it across, every symbol ships an empty
+        language and colouring by language drops the view into "other"."""
+        view = _payload(indexed_repo)["views"]["symbols"]
+
+        assert view["nodes"], "the fixture calls helper() from run()"
+        python_nodes = [n for n in view["nodes"] if n["p"].endswith(".py")]
+        assert python_nodes, "no python function reached the symbols view"
+        assert {n["l"] for n in python_nodes} == {"python"}
+
 
 class TestInfraView:
     def test_resources_hang_off_the_file_that_declares_them(self, indexed_repo):

@@ -307,16 +307,6 @@ Overrides where the `.codegraph/` directory is located. By default it is `<proje
 CODEGRAPH_DIR=/tmp/my-project-codegraph cgh index
 ```
 
-### `CODEGRAPH_RUFLO_ENABLED`
-
-Force-enable or force-disable the Ruflo integration, bypassing auto-detection:
-
-```bash
-CODEGRAPH_RUFLO_ENABLED=false cgh serve --watch
-```
-
----
-
 ## File Discovery
 
 codegraph discovers files to index using this strategy:
@@ -341,12 +331,12 @@ After initialization and indexing, the `.codegraph/` directory contains:
 .codegraph/
     config.toml      # project configuration
     graph.duckdb     # DuckDB graph database (nodes + edges): default backend
-    graph.db/        # Kuzu graph database (nodes + edges): only when CGH_DB=kuzu
+    graph.sqlite     # SQLite graph database (nodes + edges): standalone binary / CGH_DB=sqlite
     fts.db           # SQLite FTS5 full-text search index
     call_log.db      # SQLite log of MCP tool calls
 ```
 
-Typical storage usage for a 200-file project: 4-8 MB total on DuckDB (~3x smaller than the legacy Kuzu layout).
+Typical storage usage for a 200-file project: 4-8 MB total on DuckDB.
 
 Use `cgh compact` to vacuum the SQLite databases and reclaim space.
 
@@ -354,19 +344,17 @@ Use `cgh compact` to vacuum the SQLite databases and reclaim space.
 
 ## Backend selection
 
-Since v0.4 the default graph backend is **DuckDB**. Resolution order when opening a repo's graph:
+The default graph backend is **DuckDB**. The standalone binary ships a SQLite backend instead (no bundled DuckDB library). Resolution order when opening a repo's graph:
 
-1. `CGH_DB` env var, if set to `duckdb` or `kuzu`.
-2. Auto-detect from `.codegraph/`: `graph.duckdb` → DuckDB, `graph.db` → Kuzu.
-3. Fresh repos with no `.codegraph/` → DuckDB.
-
-`cgh init` auto-migrates repos that only have `graph.db` by re-indexing into `graph.duckdb` and verifying counts. See [`cgh migrate-to-duckdb`](CLI_REFERENCE.md#migrate-to-duckdb) for the manual command and its `stale_kuzu` classifier rules.
+1. `CGH_DB` env var, if set to `duckdb` or `sqlite`.
+2. Auto-detect from `.codegraph/`: `graph.duckdb` → DuckDB, `graph.sqlite` → SQLite.
+3. Fresh repos with no `.codegraph/` → DuckDB when the DuckDB library is importable, otherwise SQLite.
 
 Pin a specific backend per shell:
 
 ```bash
 CGH_DB=duckdb cgh index    # force DuckDB
-CGH_DB=kuzu   cgh index    # opt back into Kuzu (kept for parity / debugging)
+CGH_DB=sqlite cgh index    # force the SQLite backend
 ```
 
 ---

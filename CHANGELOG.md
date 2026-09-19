@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh papercut`, a native log of tooling and environment time-sinks**:
+  record a papercut (a wedged tool, an auth gotcha, a CI job stuck for no
+  obvious reason) with `cgh papercut add "<symptom>" --fix "<fix>"`, and find
+  it later with `cgh papercut <query>` or plain `cgh papercut`. Entries live in
+  the repo's knowledge store (kind `gotcha`, tag `papercut`), so they are
+  searchable and resurface in the resume bundle, and a bundled `cgh-papercuts`
+  skill that `cgh init` installs tells connected agents to read the log first
+  when tooling fails and to add one when they lose time to it. So the next
+  session does not re-pay the same lost time.
+
 ### Removed
 - **The ruflo integration**: `context_for_task` shelled out to `npx ruflo` on
   every call to merge an external memory store into its answer. The subprocess

@@ -58,6 +58,7 @@ from codegraph.cli.commands_monitor import (
     cmd_status,
     cmd_tail,
 )
+from codegraph.cli.commands_papercut import cmd_papercut, register_papercut_parser
 from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
@@ -158,6 +159,7 @@ def _print_help():
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
+                ("papercut", "Log or search papercuts (tooling time-sinks)"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -534,6 +536,7 @@ def _register_analysis(sub) -> None:
     # --- graph + add-dir ---
     register_graph_parser(sub)
     register_backend_parser(sub)
+    register_papercut_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -726,6 +729,7 @@ def main() -> None:
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,
+        "papercut": cmd_papercut,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

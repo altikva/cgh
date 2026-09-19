@@ -392,6 +392,13 @@ No config changes, no registry edits. The `@register_parser` decorator and auto-
 | `markdown.py` | Markdown | regex (headings, links, code refs) |
 | `plaintext.py` | Plain text fallback | line-based |
 
+**Import resolution.** Parsing an import is not the same as resolving it. A
+parser records what a file imports; a resolver in `codegraph/imports/` maps
+that onto a file in the repo so the graph gains a `File -> File` edge.
+Python, TypeScript and JavaScript, Vue, Java, Go and Rust have one. A
+language without a resolver still reports what it parsed, and `cgh status`
+says so rather than showing an empty import graph.
+
 ---
 
 ## Dependencies

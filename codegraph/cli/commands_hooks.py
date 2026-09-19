@@ -26,6 +26,13 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,}$")
 # file is likely a config / README / fixture and a full Read is fine.
 _MIN_SYMBOLS_FOR_OUTLINE_HINT = 5
 
+# Do not stream-hash an artifact larger than this inside a PreToolUse hook,
+# freshness stays "unverified" rather than stalling the Read on a huge file.
+_ARTIFACT_HASH_CAP = 25 * 1024 * 1024
+# Only nudge to record a summary for a file big enough that re-reading it costs
+# real tokens; a tiny icon is not worth caching.
+_ARTIFACT_RECORD_MIN = 20 * 1024
+
 
 def _emit_nudge(message: str) -> None:
     """Deliver an advisory nudge to the model on a PreToolUse hook, then
@@ -79,6 +86,101 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     )
 
 
+def _emit_artifact_recall(target: Path, rel_path: str, body: str) -> None:
+    """Surface a saved summary for an opaque file, tagged with whether the file
+    still matches the summary. Never blocks the Read."""
+    from codegraph.cli.commands_artifact import (
+        parse_stored_sha,
+        sha256_file,
+        strip_marker,
+    )
+
+    summary = strip_marker(body)
+    stored = parse_stored_sha(body)
+    state = "unverified"
+    try:
+        size = target.stat().st_size
+    except OSError:
+        size = None
+    if stored and size is not None and size <= _ARTIFACT_HASH_CAP:
+        try:
+            state = "fresh" if sha256_file(target) == stored else "stale"
+        except OSError:
+            state = "unverified"
+
+    if state == "stale":
+        _emit_nudge(
+            f"[cgh hook] '{rel_path}' has CHANGED since cgh last summarized it. "
+            "The saved summary below is now out of date, re-inspect and save a new one "
+            f"(knowledge_record(..., kind='note', tags='artifact', file_refs=['{rel_path}']) "
+            "or `cgh artifact note`):\n\n"
+            f"{summary}"
+        )
+    elif state == "fresh":
+        _emit_nudge(
+            f"[cgh hook] cgh already inspected '{rel_path}' and the file is unchanged. "
+            "Use this saved summary instead of re-reading; re-inspect only for detail beyond it:\n\n"
+            f"{summary}"
+        )
+    else:
+        _emit_nudge(
+            f"[cgh hook] cgh has a saved summary of '{rel_path}' (freshness unverified). "
+            "Use it if it suffices; re-inspect for anything beyond it:\n\n"
+            f"{summary}"
+        )
+
+
+def _artifact_precheck(
+    repo_root: Path, target: Path, rel_path: str, abs_path: str
+) -> None:
+    """Read hook branch for files cgh cannot parse (pdf, images, office docs).
+    Surfaces a saved summary if one exists, else nudges to record one after the
+    inspection so the next read is free. Advisory and best-effort throughout: a
+    missing DB or a bad row must never break the Read."""
+    db = repo_root / ".codegraph" / "call_log.db"
+    hit_body: str | None = None
+    if db.is_file():
+        try:
+            from codegraph.core.utils import ro_sqlite_uri
+
+            conn = sqlite3.connect(ro_sqlite_uri(db), uri=True, timeout=0.5)
+            rows = conn.execute(
+                "SELECT body, file_refs FROM knowledge "
+                "WHERE kind='note' AND tags LIKE '%artifact%' AND file_refs LIKE ? "
+                "AND superseded_by IS NULL ORDER BY ts DESC LIMIT 5",
+                (f"%{rel_path}%",),
+            ).fetchall()
+            conn.close()
+            for body, refs in rows:
+                parts = [p for p in (refs or "").split(",") if p]
+                if rel_path in parts or abs_path in parts:
+                    hit_body = body
+                    break
+        except sqlite3.Error:
+            hit_body = None
+
+    if hit_body is not None:
+        _emit_artifact_recall(target, rel_path, hit_body)
+        return
+
+    # No saved summary. Only prompt to record for a file big enough that a
+    # re-read costs real tokens, and only advisory.
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return
+    if size < _ARTIFACT_RECORD_MIN:
+        return
+    ext = target.suffix.lower().lstrip(".")
+    _emit_nudge(
+        f"[cgh hook] '{rel_path}' is a {ext} cgh can't parse, and has no saved summary. "
+        "After you inspect it, save what you learned so the next read is cheap:\n"
+        f"  knowledge_record(title='{target.name}', body='<summary>', kind='note', "
+        f"tags='artifact', file_refs=['{rel_path}'])\n"
+        f"  or: cgh artifact note {rel_path} --summary '<summary>'"
+    )
+
+
 def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
@@ -123,6 +225,24 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         abs_path = str(target.resolve())
         rel_path = str(target.resolve().relative_to(repo_root.resolve()))
     except ValueError:
+        sys.exit(0)
+
+    # Files cgh cannot parse into the graph (pdf, images, office docs) carry no
+    # symbols, so the outline hint below never fires for them. Give them their
+    # own treatment instead: surface a saved summary so an expensive re-read is
+    # skipped, or nudge to save one after the inspection. This replaces the
+    # symbol path for these files, it does not run in addition to it.
+    try:
+        from codegraph.cli.commands_artifact import ARTIFACT_EXTS
+    except Exception:
+        ARTIFACT_EXTS = frozenset()
+    if target.suffix.lower() in ARTIFACT_EXTS:
+        try:
+            _artifact_precheck(repo_root, target, rel_path, abs_path)
+        except Exception:
+            # Advisory hook: a cache miss or a malformed row must never break
+            # a Read. _emit_nudge raises SystemExit(0), which is not caught here.
+            pass
         sys.exit(0)
 
     fts_db = repo_root / ".codegraph" / "fts.db"

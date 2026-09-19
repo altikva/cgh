@@ -19,6 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codegraph.cli import LOGO, VERSION, console
+from codegraph.cli.commands_artifact import cmd_artifact, register_artifact_parser
 from codegraph.cli.commands_backend import cmd_backend, register_backend_parser
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
 from codegraph.cli.commands_federate import cmd_federate
@@ -160,6 +161,7 @@ def _print_help():
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
+                ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -537,6 +539,7 @@ def _register_analysis(sub) -> None:
     register_graph_parser(sub)
     register_backend_parser(sub)
     register_papercut_parser(sub)
+    register_artifact_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -730,6 +733,7 @@ def main() -> None:
         "status": cmd_status,
         "backend": cmd_backend,
         "papercut": cmd_papercut,
+        "artifact": cmd_artifact,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

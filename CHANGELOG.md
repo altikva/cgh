@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh artifact`, a read-through cache for files cgh can't parse** (PDFs,
+  images, office documents): after an agent opens one with vision or an
+  extractor, it saves a summary; the next session recalls it instead of paying
+  the read again. The Read pre-hook surfaces a saved summary automatically, and
+  flags it stale when the file's hash no longer matches, so a changed file gets
+  re-read. `cgh artifact recall`/`list` is the human and external-agent surface;
+  connected agents use the knowledge tools, guided by a bundled `cgh-artifacts`
+  skill that `cgh init` installs.
+
 ## [0.13.0] - 2026-09-19
 
 ### Added

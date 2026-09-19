@@ -78,3 +78,14 @@ def test_search_surfaces_only_papercuts(_fresh):
     # list and query paths run without error
     cmd_papercut(_ns([]))
     cmd_papercut(_ns(["duckdb"]))
+
+
+def test_papercut_is_wired_into_the_installed_rule_and_skill():
+    # The always-loaded rule cgh init writes must carry the papercut reflex,
+    # and the bundled skill must be present for auto-install. Guard both so a
+    # future edit does not silently drop the native convention.
+    from codegraph.integrations.skill_installer import _USAGE_BODY, list_bundled_skills
+
+    assert "papercut" in _USAGE_BODY.lower()
+    assert "knowledge_search" in _USAGE_BODY  # read-first path
+    assert "cgh-papercuts" in list_bundled_skills()

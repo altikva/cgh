@@ -1,49 +1,62 @@
 ---
 name: cgh-papercuts
-description: Log and reuse "papercuts", the tooling and environment time-sinks that slow a session down, through cgh. Read them FIRST when a tool fails mysteriously (a wedged process, an env gotcha, a flag that misbehaves, a CI job stuck); log one when you lose time and find the fix, so the next session does not re-pay it. Triggers when tooling or the environment fails in a way that is not the code you are writing.
+description: MANDATORY reflex around tooling and environment failures. Whenever a tool, process, CLI, build, CI job, auth flow, or environment misbehaves in a way that is NOT the code you are writing, do two things without being asked. (1) BEFORE investigating, search this repo's papercuts for the symptom. (2) AFTER you have lost time to it and found the fix, record it. Concrete triggers: a background process wedged or a lock held ("could not set lock", "database is locked", "resource busy"); a CLI erroring on something you did not ask about ("SERVICE_DISABLED", "permission denied", quota/billing project mismatch); a CI job stuck "queued" forever or a push that never triggered a run; an auth token stale while another credential works fine; a flag or tool behaving unlike its docs; a reinstall that broke a resident daemon; a URL/value silently truncated; a slow path when a fast one exists. Do NOT wait for the user to ask; logging and reading papercuts is part of doing the work.
 ---
 
-# Papercuts: don't re-pay the same lost time
+# Papercuts: read before you dig, record after you bleed
 
 A **papercut** is anything outside the code you are writing that quietly costs
-time: a tool that fails mysteriously, a wedged background process, a flag that
-behaves differently than its docs, an environment or auth gotcha, a CI job
-stuck for no obvious reason, a slow path that had a fast one. cgh keeps them in
-this repo's **knowledge** store (kind `gotcha`, tag `papercut`), so they are
-searchable and they resurface in the resume bundle at the next session.
+time: a wedged process, a lock nobody released, an auth gotcha, a CI job stuck
+for no obvious reason, a flag that behaves unlike its docs, a reinstall that
+broke a resident daemon. This repo keeps them in its **knowledge** store so the
+next session (yours or another) does not re-pay the same lost time. Treat the
+two moves below as reflexes, not chores you do when reminded.
 
-## Read FIRST when tooling fails mysteriously
+## 1. READ FIRST, before investigating a tooling failure
 
-Before starting a fresh investigation into a tool or environment failure, check
-whether someone already paid for the answer:
+The instant a tool or the environment fails in a way that is not your code,
+search the papercuts before forming a theory:
 
-```bash
-cgh papercut <symptom>     # search this repo's papercuts
-cgh papercut               # list them, newest first
-```
+- **Primary (you have MCP): `knowledge_search("papercut <symptom>")`.**
+- Filter to entries whose `tags` contain `papercut`. Grep the *symptom string*,
+  not your guess at the cause.
 
-Or from an MCP client: `knowledge_search("papercut <symptom>")`. Grep the
-symptom, not your guess about the cause. This is the whole point of the store.
+Someone probably already paid for this answer. Only start a fresh investigation
+if the search comes back empty.
 
-## Log one when you lose time and find the fix
+## 2. RECORD, after you lose time and find the fix
 
 Once you have spent more than a couple of minutes on a tooling or environment
-failure and know the fix, record it before moving on, while it is fresh:
+failure and know the fix, record it immediately, while it is fresh, without
+waiting to be asked:
 
-```bash
-cgh papercut add "<symptom: what you would grep at 2am>" --fix "<the exact command or change that worked>"
-```
+- **Primary (you have MCP):**
+  ```
+  knowledge_record(
+    title="Papercut: <symptom>",
+    body="Symptom: <what you would grep at 2am>\nCause: <root cause>\nFix: <the exact command or change that worked>\nCheck: <how to confirm it worked>",
+    kind="gotcha",
+    tags="papercut, <tool>",
+  )
+  ```
+- **Backup (no MCP available, e.g. the server is disconnected):**
+  ```
+  cgh papercut add "<symptom>" --fix "<exact fix>"
+  ```
 
-Or from an MCP client:
-`knowledge_record(title="Papercut: <symptom>", body="Symptom ... Cause ... Fix ... Check ...", kind="gotcha", tags="papercut, <tool>")`.
+Write the **symptom** as the string a future session would search for, the
+**fix** as the exact command or edit (not a description of it), and tag the tool
+(`gcloud`, `duckdb`, `actions`, `npm`, ...) so it is findable.
 
-Write the **symptom** as the string a future session would search for, and the
-**fix** as the exact command or edit, not a description of it. A tag naming the
-tool (`gcloud`, `duckdb`, `actions`, ...) makes it findable.
+## The `cgh papercut` command is for the human
+
+The user has no direct access to the knowledge store, so `cgh papercut` (list)
+and `cgh papercut <query>` (search) exist so THEY can read what has been logged
+from a terminal. As an agent, prefer the MCP tools above for both reading and
+writing; reach for `cgh papercut add` only as the no-MCP backup.
 
 ## What is NOT a papercut
 
-Ordinary bugs in the feature you are building. Those belong to the tracker or
-to `knowledge_record` as a plain `gotcha`. Papercuts are specifically about the
-**tooling and environment** getting in the way of the work, not the work
-itself.
+Ordinary bugs in the feature you are building. Those go to the tracker, or to
+`knowledge_record` as a plain `gotcha` without the `papercut` tag. Papercuts are
+specifically the **tooling and environment** getting in the way of the work.

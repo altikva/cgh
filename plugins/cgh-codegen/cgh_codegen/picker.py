@@ -150,6 +150,12 @@ def pick_reference(
     # cross-directory symbol match, while a file that is BOTH still wins.
     _GRAPH_WEIGHT = 3
     _SIBLING_WEIGHT = 4
+    # Each shared name word weighs more than a bare graph symbol match, so
+    # among same-directory siblings the closest NAME wins: for a test the file
+    # name is the signal (test_dedup_family for a family-dedup test), and a
+    # graph hit on a differently-named sibling should not outrank it. Two
+    # shared words (2 x 2 = 4) clear the graph weight (3); one word does not.
+    _OVERLAP_WEIGHT = 2
     scored: list[Candidate] = []
     for path in pool:
         c = Candidate(path=path, score=0)
@@ -161,7 +167,7 @@ def pick_reference(
             c.reasons.append("sibling in the same directory")
         overlap = len(tgt_words & set(_split_words(path.stem)))
         if overlap:
-            c.score += overlap
+            c.score += overlap * _OVERLAP_WEIGHT
             c.reasons.append(f"shares {overlap} name word(s)")
         if c.score:
             scored.append(c)

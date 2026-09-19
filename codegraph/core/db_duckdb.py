@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
 
 import duckdb
@@ -21,6 +23,41 @@ import duckdb
 from codegraph.core.protocol import QueryResult
 from codegraph.core.schema_duckdb import init_schema
 from codegraph.core.utils import checked_identifier as _ident
+
+# A concurrent writer (a git post-checkout `cgh _reindex_hook`, another
+# `cgh index`, or a running owner) holds DuckDB's exclusive file lock, and a
+# fresh open then fails with "Could not set lock on file". That contention is
+# almost always transient, so wait it out with backoff instead of aborting the
+# whole index. CGH_LOCK_WAIT (seconds) bounds the wait; 0 disables the retry.
+_LOCK_WAIT_SECONDS = float(os.environ.get("CGH_LOCK_WAIT", "12") or 0)
+
+
+def _is_lock_error(exc: Exception) -> bool:
+    """True for DuckDB's transient file-lock contention, not other I/O errors."""
+    return isinstance(exc, duckdb.IOException) and "lock" in str(exc).lower()
+
+
+def _connect_with_retry(
+    db_path: str,
+    read_only: bool,
+    *,
+    wait_seconds: float = _LOCK_WAIT_SECONDS,
+    _sleep=time.sleep,
+) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection, waiting out a transient file-lock held by a
+    concurrent writer. Only the "could not set lock" IOException is retried, up
+    to ``wait_seconds`` with exponential backoff; any other error, or the budget
+    running out, re-raises so a genuinely stuck lock is still reported clearly."""
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    delay = 0.1
+    while True:
+        try:
+            return duckdb.connect(db_path, read_only=read_only)
+        except duckdb.IOException as exc:
+            if not _is_lock_error(exc) or time.monotonic() >= deadline:
+                raise
+            _sleep(delay)
+            delay = min(delay * 2, 1.0)
 
 
 class DuckDBQueryResult:
@@ -60,7 +97,7 @@ class DuckDBGraphDB:
     """
 
     def __init__(self, db_path: str, read_only: bool = False) -> None:
-        self._conn = duckdb.connect(db_path, read_only=read_only)
+        self._conn = _connect_with_retry(db_path, read_only)
         if not read_only:
             init_schema(self._conn)
 

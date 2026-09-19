@@ -24,6 +24,14 @@ _OWNER_PID_FILE = "owner.pid"
 _OWNER_VERSION_FILE = "owner.version"
 _WORKERS_DIR = "workers"
 
+# The MCP client (Claude Code) drops a server whose initialize handshake does
+# not answer within roughly 30s. The proxy cannot answer it until the owner is
+# listening, so the owner-startup wait must stay comfortably under that budget:
+# a slower start reads as a dead server. The owner publishes its port before its
+# backgrounded reindex, so this window is ample in practice.
+_CLIENT_HANDSHAKE_BUDGET = 30.0
+_OWNER_STARTUP_TIMEOUT = 20.0
+
 
 def port_file(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _PORT_FILE
@@ -345,6 +353,20 @@ def rotate_owner_log(repo_root: str | Path) -> None:
         pass
 
 
+def _reap_child(pid: int | None) -> None:
+    """Reap a dead owner that this process spawned, so it does not linger as a
+    zombie in the process table. ``os.waitpid`` only works from the parent; a
+    ChildProcessError means the pid is not our child (already reaped, or
+    spawned by a different process), which is fine. No-op on Windows, which has
+    no zombie processes, and on a missing pid."""
+    if not pid or os.name == "nt":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
 def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None:
     """
     Launch `cgh _serve_owner` as a detached background process.
@@ -353,6 +375,10 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     """
     repo_root = Path(repo_root).resolve()
     (repo_root / ".codegraph").mkdir(parents=True, exist_ok=True)
+
+    # Reap a prior owner we spawned that has since died, so respawning does not
+    # leave its predecessor lingering as a zombie in the process table.
+    _reap_child(read_owner_pid(repo_root))
 
     # Clear any stale state
     port_file(repo_root).unlink(missing_ok=True)
@@ -402,15 +428,33 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
         popen_kwargs["start_new_session"] = True
     subprocess.Popen(cmd, **popen_kwargs)
 
-    # Wait for the owner to publish its port. When --reindex is requested the
-    # owner finishes the full scan before writing the port file, which can take
-    # well over a minute on large repos. Use a generous timeout.
-    timeout = 300.0 if reindex else 15.0
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if is_owner_alive(repo_root):
-            return read_owner_port(repo_root)
-        time.sleep(0.25)
+    # Wait for the owner to publish its port, then bridge to it. The owner
+    # publishes the port as soon as it is listening and runs its reindex in the
+    # background (see owner_main), so this no longer scales with repo size the
+    # way it did when the owner scanned before serving, and the old 300s wait
+    # would only ever block long past the point the MCP client had given up.
+    return _await_owner_port(repo_root, _OWNER_STARTUP_TIMEOUT)
+
+
+def _await_owner_port(
+    repo_root: str | Path,
+    timeout: float,
+    *,
+    _alive=is_owner_alive,
+    _read_port=read_owner_port,
+    _now=time.monotonic,
+    _sleep=time.sleep,
+) -> int | None:
+    """Poll until the owner is alive and serving, then return its port; None if
+    it does not come up within ``timeout``. The wait stays under the client's
+    handshake budget on purpose: an owner that cannot start in that window is
+    better reported as absent (the caller retries) than waited on past the point
+    the client has already timed the server out."""
+    deadline = _now() + timeout
+    while _now() < deadline:
+        if _alive(repo_root):
+            return _read_port(repo_root)
+        _sleep(0.25)
     return None
 
 
@@ -424,6 +468,9 @@ def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
         return None
     if is_owner_alive(repo_root):
         return read_owner_port(repo_root)
+    # The owner is gone. If it was our child it may be a zombie in the table;
+    # reap it so a defunct process does not linger, then spawn a fresh one.
+    _reap_child(read_owner_pid(repo_root))
     return spawn_owner(repo_root, watch=watch, reindex=False)
 
 

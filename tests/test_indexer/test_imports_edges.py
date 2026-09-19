@@ -14,7 +14,12 @@ import textwrap
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.imports.resolver import resolve_import, resolve_js_ts, resolve_python
+from codegraph.imports.resolver import (
+    resolve_import,
+    resolve_java,
+    resolve_js_ts,
+    resolve_python,
+)
 from codegraph.indexer import index_file
 
 
@@ -250,6 +255,71 @@ class TestResolveJsTs:
         assert resolve_js_ts("@/utils", importer, tmp_path) is None
 
 
+class TestResolveJava:
+    """A Java package maps to a directory chain under a source root, and the
+    root is per module: guessing from the repo root misses every Maven or
+    Gradle layout."""
+
+    def _module(self, tmp_path):
+        root = tmp_path / "svc" / "src" / "main" / "java" / "com" / "acme"
+        root.mkdir(parents=True)
+        (root / "Client.java").write_text("package com.acme;\n")
+        (root / "Outer.java").write_text("package com.acme;\n")
+        return root
+
+    def test_resolves_under_the_maven_source_root(self, tmp_path):
+        pkg = self._module(tmp_path)
+        importer = pkg / "App.java"
+        importer.write_text("import com.acme.Client;\n")
+
+        hit = resolve_java("com.acme.Client", importer, tmp_path)
+
+        assert hit == (pkg / "Client.java").resolve()
+
+    def test_static_member_import_lands_on_the_declaring_file(self, tmp_path):
+        """tree-sitter hands back com.acme.Outer.helper for a static import."""
+        pkg = self._module(tmp_path)
+        importer = pkg / "App.java"
+
+        hit = resolve_java("com.acme.Outer.helper", importer, tmp_path)
+
+        assert hit == (pkg / "Outer.java").resolve()
+
+    def test_nested_class_lands_on_the_outer_file(self, tmp_path):
+        pkg = self._module(tmp_path)
+        importer = pkg / "App.java"
+
+        hit = resolve_java("com.acme.Outer.Inner", importer, tmp_path)
+
+        assert hit == (pkg / "Outer.java").resolve()
+
+    def test_a_wildcard_resolves_to_nothing(self, tmp_path):
+        """The asterisk is a separate node, so a wildcard arrives as the
+        package alone. Resolving it to some file would invent an edge."""
+        pkg = self._module(tmp_path)
+        importer = pkg / "App.java"
+
+        assert resolve_java("com.acme", importer, tmp_path) is None
+
+    def test_the_jdk_stays_unresolved(self, tmp_path):
+        pkg = self._module(tmp_path)
+        importer = pkg / "App.java"
+
+        assert resolve_java("java.io.IOException", importer, tmp_path) is None
+
+    def test_a_sibling_module_is_not_reached_through_the_wrong_root(self, tmp_path):
+        """Each module owns its source root; com.acme.Client in module A must
+        not resolve into module B's tree."""
+        self._module(tmp_path)
+        other = tmp_path / "web" / "src" / "main" / "java" / "com" / "other"
+        other.mkdir(parents=True)
+        (other / "Page.java").write_text("package com.other;\n")
+        importer = other / "App.java"
+
+        assert resolve_java("com.other.Page", importer, tmp_path) is not None
+        assert resolve_java("com.acme.Client", importer, tmp_path) is None
+
+
 class TestResolveImportDispatch:
     def test_python_dispatch(self, tmp_path):
         (tmp_path / "lib.py").write_text("")
@@ -260,6 +330,13 @@ class TestResolveImportDispatch:
         (tmp_path / "lib.ts").write_text("")
         importer = tmp_path / "main.ts"
         assert resolve_import("typescript", "./lib", importer, tmp_path) is not None
+
+    def test_java_dispatch(self, tmp_path):
+        pkg = tmp_path / "src" / "main" / "java" / "com" / "acme"
+        pkg.mkdir(parents=True)
+        (pkg / "Lib.java").write_text("package com.acme;\n")
+        importer = pkg / "App.java"
+        assert resolve_import("java", "com.acme.Lib", importer, tmp_path) is not None
 
     def test_unknown_lang_returns_none(self, tmp_path):
         assert resolve_import("rust", "foo", tmp_path / "x.rs", tmp_path) is None

@@ -220,7 +220,9 @@ def test_stdout_mode_writes_nothing(tmp_path):
         to_stdout=True,
     )
     assert out["written"] is False
-    assert out["code"] == "x = 1"
+    # strip() so the assertion holds whether or not ruff polished the output
+    # (ruff normalises the trailing newline); the meaningful content is "x = 1".
+    assert out["code"].strip() == "x = 1"
     assert not (root / "src" / "user_service.py").exists()
 
 
@@ -398,6 +400,22 @@ class TestExtendSafety:
         idx_guard = result.find("if __name__")
         assert idx_foo != -1 and idx_guard != -1
         assert idx_foo < idx_guard
+
+
+def test_generated_python_is_ruff_polished(tmp_path):
+    import shutil
+
+    if shutil.which("ruff") is None:
+        pytest.skip("ruff not on PATH")
+    root = _repo(tmp_path)
+    backend = FakeBackend("```python\nimport os\n\n\ndef f():\n    return 1\n```")
+    run_generation(
+        root, "spec", "src/thing.py", "src/order_service.py", config={}, backend=backend
+    )
+    content = (root / "src" / "thing.py").read_text(encoding="utf-8")
+    assert "import os" not in content
+    assert "def f" in content
+    assert all(line == line.rstrip() for line in content.splitlines())
 
 
 if __name__ == "__main__":  # pragma: no cover

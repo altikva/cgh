@@ -21,6 +21,67 @@ from .generate import Backend, generate_code
 from .picker import CodeWriteError, _confine, pick_reference
 
 
+def _select_reference(
+    root: Path, pick: dict, backend: Backend, config: dict
+) -> tuple[str, Path, str, str | None]:
+    """Choose the reference to actually mirror, honoring the egress gate.
+
+    For a cloud backend the top-ranked pick may carry a confidential or PII
+    finding, which the gate refuses. Rather than fail the whole generation,
+    walk the ranked candidates and take the first that clears the gate, so an
+    auto-pick lands on a sendable reference instead of stopping on the first
+    one that happens to hold a secret. A local backend never leaves the
+    machine, so it skips the gate and keeps the top pick.
+
+    Returns ``(ref_rel, ref_path, egress_reason, note)``. ``note`` is a human
+    string when the choice fell back off the top pick (so the caller can say
+    why the mirrored file is not the one first proposed), else None. Raises
+    CodeWriteError when no candidate is usable.
+    """
+    ref_top = pick["reference"]
+    if ref_top is None:
+        raise CodeWriteError(pick["reason"])
+
+    def _readable(rel: str) -> Path | None:
+        p = _confine(root, rel)
+        return p if (p is not None and p.is_file()) else None
+
+    if backend.is_local:
+        p = _readable(ref_top)
+        if p is None:
+            raise CodeWriteError(f"reference {ref_top!r} is not a readable file")
+        return ref_top, p, "local backend (no egress)", None
+
+    # Cloud backend: the reference's bytes leave the machine, so every
+    # candidate must clear the gate. Try them in rank order; the top pick is
+    # candidates[0], so an ungated top pick is chosen with no fallback note.
+    ordered = pick["candidates"] or [ref_top]
+    denials: list[str] = []
+    for cand in ordered:
+        p = _readable(cand)
+        if p is None:
+            denials.append(f"{cand}: not a readable file")
+            continue
+        allowed, reason = egress_decision(root, p, config)
+        if allowed:
+            note = None
+            if cand != ref_top:
+                note = (
+                    f"top pick {ref_top} was refused by the egress gate; "
+                    f"mirrored the next clear candidate {cand} instead"
+                )
+            return cand, p, reason, note
+        denials.append(f"{cand}: {reason}")
+        _audit(root, "codegen_egress_denied", f"{cand}: {reason}")
+
+    if len(denials) == 1:
+        raise CodeWriteError(f"egress refused for reference {denials[0]}")
+    raise CodeWriteError(
+        "every candidate reference was refused by the egress gate; "
+        + "; ".join(denials)
+    )
+
+
 def run_generation(
     repo_root: str | Path,
     spec: str,
@@ -50,26 +111,7 @@ def run_generation(
     root = Path(repo_root).resolve()
 
     pick = pick_reference(root, target, reference)
-    ref_rel = pick["reference"]
-    if ref_rel is None:
-        raise CodeWriteError(pick["reason"])
-    ref_path = _confine(root, ref_rel)
-    if ref_path is None or not ref_path.is_file():
-        raise CodeWriteError(f"reference {ref_rel!r} is not a readable file")
-
-    # Egress gate: a cloud backend sees the reference's contents, so the
-    # reference must clear the same checks as any other departure. A local
-    # backend never leaves the machine, so it skips the gate, like the rest
-    # of cgh.
-    if backend.is_local:
-        egress = "local backend (no egress)"
-    else:
-        allowed, reason = egress_decision(root, ref_path, config)
-        if not allowed:
-            _audit(root, "codegen_egress_denied", f"{ref_rel}: {reason}")
-            raise CodeWriteError(f"egress refused for reference {ref_rel}: {reason}")
-        egress = reason
-
+    ref_rel, ref_path, egress, ref_note = _select_reference(root, pick, backend, config)
     ref_text = ref_path.read_text(encoding="utf-8", errors="replace")
 
     # Clobber check once, up front; the retry loop then overwrites its own
@@ -121,7 +163,8 @@ def run_generation(
     return {
         "target": target,
         "reference": ref_rel,
-        "reason": pick["reason"],
+        "reason": ref_note or pick["reason"],
+        "ref_fallback": ref_note,
         "lines": len(result.code.splitlines()),
         "cost": result.cost,
         "backend": result.backend,

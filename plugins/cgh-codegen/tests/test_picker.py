@@ -100,5 +100,28 @@ def test_no_analogue_returns_none_reference(tmp_path, monkeypatch):
     assert "no analogue" in out["reason"]
 
 
+def test_sibling_outranks_a_nonsibling_graph_hit(tmp_path, monkeypatch):
+    # A same-directory sibling must outrank a cross-directory graph hit,
+    # even if the graph reports a match.
+    src = tmp_path / "src"
+    src.mkdir()
+    lib = tmp_path / "lib"
+    lib.mkdir()
+
+    sibling = src / "beta.py"
+    sibling.write_text("class Beta:\n    pass\n", encoding="utf-8")
+    graph_hit = lib / "gamma.py"
+    graph_hit.write_text("class Gamma:\n    pass\n", encoding="utf-8")
+
+    def fake_find(root, q):
+        # Report the non-sibling graph_hit for any query.
+        return [{"kind": "class", "name": "Gamma", "file": str(graph_hit), "line": 1}]
+
+    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", fake_find)
+    out = pick_reference(tmp_path, "src/alpha.py")
+    assert out["reference"] == "src/beta.py"
+    assert "sibling in the same directory" in out["reason"]
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

@@ -143,14 +143,21 @@ def pick_reference(
         )
     pool.update(f for f in graph_files if f.suffix == suffix and f != tgt)
 
+    # A file in the target's own directory is the same kind of thing in the
+    # same place (a new commands_*.py mirrors its commands_*.py neighbours,
+    # not a test that merely mentions the name), so the sibling weight is set
+    # above the graph-match weight: a same-directory sibling outranks a bare
+    # cross-directory symbol match, while a file that is BOTH still wins.
+    _GRAPH_WEIGHT = 3
+    _SIBLING_WEIGHT = 4
     scored: list[Candidate] = []
     for path in pool:
         c = Candidate(path=path, score=0)
         if path in graph_files:
-            c.score += 3
+            c.score += _GRAPH_WEIGHT
             c.reasons.append("defines a matching symbol")
         if path.parent == parent:
-            c.score += 2
+            c.score += _SIBLING_WEIGHT
             c.reasons.append("sibling in the same directory")
         overlap = len(tgt_words & set(_split_words(path.stem)))
         if overlap:

@@ -47,7 +47,6 @@ from codegraph.cli.commands_index import (
     cmd_watch,
 )
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
-from codegraph.cli.commands_migrate import cmd_migrate_to_duckdb
 from codegraph.cli.commands_monitor import (
     cmd_compact,
     cmd_diff,
@@ -59,6 +58,7 @@ from codegraph.cli.commands_monitor import (
     cmd_status,
     cmd_tail,
 )
+from codegraph.cli.commands_papercut import cmd_papercut, register_papercut_parser
 from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
@@ -74,7 +74,6 @@ from codegraph.cli.commands_session import (
     cmd_memory,
 )
 from codegraph.cli.output import add_out_option
-from codegraph.core.db import KuzuNotInstalled
 
 
 def _cmd_serve_owner(args: argparse.Namespace) -> None:
@@ -143,10 +142,6 @@ def _print_help():
                 ("compact", "Vacuum SQLite DBs and reclaim space"),
                 ("hooks", "Install git hooks that reindex after pull/merge/checkout"),
                 ("ensurepath", "Add the cgh command to your PATH"),
-                (
-                    "migrate-to-duckdb",
-                    "Re-index Kuzu repos onto DuckDB (faster + smaller)",
-                ),
             ],
         ),
         (
@@ -164,6 +159,7 @@ def _print_help():
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
                 ("guard", "Confidentiality guard: agent-side enforcement"),
+                ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -306,7 +302,7 @@ def _register_setup_and_serve(sub) -> None:
         "--force",
         action="store_true",
         help=(
-            "Bypass the running owner and grab the Kuzu write lock directly. "
+            "Bypass the running owner and grab the graph DB write lock directly. "
             "Fails with a clear error if another cgh process holds it. "
             "Default behavior routes through the owner via MCP when one is alive."
         ),
@@ -357,7 +353,7 @@ def _register_setup_and_serve(sub) -> None:
 
 
 def _register_inspect(sub) -> None:
-    """Register stats, migrate-to-duckdb, logs, search, lookup, callers, callees, outline, doctor."""
+    """Register stats, logs, search, lookup, callers, callees, outline, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -394,29 +390,6 @@ def _register_inspect(sub) -> None:
     )
     p.add_argument(
         "--no-reindex", action="store_true", help="Don't re-index after cleaning"
-    )
-
-    # --- migrate-to-duckdb ---
-    p = sub.add_parser(
-        "migrate-to-duckdb",
-        help="Re-index a Kuzu-backed repo into DuckDB, verify counts match, optionally delete graph.db",
-    )
-    _add_root(p)
-    p.add_argument(
-        "--yes",
-        "-y",
-        action="store_true",
-        help="Skip the 'delete graph.db?' confirmation",
-    )
-    p.add_argument(
-        "--keep-kuzu",
-        action="store_true",
-        help="Always keep graph.db even after a clean migration",
-    )
-    p.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite an existing graph.duckdb (default: abort if present)",
     )
 
     p = sub.add_parser(
@@ -563,6 +536,7 @@ def _register_analysis(sub) -> None:
     # --- graph + add-dir ---
     register_graph_parser(sub)
     register_backend_parser(sub)
+    register_papercut_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -752,10 +726,10 @@ def main() -> None:
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
-        "migrate-to-duckdb": cmd_migrate_to_duckdb,
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,
+        "papercut": cmd_papercut,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,
@@ -795,27 +769,7 @@ def main() -> None:
         _print_help()
         return
 
-    try:
-        handler(args)
-    except KuzuNotInstalled as exc:
-        # Known, recoverable situation (Kuzu repo + kuzu not installed).
-        # Print the message and how to fix it, not a traceback. Pass
-        # --verbose to see the full stack.
-        if getattr(args, "verbose", False):
-            raise
-        # Render the message as literal text. It contains `cgh[kuzu]`,
-        # which Rich would otherwise parse as markup and drop.
-        from rich.text import Text
-
-        console.print(
-            Panel(
-                Text(str(exc)),
-                title="[red]Kuzu backend not available[/red]",
-                border_style="red",
-            )
-        )
-        console.print("[dim]Run with --verbose to see the full traceback.[/dim]")
-        sys.exit(1)
+    handler(args)
 
 
 if __name__ == "__main__":

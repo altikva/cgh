@@ -581,9 +581,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     # Scan freshness (re-read after possible refresh)
     ss = _scan_status(root)
 
-    # Counts. Kuzu holds an exclusive lock for the lifetime of an open
-    # write Database, so when our owner is alive, even a read-only open
-    # from this CLI process is blocked. Order of attempts:
+    # Counts. The graph DB holds an exclusive lock for the lifetime of an
+    # open write connection, so when our owner is alive, even a read-only
+    # open from this CLI process is blocked. Order of attempts:
     #   1. If the owner is alive AND we know its port, ask it via MCP
     #      (live_graph_stats), authoritative + cheap.
     #   2. Else try a local RO open (works only when no owner is up).
@@ -633,8 +633,8 @@ def cmd_status(args: argparse.Namespace) -> None:
                     "status": (
                         "ok"
                         if st.ok
-                        else "no graph.db"
-                        if st.initialized and not st.has_kuzu
+                        else "no graph db"
+                        if st.initialized and not st.has_graphdb
                         else "uninitialized"
                         if st.exists
                         else "missing"
@@ -740,16 +740,16 @@ def _backend_info(root: str) -> dict:
     """
     cg = Path(root) / ".codegraph"
     duck = cg / "graph.duckdb"
-    kuzu_file = cg / "graph.db"
+    lite = cg / "graph.sqlite"
 
     on_disk: list[str] = []
     if duck.exists():
         on_disk.append("duckdb")
-    if kuzu_file.exists():
-        on_disk.append("kuzu")
+    if lite.exists():
+        on_disk.append("sqlite")
 
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
-    env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
+    env_backend = "sqlite" if env_value == "sqlite" else "duckdb"
 
     from codegraph.core.db import detect_backend_file
 
@@ -769,23 +769,23 @@ def _backend_status_line(root: str) -> str:
     """One-line description of which graph backend is in use for ``root``.
 
     Reports:
-      - the backend currently on disk (graph.duckdb / graph.db / none)
+      - the backend currently on disk (graph.duckdb / graph.sqlite / none)
       - file size for the present DB
       - the CGH_DB env var if set, with a warning when it disagrees with
         what's on disk (the next `cgh index` would write a second file)
     """
     cg = Path(root) / ".codegraph"
     duck = cg / "graph.duckdb"
-    kuzu_file = cg / "graph.db"
+    lite = cg / "graph.sqlite"
 
     on_disk: list[tuple[str, Path]] = []
     if duck.exists():
         on_disk.append(("duckdb", duck))
-    if kuzu_file.exists():
-        on_disk.append(("kuzu", kuzu_file))
+    if lite.exists():
+        on_disk.append(("sqlite", lite))
 
     env_value = (os.environ.get("CGH_DB") or "").strip().lower()
-    env_backend = "duckdb" if env_value == "duckdb" else "kuzu"
+    env_backend = "sqlite" if env_value == "sqlite" else "duckdb"
     env_was_set = bool(env_value)
 
     if not on_disk:
@@ -811,18 +811,14 @@ def _backend_status_line(root: str) -> str:
                 label
                 + f"  [yellow]CGH_DB={env_value!r} mismatch, next index would create a {env_backend} DB[/yellow]"
             )
-        if kind == "kuzu":
-            # Gentle nudge toward DuckDB, about 18x faster + 5x smaller
-            # on the wb-backend stress test. Opt-in, not automatic.
-            label += "  [dim]· run [cyan]cgh migrate-to-duckdb[/cyan] for faster + smaller DB[/dim]"
         return label
 
-    # Both present (rare, half-migrated repo).
+    # Both present (rare).
     duck_p = on_disk[0][1]
-    kuzu_p = on_disk[1][1]
+    lite_p = on_disk[1][1]
     label = (
         f"[yellow]both[/yellow] ([dim]graph.duckdb {_size(duck_p)}, "
-        f"graph.db {_size(kuzu_p)}[/dim])"
+        f"graph.sqlite {_size(lite_p)}[/dim])"
     )
     if env_was_set:
         label += f"  [dim]CGH_DB={env_value!r} -> {env_backend} wins[/dim]"
@@ -877,7 +873,7 @@ def _call_owner_tool(root: str, port: int, tool: str, timeout: float) -> dict | 
     HTTP-call any MCP tool on the running owner with the given timeout.
     Returns the parsed JSON dict on success, None on any failure (timeout,
     auth, HTTP error, malformed body). Used by cgh status when the owner
-    is alive and the local CLI can't open Kuzu read-only.
+    is alive and the local CLI can't open the graph DB read-only.
     """
     import http.client
     import json as _json
@@ -1067,12 +1063,12 @@ def cmd_reset(args: argparse.Namespace) -> None:
 
     # 2. Confirm destructive deletion
     targets = []
-    # graph.duckdb is the DuckDB backend (default since v0.4), graph.db the
-    # Kuzu one; a reset must remove whichever is present or a corrupt graph
-    # survives the reset (graph.duckdb does not start with "graph.db").
+    # graph.duckdb is the DuckDB backend (default), graph.sqlite the
+    # standalone-binary backend; a reset must remove whichever is present
+    # or a corrupt graph survives the reset.
     for name in (
         "graph.duckdb",
-        "graph.db",
+        "graph.sqlite",
         "fts.db",
         "scan_meta.json",
         "activity.log",
@@ -1530,11 +1526,14 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         )
     )
 
-    # 2. graph.db accessible
+    # 2. graph DB accessible
     graph_ok = False
     graph_msg = "not found"
-    graph_path = codegraph_dir / "graph.db"
-    if graph_path.exists():
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    graph_label = detected[1].name if detected else "graph DB"
+    if detected is not None:
         try:
             from codegraph.core.db import get_readonly_connection
 
@@ -1546,7 +1545,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 graph_msg = "locked by another process"
         except Exception as exc:
             graph_msg = f"error: {exc}"
-    checks.append(("graph.db", graph_ok, graph_msg))
+    checks.append((graph_label, graph_ok, graph_msg))
 
     # 3. fts.db accessible
     fts_ok = False
@@ -1794,7 +1793,8 @@ def cmd_compact(args: argparse.Namespace) -> None:
             return f"{size_bytes / 1024 / 1024:.1f} MB"
         return f"{size_bytes / 1024:.0f} KB"
 
-    # DBs to vacuum (SQLite only, graph.db is Kuzu, not vacuumable here)
+    # DBs to vacuum. The main graph DB is owned + write-locked, so it's
+    # reported for size only, not vacuumed here.
     sqlite_dbs = ["fts.db", "call_log.db"]
     results: list[tuple[str, int, int]] = []
 
@@ -1813,16 +1813,15 @@ def cmd_compact(args: argparse.Namespace) -> None:
         except Exception as exc:
             console.print(f"  [red]x[/red] {db_name}: {exc}")
 
-    # Graph.db size (read-only info)
-    graph_path = codegraph_dir / "graph.db"
+    # Graph DB size (read-only info)
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    graph_path = detected[1] if detected else None
+    graph_label = graph_path.name if graph_path else "graph DB"
     graph_size = 0
-    if graph_path.exists():
-        if graph_path.is_dir():
-            for f in graph_path.rglob("*"):
-                if f.is_file():
-                    graph_size += f.stat().st_size
-        else:
-            graph_size = graph_path.stat().st_size
+    if graph_path is not None and graph_path.exists():
+        graph_size = graph_path.stat().st_size
 
     # Display
     table = Table(
@@ -1846,7 +1845,7 @@ def cmd_compact(args: argparse.Namespace) -> None:
 
     if graph_size > 0:
         table.add_row(
-            "[dim]graph.db (Kuzu)[/dim]",
+            f"[dim]{graph_label}[/dim]",
             _fmt_size(graph_size),
             "[dim]---[/dim]",
             "[dim]N/A[/dim]",

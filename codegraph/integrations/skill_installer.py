@@ -67,6 +67,16 @@ than reading.
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
   1. `knowledge_record(title, body, kind, tags, file_refs?)`
+- **Tooling or the environment fails (NOT your code)**: a wedged process, a
+  held lock, `SERVICE_DISABLED`, a CI job stuck `queued`, a stale token while
+  another credential works, a flag that misbehaves. This is a *papercut*, and
+  handling it is not optional:
+  1. FIRST, before investigating: `knowledge_search("papercut <symptom>")`.
+     Someone may have already paid for the fix.
+  2. AFTER you lose time and find the fix: `knowledge_record(title="Papercut:
+     <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
+     <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
+     the no-MCP backup; `cgh papercut` lets the human read the list.
 - **After `git pull` / `checkout` / `rebase`**:
   1. `scan_status` → `incremental_reindex` if stale
 - **Including a sibling repo**: `add_directory(path)` (hot, no restart)
@@ -295,10 +305,13 @@ def install_gemini(project_root: Path) -> list[str]:
 
 
 def install_bob(project_root: Path) -> list[str]:
-    """Copy skills verbatim to <project>/.bob/skills/<name>/. Bob speaks
-    the same Agent Skills standard as Claude Code (a SKILL.md with YAML
-    front matter per folder, activated on demand), so the bundled skills
-    install unchanged, supporting files included."""
+    """Copy skills verbatim to <project>/.bob/skills/<name>/.
+
+    Bob speaks the same Agent Skills standard as Claude Code (a SKILL.md
+    with YAML front matter per folder, activated on demand), and its own
+    constants join WORKSPACE_BOB_DIR ".bob" with "skills", under a
+    SKILL_FILENAME of "SKILL.md". The global equivalent is
+    ~/.bob/skills/."""
     project_root = Path(project_root)
     dest_root = project_root / ".bob" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -475,7 +488,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
       codex   → ./AGENTS.md
       gemini  → ./GEMINI.md
       cursor  → ./.cursor/rules/codegraph-usage.mdc
-      bob     → ./.bob/rules/00-codegraph-usage.md
+      bob     → ./.bob/rules/cgh-usage.md
 
     Returns the path written (as str) or None if skipped.
     """
@@ -493,8 +506,9 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         return str(target)
 
     if tool == "bob":
-        # 00- prefix so the alphabetical rules loading reads it first.
-        target = project_root / ".bob" / "rules" / "00-codegraph-usage.md"
+        # Workspace rules live under .bob/rules/; the mode-specific
+        # siblings (.bob/rules-agent, -ask, -plan) hold AGENTS.md.
+        target = project_root / ".bob" / "rules" / "cgh-usage.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,

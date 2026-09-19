@@ -17,7 +17,6 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from codegraph.core.fts import fts_search
-from codegraph.core.utils import quiet_subprocess_kwargs
 
 
 @dataclass
@@ -33,16 +32,8 @@ class ContextNode:
 
 
 @dataclass
-class MemoryHit:
-    key: str
-    source: str  # "ruflo_memory" or "ruflo_pattern"
-    content: str
-    similarity: float
-
-
-@dataclass
 class MemoryDocHit:
-    """A hit from the local Claude Code memory index (not Ruflo)."""
+    """A hit from the local Claude Code memory index."""
 
     path: str
     kind: str
@@ -81,121 +72,9 @@ class TaskContext:
     nodes: list[ContextNode]
     files_referenced: list[str]
     token_estimate: int
-    memory_hits: list[MemoryHit] = field(default_factory=list)
     memory_docs: list[MemoryDocHit] = field(default_factory=list)
     plan_docs: list[PlanDocHit] = field(default_factory=list)
     knowledge_docs: list[KnowledgeHit] = field(default_factory=list)
-
-
-def _check_ruflo_available() -> bool:
-    """Check if Ruflo (npx ruflo) is available. Cached after first check."""
-    if not hasattr(_check_ruflo_available, "_cached"):
-        import shutil
-        import subprocess
-
-        _check_ruflo_available._cached = False
-        if shutil.which("npx"):
-            try:
-                r = subprocess.run(
-                    ["npx", "ruflo", "--version"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=5,
-                    **quiet_subprocess_kwargs(),
-                )
-                _check_ruflo_available._cached = r.returncode == 0
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
-    return _check_ruflo_available._cached
-
-
-def _query_ruflo_memory(task: str, limit: int = 5) -> list[MemoryHit]:
-    """
-    Query Ruflo memory + pattern stores via MCP subprocess.
-    Returns merged results from both knowledge memory and review patterns.
-    Returns empty list if Ruflo is not installed, codegraph works standalone.
-    """
-    if not _check_ruflo_available():
-        return []
-
-    import json as _json
-    import subprocess
-
-    hits: list[MemoryHit] = []
-
-    for source, cmd in [
-        (
-            "ruflo_memory",
-            [
-                "npx",
-                "ruflo",
-                "memory",
-                "search",
-                "--query",
-                task,
-                "--namespace",
-                "ondonne",
-                "--limit",
-                str(limit),
-            ],
-        ),
-        (
-            "ruflo_pattern",
-            [
-                "npx",
-                "ruflo",
-                "hooks",
-                "intelligence",
-                "pattern-search",
-                "--query",
-                task,
-                "--topK",
-                str(limit),
-            ],
-        ),
-    ]:
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-                cwd=str(__import__("pathlib").Path.cwd()),
-                **quiet_subprocess_kwargs(),
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                data = _json.loads(result.stdout)
-                results = data.get("results", [])
-                for r in results:
-                    content = r.get("value", r.get("pattern", ""))
-                    if isinstance(content, dict):
-                        content = _json.dumps(content)
-                    elif isinstance(content, str) and len(content) > 300:
-                        content = content[:300]
-                    sim = r.get("similarity", 0.5)
-                    key = r.get("key", r.get("patternId", "?"))
-                    hits.append(
-                        MemoryHit(
-                            key=key,
-                            source=source,
-                            content=content,
-                            similarity=sim,
-                        )
-                    )
-        except (
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-            _json.JSONDecodeError,
-            OSError,
-        ):
-            pass
-
-    hits.sort(key=lambda h: h.similarity, reverse=True)
-    return hits[:limit]
 
 
 _STOPWORDS = frozenset(
@@ -399,7 +278,7 @@ def _keyword_query(task: str, min_len: int = 3) -> str:
 
 def context_for_task(
     task: str,
-    kuzu_conn,
+    graph_conn,
     fts_conn: sqlite3.Connection,
     max_nodes: int = 15,
 ) -> TaskContext:
@@ -407,13 +286,9 @@ def context_for_task(
     Build a ranked context for a natural-language task.
     1. Keyword-extract the task, FTS-search to find initial seed symbols
     2. Expand via graph edges (callers, callees, inheritance)
-    3. Query Ruflo memory for project knowledge + review patterns
-    4. Rank by relevance and return top-N
+    3. Rank by relevance and return top-N
     """
-    # Step 0: Query Ruflo memory (best-effort, non-blocking)
-    memory_hits = _query_ruflo_memory(task)
-
-    # Step 0b: Query local Claude Code memory + plans (SQLite FTS, always on)
+    # Step 0: Query local Claude Code memory + plans (SQLite FTS, always on)
     memory_docs = _local_memory_hits(fts_conn, task, limit=3)
     plan_docs = _local_plan_hits(fts_conn, task, limit=2)
     knowledge_docs = _local_knowledge_hits(task, limit=3)
@@ -451,7 +326,7 @@ def context_for_task(
 
         # Step 3: Expand via graph, find callers/callees (up to 3 each)
         if r.kind == "function":
-            callers = kuzu_conn.find_neighbors(
+            callers = graph_conn.find_neighbors(
                 "CALLS",
                 dst_where={"name": r.name},
                 return_src=["name"],
@@ -459,7 +334,7 @@ def context_for_task(
             for c in callers:
                 node.relationships.append(f"called by {c['src_name']}")
 
-            callees = kuzu_conn.find_neighbors(
+            callees = graph_conn.find_neighbors(
                 "CALLS",
                 src_where={"name": r.name},
                 return_dst=["name"],
@@ -468,7 +343,7 @@ def context_for_task(
                 node.relationships.append(f"calls {c['dst_name']}")
 
         elif r.kind == "class":
-            parents = kuzu_conn.find_neighbors(
+            parents = graph_conn.find_neighbors(
                 "INHERITS",
                 src_where={"name": r.name},
                 return_dst=["name"],
@@ -496,7 +371,6 @@ def context_for_task(
         nodes=nodes,
         files_referenced=files,
         token_estimate=token_estimate,
-        memory_hits=memory_hits,
         memory_docs=memory_docs,
         plan_docs=plan_docs,
         knowledge_docs=knowledge_docs,
@@ -630,19 +504,6 @@ def render_context_markdown(ctx: TaskContext) -> str:
             lines.append(f"  {k.body[:200]}")
             lines.append("")
 
-    # Ruflo memory knowledge
-    if ctx.memory_hits:
-        lines.append("---")
-        lines.append("## Project Knowledge (Ruflo Memory)")
-        lines.append("")
-        for hit in ctx.memory_hits:
-            source_label = "memory" if hit.source == "ruflo_memory" else "pattern"
-            lines.append(
-                f"- **[{source_label}]** `{hit.key}` (sim: {hit.similarity:.2f})"
-            )
-            lines.append(f"  {hit.content[:200]}")
-            lines.append("")
-
     lines.append(f"**Files**: {', '.join(ctx.files_referenced)}")
     lines.append(f"**Estimated tokens**: ~{ctx.token_estimate}")
     if ctx.memory_docs:
@@ -651,6 +512,4 @@ def render_context_markdown(ctx: TaskContext) -> str:
         lines.append(f"**Plans**: {len(ctx.plan_docs)} related")
     if ctx.knowledge_docs:
         lines.append(f"**Knowledge**: {len(ctx.knowledge_docs)} entries")
-    if ctx.memory_hits:
-        lines.append(f"**Ruflo knowledge**: {len(ctx.memory_hits)} entries")
     return "\n".join(lines)

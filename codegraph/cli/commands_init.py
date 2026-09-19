@@ -267,7 +267,10 @@ def _detect_existing_state(root: Path) -> dict:
     choose the right index strategy and warn about stale artifacts.
     """
     cg_dir = root / ".codegraph"
-    graph_db = cg_dir / "graph.db"
+    from codegraph.core.db import detect_backend_file
+
+    detected = detect_backend_file(root)
+    graph_db = detected[1] if detected else cg_dir / "graph.duckdb"
     fts_db = cg_dir / "fts.db"
 
     state = {
@@ -394,84 +397,6 @@ def _detect_existing_state(root: Path) -> dict:
     return state
 
 
-# ---------------------------------------------------------------------------
-# Auto-migration: detect a Kuzu graph.db and re-index it into DuckDB
-# ---------------------------------------------------------------------------
-
-
-def _auto_migrate_kuzu_to_duckdb(root: Path) -> None:
-    """If ``root/.codegraph/graph.db`` exists and no graph.duckdb is there
-    yet, re-index into DuckDB transparently. cgh init is a deliberate
-    user action that signals "set this repo up properly", so we don't
-    prompt, we just do it and report.
-
-    Mismatch handling: if the verify step finds drift between the two
-    backends, both files are kept and we print a warning. cgh status will
-    show the "both files" state; the user can re-run ``cgh migrate-to-duckdb
-    --force`` once they understand the cause. We do NOT exit cgh init
-    on mismatch, the rest of the install flow (MCP server, skills,
-    indexing) should still proceed.
-    """
-    cg = root / ".codegraph"
-    kuzu_path = cg / "graph.db"
-    duckdb_path = cg / "graph.duckdb"
-
-    if not kuzu_path.exists() or duckdb_path.exists():
-        return  # nothing to do, fresh repo or already migrated
-
-    from codegraph.cli.commands_migrate import do_migrate_to_duckdb
-
-    console.print(
-        "  [bold]Auto-migrating from Kuzu to DuckDB[/bold]  "
-        "[dim](DuckDB is the v0.5 default, ~18× faster index, ~5× smaller DB)[/dim]"
-    )
-    try:
-        result = do_migrate_to_duckdb(root, delete_kuzu=True, force=False)
-    except Exception as exc:
-        console.print(
-            f"    [yellow]Migration failed: {type(exc).__name__}: {exc}[/yellow]"
-        )
-        console.print(
-            "    [dim]Continuing with the existing Kuzu graph. "
-            "Run [cyan]cgh migrate-to-duckdb[/cyan] manually to retry.[/dim]\n"
-        )
-        return
-
-    if result.status == "skipped":
-        return
-    if result.status == "aborted":
-        console.print(f"    [dim]{result.message}[/dim]\n")
-        return
-    if result.status == "matched":
-        console.print(
-            f"    [green]+[/green] re-indexed into graph.duckdb "
-            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            "graph.db deleted.\n"
-        )
-        return
-    if result.status in ("stale_kuzu", "kuzu_unreadable"):
-        console.print(
-            f"    [green]+[/green] re-indexed into graph.duckdb "
-            f"({result.duckdb_nodes:,} nodes, {result.duckdb_edges:,} edges). "
-            + ("graph.db deleted." if result.kuzu_deleted else "graph.db kept.")
-        )
-        console.print(
-            f"    [dim]Note: {result.message.rstrip('.')}. "
-            "DuckDB accepted as canonical.[/dim]\n"
-        )
-        return
-    # mismatched
-    console.print(
-        f"    [yellow]Counts differ between Kuzu ({result.kuzu_nodes:,} nodes) "
-        f"and DuckDB ({result.duckdb_nodes:,} nodes). Kept both files.[/yellow]"
-    )
-    console.print(f"    [dim]{result.message}[/dim]")
-    console.print(
-        "    [dim]Inspect with [cyan]cgh status[/cyan], then "
-        "[cyan]cgh migrate-to-duckdb --force[/cyan] to retry.[/dim]\n"
-    )
-
-
 def _install_git_reindex_hooks(root: Path) -> None:
     """Install the git hooks that refresh the graph after a pull, merge,
     branch switch, or rebase. Quiet and safe: skips a non-git repo, and skips
@@ -512,7 +437,7 @@ def _print_prior_state(prior_state: dict) -> None:
     if prior_state["indexed_files"] > 0:
         bits.append(f"{prior_state['indexed_files']:,} files indexed")
     if prior_state["graph_db_bytes"] > 0:
-        bits.append(f"graph.db {prior_state['graph_db_bytes'] // 1024} KB")
+        bits.append(f"graph DB {prior_state['graph_db_bytes'] // 1024} KB")
     if prior_state["owner_alive"]:
         bits.append(
             f"[green]owner running[/green] (pid {prior_state['owner_pid']} port {prior_state['owner_port']})"
@@ -912,7 +837,7 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
             "codex": "AGENTS.md",
             "gemini": "GEMINI.md",
             "cursor": ".cursor/rules/codegraph-usage.mdc",
-            "bob": ".bob/rules/00-codegraph-usage.md",
+            "bob": ".bob/rules/cgh-usage.md",
         }
         inject_targets = [
             (k, target_files[k]) for k in selected_keys if k in target_files
@@ -1026,9 +951,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     with phase_status("[dim]checking existing codegraph state..."):
         prior_state = _detect_existing_state(root)
     _print_prior_state(prior_state)
-
-    # -- Auto-migrate Kuzu -> DuckDB before anything else touches the DB --
-    _auto_migrate_kuzu_to_duckdb(root)
 
     # -- Step 1: Create .codegraph/ --
     with phase_status("[bold cyan]Setting up codegraph..."):
@@ -1172,8 +1094,8 @@ def _init_children(root: Path, assume_yes: bool) -> None:
 
     A parent that upgrades cgh, or re-runs init, propagates to its
     children: uninitialized ones get a full init + index, initialized
-    ones get the idempotent refresh (Kuzu auto-migration, hooks, missing
-    config, auth key). Each child runs in its own subprocess with
+    ones get the idempotent refresh (hooks, missing config, auth key).
+    Each child runs in its own subprocess with
     --no-children, so propagation stays single-level and a federation
     cycle cannot loop. Failures are per-child and never abort the
     parent's init.
@@ -1470,6 +1392,38 @@ def _append_hook(settings: dict, spec: dict) -> None:
     if spec.get("matcher"):
         wrapper["matcher"] = spec["matcher"]
     bucket.append(wrapper)
+
+
+def _mcp_command() -> tuple[str, list[str]]:
+    """The command an IDE should spawn for the MCP server, resolved absolutely.
+
+    A GUI process does not inherit the login shell PATH: an IDE launched from
+    the Dock or the Start menu sees a bare `/usr/bin:/bin:/usr/sbin:/sbin`,
+    so a bare "cgh" never resolves. On Windows, prefer the windowless twin
+    for the same reason the hooks do: `cgh.exe` is a console application and
+    a GUI parent spawning it flashes a console window.
+    """
+    import shutil
+
+    if os.name == "nt":
+        for name in ("cghw", "cgh", "codegraph"):
+            found = shutil.which(name)
+            if found:
+                return found, ["serve", "--root", ".", "--watch", "--reindex"]
+    else:
+        for name in ("cgh", "codegraph"):
+            found = shutil.which(name)
+            if found:
+                return found, ["serve", "--root", ".", "--watch", "--reindex"]
+    return sys.executable, [
+        "-m",
+        "codegraph",
+        "serve",
+        "--root",
+        ".",
+        "--watch",
+        "--reindex",
+    ]
 
 
 def _hook_launcher(cli_prefix: str) -> str:
@@ -1850,8 +1804,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         _skills_line("GEMINI.md", install_gemini(root))
 
     elif tool == "bob":
-        # Bob reads project-level MCP servers from .bob/mcp.json (its
-        # global file is ~/.bob/mcp_settings.json; project wins).
+        # The Bob agent reads its MCP servers from .bob/mcp.json in the
+        # project, or ~/.bob/settings/mcp.json globally, the project file
+        # winning for a same-named server. Its own constants spell both:
+        # WORKSPACE_BOB_DIR ".bob" joined with "mcp.json", and with
+        # "settings"/"mcp.json" for the global one.
+        #
+        # The surrounding VS Code shell watches the repo-root .mcp.json as
+        # well, but that is the editor's generic MCP surface, not the Bob
+        # agent's. Writing both would leave two definitions of one server
+        # racing for the same repo's write lock, so only .bob/ is written.
         #
         # Bob is an IDE agent, and a GUI process does not inherit the login
         # shell PATH: a bare "cgh" command fails to spawn, so Bob never
@@ -1860,27 +1822,12 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         # the project root so the executable and `--root .` both resolve.
         # Bob's stdio schema is command/args with an optional cwd; there is
         # no "type" field for stdio.
-        cgh_abs = shutil.which("cgh") or shutil.which("codegraph")
-        if cgh_abs:
-            bob_entry = {
-                "command": cgh_abs,
-                "args": ["serve", "--root", ".", "--watch", "--reindex"],
-                "cwd": str(root.resolve()),
-            }
-        else:
-            bob_entry = {
-                "command": sys.executable,
-                "args": [
-                    "-m",
-                    "codegraph",
-                    "serve",
-                    "--root",
-                    ".",
-                    "--watch",
-                    "--reindex",
-                ],
-                "cwd": str(root.resolve()),
-            }
+        command, args = _mcp_command()
+        bob_entry = {
+            "command": command,
+            "args": args,
+            "cwd": str(root.resolve()),
+        }
         bob_dir = root / ".bob"
         bob_dir.mkdir(exist_ok=True)
         mcp_path = bob_dir / "mcp.json"
@@ -1892,6 +1839,10 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         _skills_line(".bob/skills/", install_bob(root))
+        console.print(
+            "    [dim]every workspace instead: copy that entry into "
+            "~/.bob/settings/mcp.json[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------

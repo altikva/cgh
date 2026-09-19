@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Single source of truth for the cgh graph model: what
 # nodes exist, what edges exist, and how each backend names them.
-# Both KuzuGraphDB and DuckDBGraphDB consume this when implementing
+# DuckDBGraphDB and SQLiteGraphDB consume this when implementing
 # the upsert/edge/purge helpers from core.protocol.GraphDB.
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 class NodeSpec:
     """Metadata about a node label / SQL table.
 
-    ``label``     : Cypher label (matches core/schema.py).
+    ``label``     : node label used across the graph model.
     ``table``     : DuckDB table name.
     ``key_field`` : the unique key column / property (the PRIMARY KEY).
     ``has_file_path`` : True if the node carries a ``file_path`` column

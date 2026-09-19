@@ -144,7 +144,7 @@ cgh setup all        # writes configs for all tools
 
 ### `index`
 
-Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, Kuzu via `CGH_DB=kuzu`) and BM25 FTS index.
+Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, SQLite via `CGH_DB=sqlite`) and BM25 FTS index.
 
 ```
 cgh index [--verbose | -v] [--root DIR]
@@ -499,30 +499,6 @@ cgh compact [--root DIR]
 
 ---
 
-### `migrate-to-duckdb`
-
-Re-index a repo currently on the Kuzu backend into DuckDB, verify counts match, and optionally delete `graph.db`. Safe to run mid-flight: keeps the old DB around until you confirm.
-
-```
-cgh migrate-to-duckdb [--yes | -y] [--keep-kuzu] [--force] [--root DIR]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--yes`, `-y` | Skip the "delete graph.db?" prompt and delete on success |
-| `--keep-kuzu` | Never delete `graph.db`, even on exact count match |
-| `--force` | Overwrite an existing `graph.duckdb` before re-indexing |
-
-The verifier compares per-label node + per-type edge counts between the two backends and classifies the diff:
-
-- **matched**: exact counts; swap proceeds.
-- **stale_kuzu**: every diff is explained by a fix shipped after the Kuzu DB was written (`IMPORTS` going from `0` to N, or any metric where DuckDB ≤ Kuzu, i.e. ghost rows from deleted files). DuckDB is accepted as canonical and the swap proceeds.
-- **mismatched**: DuckDB gained rows that aren't explained by a known post-fix signature. Both files are kept and the command exits non-zero so you can inspect manually.
-
-`cgh init` runs this automatically when it detects only `graph.db` is present.
-
----
-
 ### `backend`
 
 Show the graph backend in use, or switch between DuckDB and SQLite by
@@ -630,6 +606,22 @@ cgh findings [FILE] [--key PREFIX] [--severity info|warn|block] [--limit N] [--j
 cgh findings --key pii.            # every PII finding in the repo
 cgh findings src/billing.py       # everything known about one file
 cgh findings --severity block     # what the gates would stop
+```
+
+### `papercut`
+
+Read and log **papercuts**: the tooling and environment time-sinks that slow a
+session down (a wedged process, a held lock, `SERVICE_DISABLED`, a stuck CI job,
+a stale token, a flag that misbehaves). A papercut is a knowledge entry of kind
+`gotcha` tagged `papercut`, so it is searchable and resurfaces in the resume
+bundle. This verb is mainly the human read surface; connected agents record and
+read through the knowledge MCP tools, guided by the bundled `cgh-papercuts`
+skill that `cgh init` installs.
+
+```
+cgh papercut                                   # list this repo's papercuts, newest first
+cgh papercut <query>                           # search them
+cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override the scope)
 ```
 
 ### `guard`

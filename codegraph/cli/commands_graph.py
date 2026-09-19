@@ -31,7 +31,7 @@ def _fetch_mermaid_via_owner(
 ) -> str | None:
     """
     Ask the running MCP owner to build the Mermaid diagram for us.
-    Works while the owner holds the Kuzu write lock (which blocks our
+    Works while the owner holds the graph DB write lock (which blocks our
     own readonly connection). Returns None if the owner isn't running
     or the call fails.
     """

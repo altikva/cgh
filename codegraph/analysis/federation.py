@@ -24,8 +24,8 @@ from codegraph.core.config import load_config
 from codegraph.core.protocol import GraphDB
 
 _DB_DIR = ".codegraph"
-_KUZU_FILE = "graph.db"
 _DUCKDB_FILE = "graph.duckdb"
+_SQLITE_FILE = "graph.sqlite"
 _FTS_FILE = "fts.db"
 
 
@@ -49,15 +49,15 @@ class ChildStatus:
     path: Path
     exists: bool
     initialized: bool  # has a .codegraph/ dir
-    has_kuzu: bool  # graph.db present
     has_duckdb: bool  # graph.duckdb present
+    has_sqlite: bool  # graph.sqlite present
     has_fts: bool  # fts.db present
     is_git_repo: bool  # has a .git dir (informational)
     error: str | None = None  # populated when something failed
 
     @property
     def has_graphdb(self) -> bool:
-        return self.has_kuzu or self.has_duckdb
+        return self.has_duckdb or self.has_sqlite
 
     @property
     def ok(self) -> bool:
@@ -142,8 +142,8 @@ def verify_child(child_path: str | Path) -> ChildStatus:
             path=p,
             exists=False,
             initialized=False,
-            has_kuzu=False,
             has_duckdb=False,
+            has_sqlite=False,
             has_fts=False,
             is_git_repo=False,
             error="path does not exist",
@@ -154,8 +154,8 @@ def verify_child(child_path: str | Path) -> ChildStatus:
         path=p,
         exists=True,
         initialized=cg.is_dir(),
-        has_kuzu=(cg / _KUZU_FILE).exists(),
         has_duckdb=(cg / _DUCKDB_FILE).exists(),
+        has_sqlite=(cg / _SQLITE_FILE).exists(),
         has_fts=(cg / _FTS_FILE).exists(),
         is_git_repo=(p / ".git").exists(),
     )
@@ -173,11 +173,10 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
     """
     Open a fresh read-only GraphDB connection for ``repo_root``, regardless
     of which backend the child repo uses. Detection looks at the file
-    actually on disk: ``graph.duckdb`` -> DuckDB, ``graph.db`` -> Kuzu.
+    actually on disk: ``graph.duckdb`` -> DuckDB, ``graph.sqlite`` -> SQLite.
 
     Yields None when the DB is missing, locked, or unreadable. Always
-    closes the connection, Kuzu holds an OS file lock that must be
-    released so the child's own owner can keep writing.
+    closes the connection so the child's own owner can keep writing.
     """
     detected = _detect_backend_file(repo_root)
     if detected is None:
@@ -196,11 +195,6 @@ def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
                 conn.close()
         except Exception:
             pass
-
-
-# Backward-compat alias for callers that import the old name. New code
-# should prefer open_graphdb_ro.
-open_kuzu_ro = open_graphdb_ro
 
 
 @contextmanager
@@ -241,7 +235,7 @@ def open_fts_ro(repo_root: Path) -> Iterator[sqlite3.Connection | None]:
 def iter_db_roots(repo_root: str | Path) -> list[Path]:
     """
     Return [parent_root, *initialized_subrepo_roots]. Subrepos that don't
-    have a `.codegraph/graph.db` yet are skipped (with no error).
+    have a graph DB in `.codegraph/` yet are skipped (with no error).
     """
     parent = Path(repo_root).resolve()
     roots = [parent]
@@ -368,14 +362,6 @@ def federate_flat(
             item["scope"] = scope
             rows.append(item)
     return rows, warnings
-
-
-# Backward-compat aliases for callers that import the old names. New
-# code should prefer the _graphdb variants, these will be removed in
-# the 0.6 release that also deletes the Kuzu-specific code paths.
-for_each_kuzu = for_each_graphdb
-for_each_child_kuzu = for_each_child_graphdb
-_run_one_kuzu = _run_one_graphdb
 
 
 def for_each_fts(
@@ -688,7 +674,7 @@ def _write_config_toml(path: Path, data: dict) -> None:
             lines.append(_emit_toml_value(key, value))
         lines.append("")
 
-    # Pass-through other top-level tables (parsers, mcp, ruflo, paths, …)
+    # Pass-through other top-level tables (parsers, mcp, paths, …)
     for table, body in data.items():
         if table == "codegraph":
             continue

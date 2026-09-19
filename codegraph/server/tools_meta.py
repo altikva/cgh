@@ -197,7 +197,7 @@ def register(mcp) -> None:
 
         ctx = _ctx(
             task=task,
-            kuzu_conn=_get_conn(),
+            graph_conn=_get_conn(),
             fts_conn=_get_fts(),
             max_nodes=max_nodes,
         )
@@ -275,7 +275,6 @@ def register(mcp) -> None:
                 "memory_docs_count": len(ctx.memory_docs),
                 "plan_docs_count": len(ctx.plan_docs),
                 "knowledge_docs_count": len(ctx.knowledge_docs),
-                "ruflo_memory_hits": len(ctx.memory_hits),
                 "estimated_tokens": ctx.token_estimate,
                 "session_id": session_id or None,
             },

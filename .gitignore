@@ -43,3 +43,4 @@ internal/
 # Local model weights (GGUF), never committed
 downloads/
 dist-binary/
+/.bob/

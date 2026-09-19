@@ -34,7 +34,7 @@ def register(mcp) -> None:
         Use this when you notice something worth remembering:
           - a pattern the codebase follows ("all handlers return X")
           - a decision and its rationale ("we chose Stripe over PayPal because…")
-          - a gotcha ("Kuzu holds the DB lock until Python GC runs")
+          - a gotcha ("DuckDB rejects a RO open while a RW conn is live")
           - a user style preference ("user prefers French in commit bodies")
           - a glossary entry ("RFM = Recency, Frequency, Monetary")
 

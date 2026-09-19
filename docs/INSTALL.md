@@ -1,11 +1,9 @@
 # Install
 
-**Python 3.11, 3.12, 3.13, or 3.14.** Since v0.4.2 Kuzu is an optional
-extra (`pip install cgh[kuzu]`), so the default install no longer pulls a
-package that lacks cp3.14 wheels. The DuckDB backend ships wheels on every
-supported Python and is the default everywhere. Existing Kuzu repos are
-auto-migrated to DuckDB on the next `cgh init`. Use `CGH_DB=kuzu` (with
-the extra installed) to keep using Kuzu if you have a reason to.
+**Python 3.11, 3.12, 3.13, or 3.14.** The default install pulls the DuckDB
+graph backend, which ships wheels on every supported Python. No Python at
+all? Run the standalone binary through `npx @altikva/cgh`, or download it from
+the [latest release](https://github.com/altikva/cgh/releases/latest).
 
 ### One-line install
 
@@ -71,12 +69,11 @@ Optional extras (none are required; the core install is lean and works on Python
 pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
 pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars, abi3 wheels)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
-pip install "cgh[kuzu]"    # the legacy Kuzu graph backend (DuckDB is the default)
 
 # Combine extras in one bracket, comma-separated:
 pip install "cgh[langs,lsp]"
 
-# Or everything above except kuzu, in one shot:
+# Or everything above, in one shot:
 pip install "cgh[full]"
 ```
 
@@ -88,6 +85,59 @@ cgh init           # initialize in any project
 cgh serve          # start the MCP server for Claude / Cursor / Codex / Gemini / Bob
 cgh stop           # stop this repo's owner + worker (alias of serve --stop)
 ```
+
+### No Python: the standalone binary
+
+cgh also ships as a self-contained executable, so a machine with no Python can
+run it. The quickest path is npm, which fetches the right build for your OS,
+verifies its checksum, caches it, and runs it:
+
+```bash
+npx @altikva/cgh serve          # start the MCP server for this repo
+npx @altikva/cgh --version
+npm install -g @altikva/cgh     # or install the `cgh` command globally
+```
+
+The binary comes in two variants. The default is **sealed**: the core graph,
+the MCP tools, memory, plans and knowledge, plus the local-only plugins (PII
+scrubbing and classification). It contains no code that can reach the network.
+
+```bash
+npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can
+                                  # call a model (code generation, summarization,
+                                  # bug reports), gated and inert until configured
+```
+
+Prefer a direct download? Each release ships one asset per platform (with a
+`.sha256` next to it). Pick yours from the
+[latest release](https://github.com/altikva/cgh/releases/latest):
+
+| Platform | Sealed asset | Egress asset |
+|---|---|---|
+| macOS (Apple Silicon) | [`cgh-macos-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-macos-arm64) | [`cgh-egress-macos-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-macos-arm64) |
+| Linux x64 | [`cgh-linux-x64`](https://github.com/altikva/cgh/releases/latest/download/cgh-linux-x64) | [`cgh-egress-linux-x64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-linux-x64) |
+| Linux arm64 | [`cgh-linux-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-linux-arm64) | [`cgh-egress-linux-arm64`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-linux-arm64) |
+| Windows x64 | [`cgh-windows-x64.exe`](https://github.com/altikva/cgh/releases/latest/download/cgh-windows-x64.exe) | [`cgh-egress-windows-x64.exe`](https://github.com/altikva/cgh/releases/latest/download/cgh-egress-windows-x64.exe) |
+
+macOS and Linux (download, mark executable, run):
+
+```bash
+# swap the filename for your platform from the table above
+curl -fsSL -o cgh https://github.com/altikva/cgh/releases/latest/download/cgh-linux-x64
+chmod +x cgh && ./cgh --version
+```
+
+Windows (PowerShell, no chmod needed):
+
+```powershell
+curl.exe -fsSL -o cgh.exe https://github.com/altikva/cgh/releases/latest/download/cgh-windows-x64.exe
+.\cgh.exe --version
+```
+
+The binary uses the SQLite backend; if you want DuckDB's analytical speed or
+the heavier `docs` and `vision` plugins, install with Python instead
+(`uvx cgh`, or `pip install "cgh[full]"`). On an Intel Mac or any platform
+without a prebuilt binary, `npx @altikva/cgh` points you to `uvx cgh`.
 
 ### If `cgh` is not found after install
 

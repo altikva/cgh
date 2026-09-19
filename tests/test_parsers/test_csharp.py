@@ -13,8 +13,7 @@ import textwrap
 
 import pytest
 
-# Optional grammar: skip the whole module when the extra is absent, the same
-# way tests/test_core/test_kuzu_optional.py guards the kuzu extra.
+# Optional grammar: skip the whole module when the extra is absent.
 pytest.importorskip("tree_sitter_c_sharp")
 
 from codegraph.core.db import get_connection, reset_connection

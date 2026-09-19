@@ -38,6 +38,7 @@ def reset_for_tests() -> None:
     """Drop the memoised source roots."""
     _PY_ROOTS_CACHE.clear()
     _JS_ROOTS_CACHE.clear()
+    _JAVA_ROOTS_CACHE.clear()
 
 
 def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
@@ -287,7 +288,94 @@ def resolve_js_ts(
 # Languages with a resolver behind them. Everything else parses its imports
 # and then drops them here, which is why a Go or Terraform repo shows zero
 # import edges: not a missing edge, a missing resolver.
-RESOLVABLE_LANGS = frozenset({"python", "typescript", "tsx", "javascript", "vue"})
+# Source roots per importer directory, for Java's package-to-path mapping.
+_JAVA_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+# Directory names that end a Java source root. A package path is written
+# against one of these, never against the repo root of a Maven or Gradle
+# project, and a multi-module build has one per module.
+_JAVA_ROOT_SUFFIXES = (
+    ("src", "main", "java"),
+    ("src", "test", "java"),
+    ("src", "main", "kotlin"),
+    ("src",),
+)
+
+
+def _java_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
+    """Directories a Java package path may be written against.
+
+    A package maps to a directory chain, so the root is whichever ancestor
+    of the importer ends the conventional prefix: `src/main/java` for a
+    Maven or Gradle module, `src/test/java` for its tests, plain `src/` for
+    a flat project. A multi-module build has one per module, which is why
+    the walk starts at the importer and climbs rather than guessing from
+    the repo root.
+    """
+    key = str(importer_dir)
+    cached = _JAVA_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    roots: list[Path] = []
+    walker = importer_dir
+    while True:
+        for suffix in _JAVA_ROOT_SUFFIXES:
+            if walker.parts[-len(suffix) :] == suffix:
+                roots.append(walker)
+                break
+        if walker == repo_root or walker.parent == walker:
+            break
+        walker = walker.parent
+    roots.append(repo_root)
+
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for root in roots:
+        marker = str(root)
+        if marker not in seen:
+            seen.add(marker)
+            ordered.append(root)
+    result = tuple(ordered)
+    _JAVA_ROOTS_CACHE[key] = result
+    return result
+
+
+def resolve_java(
+    source_module: str, importer_path: Path, repo_root: Path
+) -> Path | None:
+    """Resolve a Java import to the file that declares it.
+
+    ``source_module`` is the dotted path tree-sitter hands back for an
+    import declaration: `com.google.gson.TypeAdapter` for a plain import,
+    `com.google.gson.TypeAdapter.read` for a static member import, and
+    `com.google.gson` for a wildcard, because the asterisk is a separate
+    node. Trailing segments are dropped one at a time, so a static import
+    and a nested class both land on the file that holds the outer type,
+    and a wildcard resolves to nothing rather than to a wrong file.
+    """
+    if not source_module:
+        return None
+
+    importer = importer_path.resolve()
+    parts = [p for p in source_module.split(".") if p]
+    if not parts:
+        return None
+
+    for base in _java_source_roots(importer.parent, repo_root.resolve()):
+        candidate = list(parts)
+        while candidate:
+            target_dir = base.joinpath(*candidate[:-1]) if len(candidate) > 1 else base
+            hit = _try_paths([target_dir / f"{candidate[-1]}.java"])
+            if hit:
+                return hit
+            candidate.pop()
+    return None
+
+
+RESOLVABLE_LANGS = frozenset(
+    {"python", "typescript", "tsx", "javascript", "vue", "java"}
+)
 
 
 def resolve_import(
@@ -310,4 +398,6 @@ def resolve_import(
         return resolve_python(source_module, importer, root)
     if lang in ("typescript", "tsx", "javascript", "vue"):
         return resolve_js_ts(source_module, importer, root)
+    if lang == "java":
+        return resolve_java(source_module, importer, root)
     return None

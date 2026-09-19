@@ -30,6 +30,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   response. Claude Code memory, plans and knowledge are untouched: they come
   from the local FTS index and never went through this path.
 ### Fixed
+- **The graph's call view carries the language again**: a function node
+  shipped an empty `l`, so colouring `Functions · calls` by language put
+  every node in the grey "Other" bucket and Python never appeared. The graph
+  keeps `lang` on File only, and the symbols view was the one view of four
+  that did not receive the file rows, so it could not look it up.
 - **`cgh setup bob` wrote a command Bob cannot spawn**: the MCP entry named
   `cgh` bare, and an IDE launched from the Dock or the Start menu inherits
   none of the login shell PATH, so the agent could never start the server.

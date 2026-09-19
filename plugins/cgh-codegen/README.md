@@ -39,6 +39,23 @@ egress gate before it reaches a cloud model: a confidential or PII-labeled
 reference is refused. A local backend skips the gate. An existing target is
 never overwritten without `--force`; `--stdout` prints instead of writing.
 
+`--extend` grows a file that already exists instead of writing a new one:
+
+```
+cgh codegen gen --extend --target tests/test_user_service.py \
+                  --spec "add a test for the soft-delete path" \
+                  --verify "pytest tests/test_user_service.py -q"
+```
+
+The file itself goes to the model as the thing to add to, and the model
+returns only the block to append, so nothing already in the file passes
+through the model's output and nothing can be dropped from it. The block
+lands before a trailing `if __name__ == "__main__":` guard rather than after
+it. With `--verify`, a check that never passes restores the original: a
+damaged existing file is worse than no change, which is the opposite of the
+tradeoff for a new file, where the failed draft is left for you to read.
+Anything the addition needs must already be imported in the file.
+
 Configure the backend in `.codegraph/config.toml`:
 
 ```toml

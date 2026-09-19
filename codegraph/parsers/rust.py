@@ -182,6 +182,27 @@ class RustParser(BaseParser):
                             )
                     return
 
+        def _emit_mod(mod: Node) -> None:
+            """A body-less `mod foo;` is how a Rust file reaches a sibling.
+
+            Rust has no import statement for a crate's own files: the parent
+            module declares the child, and every `use crate::foo` elsewhere
+            leans on that declaration. Skip it and a crate's file tree stays
+            disconnected whatever its `use` lines say. An inline
+            `mod foo { ... }` declares nothing outside this file, so it
+            carries no edge.
+            """
+            if any(child.type == "declaration_list" for child in mod.children):
+                return
+            name = mod.child_by_field_name("name")
+            if name is None:
+                return
+            ident = _text(name, src).strip()
+            if ident:
+                index.imports.append(
+                    ImportRef(source_module=f"self::{ident}", symbols=[])
+                )
+
         def _walk_impl(impl: Node) -> None:
             type_node = impl.child_by_field_name("type")
             current_class = _ident(type_node, src) if type_node else None
@@ -195,6 +216,8 @@ class RustParser(BaseParser):
         for node in root.children:
             if node.type == "use_declaration":
                 _emit_use(node)
+            elif node.type == "mod_item":
+                _emit_mod(node)
             elif node.type == "struct_item":
                 _emit_type(node, "struct")
             elif node.type == "enum_item":

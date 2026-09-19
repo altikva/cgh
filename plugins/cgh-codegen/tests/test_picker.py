@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("cgh_codegen")
 
-from cgh_codegen.picker import CodeWriteError, name_tokens, pick_reference
+from cgh_codegen.picker import CodegenError, name_tokens, pick_reference
 
 
 def test_name_tokens_drops_noise_and_makes_case_variants():
@@ -41,17 +41,17 @@ def test_explicit_reference_is_validated(tmp_path):
 
 
 def test_explicit_reference_outside_repo_is_rejected(tmp_path):
-    with pytest.raises(CodeWriteError):
+    with pytest.raises(CodegenError):
         pick_reference(tmp_path, "x.py", "/etc/passwd")
 
 
 def test_explicit_reference_must_exist(tmp_path):
-    with pytest.raises(CodeWriteError):
+    with pytest.raises(CodegenError):
         pick_reference(tmp_path, "x.py", "missing.py")
 
 
 def test_target_outside_repo_is_rejected(tmp_path):
-    with pytest.raises(CodeWriteError):
+    with pytest.raises(CodegenError):
         pick_reference(tmp_path, "../../escape.py")
 
 

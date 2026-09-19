@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .gate import egress_decision
 from .generate import Backend, generate_code
-from .picker import CodeWriteError, _confine, pick_reference
+from .picker import CodegenError, _confine, pick_reference
 
 
 def _select_reference(
@@ -36,11 +36,11 @@ def _select_reference(
     Returns ``(ref_rel, ref_path, egress_reason, note)``. ``note`` is a human
     string when the choice fell back off the top pick (so the caller can say
     why the mirrored file is not the one first proposed), else None. Raises
-    CodeWriteError when no candidate is usable.
+    CodegenError when no candidate is usable.
     """
     ref_top = pick["reference"]
     if ref_top is None:
-        raise CodeWriteError(pick["reason"])
+        raise CodegenError(pick["reason"])
 
     def _readable(rel: str) -> Path | None:
         p = _confine(root, rel)
@@ -49,7 +49,7 @@ def _select_reference(
     if backend.is_local:
         p = _readable(ref_top)
         if p is None:
-            raise CodeWriteError(f"reference {ref_top!r} is not a readable file")
+            raise CodegenError(f"reference {ref_top!r} is not a readable file")
         return ref_top, p, "local backend (no egress)", None
 
     # Cloud backend: the reference's bytes leave the machine, so every
@@ -75,8 +75,8 @@ def _select_reference(
         _audit(root, "codegen_egress_denied", f"{cand}: {reason}")
 
     if len(denials) == 1:
-        raise CodeWriteError(f"egress refused for reference {denials[0]}")
-    raise CodeWriteError(
+        raise CodegenError(f"egress refused for reference {denials[0]}")
+    raise CodegenError(
         "every candidate reference was refused by the egress gate; "
         + "; ".join(denials)
     )
@@ -94,6 +94,7 @@ def run_generation(
     to_stdout: bool = False,
     verify: str | None = None,
     max_attempts: int = 1,
+    extend: bool = False,
 ) -> dict:
     """Generate the code for ``target`` and, unless ``to_stdout``, write it.
 
@@ -105,24 +106,65 @@ def run_generation(
     failure text drives the fix), turning "verify, don't trust" into a
     closed loop instead of a manual review.
 
-    Returns a result dict. Raises CodeWriteError for a bad target, a gated
+    With ``extend``, the target must already exist and is added to rather than
+    written over: the model receives the current file and returns only the
+    block to append. That is the safe way to grow a file, since the existing
+    content is never in the model's output and so cannot be dropped by a
+    careless regeneration. The file is then its own style reference, and no
+    sibling is picked unless one is named explicitly.
+
+    Returns a result dict. Raises CodegenError for a bad target, a gated
     reference, or a refused overwrite.
     """
     root = Path(repo_root).resolve()
 
-    pick = pick_reference(root, target, reference)
-    ref_rel, ref_path, egress, ref_note = _select_reference(root, pick, backend, config)
-    ref_text = ref_path.read_text(encoding="utf-8", errors="replace")
+    tgt_probe = _confine(root, target)
+    if tgt_probe is None:
+        raise CodegenError(f"target {target!r} is outside the repo")
+
+    existing_text: str | None = None
+    if extend:
+        if not tgt_probe.is_file():
+            raise CodegenError(
+                f"target {target} does not exist; generate it before extending it"
+            )
+        existing_text = tgt_probe.read_text(encoding="utf-8", errors="replace")
+
+    refs: list[tuple[str, str]] = []
+    if extend and reference is None:
+        # The file being extended is its own style example, and it already goes
+        # to the model as the text to append to, so no sibling is picked and
+        # there is nothing to fall back to. Its bytes still leave the machine,
+        # so it still clears the gate.
+        pick = {
+            "reference": None,
+            "reason": "extending the target, which is its own reference",
+            "graph_available": False,
+        }
+        ref_rel, ref_path, ref_note = None, tgt_probe, None
+        if backend.is_local:
+            egress = "local backend (no egress)"
+        else:
+            allowed, reason = egress_decision(root, tgt_probe, config)
+            if not allowed:
+                _audit(root, "codegen_egress_denied", f"{target}: {reason}")
+                raise CodegenError(f"egress refused for {target}: {reason}")
+            egress = reason
+    else:
+        pick = pick_reference(root, target, reference)
+        ref_rel, ref_path, egress, ref_note = _select_reference(
+            root, pick, backend, config
+        )
+        refs.append((ref_rel, ref_path.read_text(encoding="utf-8", errors="replace")))
 
     # Clobber check once, up front; the retry loop then overwrites its own
-    # attempts freely (verify needs the file on disk to check it).
+    # attempts freely (verify needs the file on disk to check it). Extending
+    # never clobbers, so it is exempt.
     tgt = None
     if not to_stdout:
-        tgt = _confine(root, target)
-        if tgt is None:
-            raise CodeWriteError(f"target {target!r} is outside the repo")
-        if tgt.exists() and not force:
-            raise CodeWriteError(
+        tgt = tgt_probe
+        if tgt.exists() and not force and not extend:
+            raise CodegenError(
                 f"target {target} already exists; pass force to overwrite"
             )
 
@@ -135,11 +177,21 @@ def run_generation(
     while attempts < max(1, max_attempts):
         attempts += 1
         result = generate_code(
-            spec, [(ref_rel, ref_text)], backend, target=target, prior=prior
+            spec,
+            refs,
+            backend,
+            target=target,
+            prior=prior,
+            existing=existing_text,
         )
         if to_stdout or tgt is None:
             break
-        body = result.code if result.code.endswith("\n") else result.code + "\n"
+        if existing_text is not None:
+            # Rebuild from the original every attempt, so a retry appends to
+            # the file as it was rather than stacking onto its own last try.
+            body = _append_into(existing_text, result.code)
+        else:
+            body = result.code if result.code.endswith("\n") else result.code + "\n"
         tgt.parent.mkdir(parents=True, exist_ok=True)
         tgt.write_text(body, encoding="utf-8")
         written = True
@@ -151,13 +203,23 @@ def run_generation(
             break
         prior = (result.code, output)
 
+    # Extending must never leave the file worse than it was found. A new file
+    # that fails its check is a draft worth reading; an existing file that
+    # fails one has been damaged, and the last attempt can be truncated or
+    # unparsable. So put the original back and report the failure instead.
+    rolled_back = False
+    if extend and written and do_verify and not verified and existing_text is not None:
+        tgt.write_text(existing_text, encoding="utf-8")  # type: ignore[union-attr]
+        written = False
+        rolled_back = True
+
     if result is None:  # unreachable: the loop always runs at least once
-        raise CodeWriteError("generation produced no result")
+        raise CodegenError("generation produced no result")
     _audit(
         root,
-        "codegen_generated",
-        f"{target} <- {ref_rel} ({backend.name}, {attempts} attempt(s), "
-        f"verified={verified})",
+        "codegen_extended" if extend else "codegen_generated",
+        f"{target} <- {ref_rel or '(itself)'} ({backend.name}, "
+        f"{attempts} attempt(s), verified={verified})",
     )
 
     return {
@@ -173,8 +235,36 @@ def run_generation(
         "graph_available": pick["graph_available"],
         "attempts": attempts,
         "verified": verified,
+        "extended": extend,
+        "rolled_back": rolled_back,
         "code": result.code if to_stdout else "",
     }
+
+
+def _append_into(existing: str, block: str) -> str:
+    """Put ``block`` at the end of ``existing``, but before a trailing
+    `if __name__ == "__main__":` guard.
+
+    That guard is a runner, not content, and it is conventionally the last
+    thing in the file. Appending after it works but reads as a mistake, and
+    for a module that does real work under the guard it would leave the new
+    code unreachable from a direct run.
+    """
+    lines = existing.rstrip("\n").split("\n")
+    cut = len(lines)
+    for i, line in enumerate(lines):
+        if line.startswith('if __name__ == "__main__":') or line.startswith(
+            "if __name__ == '__main__':"
+        ):
+            cut = i
+            break
+
+    head = "\n".join(lines[:cut]).rstrip("\n")
+    tail = "\n".join(lines[cut:]).strip("\n")
+    body = head + "\n\n" + block.strip("\n") + "\n"
+    if tail:
+        body += "\n" + tail + "\n"
+    return body
 
 
 def _run_verify(root: Path, command: str) -> tuple[bool, str]:

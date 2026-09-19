@@ -1085,6 +1085,20 @@ def cmd_init(args: argparse.Namespace) -> None:
     if not getattr(args, "no_children", False):
         _init_children(root, assume_yes=bool(getattr(args, "yes", False)))
 
+    # -- Worktree: keep cgh's own writes out of git --
+    # In a linked worktree these files are already committed on the branch, so
+    # re-running init only produces committable diffs an agent might land by
+    # accident. Hide them (skip-worktree + info/exclude) unless opted out.
+    from codegraph.integrations.worktree import hide_footprint
+
+    hidden = hide_footprint(root, enabled=bool(getattr(args, "hide_footprint", True)))
+    if hidden:
+        console.print(
+            f"\n  [green]+[/green] worktree: kept {len(hidden)} cgh file(s) out of "
+            "git [dim](skip-worktree + info/exclude, so no agent commits local "
+            "tooling; --no-hide-footprint to disable)[/dim]"
+        )
+
     # -- Done --
     _print_init_summary()
 

@@ -98,5 +98,54 @@ def test_generate_code_rejects_empty_spec():
         generate_code("   ", [], FakeBackend("x = 1"))
 
 
+class TestNestedFences:
+    """Test extract_code with nested fences and build_prompt with existing."""
+
+    def test_nested_fence_is_not_truncated(self):
+        # extract_code now extracts to the LAST fence, not the first,
+        # so nested fences within the outer block don't truncate the result.
+        reply = (
+            "```python\n"
+            "def generate(prompt):\n"
+            "    inner = '''\n"
+            "```python\n"
+            "print('hello')\n"
+            "```\n"
+            "    '''\n"
+            "    return inner\n"
+            "```\n"
+        )
+        code = extract_code(reply)
+        assert "print('hello')" in code
+        assert "def generate(prompt):" in code
+        # The real regression: everything after the inner closing fence used
+        # to be cut off, which truncated the file mid-string literal.
+        assert "return inner" in code
+
+    def test_single_block_is_unchanged(self):
+        # A single outer fence still works as before.
+        reply = "```python\nx = 1\n```"
+        assert extract_code(reply) == "x = 1"
+
+    def test_reply_without_a_fence_returns_empty(self):
+        # No fence means nothing usable to extract.
+        assert extract_code("def foo():\n    pass") == ""
+
+    def test_build_prompt_with_existing_argument(self):
+        # When existing is given, build_prompt switches to extend mode.
+        import cgh_codegen.generate as gen
+
+        existing_code = "def old():\n    pass\n"
+        system, user = build_prompt(
+            "add a new function",
+            [("ref.py", "x = 1\n")],
+            target="existing.py",
+            existing=existing_code,
+        )
+        assert system == gen.EXTEND_SYSTEM_PROMPT
+        assert "<file_to_extend" in user
+        assert existing_code in user
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

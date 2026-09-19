@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-class CodeWriteError(RuntimeError):
+class CodegenError(RuntimeError):
     """Base error for the cgh-codegen plugin."""
 
 
@@ -112,11 +112,9 @@ def pick_reference(
     if explicit_reference:
         ref = _confine(root, explicit_reference)
         if ref is None:
-            raise CodeWriteError(
-                f"reference {explicit_reference!r} is outside the repo"
-            )
+            raise CodegenError(f"reference {explicit_reference!r} is outside the repo")
         if not ref.is_file():
-            raise CodeWriteError(f"reference {explicit_reference!r} is not a file")
+            raise CodegenError(f"reference {explicit_reference!r} is not a file")
         return {
             "reference": _rel(root, ref),
             "reason": "given by the caller",
@@ -126,7 +124,7 @@ def pick_reference(
 
     tgt = _confine(root, target)
     if tgt is None:
-        raise CodeWriteError(f"target {target!r} is outside the repo")
+        raise CodegenError(f"target {target!r} is outside the repo")
 
     suffix = tgt.suffix
     parent = tgt.parent

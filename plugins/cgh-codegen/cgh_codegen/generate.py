@@ -34,7 +34,23 @@ SYSTEM_PROMPT = (
     "you cannot produce the file, return an empty fenced block."
 )
 
+# The extend-mode twin. The instruction above is the wrong one when a file is
+# being grown: told to write a complete file, a cheap model returns the whole
+# thing rewritten, and appending that would duplicate everything already there.
+EXTEND_SYSTEM_PROMPT = (
+    "You write ONE block of code to append to the end of an existing file. "
+    "You are shown that file: match its conventions, and do NOT repeat any of "
+    "it. Output only the new code, never the file's existing contents and "
+    "never the whole file. Return it as a single fenced code block (```) and "
+    "nothing outside the fence. If you cannot produce it, return an empty "
+    "fenced block."
+)
+
 _FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+
+# The same match, but running to the LAST fence instead of the first. Needed
+# when the generated file legitimately contains fences of its own.
+_OUTER_FENCE_RE = re.compile(r"```[^\n]*\n(.*)```", re.DOTALL)
 
 
 class GenerationError(RuntimeError):
@@ -73,6 +89,7 @@ def build_prompt(
     references: list[tuple[str, str]],
     target: str | None = None,
     prior: tuple[str, str] | None = None,
+    existing: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system, user) prompt. ``references`` is a list of
     (path, text), each wrapped as a style example the model imitates but does
@@ -81,21 +98,40 @@ def build_prompt(
     buried under a long reference. ``prior`` is (previous_code, check_output)
     from a failed verify: it is fed back so the model fixes the specific
     failure instead of guessing, which is what makes the self-correct loop
-    catch the subtleties a first pass misses."""
-    lead = f"Write the new file: {target}\n\n" if target else ""
+    catch the subtleties a first pass misses. ``existing`` is the current text
+    of a file being extended rather than created: the model sees it and returns
+    only the block to append, never a rewrite, so nothing already in the file
+    can be lost to a careless regeneration."""
+    if existing is not None:
+        lead = (
+            f"Add to the existing file: {target}\n"
+            "Return ONLY the new code to append at the end of the file, not "
+            "the whole file. Match the conventions already in it and do not "
+            "repeat anything it already contains. Everything it needs must "
+            "already be imported there: if your addition would require a new "
+            "import, use a fully qualified reference instead.\n\n"
+        )
+    else:
+        lead = f"Write the new file: {target}\n\n" if target else ""
     blocks = [f"{lead}SPEC:\n{spec.strip()}\n"]
+    if existing is not None:
+        blocks.append(
+            f'<file_to_extend path="{target}">\n{existing}\n</file_to_extend>'
+        )
     for path, text in references:
         blocks.append(f'<style_example path="{path}">\n{text}\n</style_example>')
     if prior is not None:
         prev_code, check_output = prior
         blocks.append(
-            "Your previous attempt did not pass its check. Return a corrected, "
-            "complete file that fixes the failure below (keep everything that "
+            "Your previous attempt did not pass its check. Return a corrected "
+            + ("block to append" if existing is not None else "complete file")
+            + " that fixes the failure below (keep everything that "
             "was already correct).\n"
             f"<previous_attempt>\n{prev_code}\n</previous_attempt>\n"
             f"<check_failure>\n{check_output}\n</check_failure>"
         )
-    return SYSTEM_PROMPT, "\n\n".join(blocks)
+    system = EXTEND_SYSTEM_PROMPT if existing is not None else SYSTEM_PROMPT
+    return system, "\n\n".join(blocks)
 
 
 def extract_code(reply: str) -> str:
@@ -107,8 +143,15 @@ def extract_code(reply: str) -> str:
     usable" and refuses to write. This is deliberate: it is safer to refuse
     an unframed reply than to write a cheap model's apology or half-answer
     over a target file.
+
+    A generated file can legitimately contain fences of its own: a test that
+    builds a fenced model reply, a docs generator, anything that writes
+    Markdown. Stopping at the first closing fence cuts those off mid-file,
+    often mid-string, and the truncation is silent. So when the reply holds
+    more than the outer pair, run to the last fence instead of the first.
     """
-    m = _FENCE_RE.search(reply)
+    pattern = _OUTER_FENCE_RE if reply.count("```") > 2 else _FENCE_RE
+    m = pattern.search(reply)
     if m:
         return m.group(1).strip("\n")
     return ""
@@ -120,15 +163,18 @@ def generate_code(
     backend: Backend,
     target: str | None = None,
     prior: tuple[str, str] | None = None,
+    existing: str | None = None,
 ) -> GenResult:
     """Run one generation. Pure orchestration: build the prompt, call the
     backend, clean the reply. No file is written and no egress gate is
     consulted here; that is the caller's job. Raises GenerationError when the
     backend returns nothing usable so an empty file is never produced.
-    ``prior`` feeds a failed attempt's code + check output back for a retry."""
+    ``prior`` feeds a failed attempt's code + check output back for a retry.
+    ``existing`` switches the prompt to extend that text instead of writing a
+    new file, in which case the result holds only the block to append."""
     if not spec.strip():
         raise GenerationError("empty spec")
-    system, user = build_prompt(spec, references, target, prior)
+    system, user = build_prompt(spec, references, target, prior, existing)
     raw, cost = backend.generate(system, user)
     code = extract_code(raw)
     if not code.strip():

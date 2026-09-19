@@ -345,6 +345,20 @@ def rotate_owner_log(repo_root: str | Path) -> None:
         pass
 
 
+def _reap_child(pid: int | None) -> None:
+    """Reap a dead owner that this process spawned, so it does not linger as a
+    zombie in the process table. ``os.waitpid`` only works from the parent; a
+    ChildProcessError means the pid is not our child (already reaped, or
+    spawned by a different process), which is fine. No-op on Windows, which has
+    no zombie processes, and on a missing pid."""
+    if not pid or os.name == "nt":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
 def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None:
     """
     Launch `cgh _serve_owner` as a detached background process.
@@ -353,6 +367,10 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     """
     repo_root = Path(repo_root).resolve()
     (repo_root / ".codegraph").mkdir(parents=True, exist_ok=True)
+
+    # Reap a prior owner we spawned that has since died, so respawning does not
+    # leave its predecessor lingering as a zombie in the process table.
+    _reap_child(read_owner_pid(repo_root))
 
     # Clear any stale state
     port_file(repo_root).unlink(missing_ok=True)
@@ -424,6 +442,9 @@ def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
         return None
     if is_owner_alive(repo_root):
         return read_owner_port(repo_root)
+    # The owner is gone. If it was our child it may be a zombie in the table;
+    # reap it so a defunct process does not linger, then spawn a fresh one.
+    _reap_child(read_owner_pid(repo_root))
     return spawn_owner(repo_root, watch=watch, reindex=False)
 
 

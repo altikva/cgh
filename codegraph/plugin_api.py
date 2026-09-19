@@ -186,6 +186,7 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
     "findings_db_path": ("codegraph.state.findings", "findings_db_path"),
     # audit trail + knowledge
     "activity_log": ("codegraph.state.activity", "log"),
+    "activity_tail": ("codegraph.state.activity", "tail"),
     "knowledge_record": ("codegraph.state.call_log", "knowledge_record"),
     # config + repo resolution
     "load_config": ("codegraph.core.config", "load_config"),

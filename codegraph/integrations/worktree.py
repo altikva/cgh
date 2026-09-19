@@ -69,6 +69,42 @@ def in_git_worktree(root: Path) -> bool:
     return Path(git_dir).resolve() != Path(common_dir).resolve()
 
 
+def _list_worktrees(repo: Path) -> list[Path]:
+    """Absolute paths of every worktree of ``repo`` (main checkout + linked),
+    from ``git worktree list``. Empty if ``repo`` is not a git repo."""
+    out = _git(repo, ["worktree", "list", "--porcelain"])
+    if out.returncode != 0:
+        return []
+    paths: list[Path] = []
+    for line in out.stdout.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line[len("worktree ") :].strip()).resolve())
+    return paths
+
+
+def worktree_sibling(current_root: str | Path, subrepo: str | Path) -> Path | None:
+    """A worktree of ``subrepo`` that sits beside ``current_root``, or None.
+
+    When the current repo is a linked worktree, a federated child configured by
+    its main-checkout path points at the wrong branch. If the child has its own
+    worktree in the same parent directory as the current one (the sprint layout
+    ``<root>/<chantier>/{api,front}``) and that worktree is cgh-indexed, return
+    it so federation reads the matching branch. Returns None outside a worktree,
+    or when no cgh-indexed sibling exists, so the caller keeps the configured
+    path."""
+    current_root = Path(current_root).resolve()
+    subrepo = Path(subrepo).resolve()
+    if not in_git_worktree(current_root):
+        return None
+    parent = current_root.parent
+    for wt in _list_worktrees(subrepo):
+        if wt in (subrepo, current_root):
+            continue
+        if wt.parent == parent and (wt / ".codegraph").is_dir():
+            return wt
+    return None
+
+
 def _exclude_file(root: Path) -> Path | None:
     out = _git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
     if out.returncode != 0 or not out.stdout.strip():

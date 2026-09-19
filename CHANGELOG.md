@@ -8,6 +8,23 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Java imports resolve to edges**: a Java package maps to a directory chain
+  under a source root, and that root is per module, so anchoring on the repo
+  root missed every Maven and Gradle layout. The resolver climbs from the
+  importing file to the ancestor ending `src/main/java`, `src/test/java` or
+  `src`, then drops trailing segments so a static member import and a nested
+  class both land on the file holding the outer type. A wildcard arrives as
+  the package alone and stays unresolved rather than inventing an edge. On
+  google/gson this took the import graph from 0 to 344 edges, coverage
+  reported as `java 390/2,674`, the remainder being the JDK and third-party
+  packages that are not in the repo.
+- **The graph colours the languages a repo actually holds**: the three most
+  present take the palette slots and everything else folds into the neutral,
+  so a Java or Go repo no longer paints every node "Other". Three is the cap
+  the palette validates for a node-link diagram, where any two nodes can sit
+  side by side.
+
 ## [0.13.0] - 2026-09-19
 
 ### Added

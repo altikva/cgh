@@ -4,10 +4,11 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI verbs `cgh codegen pick` (report the reference to mirror)
-#              and `cgh codegen gen` (generate the file from a spec plus that
+# Description: CLI verbs `cgh codegen pick` (report the reference to mirror),
+#              `cgh codegen gen` (generate the file from a spec plus that
 #              reference, behind the egress gate, refusing to clobber without
-#              --force).
+#              --force), and `cgh codegen log` (show what codegen has done in
+#              this repo, read from the activity log, at no model-token cost).
 
 from __future__ import annotations
 
@@ -79,7 +80,54 @@ def make_cli_registrar(config: dict):
         gen.add_argument("--root", default=os.getcwd())
         gen.set_defaults(func=lambda args: _cmd_gen(args, config))
 
+        log = actions.add_parser(
+            "log",
+            help="Show what codegen has done here, read from the activity log "
+            "(no model tokens)",
+        )
+        log.add_argument("--limit", type=int, default=20, help="Max entries to show")
+        log.add_argument("--root", default=os.getcwd())
+        log.set_defaults(func=lambda args: _cmd_log(args, config))
+
     return add_cli
+
+
+def _cmd_log(args, config: dict) -> None:
+    from datetime import datetime
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from .logview import codegen_activity
+
+    console = Console()
+    root = Path(os.path.abspath(args.root))
+    rows = codegen_activity(root, limit=args.limit)
+    if not rows:
+        console.print(
+            "[dim]No codegen activity logged in this repo yet. "
+            "Runs of cgh codegen gen show up here.[/dim]"
+        )
+        return
+
+    table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+    table.add_column("when", style="dim", no_wrap=True)
+    table.add_column("event")
+    table.add_column("detail", overflow="fold")
+    for ts, event, detail in rows:
+        try:
+            when = datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError):
+            when = "?"
+        kind = event.removeprefix("codegen_")
+        label = f"[red]{kind}[/red]" if kind == "egress_denied" else kind
+        table.add_row(when, label, detail)
+    console.print(f"[bold]codegen activity[/bold]  [dim]({len(rows)})[/dim]")
+    console.print(table)
+    console.print(
+        "[dim]Read straight from .codegraph/activity.log; "
+        "nothing here entered a model's context.[/dim]"
+    )
 
 
 def _cmd_pick(args, config: dict) -> None:

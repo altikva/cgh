@@ -16,6 +16,22 @@ from __future__ import annotations
 
 import json
 
+# The share of the post-instructions budget reserved for the knowledge bucket,
+# so earlier sections (digests, and especially contentless auto checkpoints)
+# cannot starve it. Without this a long standing instruction plus a few digests
+# emptied knowledge and the only signal was truncated:true.
+_KNOWLEDGE_RESERVE = 0.4
+
+# How many knowledge entries the bucket aims to carry.
+_KNOWLEDGE_LIMIT = 8
+
+
+def _is_auto_checkpoint(entry: dict) -> bool:
+    """A contentless automatic SessionEnd/PreCompact marker (tagged
+    auto-checkpoint), as opposed to a model-written digest. These carry no
+    recoverable content, so they rank below real digests."""
+    return "auto-checkpoint" in (entry.get("tags") or "")
+
 
 def build_resume_bundle(
     repo_root,
@@ -37,23 +53,41 @@ def build_resume_bundle(
     )
     sections.append(("standing_instructions", instructions))
 
-    digests = []
+    raw_digests = []
     if session_id:
-        digests = knowledge_list(
-            tag="session-digest", session_id=session_id, limit=2, repo_root=repo_root
+        raw_digests = knowledge_list(
+            tag="session-digest", session_id=session_id, limit=3, repo_root=repo_root
         )
-    digests += [
+    raw_digests += [
         d
-        for d in knowledge_list(tag="session-digest", limit=3, repo_root=repo_root)
-        if d["id"] not in {x["id"] for x in digests}
+        for d in knowledge_list(tag="session-digest", limit=6, repo_root=repo_root)
+        if d["id"] not in {x["id"] for x in raw_digests}
     ]
+    # Content-bearing digests first; keep at most one contentless auto marker
+    # (a "a session ended here" signal) and only after the real digests, so
+    # empty checkpoints stop eating the budget ahead of knowledge.
+    content_digests = [d for d in raw_digests if not _is_auto_checkpoint(d)]
+    auto_digests = [d for d in raw_digests if _is_auto_checkpoint(d)]
+    digests = content_digests + auto_digests[:1]
     sections.append(("digests", digests))
 
+    # Coverage-first: a task ranks the entries (BM25 is strict AND over the
+    # terms), but a search that matches nothing must never SHRINK the bucket,
+    # so backfill with recent entries up to the limit. The no-task path is pure
+    # backfill.
     knowledge = (
-        knowledge_search(task, limit=8, repo_root=repo_root)
+        knowledge_search(task, limit=_KNOWLEDGE_LIMIT, repo_root=repo_root)
         if task
-        else knowledge_list(limit=8, repo_root=repo_root)
+        else []
     )
+    have = {k["id"] for k in knowledge}
+    if len(knowledge) < _KNOWLEDGE_LIMIT:
+        for k in knowledge_list(limit=_KNOWLEDGE_LIMIT, repo_root=repo_root):
+            if len(knowledge) >= _KNOWLEDGE_LIMIT:
+                break
+            if k["id"] not in have:
+                knowledge.append(k)
+                have.add(k["id"])
     seen_ids = {d["id"] for d in instructions} | {d["id"] for d in digests}
     sections.append(("knowledge", [k for k in knowledge if k["id"] not in seen_ids]))
 
@@ -85,22 +119,48 @@ def build_resume_bundle(
     ][:5]
     sections.append(("recent_summaries", summaries))
 
-    # Budget: sections in priority order, entries dropped once the
-    # serialized bundle would pass the cap. Standing instructions are
-    # never dropped: they are the whole point of the pillar.
+    # Budget. Standing instructions are never dropped. Knowledge gets a
+    # reserved share of what's left so digests (and contentless checkpoints)
+    # cannot starve it, the reported failure where knowledge came back empty
+    # with only truncated:true as a signal. Every section that loses entries to
+    # the budget records the count under dropped_for_budget, so an empty section
+    # is never silently read as lost memory.
     budget = int(budget_kb * 1024)
-    bundle: dict = {"truncated": False}
-    used = 0
-    for name, entries in sections:
-        kept = []
+    by_name = dict(sections)
+    bundle: dict = {"truncated": False, "dropped_for_budget": {}}
+
+    def _size(entry) -> int:
+        return len(json.dumps(entry, default=str))
+
+    def _fill(name: str, entries: list, cap: int, used: int) -> int:
+        kept: list = []
         for entry in entries:
-            size = len(json.dumps(entry))
-            if name != "standing_instructions" and used + size > budget:
-                bundle["truncated"] = True
+            s = _size(entry)
+            if used + s > cap:
                 break
             kept.append(entry)
-            used += size
+            used += s
+        if len(kept) < len(entries):
+            bundle["dropped_for_budget"][name] = len(entries) - len(kept)
+            bundle["truncated"] = True
         bundle[name] = kept
+        return used
+
+    instr = by_name.get("standing_instructions", [])
+    bundle["standing_instructions"] = instr
+    used = sum(_size(e) for e in instr)
+
+    avail = max(0, budget - used)
+    # The non-knowledge sections share the budget MINUS the knowledge reserve,
+    # in priority order, so they cannot eat into knowledge's floor.
+    other_cap = used + int(avail * (1 - _KNOWLEDGE_RESERVE))
+    for name in ("digests", "open_plans", "recent_summaries", "federated_knowledge"):
+        if name in by_name:
+            used = _fill(name, by_name[name], other_cap, used)
+
+    # Knowledge gets its reserved floor plus whatever the others left unspent.
+    _fill("knowledge", by_name.get("knowledge", []), budget, used)
+
     return bundle
 
 

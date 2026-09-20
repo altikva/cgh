@@ -13,6 +13,18 @@ from __future__ import annotations
 import json
 
 
+def _digest_tags(caller_tags: str) -> str:
+    """Tags for a session digest. Always carries 'session-digest' so resume's
+    digest bucket finds it, appending the caller's topics rather than letting
+    them replace the marker. A digest tagged with only the caller's topics used
+    to land under knowledge, and the agent reported its digest missing."""
+    caller = (caller_tags or "").strip()
+    final = caller or "compaction"
+    if "session-digest" not in final:
+        final = f"{final},session-digest"
+    return final
+
+
 def register(mcp) -> None:
     import codegraph.server as _srv
     from codegraph.server import _logged_tool
@@ -144,7 +156,9 @@ def register(mcp) -> None:
             session_id=session_id or None,
             repo_root=_srv._root,
         )
-        has_more = (offset + len(entries)) < total
+        # Fewer than a full page back means the list is exhausted, whatever a
+        # (now-aligned) count says, so require a full page AND more counted.
+        has_more = len(entries) == limit and (offset + len(entries)) < total
         return json.dumps(
             {
                 "kind": kind or None,
@@ -214,7 +228,7 @@ def register(mcp) -> None:
             title=title or f"Session digest {session_id}",
             body=digest,
             kind="note",
-            tags=tags or "compaction,session-digest",
+            tags=_digest_tags(tags),
             file_refs=file_refs,
             session_id=session_id,
             repo_root=_srv._root,

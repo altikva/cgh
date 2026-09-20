@@ -419,6 +419,11 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
         "stdout": logf,
         "stderr": logf,
         "close_fds": True,
+        # Start the owner in its OWN repo, so per-repo state that falls back to
+        # the process cwd can never open another worktree's call_log.db. The
+        # owner also chdirs to --root itself, this covers the spawn window
+        # before that runs.
+        "cwd": str(repo_root),
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = (

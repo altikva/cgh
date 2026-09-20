@@ -172,9 +172,48 @@ class TestLifecycleHooks:
         out = capsys.readouterr().out
         assert "resume bundle" in out and "1 standing instruction" in out
 
+    def test_hook_resume_header_nudges_after_compact(self, repo, monkeypatch, capsys):
+        from codegraph.cli.commands_session import cmd_hook_resume_header
+
+        # Seed an auto-checkpoint-only marker for session "sc"
+        knowledge_record(
+            "Session checkpoint",
+            "auto checkpoint only",
+            kind="note",
+            tags="auto-checkpoint,session-digest",
+            session_id="sc",
+            repo_root=repo,
+        )
+
+        # Feed compact source payload, expect nudge about missing model-written digest
+        monkeypatch.setattr(
+            "sys.stdin", self._payload(repo, {"session_id": "sc", "source": "compact"})
+        )
+        cmd_hook_resume_header(Namespace())
+        out = capsys.readouterr().out
+        assert "compact_session" in out and "NO" in out
+
+        # Record a real model-written digest for session "sc"
+        knowledge_record(
+            "Digest sc",
+            "did things",
+            kind="note",
+            tags="compaction,session-digest",
+            session_id="sc",
+            repo_root=repo,
+        )
+
+        # Feed same compact payload again, expect nudge to be gone now
+        monkeypatch.setattr(
+            "sys.stdin", self._payload(repo, {"session_id": "sc", "source": "compact"})
+        )
+        cmd_hook_resume_header(Namespace())
+        out = capsys.readouterr().out
+        assert "compact_session" not in out
+
 
 class TestHookSpecs:
-    def test_lifecycle_specs_ship_and_render_without_matcher(self):
+    def test_lifecycle_specs_ship_and_render_with_empty_matcher(self):
         from codegraph.cli.commands_init import (
             _append_hook,
             _claude_hook_specs,
@@ -193,5 +232,9 @@ class TestHookSpecs:
         spec = specs["cgh-resume-header"]
         _append_hook(settings, spec)
         entry = settings["hooks"]["SessionStart"][0]
-        assert "matcher" not in entry  # lifecycle events carry no matcher
+        # A lifecycle event matches all triggers, so its matcher is "" — but the
+        # key must be PRESENT. Claude Code treats a matcher-taking event whose
+        # entry omits the field as undefined, which is why the auto-checkpoint
+        # hook silently failed to fire before.
+        assert entry.get("matcher") == ""
         assert _find_hook(settings, spec)

@@ -1402,9 +1402,11 @@ def _append_hook(settings: dict, spec: dict) -> None:
         entry["async"] = True
     if spec.get("statusMessage"):
         entry["statusMessage"] = spec["statusMessage"]
-    wrapper: dict = {"hooks": [entry]}
-    if spec.get("matcher"):
-        wrapper["matcher"] = spec["matcher"]
+    # Always emit a matcher, even "" (match all). Claude Code's matcher-taking
+    # events (PreToolUse, PreCompact, SessionStart, SessionEnd) expect the field
+    # present; an entry written without it is undefined and may silently not
+    # fire, which is why the PreCompact auto-checkpoint hook was unreliable.
+    wrapper: dict = {"matcher": spec.get("matcher", ""), "hooks": [entry]}
     bucket.append(wrapper)
 
 

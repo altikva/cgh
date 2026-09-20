@@ -108,8 +108,11 @@ def test_record_fingerprint_moves_when_source_changes():
 
 
 def test_record_fingerprint_refuses_editable_record():
-    # Hashed, but lists no source file: the hash can't reflect code edits, so it
-    # must fall back to the bare version rather than a precise-looking constant.
+    # The trap: this RECORD IS hashed, so a hashedness check alone would accept
+    # it and produce a precise-looking constant. Only the path lookup can reject
+    # it, so assert the fixture is genuinely hashed and that rejection still
+    # happens, proving the path membership check is what does the work.
+    assert "sha256=" in _EDITABLE_RECORD
     assert (
         ipc._record_fingerprint(_EDITABLE_RECORD, "codegraph/__init__.py", "0.13.0")
         is None

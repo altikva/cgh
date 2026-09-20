@@ -82,11 +82,40 @@ def cmd_hook_resume_header(args: argparse.Namespace) -> None:
         instructions = len(
             knowledge_list(kind="standing_instruction", limit=50, repo_root=root)
         )
-        digests = len(knowledge_list(tag="session-digest", limit=50, repo_root=root))
+        digest_entries = knowledge_list(tag="session-digest", limit=50, repo_root=root)
+        digests = len(digest_entries)
         try:
             plans = len(list_plan_entries(get_fts_conn(root), limit=50))
         except Exception:
             plans = 0
+
+        # A SessionStart fired with source "compact" means the conversation was
+        # just summarized: everything not already written down is gone. PreCompact
+        # cannot inject text (it is purely advisory), so this is the one hook that
+        # can push the model to record a real digest. Nudge whenever no
+        # model-written digest exists for this session (auto-checkpoint markers,
+        # which the lifecycle hook drops on its own, do not count).
+        if str(payload.get("source") or "") == "compact":
+            session_id = str(payload.get("session_id", "") or "")
+            model_digests = [
+                e
+                for e in knowledge_list(
+                    tag="session-digest",
+                    session_id=session_id,
+                    limit=50,
+                    repo_root=root,
+                )
+                if "auto-checkpoint" not in str(e.get("tags", "") or "")
+            ]
+            if not model_digests:
+                print(
+                    "This session was just compacted and cgh has NO "
+                    "model-written digest for it, so the summary above is all "
+                    "that survived. Call the codegraph `compact_session` tool "
+                    "now with what you did, the decisions you made, and the open "
+                    "threads, so the next compaction does not lose them."
+                )
+
         if not (instructions or digests):
             return
         print(

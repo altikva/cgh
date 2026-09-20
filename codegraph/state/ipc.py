@@ -217,10 +217,65 @@ def installed_cgh_version() -> str | None:
         return None
 
 
+def _record_fingerprint(record_text: str, rel_path: str, ver: str | None) -> str | None:
+    """Fold RECORD into the version, but ONLY when RECORD actually describes the
+    imported source: its own path (`rel_path`) must appear as a hashed entry. A
+    PEP 660 editable RECORD is hashed yet lists only the `.pth` shim, not
+    `codegraph/*`, so its hash never moves across source edits, a fingerprint
+    that looks precise but is blind. Requiring the module's own path to be listed
+    rejects that case (and any future layout where RECORD stops describing the
+    sources) without sniffing install modes. Returns None to signal "fall back
+    to the bare version"."""
+    if "sha256=" not in record_text or rel_path not in record_text:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256(record_text.encode("utf-8")).hexdigest()[:16]
+    return f"{ver or '?'}+{digest}"
+
+
+def installed_cgh_fingerprint() -> str | None:
+    """A build fingerprint that changes whenever the installed code changes,
+    even across a same-version reinstall. The version string alone cannot see a
+    develop-to-develop swap that keeps the number, which is how a stale owner
+    kept serving old code after a reinstall. The installer's RECORD can see it:
+    it lists a content hash per file, so hashing RECORD changes iff some file's
+    content changed, and it is static on disk (never recomputed), so the same
+    install yields the same fingerprint in the owner and in the checker, with no
+    restart-loop risk.
+
+    RECORD is read from the dist-info beside the actually-imported package, not
+    via importlib.metadata, whose distribution() can be shadowed by a stray
+    egg-info in the cwd and then report an empty RECORD. The RECORD must list the
+    imported module's own path (see _record_fingerprint); otherwise, or on any
+    failure, fall back to the bare version so the drift check stays coarse but
+    keeps its never-loop guarantee.
+    """
+    ver = installed_cgh_version()
+    try:
+        import codegraph
+
+        pkg_file = Path(codegraph.__file__).resolve()
+        site_packages = pkg_file.parent.parent
+        rel_path = pkg_file.relative_to(site_packages).as_posix()
+        for dist_info in sorted(site_packages.glob("cgh-*.dist-info")):
+            record = dist_info / "RECORD"
+            if not record.is_file():
+                continue
+            fp = _record_fingerprint(record.read_text(encoding="utf-8"), rel_path, ver)
+            if fp is not None:
+                return fp
+    except Exception:
+        # Any failure to fingerprint reads as "version only": the drift check
+        # still catches a version bump and still never forces a restart loop.
+        pass
+    return ver
+
+
 def write_owner_version(repo_root: str | Path, ver: str | None) -> None:
-    """Stamp the version the owner is serving under. Best-effort: a missing
-    stamp just means the drift check stays quiet (fails safe, never a restart
-    loop)."""
+    """Stamp the build fingerprint the owner is serving under. Best-effort: a
+    missing stamp just means the drift check stays quiet (fails safe, never a
+    restart loop)."""
     if not ver:
         return
     try:
@@ -242,11 +297,13 @@ def read_owner_version(repo_root: str | Path) -> str | None:
 
 
 def owner_version_current(repo_root: str | Path) -> bool:
-    """True unless the running owner's stamped version and the installed
-    version are BOTH known and differ. Unknown on either side reads as
-    current, so an unreadable version can never drive a stop/respawn loop."""
+    """True unless the running owner's stamped fingerprint and the installed
+    fingerprint are BOTH known and differ. The fingerprint folds a RECORD hash
+    into the version, so a same-version reinstall with new code is caught, not
+    just a version bump. Unknown on either side reads as current, so an
+    unreadable fingerprint can never drive a stop/respawn loop."""
     stamped = read_owner_version(repo_root)
-    installed = installed_cgh_version()
+    installed = installed_cgh_fingerprint()
     if stamped is None or installed is None:
         return True
     return stamped == installed

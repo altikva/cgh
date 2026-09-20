@@ -123,5 +123,32 @@ def test_sibling_outranks_a_nonsibling_graph_hit(tmp_path, monkeypatch):
     assert "sibling in the same directory" in out["reason"]
 
 
+def test_name_overlap_beats_a_bare_graph_hit_sibling(tmp_path, monkeypatch):
+    # Two siblings; one shares two-plus name tokens (dedup, family), the other
+    # is a bare graph hit with no matching symbol name. The name overlap must win.
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_dedup_family.py").write_text(
+        "def test(): pass\n", encoding="utf-8"
+    )
+    (tests_dir / "test_member_cards.py").write_text(
+        "def test(): pass\n", encoding="utf-8"
+    )
+
+    def fake_find(root, q):
+        return [
+            {
+                "kind": "function",
+                "name": "x",
+                "file": str(tmp_path / "tests" / "test_member_cards.py"),
+                "line": 1,
+            }
+        ]
+
+    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", fake_find)
+    out = pick_reference(tmp_path, "tests/test_family_dedup.py")
+    assert out["reference"] == "tests/test_dedup_family.py"
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

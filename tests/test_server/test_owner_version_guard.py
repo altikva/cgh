@@ -77,6 +77,54 @@ def test_fingerprint_is_version_prefixed(monkeypatch):
         assert len(fp.split("+", 1)[1]) == 16
 
 
+# A wheel/tool RECORD lists the source files with hashes; an editable (PEP 660)
+# RECORD is hashed but lists only the .pth shim, so its hash is blind to source
+# edits and must be refused.
+_WHEEL_RECORD = (
+    "codegraph/__init__.py,sha256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,120\n"
+    "codegraph/state/ipc.py,sha256=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB,4200\n"
+    "cgh-0.13.0.dist-info/RECORD,,\n"
+)
+_EDITABLE_RECORD = (
+    "__editable__.cgh-0.13.0.pth,sha256=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC,42\n"
+    "__editable___cgh_0_13_0_finder.py,sha256=DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,900\n"
+    "cgh-0.13.0.dist-info/RECORD,,\n"
+)
+
+
+def test_record_fingerprint_hashes_a_wheel_record():
+    fp = ipc._record_fingerprint(_WHEEL_RECORD, "codegraph/__init__.py", "0.13.0")
+    assert fp is not None and fp.startswith("0.13.0+")
+    assert len(fp.split("+", 1)[1]) == 16
+
+
+def test_record_fingerprint_moves_when_source_changes():
+    # A different source hash in RECORD yields a different fingerprint, which is
+    # the whole point: a develop-to-develop swap is caught.
+    changed = _WHEEL_RECORD.replace("AAAAAAA", "ZZZZZZZ")
+    a = ipc._record_fingerprint(_WHEEL_RECORD, "codegraph/__init__.py", "0.13.0")
+    b = ipc._record_fingerprint(changed, "codegraph/__init__.py", "0.13.0")
+    assert a is not None and b is not None and a != b
+
+
+def test_record_fingerprint_refuses_editable_record():
+    # Hashed, but lists no source file: the hash can't reflect code edits, so it
+    # must fall back to the bare version rather than a precise-looking constant.
+    assert (
+        ipc._record_fingerprint(_EDITABLE_RECORD, "codegraph/__init__.py", "0.13.0")
+        is None
+    )
+
+
+def test_record_fingerprint_refuses_unhashed_record():
+    assert (
+        ipc._record_fingerprint(
+            "codegraph/__init__.py,,\n", "codegraph/__init__.py", "0.13.0"
+        )
+        is None
+    )
+
+
 def test_stop_owner_terminates_and_clears_files(monkeypatch, tmp_path):
     root = tmp_path
     (root / ".codegraph").mkdir()

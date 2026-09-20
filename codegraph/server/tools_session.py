@@ -68,6 +68,32 @@ def build_resume_bundle(
     # empty checkpoints stop eating the budget ahead of knowledge.
     content_digests = [d for d in raw_digests if not _is_auto_checkpoint(d)]
     auto_digests = [d for d in raw_digests if _is_auto_checkpoint(d)]
+
+    # Rescue digests written before they carried the session-digest tag:
+    # compact_session once stored the digest as a plain note whose only marker
+    # was a non-empty session_id, so it never matched the tagged query above and
+    # fell silently into the knowledge bucket while the contentless auto marker
+    # took the digest slot, which reads exactly like lost memory. A note that
+    # carries a session_id and is not an auto marker is a model-written digest;
+    # fold it in so digests already on disk are recovered, not only new ones.
+    # Only reach for this when the tagged path found nothing, to stay a no-op on
+    # stores that already have real tagged digests.
+    if not content_digests:
+        known = {d["id"] for d in raw_digests}
+        if session_id:
+            candidates = knowledge_list(
+                kind="note", session_id=session_id, limit=3, repo_root=repo_root
+            )
+        else:
+            candidates = [
+                d
+                for d in knowledge_list(kind="note", limit=20, repo_root=repo_root)
+                if d.get("session_id")
+            ]
+        content_digests = [
+            d for d in candidates if d["id"] not in known and not _is_auto_checkpoint(d)
+        ][:3]
+
     digests = content_digests + auto_digests[:1]
     sections.append(("digests", digests))
 

@@ -120,6 +120,45 @@ class TestResumeBundle:
         digests = knowledge_list(tag="session-digest", repo_root=repo)
         assert [d["id"] for d in digests] == [second]
 
+    def test_legacy_untagged_digest_is_rescued_over_auto_marker(self, repo):
+        knowledge_record(
+            "Session digest legacy",
+            "we shipped the guard and the cwd fix",
+            kind="note",
+            session_id="sprint-legacy",
+            repo_root=repo,
+        )
+        knowledge_record(
+            "Auto checkpoint",
+            "details are gone",
+            kind="note",
+            tags="auto-checkpoint,session-digest",
+            session_id="sprint-legacy",
+            repo_root=repo,
+        )
+        bundle = build_resume_bundle(repo, session_id="sprint-legacy")
+
+        digest_titles = [d["title"] for d in bundle["digests"]]
+        assert "Session digest legacy" in digest_titles
+
+        knowledge_titles = [k["title"] for k in bundle["knowledge"]]
+        assert "Session digest legacy" not in knowledge_titles
+
+        # The legacy digest must come before any auto-checkpoint entry
+        digests = bundle["digests"]
+        legacy_index = None
+        auto_checkpoint_index = None
+
+        for i, d in enumerate(digests):
+            if d["title"] == "Session digest legacy":
+                legacy_index = i
+            if d.get("tags") and "auto-checkpoint" in d["tags"]:
+                auto_checkpoint_index = i
+
+        assert legacy_index is not None
+        if auto_checkpoint_index is not None:
+            assert legacy_index < auto_checkpoint_index
+
 
 class TestFederatedKnowledge:
     def test_ro_search_reads_a_child_store(self, repo):

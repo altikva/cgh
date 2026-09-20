@@ -339,6 +339,17 @@ def owner_main(
     global _root
 
     _root = Path(root or os.getcwd()).resolve()
+    # Pin the process to its own repo. Per-repo state (call_log, findings, fts)
+    # falls back to Path.cwd() when a caller omits repo_root, so an owner
+    # spawned with a different cwd would open and HOLD another worktree's
+    # call_log.db read-write, blocking that repo's memory writes with "database
+    # is locked" while reads still work (so it reads as empty memory, not a
+    # lock). chdir keeps cwd == --root, so a stray cwd fallback can only ever
+    # touch this owner's own repo.
+    try:
+        os.chdir(_root)
+    except OSError:
+        pass
 
     configure_background_logging()
 

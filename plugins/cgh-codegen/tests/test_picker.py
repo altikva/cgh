@@ -150,5 +150,42 @@ def test_name_overlap_beats_a_bare_graph_hit_sibling(tmp_path, monkeypatch):
     assert out["reference"] == "tests/test_dedup_family.py"
 
 
+def test_graph_candidates_returns_unavailable_on_timeout(tmp_path, monkeypatch):
+    import time
+
+    from cgh_codegen.picker import _graph_candidates
+
+    def slow_find(root, q):
+        time.sleep(30)  # a wedged owner never answers
+        return []
+
+    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", slow_find)
+    start = time.monotonic()
+    files, available = _graph_candidates(tmp_path, ["user"], timeout=0.3)
+    elapsed = time.monotonic() - start
+    assert files == set() and available is False
+    assert elapsed < 5, f"deadline not honored ({elapsed:.1f}s)"
+
+
+def test_pick_reference_falls_back_to_siblings_when_graph_hangs(tmp_path, monkeypatch):
+    import time
+
+    def slow_find(root, q):
+        time.sleep(30)
+        return []
+
+    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", slow_find)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_order_service.py").write_text("# order\n", encoding="utf-8")
+    start = time.monotonic()
+    out = pick_reference(tmp_path, "tests/test_user_service.py", graph_timeout=0.3)
+    elapsed = time.monotonic() - start
+    # A wedged graph must not hang the pick: it degrades to the sibling.
+    assert out["reference"] == "tests/test_order_service.py"
+    assert out["graph_available"] is False
+    assert elapsed < 5, f"pick hung on the graph ({elapsed:.1f}s)"
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])

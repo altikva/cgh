@@ -197,7 +197,14 @@ class DuckDBGraphDB:
                 f"SELECT id FROM {spec.table} WHERE file_path = ?",
                 [file_path],
             ).fetchall()
-            ids = [r[0] for r in ids_rows]
+            # Bind ids as strings. Every id/to_id/from_id column is TEXT, so a
+            # string IN-list compares correctly. A legacy or anomalous DB whose
+            # node id column is integer-typed (an old table that CREATE TABLE IF
+            # NOT EXISTS never migrated) would otherwise hand back Python ints,
+            # and a single int makes DuckDB retype the whole IN-list to INT32
+            # and cast the TEXT to_id column to match, which raises on any
+            # non-numeric id and aborts the reindex, silently dropping the file.
+            ids = [str(r[0]) for r in ids_rows]
 
             for edge in edges_touching(spec.label):
                 # Determine which side of the edge points at this label.

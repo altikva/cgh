@@ -163,10 +163,25 @@ def run_generation(
     tgt = None
     if not to_stdout:
         tgt = tgt_probe
-        if tgt.exists() and not force and not extend:
-            raise CodegenError(
-                f"target {target} already exists; pass force to overwrite"
-            )
+        if tgt.exists() and not extend:
+            if not force:
+                raise CodegenError(
+                    f"target {target} already exists; pass force to overwrite"
+                )
+            # Force refreshes codegen's OWN output freely, but must never
+            # silently discard edits a human made since codegen last wrote the
+            # file. If we recorded what we wrote and the file no longer matches
+            # it, someone changed it by hand, so refuse rather than clobber.
+            recorded = _load_provenance(root).get(_rel(root, tgt))
+            if recorded is not None and (
+                _sha(tgt.read_text(encoding="utf-8", errors="replace")) != recorded
+            ):
+                raise CodegenError(
+                    f"target {target} was modified since codegen last generated "
+                    "it (it looks hand-edited); refusing to overwrite and discard "
+                    "those changes. Use extend to add to it, or delete the file "
+                    "to regenerate it from scratch."
+                )
 
     do_verify = bool(verify) and not to_stdout
     prior: tuple[str, str] | None = None
@@ -221,6 +236,14 @@ def run_generation(
         tgt.write_text(existing_text, encoding="utf-8")  # type: ignore[union-attr]
         written = False
         rolled_back = True
+
+    # Remember what codegen wrote (a full generation, not an extend, which
+    # carries human content), so a later force-overwrite can tell its own
+    # untouched output from a file a human has since edited. Best-effort.
+    if written and not extend and tgt is not None:
+        _record_provenance(
+            root, _rel(root, tgt), tgt.read_text(encoding="utf-8", errors="replace")
+        )
 
     if result is None:  # unreachable: the loop always runs at least once
         raise CodegenError("generation produced no result")
@@ -359,3 +382,50 @@ def _audit(root: Path, event: str, detail: str) -> None:
     from codegraph.plugin_api import activity_log
 
     activity_log(root, event, detail)
+
+
+def _rel(root: Path, tgt: Path) -> str:
+    """The target's key in the provenance store: its path relative to the repo
+    root, so the record survives being read from a different working directory.
+    Falls back to the absolute path if the target somehow sits outside root."""
+    try:
+        return tgt.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(tgt.resolve())
+
+
+def _sha(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _provenance_path(root: Path) -> Path:
+    return root / ".codegraph" / "codegen" / "provenance.json"
+
+
+def _load_provenance(root: Path) -> dict:
+    import json
+
+    try:
+        return json.loads(_provenance_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_provenance(root: Path, rel: str, body: str) -> None:
+    """Record the sha256 of the bytes codegen just wrote for ``rel``. Best-effort:
+    a store that cannot be written just means the next force-overwrite falls back
+    to the old behaviour, never a failed generation."""
+    import json
+
+    path = _provenance_path(root)
+    try:
+        data = _load_provenance(root)
+        data[rel] = _sha(body)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass

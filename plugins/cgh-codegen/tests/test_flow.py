@@ -96,6 +96,64 @@ def test_force_overwrites(tmp_path):
     assert (root / "src" / "user_service.py").read_text(encoding="utf-8") == "x = 2\n"
 
 
+def test_force_refuses_to_discard_human_edits(tmp_path):
+    root = _repo(tmp_path)
+    target = root / "src" / "user_service.py"
+    # First generation writes the file and records what codegen wrote.
+    run_generation(
+        root,
+        "spec",
+        "src/user_service.py",
+        "src/order_service.py",
+        config={},
+        backend=FakeBackend("```python\nclass UserService:\n    pass\n```"),
+    )
+    # A human corrects the generated file.
+    target.write_text(
+        "class UserService:\n    def fixed(self):\n        return 1\n", encoding="utf-8"
+    )
+    edited = target.read_text(encoding="utf-8")
+    # A re-run with force must refuse rather than silently discard the edits.
+    with pytest.raises(CodegenError, match="modified since codegen"):
+        run_generation(
+            root,
+            "spec",
+            "src/user_service.py",
+            "src/order_service.py",
+            config={},
+            backend=FakeBackend("```python\nx = 999\n```"),
+            force=True,
+        )
+    assert target.read_text(encoding="utf-8") == edited  # left untouched
+
+
+def test_force_refreshes_codegens_own_unchanged_output(tmp_path):
+    root = _repo(tmp_path)
+    target = root / "src" / "user_service.py"
+    run_generation(
+        root,
+        "spec",
+        "src/user_service.py",
+        "src/order_service.py",
+        config={},
+        backend=FakeBackend("```python\nclass UserService:\n    pass\n```"),
+    )
+    # The file is codegen's own output, untouched since: force may refresh it.
+    out = run_generation(
+        root,
+        "spec",
+        "src/user_service.py",
+        "src/order_service.py",
+        config={},
+        backend=FakeBackend(
+            "```python\nclass UserService:\n    def v2(self):\n        return 2\n```"
+        ),
+        force=True,
+    )
+    assert out["written"] is True
+    assert "v2" in target.read_text(encoding="utf-8")
+
+
 def test_cloud_backend_refused_on_gated_reference(tmp_path):
     root = _repo(tmp_path)
     # Findings are keyed by the absolute path, which is what the flow gates on.

@@ -151,7 +151,15 @@ def run_generation(
                 raise CodegenError(f"egress refused for {target}: {reason}")
             egress = reason
     else:
-        pick = pick_reference(root, target, reference)
+        # Bound graph-based reference selection so a wedged owner cannot hang
+        # the whole call; config can tune the ceiling.
+        graph_timeout = config.get("reference_timeout_s")
+        pick = pick_reference(
+            root,
+            target,
+            reference,
+            graph_timeout=float(graph_timeout) if graph_timeout is not None else None,
+        )
         ref_rel, ref_path, egress, ref_note = _select_reference(
             root, pick, backend, config
         )

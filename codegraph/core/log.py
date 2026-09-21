@@ -16,7 +16,12 @@ from __future__ import annotations
 import logging
 import sys
 
-_FORMAT = "[codegraph] %(levelname).1s %(name)s: %(message)s"
+# The leading timestamp lets a reader place an owner.log line against a
+# specific event (a crash window, a restart) instead of guessing from its
+# position in the file. Without it, "when did this error happen" is
+# unanswerable, which is exactly what a live incident ran into.
+_FORMAT = "[codegraph] %(asctime)s %(levelname).1s %(name)s: %(message)s"
+_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
 def configure_background_logging(level: int = logging.INFO) -> None:
@@ -29,7 +34,7 @@ def configure_background_logging(level: int = logging.INFO) -> None:
     if logger.handlers:
         return
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter(_FORMAT))
+    handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
     logger.addHandler(handler)
     logger.setLevel(level)
     logger.propagate = False

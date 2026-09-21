@@ -184,26 +184,69 @@ def acquire(repo_root: str | Path) -> tuple[bool, int | None]:
     Try to claim the single-writer slot for this repo.
     Returns (acquired, other_pid):
       - (True, None), we now own the pidfile
-      - (False, pid), another live cgh serve holds it
-    Stale pidfiles (process no longer alive) are overwritten.
+      - (False, pid), another live cgh serve holds it (pid may be None if a
+        rival is still mid-claim)
+
+    The claim is atomic: our pid is staged in a per-process temp file and then
+    hard-linked into place with ``os.link``, which fails if the slot is already
+    taken. Exactly one racing owner wins the link, and the pidfile is never
+    observed empty (it appears fully written), so a rival cannot misread a
+    mid-write file as stale and clobber it. The previous check-then-write let
+    two owners spawned at once both pass the liveness check and both write their
+    pid, so the loser of the graph DB write lock could leave owner.pid pointing
+    at its own now-dead process while the winner kept serving. A stale pidfile
+    (its process no longer alive) is taken over by removing it and retrying the
+    link, with the link as the arbiter so a live holder is never clobbered.
     """
     path = _pidfile_path(repo_root)
-    existing = read_existing_pid(repo_root)
-    if existing is not None and existing != os.getpid() and _is_process_alive(existing):
-        return False, existing
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(str(os.getpid()) + "\n", encoding="utf-8")
-    atexit.register(release, repo_root)
+    mypid = os.getpid()
 
-    # Best-effort: release on SIGTERM too (atexit may not fire).
+    # Stage our pid, fully written, in a per-process temp on the same directory
+    # (so the hard link stays within one filesystem), then link it into place.
+    staged = path.with_name(f"{path.name}.{mypid}")
     try:
-        signal.signal(signal.SIGTERM, _sigterm_handler_factory(repo_root))
-    except (ValueError, OSError):
-        # Signal registration can fail in non-main threads; non-fatal.
-        pass
+        staged.write_text(str(mypid) + "\n", encoding="utf-8")
+        # Bounded retries so a rival churning a stale file cannot spin us forever.
+        for _ in range(100):
+            try:
+                os.link(staged, path)
+            except FileExistsError:
+                existing = read_existing_pid(repo_root)
+                if (
+                    existing is not None
+                    and existing != mypid
+                    and _is_process_alive(existing)
+                ):
+                    return False, existing
+                # Stale (dead holder or our own leftover): drop it and retry the
+                # link. The link is the arbiter, so if a rival relinks a live pid
+                # first, the next pass reads it and yields rather than removing it.
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            else:
+                atexit.register(release, repo_root)
+                # Best-effort: release on SIGTERM too (atexit may not fire).
+                try:
+                    signal.signal(signal.SIGTERM, _sigterm_handler_factory(repo_root))
+                except (ValueError, OSError):
+                    # Signal registration can fail in non-main threads; non-fatal.
+                    pass
+                return True, None
 
-    return True, None
+        # A rival kept recreating a stale file faster than we could take it over.
+        # Report it as contended rather than loop forever.
+        return False, read_existing_pid(repo_root)
+    finally:
+        # Drop the temp. If the link succeeded, `path` keeps the inode (and our
+        # pid) with its own link count, so removing the temp is safe.
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def release(repo_root: str | Path) -> None:

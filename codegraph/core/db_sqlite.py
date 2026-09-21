@@ -318,7 +318,12 @@ class SQLiteGraphDB:
             f"SELECT {spec.key_field} FROM {spec.table} WHERE {where_field} = ?",
             [where_value],
         ).fetchall()
-        return [r[0] for r in rows]
+        # Return string keys. Every id/path key column is TEXT, and callers use
+        # these as string ids (fn_id.startswith(...), edge keys). SQLite's loose
+        # type affinity can hand back an int if one was ever stored, and
+        # fn_id.startswith would then raise "'int' object has no attribute
+        # 'startswith'", crashing the reindex on every affected file.
+        return [str(r[0]) for r in rows]
 
     def query_node_field(
         self, label: str, key_field: str, key_value: Any, return_field: str

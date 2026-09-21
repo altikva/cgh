@@ -26,6 +26,12 @@ class CodegenError(RuntimeError):
 # Name-stem prefixes/suffixes that carry no pattern signal on their own.
 _NOISE_TOKENS = frozenset({"test", "tests", "spec", "specs", "impl", "base", "mod"})
 
+# How long reference selection waits on the graph before giving up and using
+# filesystem siblings only. Reference selection is normally sub-second; this is
+# a generous ceiling that turns an indefinite hang behind a wedged owner into a
+# bounded, fail-fast degradation.
+_GRAPH_DEADLINE_S = 10.0
+
 
 @dataclass(slots=True)
 class Candidate:
@@ -73,7 +79,9 @@ def name_tokens(stem: str) -> list[str]:
     return tokens
 
 
-def _graph_candidates(root: Path, tokens: list[str]) -> tuple[set[Path], bool | None]:
+def _graph_candidates_query(
+    root: Path, tokens: list[str]
+) -> tuple[set[Path], bool | None]:
     """Files the graph says define a symbol matching any token. The bool is
     graph availability: True if a query succeeded, False if the graph could
     not be read at all, None if there was nothing to ask."""
@@ -95,10 +103,37 @@ def _graph_candidates(root: Path, tokens: list[str]) -> tuple[set[Path], bool | 
     return files, available
 
 
+def _graph_candidates(
+    root: Path, tokens: list[str], timeout: float = _GRAPH_DEADLINE_S
+) -> tuple[set[Path], bool | None]:
+    """Bounded wrapper around the graph query. find_symbol_files talks to the
+    repo's owner, and a wedged owner (one whose reindex is stuck holding the
+    write lock) can block that read indefinitely, which is how a codegen call
+    hung for half an hour with no output. Run it under a deadline: if it does
+    not answer in time, treat the graph as unavailable and let selection fall
+    back to filesystem siblings, so codegen degrades instead of hanging."""
+    import threading
+
+    box: dict = {"result": (set(), None)}
+
+    def _run() -> None:
+        box["result"] = _graph_candidates_query(root, tokens)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        # The graph read is stuck. Don't wait it out; the daemon thread unwinds
+        # on its own if the query ever returns. Graph unavailable, siblings only.
+        return set(), False
+    return box["result"]
+
+
 def pick_reference(
     repo_root: str | Path,
     target: str,
     explicit_reference: str | None = None,
+    graph_timeout: float | None = None,
 ) -> dict:
     """Choose the file to mirror when generating ``target``.
 
@@ -129,7 +164,9 @@ def pick_reference(
     suffix = tgt.suffix
     parent = tgt.parent
     tokens = name_tokens(tgt.stem)
-    graph_files, graph_available = _graph_candidates(root, tokens)
+    graph_files, graph_available = _graph_candidates(
+        root, tokens, graph_timeout if graph_timeout is not None else _GRAPH_DEADLINE_S
+    )
     tgt_words = set(_split_words(tgt.stem))
 
     # Candidate pool: existing files of the same kind, from the target's

@@ -137,6 +137,25 @@ class TestExplicitPurge:
             "SELECT count(*) FROM md_section WHERE file_path = 'en.json'"
         ).get_next() == [0]
 
+    def test_find_node_keys_returns_strings_for_integer_id_column(self, duckdb_db):
+        # Same anomalous DB as above: an integer-typed id column. find_node_keys
+        # must return string keys so callers that do fn_id.startswith(...) do not
+        # crash the reindex with "'int' object has no attribute 'startswith'".
+        conn = duckdb_db._conn
+        conn.execute("DROP TABLE IF EXISTS function")
+        conn.execute(
+            "CREATE TABLE function (id INTEGER PRIMARY KEY, name TEXT, "
+            "file_path TEXT, start_line BIGINT, end_line BIGINT, docstring TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO function(id, name, file_path) VALUES (1, 'foo', 'a.py')"
+        )
+
+        keys = duckdb_db.find_node_keys("Function", "name", "foo")
+        assert keys == ["1"]
+        # The value callers actually use must support string operations.
+        assert keys[0].startswith("1")
+
 
 class TestBackendSelection:
     """core.db.get_connection() picks the backend from CGH_DB env var or

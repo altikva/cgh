@@ -269,7 +269,12 @@ class DuckDBGraphDB:
             f"SELECT {spec.key_field} FROM {spec.table} WHERE {where_field} = ?",
             [where_value],
         ).fetchall()
-        return [r[0] for r in rows]
+        # Return string keys. Every id/path key column is TEXT, and callers use
+        # these as string ids (fn_id.startswith(...), edge keys). A legacy or
+        # anomalous DB whose id column is integer-typed would otherwise hand back
+        # Python ints, and fn_id.startswith would raise "'int' object has no
+        # attribute 'startswith'", crashing the reindex on every affected file.
+        return [str(r[0]) for r in rows]
 
     def query_node_field(
         self,

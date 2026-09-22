@@ -31,14 +31,14 @@ def make_mcp_registrar(config: dict):
             so the new file matches an established pattern. Pass `reference`
             to validate a specific file instead of picking one.
             """
-            from .picker import CodeWriteError, pick_reference
+            from .picker import CodegenError, pick_reference
 
             root = server_root()
             if root is None:
                 return json.dumps({"error": "no repo root"})
             try:
                 result = pick_reference(root, target, reference or None)
-            except CodeWriteError as exc:
+            except CodegenError as exc:
                 return json.dumps({"error": str(exc)})
             return json.dumps(result, indent=2)
 
@@ -63,7 +63,7 @@ def make_mcp_registrar(config: dict):
             from .backends import resolve_backend
             from .flow import run_generation
             from .generate import GenerationError
-            from .picker import CodeWriteError
+            from .picker import CodegenError
 
             root = server_root()
             if root is None:
@@ -87,7 +87,7 @@ def make_mcp_registrar(config: dict):
                     verify=config.get("verify") or None,
                     max_attempts=max(1, int(config.get("max_attempts", 1))),
                 )
-            except (CodeWriteError, GenerationError) as exc:
+            except (CodegenError, GenerationError) as exc:
                 return json.dumps({"error": str(exc)})
             return json.dumps(result, indent=2)
 

@@ -18,7 +18,68 @@ from pathlib import Path
 
 from .gate import egress_decision
 from .generate import Backend, generate_code
-from .picker import CodeWriteError, _confine, pick_reference
+from .picker import CodegenError, _confine, pick_reference
+
+
+def _select_reference(
+    root: Path, pick: dict, backend: Backend, config: dict
+) -> tuple[str, Path, str, str | None]:
+    """Choose the reference to actually mirror, honoring the egress gate.
+
+    For a cloud backend the top-ranked pick may carry a confidential or PII
+    finding, which the gate refuses. Rather than fail the whole generation,
+    walk the ranked candidates and take the first that clears the gate, so an
+    auto-pick lands on a sendable reference instead of stopping on the first
+    one that happens to hold a secret. A local backend never leaves the
+    machine, so it skips the gate and keeps the top pick.
+
+    Returns ``(ref_rel, ref_path, egress_reason, note)``. ``note`` is a human
+    string when the choice fell back off the top pick (so the caller can say
+    why the mirrored file is not the one first proposed), else None. Raises
+    CodegenError when no candidate is usable.
+    """
+    ref_top = pick["reference"]
+    if ref_top is None:
+        raise CodegenError(pick["reason"])
+
+    def _readable(rel: str) -> Path | None:
+        p = _confine(root, rel)
+        return p if (p is not None and p.is_file()) else None
+
+    if backend.is_local:
+        p = _readable(ref_top)
+        if p is None:
+            raise CodegenError(f"reference {ref_top!r} is not a readable file")
+        return ref_top, p, "local backend (no egress)", None
+
+    # Cloud backend: the reference's bytes leave the machine, so every
+    # candidate must clear the gate. Try them in rank order; the top pick is
+    # candidates[0], so an ungated top pick is chosen with no fallback note.
+    ordered = pick["candidates"] or [ref_top]
+    denials: list[str] = []
+    for cand in ordered:
+        p = _readable(cand)
+        if p is None:
+            denials.append(f"{cand}: not a readable file")
+            continue
+        allowed, reason = egress_decision(root, p, config)
+        if allowed:
+            note = None
+            if cand != ref_top:
+                note = (
+                    f"top pick {ref_top} was refused by the egress gate; "
+                    f"mirrored the next clear candidate {cand} instead"
+                )
+            return cand, p, reason, note
+        denials.append(f"{cand}: {reason}")
+        _audit(root, "codegen_egress_denied", f"{cand}: {reason}")
+
+    if len(denials) == 1:
+        raise CodegenError(f"egress refused for reference {denials[0]}")
+    raise CodegenError(
+        "every candidate reference was refused by the egress gate; "
+        + "; ".join(denials)
+    )
 
 
 def run_generation(
@@ -33,6 +94,7 @@ def run_generation(
     to_stdout: bool = False,
     verify: str | None = None,
     max_attempts: int = 1,
+    extend: bool = False,
 ) -> dict:
     """Generate the code for ``target`` and, unless ``to_stdout``, write it.
 
@@ -44,45 +106,90 @@ def run_generation(
     failure text drives the fix), turning "verify, don't trust" into a
     closed loop instead of a manual review.
 
-    Returns a result dict. Raises CodeWriteError for a bad target, a gated
+    With ``extend``, the target must already exist and is added to rather than
+    written over: the model receives the current file and returns only the
+    block to append. That is the safe way to grow a file, since the existing
+    content is never in the model's output and so cannot be dropped by a
+    careless regeneration. The file is then its own style reference, and no
+    sibling is picked unless one is named explicitly.
+
+    Returns a result dict. Raises CodegenError for a bad target, a gated
     reference, or a refused overwrite.
     """
     root = Path(repo_root).resolve()
 
-    pick = pick_reference(root, target, reference)
-    ref_rel = pick["reference"]
-    if ref_rel is None:
-        raise CodeWriteError(pick["reason"])
-    ref_path = _confine(root, ref_rel)
-    if ref_path is None or not ref_path.is_file():
-        raise CodeWriteError(f"reference {ref_rel!r} is not a readable file")
+    tgt_probe = _confine(root, target)
+    if tgt_probe is None:
+        raise CodegenError(f"target {target!r} is outside the repo")
 
-    # Egress gate: a cloud backend sees the reference's contents, so the
-    # reference must clear the same checks as any other departure. A local
-    # backend never leaves the machine, so it skips the gate, like the rest
-    # of cgh.
-    if backend.is_local:
-        egress = "local backend (no egress)"
+    existing_text: str | None = None
+    if extend:
+        if not tgt_probe.is_file():
+            raise CodegenError(
+                f"target {target} does not exist; generate it before extending it"
+            )
+        existing_text = tgt_probe.read_text(encoding="utf-8", errors="replace")
+
+    refs: list[tuple[str, str]] = []
+    if extend and reference is None:
+        # The file being extended is its own style example, and it already goes
+        # to the model as the text to append to, so no sibling is picked and
+        # there is nothing to fall back to. Its bytes still leave the machine,
+        # so it still clears the gate.
+        pick = {
+            "reference": None,
+            "reason": "extending the target, which is its own reference",
+            "graph_available": False,
+        }
+        ref_rel, ref_path, ref_note = None, tgt_probe, None
+        if backend.is_local:
+            egress = "local backend (no egress)"
+        else:
+            allowed, reason = egress_decision(root, tgt_probe, config)
+            if not allowed:
+                _audit(root, "codegen_egress_denied", f"{target}: {reason}")
+                raise CodegenError(f"egress refused for {target}: {reason}")
+            egress = reason
     else:
-        allowed, reason = egress_decision(root, ref_path, config)
-        if not allowed:
-            _audit(root, "codegen_egress_denied", f"{ref_rel}: {reason}")
-            raise CodeWriteError(f"egress refused for reference {ref_rel}: {reason}")
-        egress = reason
-
-    ref_text = ref_path.read_text(encoding="utf-8", errors="replace")
+        # Bound graph-based reference selection so a wedged owner cannot hang
+        # the whole call; config can tune the ceiling.
+        graph_timeout = config.get("reference_timeout_s")
+        pick = pick_reference(
+            root,
+            target,
+            reference,
+            graph_timeout=float(graph_timeout) if graph_timeout is not None else None,
+        )
+        ref_rel, ref_path, egress, ref_note = _select_reference(
+            root, pick, backend, config
+        )
+        refs.append((ref_rel, ref_path.read_text(encoding="utf-8", errors="replace")))
 
     # Clobber check once, up front; the retry loop then overwrites its own
-    # attempts freely (verify needs the file on disk to check it).
+    # attempts freely (verify needs the file on disk to check it). Extending
+    # never clobbers, so it is exempt.
     tgt = None
     if not to_stdout:
-        tgt = _confine(root, target)
-        if tgt is None:
-            raise CodeWriteError(f"target {target!r} is outside the repo")
-        if tgt.exists() and not force:
-            raise CodeWriteError(
-                f"target {target} already exists; pass force to overwrite"
-            )
+        tgt = tgt_probe
+        if tgt.exists() and not extend:
+            if not force:
+                raise CodegenError(
+                    f"target {target} already exists; pass force to overwrite"
+                )
+            # Force refreshes codegen's OWN output freely, but must never
+            # silently discard edits a human made since codegen last wrote the
+            # file. If we recorded what we wrote and the file no longer matches
+            # it, someone changed it by hand, so refuse rather than clobber.
+            recorded = _load_provenance(root).get(_rel(root, tgt))
+            if recorded is not None and (
+                _sha(tgt.read_text(encoding="utf-8", errors="replace")) != recorded
+            ):
+                raise CodegenError(
+                    f"target {target} was modified since codegen last generated "
+                    "it (it looks hand-edited); refusing to overwrite and discard "
+                    "those changes. Use extend to add to it, or delete the file "
+                    "to regenerate it from scratch."
+                )
 
     do_verify = bool(verify) and not to_stdout
     prior: tuple[str, str] | None = None
@@ -90,14 +197,33 @@ def run_generation(
     written = False
     attempts = 0
     result = None
+    code = ""
     while attempts < max(1, max_attempts):
         attempts += 1
         result = generate_code(
-            spec, [(ref_rel, ref_text)], backend, target=target, prior=prior
+            spec,
+            refs,
+            backend,
+            target=target,
+            prior=prior,
+            existing=existing_text,
         )
+        # Hand the cheap model's output through ruff so what lands on disk is
+        # already formatted and lint-clean, rather than leaving trailing
+        # whitespace and unused imports for a human to sweep up. Best-effort:
+        # a whole new file also gets the safe autofixes; an appended block is
+        # only reformatted, since ruff's unused-import view of a fragment out
+        # of its file's context is not reliable. No ruff on PATH, a non-Python
+        # target, or a syntax error ruff cannot parse leaves the code as-is.
+        code = _polish_code(result.code, target, root, full_module=not extend)
         if to_stdout or tgt is None:
             break
-        body = result.code if result.code.endswith("\n") else result.code + "\n"
+        if existing_text is not None:
+            # Rebuild from the original every attempt, so a retry appends to
+            # the file as it was rather than stacking onto its own last try.
+            body = _append_into(existing_text, code)
+        else:
+            body = code if code.endswith("\n") else code + "\n"
         tgt.parent.mkdir(parents=True, exist_ok=True)
         tgt.write_text(body, encoding="utf-8")
         written = True
@@ -107,22 +233,41 @@ def run_generation(
         verified = ok
         if ok:
             break
-        prior = (result.code, output)
+        prior = (code, output)
+
+    # Extending must never leave the file worse than it was found. A new file
+    # that fails its check is a draft worth reading; an existing file that
+    # fails one has been damaged, and the last attempt can be truncated or
+    # unparsable. So put the original back and report the failure instead.
+    rolled_back = False
+    if extend and written and do_verify and not verified and existing_text is not None:
+        tgt.write_text(existing_text, encoding="utf-8")  # type: ignore[union-attr]
+        written = False
+        rolled_back = True
+
+    # Remember what codegen wrote (a full generation, not an extend, which
+    # carries human content), so a later force-overwrite can tell its own
+    # untouched output from a file a human has since edited. Best-effort.
+    if written and not extend and tgt is not None:
+        _record_provenance(
+            root, _rel(root, tgt), tgt.read_text(encoding="utf-8", errors="replace")
+        )
 
     if result is None:  # unreachable: the loop always runs at least once
-        raise CodeWriteError("generation produced no result")
+        raise CodegenError("generation produced no result")
     _audit(
         root,
-        "codegen_generated",
-        f"{target} <- {ref_rel} ({backend.name}, {attempts} attempt(s), "
-        f"verified={verified})",
+        "codegen_extended" if extend else "codegen_generated",
+        f"{target} <- {ref_rel or '(itself)'} ({backend.name}, "
+        f"{attempts} attempt(s), verified={verified})",
     )
 
     return {
         "target": target,
         "reference": ref_rel,
-        "reason": pick["reason"],
-        "lines": len(result.code.splitlines()),
+        "reason": ref_note or pick["reason"],
+        "ref_fallback": ref_note,
+        "lines": len(code.splitlines()),
         "cost": result.cost,
         "backend": result.backend,
         "egress": egress,
@@ -130,8 +275,89 @@ def run_generation(
         "graph_available": pick["graph_available"],
         "attempts": attempts,
         "verified": verified,
-        "code": result.code if to_stdout else "",
+        "extended": extend,
+        "rolled_back": rolled_back,
+        "code": code if to_stdout else "",
     }
+
+
+def _append_into(existing: str, block: str) -> str:
+    """Put ``block`` at the end of ``existing``, but before a trailing
+    `if __name__ == "__main__":` guard.
+
+    That guard is a runner, not content, and it is conventionally the last
+    thing in the file. Appending after it works but reads as a mistake, and
+    for a module that does real work under the guard it would leave the new
+    code unreachable from a direct run.
+    """
+    lines = existing.rstrip("\n").split("\n")
+    cut = len(lines)
+    for i, line in enumerate(lines):
+        if line.startswith('if __name__ == "__main__":') or line.startswith(
+            "if __name__ == '__main__':"
+        ):
+            cut = i
+            break
+
+    head = "\n".join(lines[:cut]).rstrip("\n")
+    tail = "\n".join(lines[cut:]).strip("\n")
+    body = head + "\n\n" + block.strip("\n") + "\n"
+    if tail:
+        body += "\n" + tail + "\n"
+    return body
+
+
+def _polish_code(code: str, target: str, root: Path, *, full_module: bool) -> str:
+    """Run generated Python through ruff so it lands formatted and lint-clean.
+
+    A whole new file (``full_module``) is both formatted and given ruff's safe
+    autofixes (drop an unused import, normalise quotes); an appended block is
+    only formatted, because ruff cannot judge an out-of-context fragment's
+    unused imports. A non-Python target, no ruff on PATH, or code ruff cannot
+    parse are returned unchanged, so this never blocks or corrupts a run.
+    """
+    import shutil
+
+    if not target.endswith(".py") or shutil.which("ruff") is None:
+        return code
+    formatted = _ruff_run(["format", "--stdin-filename", target, "-"], code, root, (0,))
+    code = formatted or code
+    if full_module:
+        fixed = _ruff_run(
+            ["check", "--fix", "--stdin-filename", target, "-"], code, root, (0, 1)
+        )
+        code = fixed or code
+    return code
+
+
+def _ruff_run(
+    args: list[str], code: str, root: Path, ok_codes: tuple[int, ...]
+) -> str | None:
+    """Feed ``code`` to ``ruff <args>`` on stdin and return the transformed
+    source, or None when ruff was not usable. ``check --fix`` exits 1 when lint
+    issues remain but still emits the fixed source, so its caller passes
+    ``(0, 1)``; ``format`` passes ``(0,)``. Any other exit (a parse error, ruff
+    missing) yields None so the caller keeps the input unchanged."""
+    import subprocess
+
+    from codegraph.plugin_api import quiet_subprocess_kwargs
+
+    try:
+        proc = subprocess.run(
+            ["ruff", *args],
+            input=code,
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            timeout=30,
+            check=False,
+            **quiet_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode in ok_codes and proc.stdout:
+        return proc.stdout
+    return None
 
 
 def _run_verify(root: Path, command: str) -> tuple[bool, str]:
@@ -164,3 +390,50 @@ def _audit(root: Path, event: str, detail: str) -> None:
     from codegraph.plugin_api import activity_log
 
     activity_log(root, event, detail)
+
+
+def _rel(root: Path, tgt: Path) -> str:
+    """The target's key in the provenance store: its path relative to the repo
+    root, so the record survives being read from a different working directory.
+    Falls back to the absolute path if the target somehow sits outside root."""
+    try:
+        return tgt.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(tgt.resolve())
+
+
+def _sha(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _provenance_path(root: Path) -> Path:
+    return root / ".codegraph" / "codegen" / "provenance.json"
+
+
+def _load_provenance(root: Path) -> dict:
+    import json
+
+    try:
+        return json.loads(_provenance_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_provenance(root: Path, rel: str, body: str) -> None:
+    """Record the sha256 of the bytes codegen just wrote for ``rel``. Best-effort:
+    a store that cannot be written just means the next force-overwrite falls back
+    to the old behaviour, never a failed generation."""
+    import json
+
+    path = _provenance_path(root)
+    try:
+        data = _load_provenance(root)
+        data[rel] = _sha(body)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass

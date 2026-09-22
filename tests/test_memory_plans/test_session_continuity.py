@@ -120,6 +120,45 @@ class TestResumeBundle:
         digests = knowledge_list(tag="session-digest", repo_root=repo)
         assert [d["id"] for d in digests] == [second]
 
+    def test_legacy_untagged_digest_is_rescued_over_auto_marker(self, repo):
+        knowledge_record(
+            "Session digest legacy",
+            "we shipped the guard and the cwd fix",
+            kind="note",
+            session_id="sprint-legacy",
+            repo_root=repo,
+        )
+        knowledge_record(
+            "Auto checkpoint",
+            "details are gone",
+            kind="note",
+            tags="auto-checkpoint,session-digest",
+            session_id="sprint-legacy",
+            repo_root=repo,
+        )
+        bundle = build_resume_bundle(repo, session_id="sprint-legacy")
+
+        digest_titles = [d["title"] for d in bundle["digests"]]
+        assert "Session digest legacy" in digest_titles
+
+        knowledge_titles = [k["title"] for k in bundle["knowledge"]]
+        assert "Session digest legacy" not in knowledge_titles
+
+        # The legacy digest must come before any auto-checkpoint entry
+        digests = bundle["digests"]
+        legacy_index = None
+        auto_checkpoint_index = None
+
+        for i, d in enumerate(digests):
+            if d["title"] == "Session digest legacy":
+                legacy_index = i
+            if d.get("tags") and "auto-checkpoint" in d["tags"]:
+                auto_checkpoint_index = i
+
+        assert legacy_index is not None
+        if auto_checkpoint_index is not None:
+            assert legacy_index < auto_checkpoint_index
+
 
 class TestFederatedKnowledge:
     def test_ro_search_reads_a_child_store(self, repo):
@@ -172,9 +211,48 @@ class TestLifecycleHooks:
         out = capsys.readouterr().out
         assert "resume bundle" in out and "1 standing instruction" in out
 
+    def test_hook_resume_header_nudges_after_compact(self, repo, monkeypatch, capsys):
+        from codegraph.cli.commands_session import cmd_hook_resume_header
+
+        # Seed an auto-checkpoint-only marker for session "sc"
+        knowledge_record(
+            "Session checkpoint",
+            "auto checkpoint only",
+            kind="note",
+            tags="auto-checkpoint,session-digest",
+            session_id="sc",
+            repo_root=repo,
+        )
+
+        # Feed compact source payload, expect nudge about missing model-written digest
+        monkeypatch.setattr(
+            "sys.stdin", self._payload(repo, {"session_id": "sc", "source": "compact"})
+        )
+        cmd_hook_resume_header(Namespace())
+        out = capsys.readouterr().out
+        assert "compact_session" in out and "NO" in out
+
+        # Record a real model-written digest for session "sc"
+        knowledge_record(
+            "Digest sc",
+            "did things",
+            kind="note",
+            tags="compaction,session-digest",
+            session_id="sc",
+            repo_root=repo,
+        )
+
+        # Feed same compact payload again, expect nudge to be gone now
+        monkeypatch.setattr(
+            "sys.stdin", self._payload(repo, {"session_id": "sc", "source": "compact"})
+        )
+        cmd_hook_resume_header(Namespace())
+        out = capsys.readouterr().out
+        assert "compact_session" not in out
+
 
 class TestHookSpecs:
-    def test_lifecycle_specs_ship_and_render_without_matcher(self):
+    def test_lifecycle_specs_ship_and_render_with_empty_matcher(self):
         from codegraph.cli.commands_init import (
             _append_hook,
             _claude_hook_specs,
@@ -193,5 +271,9 @@ class TestHookSpecs:
         spec = specs["cgh-resume-header"]
         _append_hook(settings, spec)
         entry = settings["hooks"]["SessionStart"][0]
-        assert "matcher" not in entry  # lifecycle events carry no matcher
+        # A lifecycle event matches all triggers, so its matcher is "" — but the
+        # key must be PRESENT. Claude Code treats a matcher-taking event whose
+        # entry omits the field as undefined, which is why the auto-checkpoint
+        # hook silently failed to fire before.
+        assert entry.get("matcher") == ""
         assert _find_hook(settings, spec)

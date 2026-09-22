@@ -444,7 +444,10 @@ def knowledge_count(
     """Total matching entries, use alongside knowledge_list for pagination."""
     conn = _get_conn(repo_root)
     sql = "SELECT count(*) FROM knowledge"
-    where: list[str] = []
+    # Match knowledge_list, which excludes superseded rows. Without this the
+    # count exceeds what list can return, and the pagination it feeds (has_more
+    # / next_offset) points past the end.
+    where: list[str] = ["superseded_by IS NULL"]
     params: list = []
     if kind:
         where.append("kind = ?")

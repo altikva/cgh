@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.13.0"
+version = "0.14.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 50 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -13,7 +13,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11"
 # No upper cap: DuckDB is the default backend and ships cp3.14 wheels;
 # the standalone binary falls back to the bundled SQLite backend.
-keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor", "code-index", "symbol-lookup", "call-graph", "ai-agents"]
+keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor",
+            "code-index", "symbol-lookup", "call-graph", "ai-agents",
+            "python", "typescript", "javascript", "java", "go", "rust", "vue", "markdown"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -56,7 +58,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The six first-party plugins in one install:
+# The seven first-party plugins in one install:
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 plugins = [
     "cgh-docs>=0.2",
@@ -65,8 +67,9 @@ plugins = [
     "cgh-classify>=0.1.3",
     "cgh-bugreport>=0.1.1",
     "cgh-vision[pdf]>=0.5",
+    "cgh-codegen>=0.1",
 ]
-# Everything: the six plugins plus the langs and lsp extras. The
+# Everything: the seven plugins plus the langs and lsp extras. The
 # tree-sitter grammars ship abi3 wheels
 # (cp310-abi3, so any Python cgh supports) and jedi is pure Python,
 # which is what makes this superset safe to offer.
@@ -78,6 +81,7 @@ full = [
     "cgh-classify>=0.1.3",
     "cgh-bugreport>=0.1.1",
     "cgh-vision[pdf]>=0.5",
+    "cgh-codegen>=0.1",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
     "jedi>=0.19",
@@ -142,6 +146,15 @@ codegraph = [
 dev = [
     "pytest>=8",
 ]
+
+[tool.uv.sources]
+# Transitional: cgh-codegen is not on PyPI yet, so the cgh[plugins]/[full]
+# extras above cannot resolve it from the index. Point uv at the local plugin
+# for dev and the lock; the PUBLISHED metadata still reads "cgh-codegen>=0.1"
+# because [tool.uv.sources] is uv-only and never ships in the wheel. REMOVE this
+# entry once cgh-codegen has its first PyPI release, so the lock resolves the
+# plugin from the index like the other six.
+cgh-codegen = { path = "plugins/cgh-codegen", editable = true }
 
 [tool.ruff]
 target-version = "py311"

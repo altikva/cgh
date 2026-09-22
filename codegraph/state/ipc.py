@@ -24,6 +24,14 @@ _OWNER_PID_FILE = "owner.pid"
 _OWNER_VERSION_FILE = "owner.version"
 _WORKERS_DIR = "workers"
 
+# The MCP client (Claude Code) drops a server whose initialize handshake does
+# not answer within roughly 30s. The proxy cannot answer it until the owner is
+# listening, so the owner-startup wait must stay comfortably under that budget:
+# a slower start reads as a dead server. The owner publishes its port before its
+# backgrounded reindex, so this window is ample in practice.
+_CLIENT_HANDSHAKE_BUDGET = 30.0
+_OWNER_STARTUP_TIMEOUT = 20.0
+
 
 def port_file(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _PORT_FILE
@@ -209,10 +217,65 @@ def installed_cgh_version() -> str | None:
         return None
 
 
+def _record_fingerprint(record_text: str, rel_path: str, ver: str | None) -> str | None:
+    """Fold RECORD into the version, but ONLY when RECORD actually describes the
+    imported source: its own path (`rel_path`) must appear as a hashed entry. A
+    PEP 660 editable RECORD is hashed yet lists only the `.pth` shim, not
+    `codegraph/*`, so its hash never moves across source edits, a fingerprint
+    that looks precise but is blind. Requiring the module's own path to be listed
+    rejects that case (and any future layout where RECORD stops describing the
+    sources) without sniffing install modes. Returns None to signal "fall back
+    to the bare version"."""
+    if "sha256=" not in record_text or rel_path not in record_text:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256(record_text.encode("utf-8")).hexdigest()[:16]
+    return f"{ver or '?'}+{digest}"
+
+
+def installed_cgh_fingerprint() -> str | None:
+    """A build fingerprint that changes whenever the installed code changes,
+    even across a same-version reinstall. The version string alone cannot see a
+    develop-to-develop swap that keeps the number, which is how a stale owner
+    kept serving old code after a reinstall. The installer's RECORD can see it:
+    it lists a content hash per file, so hashing RECORD changes iff some file's
+    content changed, and it is static on disk (never recomputed), so the same
+    install yields the same fingerprint in the owner and in the checker, with no
+    restart-loop risk.
+
+    RECORD is read from the dist-info beside the actually-imported package, not
+    via importlib.metadata, whose distribution() can be shadowed by a stray
+    egg-info in the cwd and then report an empty RECORD. The RECORD must list the
+    imported module's own path (see _record_fingerprint); otherwise, or on any
+    failure, fall back to the bare version so the drift check stays coarse but
+    keeps its never-loop guarantee.
+    """
+    ver = installed_cgh_version()
+    try:
+        import codegraph
+
+        pkg_file = Path(codegraph.__file__).resolve()
+        site_packages = pkg_file.parent.parent
+        rel_path = pkg_file.relative_to(site_packages).as_posix()
+        for dist_info in sorted(site_packages.glob("cgh-*.dist-info")):
+            record = dist_info / "RECORD"
+            if not record.is_file():
+                continue
+            fp = _record_fingerprint(record.read_text(encoding="utf-8"), rel_path, ver)
+            if fp is not None:
+                return fp
+    except Exception:
+        # Any failure to fingerprint reads as "version only": the drift check
+        # still catches a version bump and still never forces a restart loop.
+        pass
+    return ver
+
+
 def write_owner_version(repo_root: str | Path, ver: str | None) -> None:
-    """Stamp the version the owner is serving under. Best-effort: a missing
-    stamp just means the drift check stays quiet (fails safe, never a restart
-    loop)."""
+    """Stamp the build fingerprint the owner is serving under. Best-effort: a
+    missing stamp just means the drift check stays quiet (fails safe, never a
+    restart loop)."""
     if not ver:
         return
     try:
@@ -234,11 +297,13 @@ def read_owner_version(repo_root: str | Path) -> str | None:
 
 
 def owner_version_current(repo_root: str | Path) -> bool:
-    """True unless the running owner's stamped version and the installed
-    version are BOTH known and differ. Unknown on either side reads as
-    current, so an unreadable version can never drive a stop/respawn loop."""
+    """True unless the running owner's stamped fingerprint and the installed
+    fingerprint are BOTH known and differ. The fingerprint folds a RECORD hash
+    into the version, so a same-version reinstall with new code is caught, not
+    just a version bump. Unknown on either side reads as current, so an
+    unreadable fingerprint can never drive a stop/respawn loop."""
     stamped = read_owner_version(repo_root)
-    installed = installed_cgh_version()
+    installed = installed_cgh_fingerprint()
     if stamped is None or installed is None:
         return True
     return stamped == installed
@@ -345,6 +410,20 @@ def rotate_owner_log(repo_root: str | Path) -> None:
         pass
 
 
+def _reap_child(pid: int | None) -> None:
+    """Reap a dead owner that this process spawned, so it does not linger as a
+    zombie in the process table. ``os.waitpid`` only works from the parent; a
+    ChildProcessError means the pid is not our child (already reaped, or
+    spawned by a different process), which is fine. No-op on Windows, which has
+    no zombie processes, and on a missing pid."""
+    if not pid or os.name == "nt":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
 def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None:
     """
     Launch `cgh _serve_owner` as a detached background process.
@@ -353,6 +432,10 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     """
     repo_root = Path(repo_root).resolve()
     (repo_root / ".codegraph").mkdir(parents=True, exist_ok=True)
+
+    # Reap a prior owner we spawned that has since died, so respawning does not
+    # leave its predecessor lingering as a zombie in the process table.
+    _reap_child(read_owner_pid(repo_root))
 
     # Clear any stale state
     port_file(repo_root).unlink(missing_ok=True)
@@ -393,6 +476,11 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
         "stdout": logf,
         "stderr": logf,
         "close_fds": True,
+        # Start the owner in its OWN repo, so per-repo state that falls back to
+        # the process cwd can never open another worktree's call_log.db. The
+        # owner also chdirs to --root itself, this covers the spawn window
+        # before that runs.
+        "cwd": str(repo_root),
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = (
@@ -402,15 +490,33 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
         popen_kwargs["start_new_session"] = True
     subprocess.Popen(cmd, **popen_kwargs)
 
-    # Wait for the owner to publish its port. When --reindex is requested the
-    # owner finishes the full scan before writing the port file, which can take
-    # well over a minute on large repos. Use a generous timeout.
-    timeout = 300.0 if reindex else 15.0
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if is_owner_alive(repo_root):
-            return read_owner_port(repo_root)
-        time.sleep(0.25)
+    # Wait for the owner to publish its port, then bridge to it. The owner
+    # publishes the port as soon as it is listening and runs its reindex in the
+    # background (see owner_main), so this no longer scales with repo size the
+    # way it did when the owner scanned before serving, and the old 300s wait
+    # would only ever block long past the point the MCP client had given up.
+    return _await_owner_port(repo_root, _OWNER_STARTUP_TIMEOUT)
+
+
+def _await_owner_port(
+    repo_root: str | Path,
+    timeout: float,
+    *,
+    _alive=is_owner_alive,
+    _read_port=read_owner_port,
+    _now=time.monotonic,
+    _sleep=time.sleep,
+) -> int | None:
+    """Poll until the owner is alive and serving, then return its port; None if
+    it does not come up within ``timeout``. The wait stays under the client's
+    handshake budget on purpose: an owner that cannot start in that window is
+    better reported as absent (the caller retries) than waited on past the point
+    the client has already timed the server out."""
+    deadline = _now() + timeout
+    while _now() < deadline:
+        if _alive(repo_root):
+            return _read_port(repo_root)
+        _sleep(0.25)
     return None
 
 
@@ -424,6 +530,9 @@ def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
         return None
     if is_owner_alive(repo_root):
         return read_owner_port(repo_root)
+    # The owner is gone. If it was our child it may be a zombie in the table;
+    # reap it so a defunct process does not linger, then spawn a fresh one.
+    _reap_child(read_owner_pid(repo_root))
     return spawn_owner(repo_root, watch=watch, reindex=False)
 
 

@@ -38,6 +38,9 @@ def reset_for_tests() -> None:
     """Drop the memoised source roots."""
     _PY_ROOTS_CACHE.clear()
     _JS_ROOTS_CACHE.clear()
+    _JAVA_ROOTS_CACHE.clear()
+    _RUST_ROOTS_CACHE.clear()
+    _GO_MODULE_CACHE.clear()
 
 
 def _python_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
@@ -287,7 +290,273 @@ def resolve_js_ts(
 # Languages with a resolver behind them. Everything else parses its imports
 # and then drops them here, which is why a Go or Terraform repo shows zero
 # import edges: not a missing edge, a missing resolver.
-RESOLVABLE_LANGS = frozenset({"python", "typescript", "tsx", "javascript", "vue"})
+# Source roots per importer directory, for Java's package-to-path mapping.
+_JAVA_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+# Directory names that end a Java source root. A package path is written
+# against one of these, never against the repo root of a Maven or Gradle
+# project, and a multi-module build has one per module.
+_JAVA_ROOT_SUFFIXES = (
+    ("src", "main", "java"),
+    ("src", "test", "java"),
+    ("src", "main", "kotlin"),
+    ("src",),
+)
+
+
+def _java_source_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
+    """Directories a Java package path may be written against.
+
+    A package maps to a directory chain, so the root is whichever ancestor
+    of the importer ends the conventional prefix: `src/main/java` for a
+    Maven or Gradle module, `src/test/java` for its tests, plain `src/` for
+    a flat project. A multi-module build has one per module, which is why
+    the walk starts at the importer and climbs rather than guessing from
+    the repo root.
+    """
+    key = str(importer_dir)
+    cached = _JAVA_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    roots: list[Path] = []
+    walker = importer_dir
+    while True:
+        for suffix in _JAVA_ROOT_SUFFIXES:
+            if walker.parts[-len(suffix) :] == suffix:
+                roots.append(walker)
+                break
+        if walker == repo_root or walker.parent == walker:
+            break
+        walker = walker.parent
+    roots.append(repo_root)
+
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for root in roots:
+        marker = str(root)
+        if marker not in seen:
+            seen.add(marker)
+            ordered.append(root)
+    result = tuple(ordered)
+    _JAVA_ROOTS_CACHE[key] = result
+    return result
+
+
+def resolve_java(
+    source_module: str, importer_path: Path, repo_root: Path
+) -> Path | None:
+    """Resolve a Java import to the file that declares it.
+
+    ``source_module`` is the dotted path tree-sitter hands back for an
+    import declaration: `com.google.gson.TypeAdapter` for a plain import,
+    `com.google.gson.TypeAdapter.read` for a static member import, and
+    `com.google.gson` for a wildcard, because the asterisk is a separate
+    node. Trailing segments are dropped one at a time, so a static import
+    and a nested class both land on the file that holds the outer type,
+    and a wildcard resolves to nothing rather than to a wrong file.
+    """
+    if not source_module:
+        return None
+
+    importer = importer_path.resolve()
+    parts = [p for p in source_module.split(".") if p]
+    if not parts:
+        return None
+
+    for base in _java_source_roots(importer.parent, repo_root.resolve()):
+        candidate = list(parts)
+        while candidate:
+            target_dir = base.joinpath(*candidate[:-1]) if len(candidate) > 1 else base
+            hit = _try_paths([target_dir / f"{candidate[-1]}.java"])
+            if hit:
+                return hit
+            candidate.pop()
+    return None
+
+
+# Go: an import is a package directory addressed by the module path from
+# go.mod, not a file. The edge has to point at a file, so the package's
+# representative source is used.
+_GO_MODULE_CACHE: dict[str, str | None] = {}
+
+
+def _go_module_path(repo_root: Path) -> str | None:
+    """The module path declared in go.mod, or None when there is no module."""
+    key = str(repo_root)
+    if key in _GO_MODULE_CACHE:
+        return _GO_MODULE_CACHE[key]
+    module = None
+    gomod = repo_root / "go.mod"
+    try:
+        for line in gomod.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("module "):
+                module = stripped[len("module ") :].strip()
+                break
+    except OSError:
+        module = None
+    _GO_MODULE_CACHE[key] = module
+    return module
+
+
+def _go_package_file(pkg_dir: Path) -> Path | None:
+    """One file standing for a package directory, tests last."""
+    if not pkg_dir.is_dir():
+        return None
+    named = pkg_dir / f"{pkg_dir.name}.go"
+    if named.is_file():
+        return named.resolve()
+    sources = sorted(f for f in pkg_dir.glob("*.go") if not f.name.endswith("_test.go"))
+    if sources:
+        return sources[0].resolve()
+    return None
+
+
+def resolve_go(source_module: str, importer_path: Path, repo_root: Path) -> Path | None:
+    """Resolve a Go import to a file inside this module.
+
+    Only the module's own packages resolve: an import is `<module>/<dir>`,
+    so anything not carrying the go.mod module prefix is the standard
+    library or a dependency and is refused rather than guessed at.
+    """
+    if not source_module:
+        return None
+    root = repo_root.resolve()
+    module = _go_module_path(root)
+    if not module or source_module == module:
+        return _go_package_file(root) if source_module == module else None
+    prefix = module + "/"
+    if not source_module.startswith(prefix):
+        return None
+    rel = source_module[len(prefix) :].strip("/")
+    if not rel:
+        return None
+    return _go_package_file(root.joinpath(*rel.split("/")))
+
+
+# Rust: a use path addresses a module, which is a file or a directory with
+# mod.rs. `mod` declarations are what actually wire files together, and the
+# parser does not emit those yet, so only `use` paths resolve here.
+_RUST_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+
+def _rust_crate_roots(importer_dir: Path, repo_root: Path) -> tuple[Path, ...]:
+    """Crate source roots above the importer, nearest first."""
+    key = str(importer_dir)
+    cached = _RUST_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    roots: list[Path] = []
+    walker = importer_dir
+    while True:
+        if walker.name == "src":
+            roots.append(walker)
+        if walker == repo_root or walker.parent == walker:
+            break
+        walker = walker.parent
+    roots.append(repo_root / "src")
+    roots.append(repo_root)
+    seen: set[str] = set()
+    ordered = []
+    for r in roots:
+        if str(r) not in seen:
+            seen.add(str(r))
+            ordered.append(r)
+    result = tuple(ordered)
+    _RUST_ROOTS_CACHE[key] = result
+    return result
+
+
+def _rust_module_file(base: Path, parts: list[str]) -> Path | None:
+    """The file holding a module path, trailing item names dropped.
+
+    A use path names a module and then an item inside it, and a grouped
+    import expands to one path per item, so `crate::escape::escape_os` has
+    to fall back to `escape.rs`. Dropping from the right stops at the first
+    file that exists, which is the module that actually holds the item.
+    """
+    candidate = list(parts)
+    while candidate:
+        target = base.joinpath(*candidate)
+        hit = _try_paths([target.with_suffix(".rs"), target / "mod.rs"])
+        if hit:
+            return hit
+        candidate.pop()
+    return None
+
+
+def _rust_self_dir(importer: Path) -> Path:
+    """The directory holding a Rust module's children.
+
+    A crate root and a `mod.rs` own the directory they sit in, so their
+    submodules are siblings. Every other file owns a directory named after
+    it: `src/foo.rs` declaring `mod bar;` means `src/foo/bar.rs`, never
+    `src/bar.rs`. Getting this wrong points a whole module tree one level
+    too high.
+
+    Crate roots are not only `lib.rs` and `main.rs`. Cargo compiles every
+    file sitting directly in `tests/`, `benches/` and `examples/`, and in
+    `src/bin/`, as its own crate, so those are roots too and their modules
+    are siblings as well.
+    """
+    if importer.stem in ("lib", "main", "mod"):
+        return importer.parent
+    if importer.parent.name in ("tests", "benches", "examples", "bin"):
+        return importer.parent
+    return importer.parent / importer.stem
+
+
+def resolve_rust(
+    source_module: str, importer_path: Path, repo_root: Path
+) -> Path | None:
+    """Resolve a Rust `use` path to the file holding that module.
+
+    The parser hands back the raw text of the use tree, so a grouped import
+    arrives as `crate::a::{b, c}` and an alias as `serde::Serialize as S`.
+    Both are cut back to the path before resolving. `crate::` starts at the
+    crate root, `self::` and `super::` walk from the importing file, and a
+    bare path is tried against the crate root before being refused, which
+    is what keeps external crates out of the graph.
+    """
+    if not source_module:
+        return None
+    head = source_module.split("{")[0].split(" as ")[0].strip()
+    parts = [p for p in head.split("::") if p and p != "*"]
+    if not parts:
+        return None
+
+    importer = importer_path.resolve()
+    importer_dir = importer.parent
+    root = repo_root.resolve()
+
+    if parts[0] in ("self", "super"):
+        base = _rust_self_dir(importer)
+        rest = parts[:]
+        while rest and rest[0] in ("self", "super"):
+            if rest[0] == "super":
+                base = base.parent
+            rest = rest[1:]
+        return _rust_module_file(base, rest) if rest else None
+
+    if parts[0] == "crate":
+        rest = parts[1:]
+        for base in _rust_crate_roots(importer_dir, root):
+            if hit := _rust_module_file(base, rest):
+                return hit
+        return None
+
+    # A bare path is only ours when a matching module exists; otherwise it
+    # is an external crate and must not produce an edge.
+    for base in _rust_crate_roots(importer_dir, root):
+        if hit := _rust_module_file(base, parts):
+            return hit
+    return None
+
+
+RESOLVABLE_LANGS = frozenset(
+    {"python", "typescript", "tsx", "javascript", "vue", "java", "go", "rust"}
+)
 
 
 def resolve_import(
@@ -310,4 +579,10 @@ def resolve_import(
         return resolve_python(source_module, importer, root)
     if lang in ("typescript", "tsx", "javascript", "vue"):
         return resolve_js_ts(source_module, importer, root)
+    if lang == "java":
+        return resolve_java(source_module, importer, root)
+    if lang == "go":
+        return resolve_go(source_module, importer, root)
+    if lang == "rust":
+        return resolve_rust(source_module, importer, root)
     return None

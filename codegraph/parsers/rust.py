@@ -131,23 +131,77 @@ class RustParser(BaseParser):
             )
             return name
 
+        def _use_paths(node: Node, prefix: str = "") -> list[str]:
+            """Every module path a use tree names.
+
+            `use crate::{a::X, b::Y}` names two modules, not one, and each is
+            its own edge. Collapsing the tree to a single string would leave
+            the grouped form, which is the idiomatic one in Rust, resolving
+            to nothing at all.
+            """
+            kind = node.type
+            if kind in ("identifier", "scoped_identifier", "crate", "super", "self"):
+                tail = _text(node, src).strip()
+                return [f"{prefix}{tail}" if prefix else tail]
+            if kind == "use_as_clause":
+                target = node.child_by_field_name("path")
+                return _use_paths(target, prefix) if target else []
+            if kind == "use_wildcard":
+                inner = node.child_by_field_name("path") or (
+                    node.children[0] if node.children else None
+                )
+                return _use_paths(inner, prefix) if inner else []
+            if kind == "scoped_use_list":
+                head = node.child_by_field_name("path")
+                lst = node.child_by_field_name("list")
+                base = prefix + (f"{_text(head, src).strip()}::" if head else "")
+                return _use_paths(lst, base) if lst else []
+            if kind == "use_list":
+                out: list[str] = []
+                for child in node.children:
+                    if child.type in (",", "{", "}"):
+                        continue
+                    out.extend(_use_paths(child, prefix))
+                return out
+            return []
+
         def _emit_use(use: Node) -> None:
             for child in use.children:
                 if child.type in (
+                    "identifier",
                     "scoped_identifier",
                     "scoped_use_list",
                     "use_as_clause",
                     "use_list",
+                    "use_wildcard",
                 ):
-                    text = _text(child, src).strip()
-                    if text:
-                        index.imports.append(ImportRef(source_module=text, symbols=[]))
+                    for path in _use_paths(child):
+                        if path:
+                            index.imports.append(
+                                ImportRef(source_module=path, symbols=[])
+                            )
                     return
-                if child.type == "identifier":
-                    index.imports.append(
-                        ImportRef(source_module=_text(child, src), symbols=[])
-                    )
-                    return
+
+        def _emit_mod(mod: Node) -> None:
+            """A body-less `mod foo;` is how a Rust file reaches a sibling.
+
+            Rust has no import statement for a crate's own files: the parent
+            module declares the child, and every `use crate::foo` elsewhere
+            leans on that declaration. Skip it and a crate's file tree stays
+            disconnected whatever its `use` lines say. An inline
+            `mod foo { ... }` declares nothing outside this file, so it
+            carries no edge.
+            """
+            if any(child.type == "declaration_list" for child in mod.children):
+                return
+            name = mod.child_by_field_name("name")
+            if name is None:
+                return
+            ident = _text(name, src).strip()
+            if ident:
+                index.imports.append(
+                    ImportRef(source_module=f"self::{ident}", symbols=[])
+                )
 
         def _walk_impl(impl: Node) -> None:
             type_node = impl.child_by_field_name("type")
@@ -162,6 +216,8 @@ class RustParser(BaseParser):
         for node in root.children:
             if node.type == "use_declaration":
                 _emit_use(node)
+            elif node.type == "mod_item":
+                _emit_mod(node)
             elif node.type == "struct_item":
                 _emit_type(node, "struct")
             elif node.type == "enum_item":

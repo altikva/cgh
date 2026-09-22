@@ -107,6 +107,36 @@ class TestExplicitPurge:
         for table in ("edge_defines_fn", "function", "file"):
             assert duckdb_db.execute(f"SELECT count(*) FROM {table}").get_next() == [0]
 
+    def test_purge_survives_integer_node_id_column(self, duckdb_db):
+        # A legacy or anomalous DB whose node id column is integer-typed (an old
+        # table CREATE TABLE IF NOT EXISTS never migrated): SELECT id hands back
+        # Python ints. A single int makes DuckDB retype the whole IN-list to
+        # INT32 and cast the TEXT to_id column to match, which raises on any
+        # non-numeric id and aborts the reindex, silently dropping the file.
+        conn = duckdb_db._conn
+        conn.execute("DROP TABLE IF EXISTS md_section")
+        conn.execute(
+            "CREATE TABLE md_section (id INTEGER PRIMARY KEY, title TEXT, "
+            "level BIGINT, file_path TEXT, start_line BIGINT, end_line BIGINT, "
+            "body_preview TEXT, anchor TEXT, kind TEXT)"
+        )
+        conn.execute("INSERT INTO file(path) VALUES ('en.json')")
+        conn.execute("INSERT INTO md_section(id, file_path) VALUES (1, 'en.json')")
+        # A stale edge whose to_id is a non-numeric string: this is the value
+        # that DuckDB fails to cast to INT32 when the IN-list is poisoned.
+        conn.execute(
+            "INSERT INTO edge_defines_section(from_path, to_id) "
+            "VALUES ('en.json', 'en.json::welcome')"
+        )
+
+        # Must not raise (pre-fix this threw a ConversionException).
+        duckdb_db.purge_file_data("en.json")
+
+        # The file's node rows are gone; the reindex can proceed.
+        assert duckdb_db.execute(
+            "SELECT count(*) FROM md_section WHERE file_path = 'en.json'"
+        ).get_next() == [0]
+
 
 class TestBackendSelection:
     """core.db.get_connection() picks the backend from CGH_DB env var or

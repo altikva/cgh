@@ -4,10 +4,11 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI verbs `cgh codegen pick` (report the reference to mirror)
-#              and `cgh codegen gen` (generate the file from a spec plus that
+# Description: CLI verbs `cgh codegen pick` (report the reference to mirror),
+#              `cgh codegen gen` (generate the file from a spec plus that
 #              reference, behind the egress gate, refusing to clobber without
-#              --force).
+#              --force), and `cgh codegen log` (show what codegen has done in
+#              this repo, read from the activity log, at no model-token cost).
 
 from __future__ import annotations
 
@@ -47,7 +48,19 @@ def make_cli_registrar(config: dict):
         gen = actions.add_parser(
             "gen", help="Generate a file from a spec, mirroring a reference"
         )
-        gen.add_argument("--spec", required=True, help="What to generate")
+        gen.add_argument(
+            "--spec",
+            default="",
+            help="What to generate. Use '-' to read the spec from stdin. "
+            "Single-quote it in the shell, or use --spec-file, to avoid the "
+            "shell running backticks or $(...) inside it.",
+        )
+        gen.add_argument(
+            "--spec-file",
+            default="",
+            help="Read the spec from this file ('-' for stdin), instead of "
+            "--spec. Sidesteps shell quoting for long or backtick-heavy specs.",
+        )
         gen.add_argument("--target", required=True, help="File to write")
         gen.add_argument(
             "--reference", default="", help="Force a reference instead of picking one"
@@ -57,6 +70,12 @@ def make_cli_registrar(config: dict):
         )
         gen.add_argument(
             "--stdout", action="store_true", help="Print the code, do not write a file"
+        )
+        gen.add_argument(
+            "--extend",
+            action="store_true",
+            help="Add to an existing target instead of writing a new file; "
+            "the model returns only the block to append",
         )
         gen.add_argument(
             "--verify",
@@ -73,19 +92,66 @@ def make_cli_registrar(config: dict):
         gen.add_argument("--root", default=os.getcwd())
         gen.set_defaults(func=lambda args: _cmd_gen(args, config))
 
+        log = actions.add_parser(
+            "log",
+            help="Show what codegen has done here, read from the activity log "
+            "(no model tokens)",
+        )
+        log.add_argument("--limit", type=int, default=20, help="Max entries to show")
+        log.add_argument("--root", default=os.getcwd())
+        log.set_defaults(func=lambda args: _cmd_log(args, config))
+
     return add_cli
+
+
+def _cmd_log(args, config: dict) -> None:
+    from datetime import datetime
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from .logview import codegen_activity
+
+    console = Console()
+    root = Path(os.path.abspath(args.root))
+    rows = codegen_activity(root, limit=args.limit)
+    if not rows:
+        console.print(
+            "[dim]No codegen activity logged in this repo yet. "
+            "Runs of cgh codegen gen show up here.[/dim]"
+        )
+        return
+
+    table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+    table.add_column("when", style="dim", no_wrap=True)
+    table.add_column("event")
+    table.add_column("detail", overflow="fold")
+    for ts, event, detail in rows:
+        try:
+            when = datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError):
+            when = "?"
+        kind = event.removeprefix("codegen_")
+        label = f"[red]{kind}[/red]" if kind == "egress_denied" else kind
+        table.add_row(when, label, detail)
+    console.print(f"[bold]codegen activity[/bold]  [dim]({len(rows)})[/dim]")
+    console.print(table)
+    console.print(
+        "[dim]Read straight from .codegraph/activity.log; "
+        "nothing here entered a model's context.[/dim]"
+    )
 
 
 def _cmd_pick(args, config: dict) -> None:
     from rich.console import Console
 
-    from .picker import CodeWriteError, pick_reference
+    from .picker import CodegenError, pick_reference
 
     console = Console()
     root = Path(os.path.abspath(args.root))
     try:
         result = pick_reference(root, args.target, args.reference or None)
-    except CodeWriteError as exc:
+    except CodegenError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
@@ -107,17 +173,52 @@ def _cmd_pick(args, config: dict) -> None:
         console.print("[dim]graph unavailable; filesystem-only pick.[/dim]")
 
 
+def _resolve_spec(args, console) -> str:
+    """The spec text, from --spec, --spec-file, or stdin ('-' in either).
+
+    Reading from a file or stdin lets an agent pass a long or backtick-heavy
+    spec without the shell running command-substitution inside it (the reported
+    footgun of an unquoted --spec). Exits with a clear message on an empty or
+    missing spec.
+    """
+    import sys
+
+    spec_file = getattr(args, "spec_file", "") or ""
+    spec = getattr(args, "spec", "") or ""
+    text: str | None = None
+    if spec_file == "-" or spec == "-":
+        text = sys.stdin.read()
+    elif spec_file:
+        try:
+            text = Path(spec_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            console.print(f"[red]cannot read --spec-file {spec_file}: {exc}[/red]")
+            raise SystemExit(1) from exc
+    elif spec:
+        text = spec
+    text = (text or "").strip()
+    if not text:
+        console.print(
+            "[red]empty spec.[/red] Pass --spec '...' (single-quoted), "
+            "--spec-file <path>, or --spec - to read from stdin."
+        )
+        raise SystemExit(1)
+    return text
+
+
 def _cmd_gen(args, config: dict) -> None:
     from rich.console import Console
 
     from .backends import resolve_backend
     from .flow import run_generation
     from .generate import GenerationError
-    from .picker import CodeWriteError
+    from .picker import CodegenError
 
     console = Console()
     root = Path(os.path.abspath(args.root))
     config = plugin_config_for_root(root, config)
+
+    spec = _resolve_spec(args, console)
 
     backend = resolve_backend(config)
     if backend is None:
@@ -131,7 +232,7 @@ def _cmd_gen(args, config: dict) -> None:
     try:
         result = run_generation(
             root,
-            args.spec,
+            spec,
             args.target,
             args.reference or None,
             config=config,
@@ -140,24 +241,43 @@ def _cmd_gen(args, config: dict) -> None:
             to_stdout=args.stdout,
             verify=args.verify or None,
             max_attempts=max(1, args.max_attempts),
+            extend=args.extend,
         )
-    except (CodeWriteError, GenerationError) as exc:
+    except (CodegenError, GenerationError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
 
     if args.stdout:
-        # code to stdout stays clean; the note goes to stderr via rich stderr
-        Console(stderr=True).print(
+        # code to stdout stays clean; the notes go to stderr via rich stderr
+        stderr = Console(stderr=True)
+        if result.get("ref_fallback"):
+            stderr.print(f"[yellow]note:[/yellow] [dim]{result['ref_fallback']}[/dim]")
+        stderr.print(
             f"[dim]{result['reference']} -> {result['lines']} lines "
             f"({result['backend']}, egress: {result['egress']})[/dim]"
         )
         print(result["code"])
         return
 
-    console.print(
-        f"[green]wrote[/green] {result['target']}  "
-        f"[dim]({result['lines']} lines, mirror of {result['reference']})[/dim]"
-    )
+    if result.get("rolled_back"):
+        console.print(
+            f"[red]not appended[/red] to {result['target']}: the check never "
+            f"passed in {result['attempts']} attempt(s), so the file was left "
+            "as it was."
+        )
+        raise SystemExit(1)
+    if result.get("ref_fallback"):
+        console.print(f"[yellow]note:[/yellow] [dim]{result['ref_fallback']}[/dim]")
+    if result["extended"]:
+        console.print(
+            f"[green]appended to[/green] {result['target']}  "
+            f"[dim]({result['lines']} lines added)[/dim]"
+        )
+    else:
+        console.print(
+            f"[green]wrote[/green] {result['target']}  "
+            f"[dim]({result['lines']} lines, mirror of {result['reference']})[/dim]"
+        )
     v = result.get("verified")
     if v is True:
         console.print(

@@ -71,6 +71,15 @@ class TestStatusLine:
         assert "partial scan" in line
         assert "31/190" in line
 
+    def test_a_language_without_a_resolver_says_so(self):
+        """Terraform parses its dependencies but has no resolver. Printing
+        0/47 there would read as a failure to resolve rather than as a
+        feature that does not exist."""
+        line = _imports_coverage_line({"terraform": {"seen": 47, "resolved": 0}})
+
+        assert "no resolver" in line
+        assert "0/47" not in line
+
     def test_a_full_measurement_stays_quiet(self):
         line = _imports_coverage_line(FULL, partial=False)
 

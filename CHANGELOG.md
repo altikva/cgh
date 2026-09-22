@@ -8,6 +8,141 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-22
+
+### Added
+- **cgh-codegen ships as a first-party PyPI plugin**: the code-generation
+  plugin was local-path only, installable just from a dev checkout. It now
+  publishes to PyPI on release like the other first-party plugins and joins the
+  `cgh[plugins]` and `cgh[full]` bundles, so `pip install "cgh[plugins]"` gets
+  it too. It stays inert until a backend is configured.
+- **`owner.log` lines carry a timestamp**: a background log line recorded its
+  level and logger name but not the time, so an error could not be placed
+  against a specific event, a crash window or an owner restart. Lines now lead
+  with the date and time.
+- **Worktree-aware init and federation**: across git worktrees, `cgh init`
+  keeps its own files out of the worktree's git tracking, and federation
+  resolves a child to its sibling worktree rather than the child's main
+  checkout, so a multi-worktree layout indexes the tree the agent is in.
+- **Rust `mod` declarations become import edges**: Rust has no import
+  statement for a crate's own files, the parent module declares the child with
+  `mod foo;`, and the parser ignored those. A crate's file tree stayed
+  disconnected whatever its `use` lines said. On ripgrep this is 87 more
+  resolved edges and internal import coverage rising from 28% to 35%. Inline
+  `mod foo { }` declares nothing outside its file and gets no edge.
+- **`cgh codegen gen --extend` adds to an existing file**: generation could
+  only create a file, so growing one meant writing it by hand. The target now
+  goes to the model as the text to add to and the model returns only the block
+  to append, so the existing content never passes through the model's output.
+  A failed `--verify` restores the original rather than leaving a damaged file.
+- **Go and Rust imports resolve to edges**: both parsed their imports and
+  resolved none, so their file graphs were nodes without edges. A Go import
+  names a package directory through the module path in `go.mod`, so only the
+  module's own packages resolve and the edge points at the file naming the
+  package. A Rust `use` path names a module, resolved as `<path>.rs` or
+  `<path>/mod.rs`, with `crate::` starting at the crate root and `self::` and
+  `super::` walking from the importing file; grouped imports and `as` aliases
+  are cut back to the path first. The standard library, third-party modules
+  and external crates stay unresolved, because an edge to code that is not in
+  the repo would be a lie about it.
+- **A Rust grouped import counts as one import per module it names**: the
+  parser collapsed `use crate::{a::X, b::Y}` into a single entry whose text
+  carried the braces, so the idiomatic form of the language resolved to
+  nothing. The use tree is walked now and each member becomes its own import,
+  which is also what makes them resolvable. On BurntSushi/ripgrep this took
+  the import graph from 9 to 99 edges.
+- **Java imports resolve to edges**: a Java package maps to a directory chain
+  under a source root, and that root is per module, so anchoring on the repo
+  root missed every Maven and Gradle layout. The resolver climbs from the
+  importing file to the ancestor ending `src/main/java`, `src/test/java` or
+  `src`, then drops trailing segments so a static member import and a nested
+  class both land on the file holding the outer type. A wildcard arrives as
+  the package alone and stays unresolved rather than inventing an edge. On
+  google/gson this took the import graph from 0 to 344 edges, coverage
+  reported as `java 390/2,674`, the remainder being the JDK and third-party
+  packages that are not in the repo.
+- **The graph colours the languages a repo actually holds**: the three most
+  present take the palette slots and everything else folds into the neutral,
+  so a Java or Go repo no longer paints every node "Other". Three is the cap
+  the palette validates for a node-link diagram, where any two nodes can sit
+  side by side.
+- **`cgh artifact`, a read-through cache for files cgh can't parse** (PDFs,
+  images, office documents): after an agent opens one with vision or an
+  extractor, it saves a summary; the next session recalls it instead of paying
+  the read again. The Read pre-hook surfaces a saved summary automatically, and
+  flags it stale when the file's hash no longer matches, so a changed file gets
+  re-read. `cgh artifact recall`/`list` is the human and external-agent surface;
+  connected agents use the knowledge tools, guided by a bundled `cgh-artifacts`
+  skill that `cgh init` installs.
+
+### Fixed
+- **Rust `self::` and `super::` resolved one level too high**: both walked from
+  the importing file's directory, which is only right for a crate root or a
+  `mod.rs`. A `src/foo.rs` declaring `mod bar;` means `src/foo/bar.rs`, and
+  Cargo also treats every file directly in `tests/`, `benches/`, `examples/`
+  and `src/bin/` as a crate root. Whole module trees pointed at the wrong
+  directory, and `super::` reached the crate root instead of the parent module.
+- **A generated file containing Markdown fences was silently truncated**: code
+  extraction stopped at the first closing fence, so a file with a fence of its
+  own (a test building a fenced model reply, a docs generator) was cut off,
+  often mid-string. Extraction now runs to the last fence when the reply holds
+  more than the outer pair.
+- **The resume bundle came back without its knowledge after a compaction**: a
+  long standing instruction plus a few digests could spend the whole budget
+  before the knowledge section, so a cleared session reloaded an empty bucket
+  that read as lost memory. Knowledge now holds a reserved share of the budget,
+  the digest list prefers a content-bearing digest over the contentless
+  auto-checkpoint marker, and every section that drops entries to the budget
+  reports the count instead of returning a silent empty list.
+- **A model-written session digest was hidden behind an empty marker**: the
+  resume bundle drew its digests only from rows tagged `session-digest`, so a
+  digest written before that tag existed (a plain note carrying only a session
+  id) fell into the knowledge bucket while the contentless auto-checkpoint took
+  the digest slot and read as lost memory. Such digests are recovered into the
+  digest bucket now.
+- **PreCompact and SessionStart lifecycle hooks could silently never fire**:
+  `cgh init` wrote them with no `matcher` key, which Claude Code can treat as
+  undefined, so the auto-checkpoint never ran. The hooks always carry a matcher
+  now (empty means every trigger), and a SessionStart after a compaction nudges
+  the model to record a real digest, since PreCompact cannot inject one itself.
+- **An owner could lock another repo's session store across git worktrees**:
+  the per-repo owner served from its launch directory rather than its `--root`,
+  so state that falls back to the current directory (the call log, findings,
+  full-text search) was read and written under the wrong repo when an agent
+  worked across sibling worktrees. The owner pins its working directory to
+  `--root` now.
+- **A same-version reinstall left a stale owner serving old code**: the owner
+  drift guard compared only the version string, so a develop-to-develop
+  reinstall that kept the number was invisible and a stale owner kept running.
+  The stamp now folds a hash of the installer's file record, so a same-version
+  code change is detected and the owner respawns on the current code.
+- **Reindexing a file crashed on a legacy integer-typed id column**: deleting a
+  file's edges bound its node ids into an `IN` clause, and a database whose id
+  column was integer-typed (an old table a later schema never migrated) handed
+  back integers, which made the delete cast a text column to `INT32` and abort
+  the reindex, silently dropping the file. Ids are bound as strings now. i18n
+  locale JSON, whose section ids are `path::key`, was the visible casualty.
+- **Two owners spawned at once could both claim the single-writer slot**: the
+  claim was a non-atomic check-then-write, so a race could leave the pidfile
+  naming a crashed loser while another process kept serving, and `cgh status`
+  then read "stale" for a store that was live. The claim is atomic now, a
+  staged pid hard-linked into place.
+- **A dead owner could wedge a store or read as alive**: a zombie owner process
+  satisfied the liveness probe, so a new `cgh serve` refused to start against a
+  store with no working owner. A zombie is treated as dead now, the owner reaps
+  its own dead child, a transient DuckDB file lock is waited out rather than
+  aborted, and owner startup is capped under the client handshake budget so a
+  slow start no longer reads as a dead server.
+- **`cgh codegen --force` silently discarded hand edits**: force overwrote the
+  target with the model's output whatever was on disk, so a corrected generated
+  file lost its corrections without warning. Force records what codegen wrote
+  now and refuses to overwrite a file that changed since, pointing at `--extend`
+  or deleting the file to regenerate.
+- **A codegen call could hang on a wedged graph**: reference selection queried
+  the graph with no timeout, so a stuck owner could block a codegen call
+  indefinitely. The query is bounded now (ten seconds, tunable via
+  `reference_timeout_s`) and falls back to filesystem siblings.
+
 ## [0.13.0] - 2026-09-19
 
 ### Added
@@ -1482,7 +1617,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0
 [0.11.8]: https://github.com/altikva/cgh/compare/v0.11.7...v0.11.8

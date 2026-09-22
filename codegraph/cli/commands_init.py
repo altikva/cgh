@@ -1085,6 +1085,20 @@ def cmd_init(args: argparse.Namespace) -> None:
     if not getattr(args, "no_children", False):
         _init_children(root, assume_yes=bool(getattr(args, "yes", False)))
 
+    # -- Worktree: keep cgh's own writes out of git --
+    # In a linked worktree these files are already committed on the branch, so
+    # re-running init only produces committable diffs an agent might land by
+    # accident. Hide them (skip-worktree + info/exclude) unless opted out.
+    from codegraph.integrations.worktree import hide_footprint
+
+    hidden = hide_footprint(root, enabled=bool(getattr(args, "hide_footprint", True)))
+    if hidden:
+        console.print(
+            f"\n  [green]+[/green] worktree: kept {len(hidden)} cgh file(s) out of "
+            "git [dim](skip-worktree + info/exclude, so no agent commits local "
+            "tooling; --no-hide-footprint to disable)[/dim]"
+        )
+
     # -- Done --
     _print_init_summary()
 
@@ -1388,9 +1402,11 @@ def _append_hook(settings: dict, spec: dict) -> None:
         entry["async"] = True
     if spec.get("statusMessage"):
         entry["statusMessage"] = spec["statusMessage"]
-    wrapper: dict = {"hooks": [entry]}
-    if spec.get("matcher"):
-        wrapper["matcher"] = spec["matcher"]
+    # Always emit a matcher, even "" (match all). Claude Code's matcher-taking
+    # events (PreToolUse, PreCompact, SessionStart, SessionEnd) expect the field
+    # present; an entry written without it is undefined and may silently not
+    # fire, which is why the PreCompact auto-checkpoint hook was unreliable.
+    wrapper: dict = {"matcher": spec.get("matcher", ""), "hooks": [entry]}
     bucket.append(wrapper)
 
 

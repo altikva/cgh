@@ -28,8 +28,12 @@ irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 $env:CGH_PLUGINS = 1; irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 ```
 
-Both try uv, then pipx, then pip, and move on to the next one when an
-install fails instead of giving up. Behind a corporate network:
+`install.sh` tries uv, then pipx, then pip; if no Python is usable it
+falls through to the npm wrapper (`@altikva/cgh`), and finally downloads
+the prebuilt binary for your platform from the latest release and verifies
+its SHA-256. `install.ps1` tries uv, then pipx, then pip. Each moves on to
+the next when one fails instead of giving up. Behind a corporate network
+(the Python installers honor these):
 
 | Variable | For |
 |---|---|

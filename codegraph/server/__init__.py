@@ -339,6 +339,17 @@ def owner_main(
     global _root
 
     _root = Path(root or os.getcwd()).resolve()
+    # Pin the process to its own repo. Per-repo state (call_log, findings, fts)
+    # falls back to Path.cwd() when a caller omits repo_root, so an owner
+    # spawned with a different cwd would open and HOLD another worktree's
+    # call_log.db read-write, blocking that repo's memory writes with "database
+    # is locked" while reads still work (so it reads as empty memory, not a
+    # lock). chdir keeps cwd == --root, so a stray cwd fallback can only ever
+    # touch this owner's own repo.
+    try:
+        os.chdir(_root)
+    except OSError:
+        pass
 
     configure_background_logging()
 
@@ -413,7 +424,7 @@ def owner_main(
     # Pick a free port + publish port file + owner pid
     from codegraph.state.ipc import (
         free_port,
-        installed_cgh_version,
+        installed_cgh_fingerprint,
         owner_pidfile,
         port_file,
         write_owner_version,
@@ -422,13 +433,15 @@ def owner_main(
     port = free_port()
     port_file(_root).write_text(str(port) + "\n", encoding="utf-8")
     owner_pidfile(_root).write_text(str(os.getpid()) + "\n", encoding="utf-8")
-    # Stamp the version this owner is serving under. If the package is
+    # Stamp the build fingerprint this owner is serving under. If the package is
     # upgraded on disk while this process keeps running, the in-memory code
     # no longer matches site-packages and a lazy import can fail against the
-    # new layout. The worker-watch loop below compares this stamp to the
-    # installed version and exits on drift so the next call respawns on
+    # new layout. The fingerprint folds a RECORD hash into the version, so a
+    # same-version reinstall (a develop-to-develop swap) is caught too, not just
+    # a version bump. The worker-watch loop below compares this stamp to the
+    # installed fingerprint and exits on drift so the next call respawns on
     # current code.
-    _startup_version = installed_cgh_version()
+    _startup_version = installed_cgh_fingerprint()
     write_owner_version(_root, _startup_version)
 
     # Cleanup on exit
@@ -538,9 +551,11 @@ def owner_main(
             # started under. The resident code no longer matches
             # site-packages, so a not-yet-taken lazy import could resolve
             # against the new layout and fail (that is how a fastmcp major
-            # bump took every tool down at once). Exiting lets the proxy
-            # respawn a fresh owner on current code.
-            _current = installed_cgh_version()
+            # bump took every tool down at once). The fingerprint catches a
+            # same-version reinstall too, so a develop-to-develop swap under a
+            # running owner is not missed. Exiting lets the proxy respawn a
+            # fresh owner on current code.
+            _current = installed_cgh_fingerprint()
             if _startup_version and _current and _current != _startup_version:
                 _shutdown(
                     f"cgh changed on disk ({_startup_version} -> {_current}) "

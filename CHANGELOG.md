@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-codegen ships as a first-party PyPI plugin**: the code-generation
+  plugin was local-path only, installable just from a dev checkout. It now
+  publishes to PyPI on release like the other first-party plugins and joins the
+  `cgh[plugins]` and `cgh[full]` bundles, so `pip install "cgh[plugins]"` gets
+  it too. It stays inert until a backend is configured.
 - **Rust `mod` declarations become import edges**: Rust has no import
   statement for a crate's own files, the parent module declares the child with
   `mod foo;`, and the parser ignored those. A crate's file tree stayed

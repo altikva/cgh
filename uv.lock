@@ -250,8 +250,8 @@ requires-dist = [
     { name = "cgh-bugreport", marker = "extra == 'plugins'", specifier = ">=0.1.1" },
     { name = "cgh-classify", marker = "extra == 'full'", specifier = ">=0.1.3" },
     { name = "cgh-classify", marker = "extra == 'plugins'", specifier = ">=0.1.3" },
-    { name = "cgh-codegen", marker = "extra == 'full'", editable = "plugins/cgh-codegen" },
-    { name = "cgh-codegen", marker = "extra == 'plugins'", editable = "plugins/cgh-codegen" },
+    { name = "cgh-codegen", marker = "extra == 'full'", specifier = ">=0.1" },
+    { name = "cgh-codegen", marker = "extra == 'plugins'", specifier = ">=0.1" },
     { name = "cgh-docs", marker = "extra == 'full'", specifier = ">=0.2" },
     { name = "cgh-docs", marker = "extra == 'plugins'", specifier = ">=0.2" },
     { name = "cgh-pii", marker = "extra == 'full'", specifier = ">=0.3.1" },
@@ -306,7 +306,11 @@ wheels = [
 [[package]]
 name = "cgh-codegen"
 version = "0.1.0"
-source = { editable = "plugins/cgh-codegen" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/4e/fcea310dca24b58749c73d67397ba20f3f0aea55cc22aa18ecccf37ae36b/cgh_codegen-0.1.0.tar.gz", hash = "sha256:43991cde0c796d46101e122fb69e3494813566871ca2a3659ddcf0b20f7d0ae1", size = 31555, upload-time = "2026-09-22T06:01:22.388Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/c9/3064db0fd3bc85247ba17dabf01b9a78f64f04374e736732c3e9cd4a5a4c/cgh_codegen-0.1.0-py3-none-any.whl", hash = "sha256:a0e8bf2dabdc046401fc98ff29a239176edad363617ef866d183182d87f54314", size = 26460, upload-time = "2026-09-22T06:01:21.055Z" },
+]
 
 [[package]]
 name = "cgh-docs"

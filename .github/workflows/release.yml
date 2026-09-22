@@ -157,6 +157,7 @@ jobs:
           - cgh-classify
           - cgh-bugreport
           - cgh-vision
+          - cgh-codegen
     steps:
       - uses: actions/checkout@v5
 

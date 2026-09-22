@@ -147,15 +147,6 @@ dev = [
     "pytest>=8",
 ]
 
-[tool.uv.sources]
-# Transitional: cgh-codegen is not on PyPI yet, so the cgh[plugins]/[full]
-# extras above cannot resolve it from the index. Point uv at the local plugin
-# for dev and the lock; the PUBLISHED metadata still reads "cgh-codegen>=0.1"
-# because [tool.uv.sources] is uv-only and never ships in the wheel. REMOVE this
-# entry once cgh-codegen has its first PyPI release, so the lock resolves the
-# plugin from the index like the other six.
-cgh-codegen = { path = "plugins/cgh-codegen", editable = true }
-
 [tool.ruff]
 target-version = "py311"
 

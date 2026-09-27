@@ -26,6 +26,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   and setup scripts can gate on a healthy store instead of parsing the table.
 
 ### Fixed
+- **Symbol search failed with "database disk image is malformed"**: rebuilding
+  the search index stored symbol names in a different form from the one later
+  deletes remove, so every delete after a rebuild left dangling entries, and a
+  ranked search that reached one failed. `context_for_task` was the usual
+  victim. The repair routine that runs on a damaged index was itself doing
+  those rebuilds, so it kept the damage coming. Rebuilds now store names the
+  way deletes expect, each store is repaired once the first time the new
+  version opens it (well under a second), and a search that still meets a
+  damaged index repairs it and retries instead of failing the tool.
 - **`resume` returned no knowledge in a busy store**: the bundle filled its
   knowledge slots with the most recent entries whatever their kind, so in a
   store dominated by automatic session checkpoints the real learnings, being

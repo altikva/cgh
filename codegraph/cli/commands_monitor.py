@@ -1542,7 +1542,18 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 graph_ok = True
                 graph_msg = "accessible"
             else:
-                graph_msg = "locked by another process"
+                from codegraph.state.ipc import is_owner_alive, read_owner_pid
+
+                # The owner holds the write lock for its whole lifetime, so a
+                # locked graph with this checkout's owner up is the healthy
+                # state, not a failure. Only a lock nobody here owns blocks.
+                if is_owner_alive(root):
+                    graph_ok = True
+                    graph_msg = (
+                        f"held by this checkout's owner (pid {read_owner_pid(root)})"
+                    )
+                else:
+                    graph_msg = "locked by another process"
         except Exception as exc:
             graph_msg = f"error: {exc}"
     checks.append((graph_label, graph_ok, graph_msg))

@@ -8,6 +8,30 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh init --from <checkout>` seeds a new checkout from an existing one**: a
+  fresh worktree started empty and paid a full index before an agent could ask
+  it anything, which on a large repo is minutes per ticket. Init now copies the
+  graph, the search index and the knowledge store from another checkout of the
+  same repo, moves every stored path to the new root, and reindexes only the
+  files that differ. Both checkouts' owners must be stopped first, since the
+  graph's writer holds an exclusive lock. Without the flag nothing changes.
+- **`cgh knowledge promote --from <worktree> --to <checkout>`**: a per-ticket
+  worktree accumulated the learnings for that ticket and took them to the bin
+  when it was torn down. Promote carries the durable ones into the main
+  checkout at merge, skipping session digests and auto-checkpoints, and records
+  where each came from (branch, commit, pull request, session). Re-running it
+  promotes nothing new, so it is safe to call from a merge script.
+- **`cgh doctor --strict` exits non-zero when a blocking check fails**, so CI
+  and setup scripts can gate on a healthy store instead of parsing the table.
+
+### Fixed
+- **`resume` returned no knowledge in a busy store**: the bundle filled its
+  knowledge slots with the most recent entries whatever their kind, so in a
+  store dominated by automatic session checkpoints the real learnings, being
+  older, never surfaced and a resuming agent restarted from zero. Digests are
+  now kept out of that bucket, which is what the digest section is for.
+
 ## [0.14.0] - 2026-09-22
 
 ### Added

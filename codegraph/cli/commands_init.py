@@ -988,7 +988,14 @@ def cmd_init(args: argparse.Namespace) -> None:
         default_method = "auto"
         choice = None
 
-        if owner_alive:
+        seed_from = getattr(args, "from_", "") or ""
+        if seed_from:
+            # A seeded store already holds every unchanged file, so the follow-up
+            # pass is incremental by construction: it reindexes only what differs
+            # between the source's indexed content and this working tree.
+            seeded = _seed_from_checkout(root, Path(os.path.abspath(seed_from)))
+            choice = "incremental" if seeded else "full"
+        elif owner_alive:
             console.print(
                 "  [yellow]The MCP owner is running, it already watches this repo.[/yellow]"
             )
@@ -1101,6 +1108,50 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # -- Done --
     _print_init_summary()
+
+
+def _seed_from_checkout(root: Path, from_root: Path) -> bool:
+    """Copy another checkout's store into ``root`` and rewrite it to this root.
+
+    Both owners must be down. The source graph is an embedded DB whose writer
+    holds an exclusive lock for the lifetime of its connection, so a running
+    owner both blocks the read and would leave a half-written copy. Returns True
+    when the store was seeded, False when the caller should fall back to a normal
+    index.
+    """
+    from codegraph.state.ipc import is_owner_alive
+    from codegraph.state.relocate import RelocateError, relocate_store
+
+    if not (from_root / ".codegraph").is_dir():
+        console.print(f"  [red]--from:[/red] no .codegraph store under {from_root}")
+        raise SystemExit(1)
+    if from_root == root:
+        console.print("  [red]--from:[/red] source and target are the same checkout")
+        raise SystemExit(1)
+
+    for label, candidate in (("source", from_root), ("target", root)):
+        if is_owner_alive(candidate):
+            console.print(
+                f"  [red]--from:[/red] a cgh owner is running on the {label} "
+                f"({candidate}).\n"
+                f"  [dim]Stop it first so the graph can be copied cleanly:[/dim] "
+                f"cgh stop --root {candidate}"
+            )
+            raise SystemExit(1)
+
+    with phase_status("[bold cyan]Seeding the index from the source checkout..."):
+        try:
+            result = relocate_store(from_root, root)
+        except RelocateError as exc:
+            console.print(f"  [yellow]--from:[/yellow] {exc}, running a normal index")
+            return False
+
+    console.print(
+        f"  [green]+[/green] seeded from {from_root.name} "
+        f"[dim]({', '.join(result['copied'])}; {result['rewritten_rows']:,} "
+        f"stored paths rewritten to this root)[/dim]"
+    )
+    return True
 
 
 def _init_children(root: Path, assume_yes: bool) -> None:

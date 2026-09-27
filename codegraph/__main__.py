@@ -48,6 +48,7 @@ from codegraph.cli.commands_index import (
     cmd_watch,
 )
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
+from codegraph.cli.commands_knowledge import cmd_knowledge, register_knowledge_parser
 from codegraph.cli.commands_monitor import (
     cmd_compact,
     cmd_diff,
@@ -162,6 +163,7 @@ def _print_help():
                 ("guard", "Confidentiality guard: agent-side enforcement"),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
+                ("knowledge", "Promote a worktree's learnings to its main checkout"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -497,6 +499,11 @@ def _register_inspect(sub) -> None:
     # --- doctor ---
     p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
     _add_root(p)
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any blocking check fails (for scripts/CI)",
+    )
 
 
 def _register_analysis(sub) -> None:
@@ -547,6 +554,7 @@ def _register_analysis(sub) -> None:
     register_backend_parser(sub)
     register_papercut_parser(sub)
     register_artifact_parser(sub)
+    register_knowledge_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -741,6 +749,7 @@ def main() -> None:
         "backend": cmd_backend,
         "papercut": cmd_papercut,
         "artifact": cmd_artifact,
+        "knowledge": cmd_knowledge,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

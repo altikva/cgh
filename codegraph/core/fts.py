@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 _DB_DIR = ".codegraph"
 _FTS_FILE = "fts.db"
@@ -74,6 +77,30 @@ def _is_corrupt(exc: Exception) -> bool:
     return "malformed" in m or "disk image" in m or "corrupt" in m
 
 
+def _rebuild_indexes(conn: sqlite3.Connection) -> None:
+    """Drop and repopulate every index, without committing.
+
+    symbols_fts cannot use FTS5's own 'rebuild': that reads the raw ``name``
+    column, while upsert_symbol and delete_file_symbols write and delete the
+    word-split form (_tokenize: GoTrueClient -> "Go True Client"). An index
+    rebuilt from raw names no longer matches what the next 'delete' replays,
+    so that delete leaves postings behind for a rowid the content table has
+    dropped, and ranking later reads the missing row as "database disk image
+    is malformed". It is repopulated here with the same form the writers use.
+    Every other index stores its content raw and rebuilds natively."""
+    for name, ddl in _FTS_DDL.items():
+        conn.execute(f"DROP TABLE IF EXISTS {name}")
+        conn.execute(ddl)
+        if name == "symbols_fts":
+            rows = conn.execute("SELECT rowid, name, docstring FROM symbols").fetchall()
+            conn.executemany(
+                "INSERT INTO symbols_fts(rowid, name, docstring) VALUES (?, ?, ?)",
+                [(rowid, _tokenize(sym), doc) for rowid, sym, doc in rows],
+            )
+        else:
+            conn.execute(f"INSERT INTO {name}({name}) VALUES('rebuild')")
+
+
 def rebuild_fts_indexes(conn: sqlite3.Connection) -> None:
     """Drop and rebuild every external-content FTS/trigram index from its
     content table. Recovers a 'database disk image is malformed' on the
@@ -81,11 +108,37 @@ def rebuild_fts_indexes(conn: sqlite3.Connection) -> None:
     plan stay); only the index is rebuilt. Safe to call whenever a
     corrupt-index error surfaces."""
     with _FTS_LOCK:
-        for name, ddl in _FTS_DDL.items():
-            conn.execute(f"DROP TABLE IF EXISTS {name}")
-            conn.execute(ddl)
-            conn.execute(f"INSERT INTO {name}({name}) VALUES('rebuild')")
+        _rebuild_indexes(conn)
         conn.commit()
+
+
+# Bumped when the on-disk index needs a one-time rebuild to be trusted.
+# 1: symbols_fts holds tokenized names. A store whose index an older cgh ever
+# rebuilt holds raw-name entries that corrupt on their next delete, and may
+# already carry orphaned postings. No cheap scan finds the latent entries, so
+# every store below this version is rebuilt once when it is opened.
+_INDEX_VERSION = 1
+
+
+def _migrate_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the indexes once for a store written by an older cgh.
+
+    Runs under BEGIN IMMEDIATE so two processes opening the same store (the
+    owner and a CLI) cannot both rebuild: the second waits for the lock, then
+    reads the new version and skips. A failure is logged rather than raised,
+    since an open must not fail over a repair; the next open retries it."""
+    with _FTS_LOCK:
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= _INDEX_VERSION:
+            return
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("PRAGMA user_version").fetchone()[0] < _INDEX_VERSION:
+                _rebuild_indexes(conn)
+                conn.execute(f"PRAGMA user_version = {_INDEX_VERSION}")
+            conn.commit()
+        except sqlite3.Error as exc:
+            conn.rollback()
+            _log.warning("fts index rebuild deferred to the next open: %s", exc)
 
 
 @dataclass
@@ -158,6 +211,7 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         )
     _backfill_trigram(conn)
     conn.commit()
+    _migrate_index(conn)
     return conn
 
 
@@ -292,16 +346,31 @@ def _rrf(rank_lists: list[list[int]], k: int = 60) -> list[int]:
 def _match_rowids(
     conn: sqlite3.Connection, table: str, match: str, cap: int
 ) -> list[int]:
-    """Rowids of a MATCH, best rank first. Empty on any FTS error."""
-    try:
-        with _FTS_LOCK:
-            rows = conn.execute(
-                f"SELECT rowid FROM {table} WHERE {table} MATCH ? ORDER BY rank LIMIT ?",
-                (match, cap),
-            ).fetchall()
-        return [r[0] for r in rows]
-    except sqlite3.OperationalError:
-        return []
+    """Rowids of a MATCH, best rank first. Empty on any FTS error.
+
+    A corrupt index surfaces here as DatabaseError, not the OperationalError of
+    a bad query, and used to escape to the tool and fail it outright. It gets
+    one rebuild and one retry, the same recovery the write path uses. The query
+    errors stay a quiet empty result: OperationalError is a DatabaseError
+    subclass, so it is caught first."""
+    sql = f"SELECT rowid FROM {table} WHERE {table} MATCH ? ORDER BY rank LIMIT ?"
+    for attempt in range(2):
+        try:
+            with _FTS_LOCK:
+                rows = conn.execute(sql, (match, cap)).fetchall()
+            return [r[0] for r in rows]
+        except sqlite3.OperationalError:
+            return []
+        except sqlite3.DatabaseError as exc:
+            if attempt or not _is_corrupt(exc):
+                _log.warning("fts search on %s failed: %s", table, exc)
+                return []
+            try:
+                rebuild_fts_indexes(conn)
+            except sqlite3.Error as rebuild_exc:
+                _log.warning("fts rebuild after corrupt search failed: %s", rebuild_exc)
+                return []
+    return []
 
 
 def fts_search(

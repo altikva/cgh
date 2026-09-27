@@ -29,13 +29,14 @@ adopting over time):
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--secure] [--no-children] [--tools LIST] [--root DIR]
+cgh init [--yes | -y] [--secure] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
 | `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
+| `--from` | Seed the index and knowledge from another checkout of this repo, then reindex only the files that differ |
 | `--no-children` | Don't initialize / refresh federated subrepos |
 | `--tools` | Comma-separated tools to wire regardless of detection (`claude,cursor,codex,gemini,bob`). For a fresh repo where cgh cannot detect the tool yet |
 
@@ -55,6 +56,23 @@ scripted or empty-repo bootstrap.
 7. Offers Claude-specific auto-accept for MCP tool calls
 8. Counts parseable files by language
 9. Optionally runs `cgh index`
+
+#### Seeding a new checkout with `--from`
+
+A fresh worktree starts with no index and pays a full scan before an agent can
+ask it anything. `--from` points at another checkout of the same repo and copies
+its graph, search index and knowledge store, moves every stored path to the new
+root, then reindexes only the files that differ:
+
+```bash
+cgh init --yes --from ~/code/myrepo    # in the new worktree
+```
+
+Both checkouts' owners must be stopped first (`cgh stop --root <checkout>`): the
+graph's writer holds an exclusive lock for the lifetime of its connection, so a
+live owner both blocks the read and would leave a half-written copy. The target
+mints its own `auth.key` rather than sharing the source's, and the scanners
+regenerate the finding store on the next pass.
 
 ### `reset`
 

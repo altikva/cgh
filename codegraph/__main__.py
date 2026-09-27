@@ -258,6 +258,15 @@ def _register_setup_and_serve(sub) -> None:
         "--yes", "-y", action="store_true", help="Accept all defaults (non-interactive)"
     )
     p.add_argument(
+        "--from",
+        dest="from_",
+        default="",
+        metavar="CHECKOUT",
+        help="Seed the index and knowledge from another checkout of this repo "
+        "(its owner must be stopped), then reindex only the files that differ. "
+        "Skips a full index on a fresh worktree.",
+    )
+    p.add_argument(
         "--no-children",
         action="store_true",
         help="Don't initialize / refresh federated subrepos",

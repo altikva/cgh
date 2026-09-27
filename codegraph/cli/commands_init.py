@@ -1115,11 +1115,19 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
 
     Both owners must be down. The source graph is an embedded DB whose writer
     holds an exclusive lock for the lifetime of its connection, so a running
-    owner both blocks the read and would leave a half-written copy. Returns True
-    when the store was seeded, False when the caller should fall back to a normal
-    index.
+    owner both blocks the read and would leave a half-written copy. A source
+    owner is left to the user, since other sessions may rely on it. A target
+    owner is stopped here: its store is about to be replaced wholesale, and one
+    often appears on a fresh worktree on its own (a git hook or a session hook
+    spawned it). Returns True when the store was seeded, False when the caller
+    should fall back to a normal index.
     """
-    from codegraph.state.ipc import is_owner_alive
+    from codegraph.state.ipc import (
+        is_owner_alive,
+        is_pid_alive,
+        read_owner_pid,
+        stop_owner,
+    )
     from codegraph.state.relocate import RelocateError, relocate_store
 
     if not (from_root / ".codegraph").is_dir():
@@ -1129,15 +1137,27 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
         console.print("  [red]--from:[/red] source and target are the same checkout")
         raise SystemExit(1)
 
-    for label, candidate in (("source", from_root), ("target", root)):
-        if is_owner_alive(candidate):
+    if is_owner_alive(from_root):
+        console.print(
+            f"  [red]--from:[/red] a cgh owner is running on the source "
+            f"({from_root}).\n"
+            f"  [dim]Stop it first so the graph can be copied cleanly:[/dim] "
+            f"cgh stop --root {from_root}"
+        )
+        raise SystemExit(1)
+    if is_owner_alive(root):
+        pid = read_owner_pid(root)
+        # stop_owner clears the pidfile either way, so ask the process itself.
+        stop_owner(root)
+        if pid is not None and is_pid_alive(pid):
             console.print(
-                f"  [red]--from:[/red] a cgh owner is running on the {label} "
-                f"({candidate}).\n"
-                f"  [dim]Stop it first so the graph can be copied cleanly:[/dim] "
-                f"cgh stop --root {candidate}"
+                f"  [red]--from:[/red] the cgh owner on this checkout did not stop.\n"
+                f"  [dim]Stop it and re-run:[/dim] cgh stop --root {root}"
             )
             raise SystemExit(1)
+        console.print(
+            "  [dim]--from: stopped this checkout's owner before seeding[/dim]"
+        )
 
     with phase_status("[bold cyan]Seeding the index from the source checkout..."):
         try:

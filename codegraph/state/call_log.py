@@ -407,9 +407,11 @@ def knowledge_list(
     limit: int = 50,
     offset: int = 0,
     repo_root: str | Path | None = None,
+    exclude_tag: str | None = None,
 ) -> list[dict]:
-    """Browse knowledge entries. Filters: kind / tag (substring) / session.
-    Pagination: limit + offset. Caller can fetch limit+1 to detect has_more.
+    """Browse knowledge entries. Filters: kind / tag (substring) / session /
+    exclude_tag (substring to omit). Pagination: limit + offset. Caller can
+    fetch limit+1 to detect has_more.
     """
     conn = _get_conn(repo_root)
     sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
@@ -421,6 +423,9 @@ def knowledge_list(
     if tag:
         where.append("tags LIKE ?")
         params.append(f"%{tag}%")
+    if exclude_tag:
+        where.append("tags NOT LIKE ?")
+        params.append(f"%{exclude_tag}%")
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)

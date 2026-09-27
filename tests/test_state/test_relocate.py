@@ -172,3 +172,88 @@ def test_relocate_rewrites_the_duckdb_backend(tmp_path):
     assert (f"{dst}/pkg/mod.py::fn", f"{dst}/pkg/other.py::helper") in calls
     assert (f"{dst}/pkg/mod.py::fn", "json::loads") in calls
     assert shas == ["cd" * 20]
+
+
+def _wal_fts(path: Path, rows: int) -> sqlite3.Connection:
+    """An fts.db in WAL mode whose committed rows stay in the -wal file: the
+    connection is left open with autocheckpoint off, as a live reader would."""
+    con = sqlite3.connect(str(path))
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA wal_autocheckpoint=0")
+    con.execute("CREATE TABLE symbols (sym_id TEXT, file_path TEXT)")
+    con.executemany(
+        "INSERT INTO symbols VALUES (?, ?)",
+        [
+            (f"{path.parent.parent}/m{i}.py::f", f"{path.parent.parent}/m{i}.py")
+            for i in range(rows)
+        ],
+    )
+    con.commit()
+    return con
+
+
+def test_relocate_carries_fts_rows_still_in_the_wal(tmp_path):
+    # A byte copy of fts.db alone drops every page still in fts.db-wal and leaves
+    # a torn file ("database disk image is malformed" at the next init step).
+    src, dst = _roots(tmp_path)
+    _sqlite_source(src)
+    live = _wal_fts(src / ".codegraph" / "fts.db", 500)
+    try:
+        assert (src / ".codegraph" / "fts.db-wal").stat().st_size > 0
+        relocate_store(src, dst)
+    finally:
+        live.close()
+
+    con = sqlite3.connect(str(dst / ".codegraph" / "fts.db"))
+    assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    paths = [r[0] for r in con.execute("SELECT DISTINCT file_path FROM symbols")]
+    con.close()
+    assert len(paths) == 500
+    assert all(p.startswith(f"{dst}/") for p in paths)
+
+
+def test_relocate_drops_a_stale_target_wal(tmp_path):
+    # A WAL left by the target's previous store would be replayed over the copy.
+    src, dst = _roots(tmp_path)
+    _sqlite_source(src)
+    _wal_fts(src / ".codegraph" / "fts.db", 10).close()
+    stale = _wal_fts(dst / ".codegraph" / "fts.db", 300)
+    try:
+        leftover = (dst / ".codegraph" / "fts.db-wal").read_bytes()
+    finally:
+        stale.close()
+    (dst / ".codegraph" / "fts.db-wal").write_bytes(leftover)
+
+    relocate_store(src, dst)
+
+    con = sqlite3.connect(str(dst / ".codegraph" / "fts.db"))
+    assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert con.execute("SELECT count(*) FROM symbols").fetchone()[0] == 10
+    con.close()
+
+
+def test_relocate_over_a_target_graph_this_process_holds_open(tmp_path):
+    # init probes the existing store with a cached read-only connection before
+    # seeding. Re-running --from on an initialised checkout then tripped DuckDB's
+    # "same database file with a different configuration" on the rewrite.
+    duckdb = pytest.importorskip("duckdb")
+    from codegraph.core.db import get_readonly_connection, reset_connection
+
+    src, dst = _roots(tmp_path)
+    (src / ".codegraph").mkdir(parents=True)
+    for root in (src, dst):
+        con = duckdb.connect(str(root / ".codegraph" / "graph.duckdb"))
+        con.execute("CREATE TABLE file (path VARCHAR, git_blob_sha VARCHAR)")
+        con.execute("INSERT INTO file VALUES (?, ?)", [f"{root}/a.py", "ef" * 20])
+        con.commit()
+        con.close()
+
+    try:
+        assert get_readonly_connection(dst) is not None
+        relocate_store(src, dst)
+    finally:
+        reset_connection(dst)
+
+    con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
+    assert con.execute("SELECT path FROM file").fetchall() == [(f"{dst}/a.py",)]
+    con.close()

@@ -19,9 +19,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 
-from codegraph.core.db import _DUCKDB_FILE, _SQLITE_FILE, _backend
+from codegraph.core.db import _DUCKDB_FILE, _SQLITE_FILE, _backend, reset_connection
 from codegraph.state.scan_meta import _meta_path, read_meta
 
 # Files carried from the source store. The graph file is chosen by backend.
@@ -36,6 +37,47 @@ _CONFIG_FILE = "config.toml"
 
 class RelocateError(Exception):
     """The source store cannot be seeded from (missing, or held by an owner)."""
+
+
+def _sidecars(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
+    return [path.with_name(path.name + s) for s in suffixes]
+
+
+def _copy_sqlite(src: Path, dst: Path) -> None:
+    """Copy a SQLite database through the backup API, not byte for byte.
+
+    The stores run in WAL mode, so committed pages can still sit in the
+    source's ``-wal`` file: a plain copy of the main file alone yields a torn
+    database ("database disk image is malformed" on first use). The backup API
+    reads a consistent snapshot that includes the WAL. Any ``-wal``/``-shm``
+    left in the target by an earlier store is removed first, since SQLite would
+    otherwise replay those foreign pages over the fresh copy."""
+    for p in (dst, *_sidecars(dst, ("-wal", "-shm", "-journal"))):
+        p.unlink(missing_ok=True)
+    s = sqlite3.connect(str(src))
+    try:
+        d = sqlite3.connect(str(dst))
+        try:
+            s.backup(d)
+        finally:
+            d.close()
+    finally:
+        s.close()
+
+
+def _copy_duckdb(src: Path, dst: Path) -> None:
+    """Copy a DuckDB file with its WAL, dropping any stale target WAL.
+
+    DuckDB replays ``<file>.wal`` on open, so the source's WAL must travel with
+    it (the source owner is down, so the pair is consistent) and a WAL left by
+    the target's previous store must not survive to be replayed onto the copy."""
+    (dst_wal,) = _sidecars(dst, (".wal",))
+    dst.unlink(missing_ok=True)
+    dst_wal.unlink(missing_ok=True)
+    shutil.copy2(src, dst)
+    (src_wal,) = _sidecars(src, (".wal",))
+    if src_wal.exists():
+        shutil.copy2(src_wal, dst_wal)
 
 
 def _text_columns_duckdb(con) -> list[tuple[str, str]]:
@@ -100,8 +142,6 @@ def _sqlite_text_columns(con, table: str) -> list[tuple[str, str]]:
 def _rewrite_sqlite_tables(
     path: Path, tables: list[str], old_prefix: str, new_prefix: str
 ) -> int:
-    import sqlite3
-
     con = sqlite3.connect(str(path))
     try:
         columns: list[tuple[str, str]] = []
@@ -115,8 +155,6 @@ def _rewrite_sqlite_tables(
 
 
 def _rewrite_sqlite_graph(path: Path, old_prefix: str, new_prefix: str) -> int:
-    import sqlite3
-
     con = sqlite3.connect(str(path))
     try:
         tables = [
@@ -137,8 +175,6 @@ def _rewrite_fts(path: Path, old_prefix: str, new_prefix: str) -> int:
     # only name and docstring, which the rewrite does not touch, so editing the
     # base table's paths leaves them consistent with no resync. Only the paths in
     # the base table need moving; the memory and plan tables are path-free.
-    import sqlite3
-
     con = sqlite3.connect(str(path))
     try:
         has_symbols = con.execute(
@@ -156,8 +192,6 @@ def _rewrite_call_log_refs(path: Path, old_prefix: str, new_prefix: str) -> int:
     # are informational, so this is best-effort: a plain substring replace over
     # the JSON text is enough, and any occurrence of the source root belongs to a
     # path from that checkout. Left untouched if the column or table is absent.
-    import sqlite3
-
     con = sqlite3.connect(str(path))
     try:
         n = con.execute(
@@ -213,12 +247,25 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     if not (from_cg / graph_file).exists():
         raise RelocateError(f"no {graph_file} under {from_cg} to seed from")
 
+    # The calling process may already hold the target's graph open (init probes
+    # the existing store first). DuckDB refuses a second open of the same file
+    # with a different configuration, and the copy replaces the file under it,
+    # so every cached connection to the target is released before anything moves.
+    reset_connection(to_root)
+
     copied: list[str] = []
     for name in (graph_file, _FTS_FILE, _CALL_LOG_FILE, _CONFIG_FILE):
         src = from_cg / name
-        if src.exists():
-            shutil.copy2(src, to_cg / name)
-            copied.append(name)
+        if not src.exists():
+            continue
+        dst = to_cg / name
+        if name == _DUCKDB_FILE:
+            _copy_duckdb(src, dst)
+        elif name == _CONFIG_FILE:
+            shutil.copy2(src, dst)
+        else:
+            _copy_sqlite(src, dst)
+        copied.append(name)
 
     old_prefix = str(from_root) + os.sep
     new_prefix = str(to_root) + os.sep

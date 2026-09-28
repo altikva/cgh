@@ -17,6 +17,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   and a long reindex could run beside a copy of itself. A request is now only
   sent again when it never reached the owner, and the bridge waits for the
   answer as long as the tool runs.
+- **`cgh init --from` failed on some DuckDB stores** with "Failed to delete
+  all rows from index": moving the stored paths rewrote key columns in place,
+  and DuckDB lost index entries doing it, although the source store was
+  sound. The new checkout's graph is now built fresh and filled with the
+  paths already moved, so no key is ever rewritten. It is also faster.
 
 ## [0.14.1] - 2026-09-28
 

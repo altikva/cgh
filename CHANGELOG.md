@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-28
+
 ### Added
 - **`cgh init --from <checkout>` seeds a new checkout from an existing one**: a
   fresh worktree started empty and paid a full index before an agent could ask
@@ -1669,7 +1671,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0

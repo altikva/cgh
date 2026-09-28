@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **A tool call slower than 60 seconds ran up to three times**: the
+  `cgh serve` bridge between the agent and the owner gave up waiting after
+  60 seconds, took the silence for a dead owner and sent the same request
+  again, twice. The owner ran every copy. A slow `codegen_write` generated and
+  wrote its file three times, the later copies overwriting the earlier ones,
+  and a long reindex could run beside a copy of itself. A request is now only
+  sent again when it never reached the owner, and the bridge waits for the
+  answer as long as the tool runs.
+
 ## [0.14.1] - 2026-09-28
 
 ### Added

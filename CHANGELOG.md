@@ -22,6 +22,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   and DuckDB lost index entries doing it, although the source store was
   sound. The new checkout's graph is now built fresh and filled with the
   paths already moved, so no key is ever rewritten. It is also faster.
+- **cgh-codegen 0.1.1: a file written during generation was overwritten**:
+  codegen checked the target before calling the model and wrote after, and
+  the call can take minutes. A file created or edited in between, by hand or
+  by another call, was replaced without a word. The target is now checked
+  again at the moment of writing; if anyone else touched it, it is left as is
+  and the call fails and says so.
 
 ## [0.14.1] - 2026-09-28
 

@@ -191,6 +191,20 @@ def run_generation(
                     "to regenerate it from scratch."
                 )
 
+    # The checks above run before generation, which can take minutes. Every
+    # write below also checks, at the moment of writing, that the target still
+    # holds what this run expects: nothing for a new file, the content read
+    # above for force or extend, then whatever this run last wrote. A file
+    # created or edited by anyone else in between is left as is and the call
+    # fails, instead of being overwritten without a word.
+    expected: str | None = None
+    if tgt is not None and tgt.exists():
+        expected = _sha(
+            existing_text
+            if existing_text is not None
+            else tgt.read_text(encoding="utf-8", errors="replace")
+        )
+
     do_verify = bool(verify) and not to_stdout
     prior: tuple[str, str] | None = None
     verified: bool | None = None
@@ -224,12 +238,16 @@ def run_generation(
             body = _append_into(existing_text, code)
         else:
             body = code if code.endswith("\n") else code + "\n"
-        tgt.parent.mkdir(parents=True, exist_ok=True)
-        tgt.write_text(body, encoding="utf-8")
+        _write_expected(tgt, body, expected, target)
+        expected = _sha(body)
         written = True
         if not do_verify:
             break
         ok, output = _run_verify(root, verify)  # type: ignore[arg-type]
+        # The check belongs to this run and may rewrite the file itself (a
+        # formatter with --fix), so what it leaves is what the next attempt
+        # expects to replace.
+        expected = _sha(tgt.read_text(encoding="utf-8", errors="replace"))
         verified = ok
         if ok:
             break
@@ -241,7 +259,7 @@ def run_generation(
     # unparsable. So put the original back and report the failure instead.
     rolled_back = False
     if extend and written and do_verify and not verified and existing_text is not None:
-        tgt.write_text(existing_text, encoding="utf-8")  # type: ignore[union-attr]
+        _write_expected(tgt, existing_text, expected, target)  # type: ignore[arg-type]
         written = False
         rolled_back = True
 
@@ -406,6 +424,40 @@ def _sha(text: str) -> str:
     import hashlib
 
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _write_expected(tgt: Path, body: str, expected: str | None, target: str) -> None:
+    """Write ``body`` only if the target still holds what this run expects.
+
+    ``expected`` is the sha of the content that should be on disk, or None when
+    the file must not exist yet. A new file is created exclusively, so one that
+    appeared during generation fails the open instead of being truncated. For
+    an existing file the content is compared just before writing; the window
+    left between that read and the write is a few syscalls, against minutes of
+    generation before. On a mismatch nothing is written and the caller is told,
+    so another writer's work is never lost."""
+    tgt.parent.mkdir(parents=True, exist_ok=True)
+    if expected is None:
+        try:
+            with open(tgt, "x", encoding="utf-8") as fh:
+                fh.write(body)
+        except FileExistsError:
+            raise CodegenError(
+                f"target {target} appeared while codegen was generating it; it "
+                "was left as is and nothing was written. Read it before "
+                "generating again."
+            ) from None
+        return
+    try:
+        current: str | None = _sha(tgt.read_text(encoding="utf-8", errors="replace"))
+    except FileNotFoundError:
+        current = None
+    if current != expected:
+        raise CodegenError(
+            f"target {target} changed while codegen was generating; it was left "
+            "as is and nothing was written, so those changes are not lost."
+        )
+    tgt.write_text(body, encoding="utf-8")
 
 
 def _provenance_path(root: Path) -> Path:

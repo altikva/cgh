@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import functools
 import os
+import threading
 import time
 from typing import Any
 
@@ -97,6 +99,8 @@ class DuckDBGraphDB:
     """
 
     def __init__(self, db_path: str, read_only: bool = False) -> None:
+        # See _locked below: one owner shares this object across threads.
+        self._lock = threading.RLock()
         self._conn = _connect_with_retry(db_path, read_only)
         if not read_only:
             init_schema(self._conn)
@@ -538,6 +542,34 @@ class DuckDBGraphDB:
     @property
     def raw(self) -> duckdb.DuckDBPyConnection:
         return self._conn
+
+
+def _locked(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+# An owner shares one DuckDBGraphDB across MCP tool threads and the watcher.
+# duckdb's execute() returns the connection itself, so column names and rows
+# live on the connection: a query another thread runs between this thread's
+# execute() and its fetch hands this thread the other query's result. That
+# surfaced as KeyError 'dst_name' in context_for_task, whose callees lookup
+# read the src_name rows of a concurrent callers lookup. Every public method
+# runs its execute-and-fetch under one reentrant lock per instance. DuckDB
+# already runs one statement at a time per connection, so this costs no real
+# concurrency. Methods call each other, hence reentrant. `raw` is a property
+# and stays unlocked; a caller holding the bare connection is on its own.
+def _lock_public_methods(cls: type) -> None:
+    for name, attr in list(vars(cls).items()):
+        if callable(attr) and not name.startswith("_"):
+            setattr(cls, name, _locked(attr))
+
+
+_lock_public_methods(DuckDBGraphDB)
 
 
 __all__ = ["DuckDBGraphDB", "DuckDBQueryResult"]

@@ -38,6 +38,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Re-run `cgh init` in an existing repo to add the hook.
 
 ### Fixed
+- **`context_for_task` occasionally failed with `KeyError: 'dst_name'`**: an
+  owner answers several tool calls at once, and on the DuckDB backend two graph
+  queries running at the same moment could each get the other's result, so a
+  lookup of what a function calls came back with the columns of a lookup of
+  who calls it. Rare, and more likely on long tasks. Graph queries in one
+  owner now run one after another, which DuckDB was already doing for
+  execution, so nothing gets slower.
 - **Symbol search failed with "database disk image is malformed"**: rebuilding
   the search index stored symbol names in a different form from the one later
   deletes remove, so every delete after a rebuild left dangling entries, and a

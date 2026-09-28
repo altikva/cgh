@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 pytest.importorskip("cgh_codegen")
@@ -474,6 +476,110 @@ def test_generated_python_is_ruff_polished(tmp_path):
     assert "import os" not in content
     assert "def f" in content
     assert all(line == line.rstrip() for line in content.splitlines())
+
+
+class _WriterDuringGeneration:
+    """A backend that, while it "thinks", lets someone else write the target:
+    a hand edit, or another codegen call. Generation takes minutes in real use,
+    and the flow used to check the target only before it."""
+
+    is_local = True
+    name = "fake"
+
+    def __init__(self, target, text: str, reply: str) -> None:
+        self._target, self._text, self._reply = target, text, reply
+
+    def generate(self, system: str, user: str) -> tuple[str, float]:
+        self._target.write_text(self._text, encoding="utf-8")
+        return self._reply, 0.0
+
+
+class TestWritesDuringGeneration:
+    def test_a_file_created_meanwhile_is_not_overwritten(self, tmp_path):
+        root = _repo(tmp_path)
+        target = root / "src" / "user_service.py"
+        backend = _WriterDuringGeneration(
+            target, "# written by hand\n", "```python\nx = 1\n```"
+        )
+        with pytest.raises(CodegenError, match="appeared while codegen"):
+            run_generation(
+                root,
+                "spec",
+                "src/user_service.py",
+                "src/order_service.py",
+                config={},
+                backend=backend,
+            )
+        assert target.read_text(encoding="utf-8") == "# written by hand\n"
+
+    def test_force_keeps_an_edit_made_meanwhile(self, tmp_path):
+        root = _repo(tmp_path)
+        target = root / "src" / "user_service.py"
+        run_generation(
+            root,
+            "spec",
+            "src/user_service.py",
+            "src/order_service.py",
+            config={},
+            backend=FakeBackend("```python\nx = 1\n```"),
+        )
+        backend = _WriterDuringGeneration(
+            target, "x = 1\n# edited meanwhile\n", "```python\nx = 2\n```"
+        )
+        with pytest.raises(CodegenError, match="changed while codegen"):
+            run_generation(
+                root,
+                "spec",
+                "src/user_service.py",
+                "src/order_service.py",
+                config={},
+                backend=backend,
+                force=True,
+            )
+        assert "# edited meanwhile" in target.read_text(encoding="utf-8")
+
+    def test_extend_keeps_an_edit_made_meanwhile(self, tmp_path):
+        root = _repo(tmp_path)
+        target = root / "src" / "existing.py"
+        target.write_text("# original\n", encoding="utf-8")
+        backend = _WriterDuringGeneration(
+            target, "# original\n# edited meanwhile\n", "```python\nx = 1\n```"
+        )
+        with pytest.raises(CodegenError, match="changed while codegen"):
+            run_generation(
+                root,
+                "spec",
+                "src/existing.py",
+                None,
+                config={},
+                backend=backend,
+                extend=True,
+            )
+        assert target.read_text(encoding="utf-8") == "# original\n# edited meanwhile\n"
+
+    def test_a_verify_that_rewrites_the_file_does_not_block_the_retry(self, tmp_path):
+        # The check is part of this run; a formatter that rewrites the file in
+        # place must not be mistaken for another writer on the next attempt.
+        root = _repo(tmp_path)
+        backend = SequenceBackend(
+            ["```python\nx = 1  # bad\n```", "```python\nx = 1  # GOOD\n```"]
+        )
+        out = run_generation(
+            root,
+            "spec",
+            "src/x.py",
+            "src/order_service.py",
+            config={},
+            backend=backend,
+            # argv, no shell: append to the file, then pass only once it says GOOD
+            verify=(
+                f"{sys.executable} -c \"import pathlib, sys; p = pathlib.Path('src/x.py'); "
+                "t = p.read_text(); p.write_text(t + '# touched by the check\\n'); "
+                "sys.exit(0 if 'GOOD' in t else 1)\""
+            ),
+            max_attempts=3,
+        )
+        assert out["verified"] is True and out["attempts"] == 2
 
 
 if __name__ == "__main__":  # pragma: no cover

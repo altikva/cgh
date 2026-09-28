@@ -1171,6 +1171,15 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
         f"[dim]({', '.join(result['copied'])}; {result['rewritten_rows']:,} "
         f"stored paths rewritten to this root)[/dim]"
     )
+    dropped = result.get("dropped_subrepos") or []
+    if dropped:
+        console.print(
+            f"  [yellow]![/yellow] not federated: {from_root.name} links "
+            f"{len(dropped)} other checkout(s), each on its own branch, so the "
+            "seed leaves them out.\n"
+            "    [dim]Re-link the ones this checkout should query:[/dim] "
+            + "  ".join(f"cgh federate add {d}" for d in dropped)
+        )
     return True
 
 

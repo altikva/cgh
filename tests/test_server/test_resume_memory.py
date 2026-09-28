@@ -69,3 +69,37 @@ def test_tiny_budget_reserves_knowledge_and_signals(store):
     assert len(b["knowledge"]) >= 1
     assert b["truncated"] is True
     assert b["dropped_for_budget"].get("knowledge", 0) >= 1
+
+
+def test_real_knowledge_surfaces_past_a_flood_of_auto_checkpoints(tmp_path):
+    # A long-lived store: one real learning, then far more recent auto-checkpoint
+    # markers than the knowledge bucket holds. The recency backfill must not fill
+    # up on the markers and bury the real entry (a store with hundreds of
+    # checkpoints returned zero knowledge on resume before this).
+    import time
+
+    reset_for_tests()
+    (tmp_path / ".codegraph").mkdir()
+    knowledge_record(
+        "Owner cwd gotcha",
+        "pin the owner to --root or it locks another repo's call log",
+        kind="gotcha",
+        tags="owner",
+        repo_root=tmp_path,
+    )
+    time.sleep(0.02)  # the flood is strictly newer than the gotcha
+    for i in range(12):
+        knowledge_record(
+            f"Auto checkpoint {i}",
+            "its details are gone",
+            kind="note",
+            tags="auto-checkpoint,session-digest",
+            session_id=f"s{i}",
+            repo_root=tmp_path,
+        )
+
+    b = build_resume_bundle(tmp_path)  # no task: pure recency backfill
+    titles = [k["title"] for k in b["knowledge"]]
+    assert "Owner cwd gotcha" in titles  # surfaced, not buried
+    # and the knowledge bucket is not polluted by the digest markers
+    assert not any(t.startswith("Auto checkpoint") for t in titles)

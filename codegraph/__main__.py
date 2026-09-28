@@ -35,7 +35,11 @@ from codegraph.cli.commands_guard import (
 # ---------------------------------------------------------------------------
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
-from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
+from codegraph.cli.commands_hooks import (
+    cmd_hook_precheck_bash,
+    cmd_hook_precheck_grep,
+    cmd_hook_precheck_read,
+)
 from codegraph.cli.commands_impact import cmd_impact
 from codegraph.cli.commands_index import (
     cmd_force_index,
@@ -48,6 +52,7 @@ from codegraph.cli.commands_index import (
     cmd_watch,
 )
 from codegraph.cli.commands_init import cmd_init, cmd_parsers, cmd_setup
+from codegraph.cli.commands_knowledge import cmd_knowledge, register_knowledge_parser
 from codegraph.cli.commands_monitor import (
     cmd_compact,
     cmd_diff,
@@ -162,6 +167,7 @@ def _print_help():
                 ("guard", "Confidentiality guard: agent-side enforcement"),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
+                ("knowledge", "Promote a worktree's learnings to its main checkout"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -254,6 +260,15 @@ def _register_setup_and_serve(sub) -> None:
     _add_root(p)
     p.add_argument(
         "--yes", "-y", action="store_true", help="Accept all defaults (non-interactive)"
+    )
+    p.add_argument(
+        "--from",
+        dest="from_",
+        default="",
+        metavar="CHECKOUT",
+        help="Seed the index and knowledge from another checkout of this repo "
+        "(its owner must be stopped), then reindex only the files that differ. "
+        "Skips a full index on a fresh worktree.",
     )
     p.add_argument(
         "--no-children",
@@ -355,10 +370,11 @@ def _register_setup_and_serve(sub) -> None:
     p.add_argument("--watch", action="store_true")
     p.add_argument("--reindex", action="store_true")
 
-    # --- _hook_precheck_grep / _hook_precheck_read (hidden hook entry points) ---
-    # Both read the PreToolUse payload on stdin; no flags.
+    # --- _hook_precheck_{grep,read,bash} (hidden hook entry points) ---
+    # All read the PreToolUse payload on stdin; no flags.
     sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_precheck_bash", help=argparse.SUPPRESS)
 
 
 def _register_inspect(sub) -> None:
@@ -497,6 +513,11 @@ def _register_inspect(sub) -> None:
     # --- doctor ---
     p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
     _add_root(p)
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any blocking check fails (for scripts/CI)",
+    )
 
 
 def _register_analysis(sub) -> None:
@@ -547,6 +568,7 @@ def _register_analysis(sub) -> None:
     register_backend_parser(sub)
     register_papercut_parser(sub)
     register_artifact_parser(sub)
+    register_knowledge_parser(sub)
 
     # --- fetch (URL into the searchable index) ---
     from codegraph.cli.commands_fetch import register_fetch_parser
@@ -736,11 +758,13 @@ def main() -> None:
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
+        "_hook_precheck_bash": cmd_hook_precheck_bash,
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,
         "papercut": cmd_papercut,
         "artifact": cmd_artifact,
+        "knowledge": cmd_knowledge,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

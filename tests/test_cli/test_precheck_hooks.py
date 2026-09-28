@@ -111,3 +111,113 @@ def test_bad_stdin_is_silent(monkeypatch, capsys):
         h.cmd_hook_precheck_grep(argparse.Namespace())
     assert exc.value.code == 0
     assert capsys.readouterr().out == ""
+
+
+# --- Bash precheck: the same lookups run as shell commands -------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git grep -n resolve_import",
+        "cd /repo && git grep -n resolve_import -- codegraph/",
+        "grep -rn def_foo codegraph/",
+        "grep -Rn def_foo .",
+        "grep --recursive def_foo src",
+        "LC_ALL=C rg resolve_import",
+        "time ag resolve_import",
+        "find . -name '*.py'",
+        "sed -n '120,180p' codegraph/core/fts.py",
+        "cat codegraph/indexer.py",
+        "head -40 web/app.tsx",
+    ],
+)
+def test_shell_search_hint_fires_on_code_lookups(command):
+    assert h._shell_search_hint(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Filters another command's output, not the repo.
+        "uv run pytest -q | grep FAILED",
+        "gh pr checks 345 | grep -v pass",
+        # rg would fire on its own; downstream of a pipe it only filters.
+        "git diff --stat | rg codegraph",
+        # One file that is not source: a log, a config.
+        "grep ERROR .codegraph/owner.log",
+        "tail -f .codegraph/owner.log",
+        "cat pyproject.toml",
+        "sed -n '1,40p' CHANGELOG.md",
+        # Not a lookup at all.
+        "git status --short",
+        "uv run ruff check .",
+    ],
+)
+def test_shell_search_hint_stays_silent(command):
+    assert h._shell_search_hint(command) is None
+
+
+def test_shell_search_hint_names_the_tools():
+    hint = h._shell_search_hint("git grep -n resolve_import")
+    assert "pattern_search" in hint and "symbol_lookup" in hint
+
+
+def test_shell_search_hint_survives_unbalanced_quotes():
+    # A regex with a pipe inside quotes splits badly; still a recursive grep.
+    assert h._shell_search_hint('grep -rn "foo|bar" src') is not None
+    assert h._shell_search_hint("grep -rn 'oops src") is not None
+
+
+def test_bash_precheck_emits_context_in_a_cgh_repo(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    out = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "git grep -n foo"}, "cwd": str(tmp_path)},
+    )
+    assert "pattern_search" in _envelope(out)
+
+
+def test_bash_precheck_is_silent_outside_a_cgh_repo(monkeypatch, capsys, tmp_path):
+    out = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "git grep -n foo"}, "cwd": str(tmp_path)},
+    )
+    assert out == ""
+
+
+def test_bash_precheck_is_silent_on_an_ordinary_command(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    out = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "uv run pytest -q"}, "cwd": str(tmp_path)},
+    )
+    assert out == ""
+
+
+def test_bash_precheck_is_registered_everywhere_init_and_the_plugin_install():
+    # The spec list, the detection markers and the plugin's hooks.json are
+    # three separate registries; a hook missing from one is silently absent.
+    from pathlib import Path
+
+    from codegraph.cli.commands_init import _CLAUDE_HOOK_MARKERS, _claude_hook_specs
+
+    specs = {s["marker"]: s for s in _claude_hook_specs("cgh")}
+    assert specs["cgh-precheck-bash"]["matcher"] == "Bash"
+    assert "_hook_precheck_bash" in specs["cgh-precheck-bash"]["command"]
+    assert any(m[0] == "cgh-precheck-bash" for m in _CLAUDE_HOOK_MARKERS)
+    plugin = json.loads(
+        (Path(__file__).parents[2] / ".claude-plugin" / "hooks.json").read_text()
+    )
+    commands = [
+        hook["command"]
+        for group in plugin["hooks"]["PreToolUse"]
+        for hook in group["hooks"]
+    ]
+    assert "cgh _hook_precheck_bash" in commands

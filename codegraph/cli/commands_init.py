@@ -988,7 +988,14 @@ def cmd_init(args: argparse.Namespace) -> None:
         default_method = "auto"
         choice = None
 
-        if owner_alive:
+        seed_from = getattr(args, "from_", "") or ""
+        if seed_from:
+            # A seeded store already holds every unchanged file, so the follow-up
+            # pass is incremental by construction: it reindexes only what differs
+            # between the source's indexed content and this working tree.
+            seeded = _seed_from_checkout(root, Path(os.path.abspath(seed_from)))
+            choice = "incremental" if seeded else "full"
+        elif owner_alive:
             console.print(
                 "  [yellow]The MCP owner is running, it already watches this repo.[/yellow]"
             )
@@ -1101,6 +1108,79 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # -- Done --
     _print_init_summary()
+
+
+def _seed_from_checkout(root: Path, from_root: Path) -> bool:
+    """Copy another checkout's store into ``root`` and rewrite it to this root.
+
+    Both owners must be down. The source graph is an embedded DB whose writer
+    holds an exclusive lock for the lifetime of its connection, so a running
+    owner both blocks the read and would leave a half-written copy. A source
+    owner is left to the user, since other sessions may rely on it. A target
+    owner is stopped here: its store is about to be replaced wholesale, and one
+    often appears on a fresh worktree on its own (a git hook or a session hook
+    spawned it). Returns True when the store was seeded, False when the caller
+    should fall back to a normal index.
+    """
+    from codegraph.state.ipc import (
+        is_owner_alive,
+        is_pid_alive,
+        read_owner_pid,
+        stop_owner,
+    )
+    from codegraph.state.relocate import RelocateError, relocate_store
+
+    if not (from_root / ".codegraph").is_dir():
+        console.print(f"  [red]--from:[/red] no .codegraph store under {from_root}")
+        raise SystemExit(1)
+    if from_root == root:
+        console.print("  [red]--from:[/red] source and target are the same checkout")
+        raise SystemExit(1)
+
+    if is_owner_alive(from_root):
+        console.print(
+            f"  [red]--from:[/red] a cgh owner is running on the source "
+            f"({from_root}).\n"
+            f"  [dim]Stop it first so the graph can be copied cleanly:[/dim] "
+            f"cgh stop --root {from_root}"
+        )
+        raise SystemExit(1)
+    if is_owner_alive(root):
+        pid = read_owner_pid(root)
+        # stop_owner clears the pidfile either way, so ask the process itself.
+        stop_owner(root)
+        if pid is not None and is_pid_alive(pid):
+            console.print(
+                f"  [red]--from:[/red] the cgh owner on this checkout did not stop.\n"
+                f"  [dim]Stop it and re-run:[/dim] cgh stop --root {root}"
+            )
+            raise SystemExit(1)
+        console.print(
+            "  [dim]--from: stopped this checkout's owner before seeding[/dim]"
+        )
+
+    with phase_status("[bold cyan]Seeding the index from the source checkout..."):
+        try:
+            result = relocate_store(from_root, root)
+        except RelocateError as exc:
+            console.print(f"  [yellow]--from:[/yellow] {exc}, running a normal index")
+            return False
+
+    console.print(
+        f"  [green]+[/green] seeded from {from_root.name} "
+        f"[dim]({', '.join(result['copied'])}; {result['rewritten_rows']:,} "
+        f"stored paths rewritten to this root)[/dim]"
+    )
+    dropped = result.get("dropped_subrepos") or []
+    if dropped:
+        console.print(
+            f"  [yellow]![/yellow] not federated: {from_root.name} links "
+            f"{len(dropped)} other checkout(s), each on its own branch, so the "
+            "seed leaves them out.\n"
+            "    [dim]Re-link the ones this checkout should query:[/dim] "
+            + "  ".join(f"cgh federate add {d}" for d in dropped)
+        )
+    return True
 
 
 def _init_children(root: Path, assume_yes: bool) -> None:
@@ -1286,6 +1366,18 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "label": "pre-Read outline hint",
             "target": "local",
             "command": f"{cli_prefix} _hook_precheck_read  # cgh-precheck-read",
+            "async": False,
+        },
+        {
+            # The Grep hint cannot see the same lookup run as a shell command
+            # (git grep, grep -rn, rg, sed -n on a source file), which is the
+            # usual way an agent drifts off cgh. Advisory, never blocks.
+            "event": "PreToolUse",
+            "matcher": "Bash",
+            "marker": "cgh-precheck-bash",
+            "label": "pre-Bash search hint",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_precheck_bash  # cgh-precheck-bash",
             "async": False,
         },
         {
@@ -1531,6 +1623,7 @@ _CLAUDE_HOOK_MARKERS = [
     ),
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
+    ("cgh-precheck-bash", "PreToolUse", "Bash", "pre-Bash search hint", "local"),
 ]
 
 

@@ -173,6 +173,25 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         _conn.execute("ALTER TABLE knowledge ADD COLUMN superseded_by INTEGER")
     except sqlite3.OperationalError:
         pass  # column already there
+    # Promotion columns: a per-ticket worktree learns something and it is
+    # promoted into the main checkout's store at merge. `scope` is 'repo' (true
+    # for the repo, promotable) or 'branch' (true only on an unmerged branch, not
+    # promoted); the source_* columns and the two timestamps carry provenance so
+    # a promoted entry keeps its origin instead of looking native. Guarded ALTERs
+    # for databases created before the columns existed.
+    for _col, _type in (
+        ("scope", "TEXT"),
+        ("source_branch", "TEXT"),
+        ("source_commit", "TEXT"),
+        ("source_pr", "TEXT"),
+        ("source_session", "TEXT"),
+        ("origin_ts", "REAL"),
+        ("promoted_at", "REAL"),
+    ):
+        try:
+            _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
+        except sqlite3.OperationalError:
+            pass  # column already there
     _conn.commit()
     # Self-heal: if the FTS references rowids that no longer exist, rebuild
     # from the content table. Cheap at open time (runs once per connection).
@@ -272,6 +291,18 @@ _VALID_KINDS = (
     "standing_instruction",
 )
 
+# The kinds promotion carries by default: durable, repo-wide learnings. Plain
+# notes come too unless the caller opts out; session digests and auto-checkpoint
+# markers never promote (they are session state, not knowledge).
+_PROMOTABLE_KINDS = (
+    "decision",
+    "gotcha",
+    "pattern",
+    "style",
+    "glossary",
+    "standing_instruction",
+)
+
 
 @_locked
 def knowledge_record(
@@ -283,6 +314,13 @@ def knowledge_record(
     session_id: str = "",
     repo_root: str | Path | None = None,
     supersedes: int = 0,
+    scope: str = "repo",
+    source_branch: str = "",
+    source_commit: str = "",
+    source_pr: str = "",
+    source_session: str = "",
+    origin_ts: float | None = None,
+    promoted_at: float | None = None,
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -290,16 +328,25 @@ def knowledge_record(
     kind ∈ {pattern, decision, gotcha, style, glossary, note}.
     tags can be a list or a comma/space-separated string.
     file_refs is similar, canonical paths the entry refers to.
+    scope is 'repo' (default, promotable) or 'branch' (true only on an unmerged
+    branch, not promoted). The source_* fields and promoted_at carry provenance
+    when an entry is promoted from another checkout; origin_ts defaults to now
+    for a native entry and preserves the source entry's timestamp on promotion.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
+    if scope not in ("repo", "branch"):
+        scope = "repo"
     if isinstance(tags, list):
         tags = ",".join(t.strip() for t in tags if t and t.strip())
     if isinstance(file_refs, list):
         file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
     conn = _get_conn(repo_root)
+    now = time.time()
     cur = conn.execute(
-        "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
+        "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
+        "promoted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -307,7 +354,14 @@ def knowledge_record(
             tags or "",
             kind,
             file_refs or "",
-            time.time(),
+            now,
+            scope,
+            source_branch or "",
+            source_commit or "",
+            source_pr or "",
+            source_session or "",
+            origin_ts if origin_ts is not None else now,
+            promoted_at,
         ),
     )
     row_id = cur.lastrowid
@@ -319,6 +373,79 @@ def knowledge_record(
         )
     conn.commit()
     return int(row_id or 0)
+
+
+@_locked
+def promote_knowledge(
+    from_root: str | Path,
+    to_root: str | Path,
+    *,
+    since_ts: float = 0.0,
+    kinds: list[str] | None = None,
+    include_plain_notes: bool = True,
+    source_branch: str = "",
+    source_commit: str = "",
+    source_pr: str = "",
+    source_session: str = "",
+) -> dict:
+    """Copy durable learnings from one store into another, the case being a
+    per-ticket worktree promoted into its main checkout at merge.
+
+    Only ``scope='repo'`` entries are carried (a NULL scope from before the
+    column existed counts as repo). Session digests and auto-checkpoint markers
+    are never carried. Deduplicates on exact (title, body) against the target,
+    so a re-run promotes nothing new. Each promoted entry keeps its origin
+    timestamp and records where it came from. Returns counts.
+    """
+    wanted = set(kinds) if kinds else set(_PROMOTABLE_KINDS)
+    src = _get_conn(from_root)
+    rows = src.execute(
+        "SELECT title, body, kind, tags, file_refs, session_id, ts, scope "
+        "FROM knowledge WHERE superseded_by IS NULL ORDER BY ts ASC"
+    ).fetchall()
+    tgt = _get_conn(to_root)
+    existing = {
+        (r[0], r[1])
+        for r in tgt.execute(
+            "SELECT title, body FROM knowledge WHERE superseded_by IS NULL"
+        ).fetchall()
+    }
+    promoted = skipped = 0
+    for title, body, kind, tags, file_refs, sess, ts, scope in rows:
+        tagset = {t.strip() for t in (tags or "").split(",") if t.strip()}
+        if "session-digest" in tagset or "auto-checkpoint" in tagset:
+            continue
+        if (scope or "repo") != "repo":
+            continue
+        if kind not in wanted and not (kind == "note" and include_plain_notes):
+            continue
+        if (ts or 0.0) < since_ts:
+            continue
+        if (title, body) in existing:
+            skipped += 1
+            continue
+        knowledge_record(
+            title,
+            body,
+            kind=kind,
+            tags=tags or "",
+            file_refs=file_refs or "",
+            repo_root=to_root,
+            scope="repo",
+            source_branch=source_branch,
+            source_commit=source_commit,
+            source_pr=source_pr,
+            source_session=source_session or sess or "",
+            origin_ts=ts,
+            promoted_at=time.time(),
+        )
+        existing.add((title, body))
+        promoted += 1
+    return {
+        "promoted": promoted,
+        "skipped_duplicate": skipped,
+        "considered": len(rows),
+    }
 
 
 @_locked
@@ -407,9 +534,11 @@ def knowledge_list(
     limit: int = 50,
     offset: int = 0,
     repo_root: str | Path | None = None,
+    exclude_tag: str | None = None,
 ) -> list[dict]:
-    """Browse knowledge entries. Filters: kind / tag (substring) / session.
-    Pagination: limit + offset. Caller can fetch limit+1 to detect has_more.
+    """Browse knowledge entries. Filters: kind / tag (substring) / session /
+    exclude_tag (substring to omit). Pagination: limit + offset. Caller can
+    fetch limit+1 to detect has_more.
     """
     conn = _get_conn(repo_root)
     sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
@@ -421,6 +550,9 @@ def knowledge_list(
     if tag:
         where.append("tags LIKE ?")
         params.append(f"%{tag}%")
+    if exclude_tag:
+        where.append("tags NOT LIKE ?")
+        params.append(f"%{exclude_tag}%")
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)

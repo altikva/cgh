@@ -1542,7 +1542,18 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 graph_ok = True
                 graph_msg = "accessible"
             else:
-                graph_msg = "locked by another process"
+                from codegraph.state.ipc import is_owner_alive, read_owner_pid
+
+                # The owner holds the write lock for its whole lifetime, so a
+                # locked graph with this checkout's owner up is the healthy
+                # state, not a failure. Only a lock nobody here owns blocks.
+                if is_owner_alive(root):
+                    graph_ok = True
+                    graph_msg = (
+                        f"held by this checkout's owner (pid {read_owner_pid(root)})"
+                    )
+                else:
+                    graph_msg = "locked by another process"
         except Exception as exc:
             graph_msg = f"error: {exc}"
     checks.append((graph_label, graph_ok, graph_msg))
@@ -1688,6 +1699,27 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     if audit is not None:
         _print_claude_audit(audit)
+
+    # --strict: exit non-zero when a blocking check failed, so a script can gate
+    # on it instead of parsing the table. Blocking excludes the optional
+    # .cghignore and the "not created yet" states (a fresh init before the first
+    # index is not a failure); a missing config.toml on an un-set-up worktree,
+    # an unreadable graph, or missing parsers do count.
+    if getattr(args, "strict", False):
+        blocking = [
+            name
+            for name, ok, msg in checks
+            if not ok
+            and name != ".cghignore"
+            and "not created yet" not in msg
+            and "(optional)" not in msg
+        ]
+        if blocking:
+            console.print(
+                f"[red]strict: {len(blocking)} blocking check(s) failed: "
+                f"{', '.join(blocking)}[/red]"
+            )
+            raise SystemExit(1)
 
 
 def _print_claude_audit(audit: dict) -> None:

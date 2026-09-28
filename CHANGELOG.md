@@ -14,8 +14,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   it anything, which on a large repo is minutes per ticket. Init now copies the
   graph, the search index and the knowledge store from another checkout of the
   same repo, moves every stored path to the new root, and reindexes only the
-  files that differ. Both checkouts' owners must be stopped first, since the
-  graph's writer holds an exclusive lock. Without the flag nothing changes.
+  files that differ. The source's owner must be stopped first, since the
+  graph's writer holds an exclusive lock; init stops the new checkout's own.
+  Federation links are not carried: the source's `subrepos` point at other
+  repos' checkouts on their own branches, so the new checkout starts
+  unfederated and init prints the `cgh federate add` lines to restore them.
+  Without the flag nothing changes.
 - **`cgh knowledge promote --from <worktree> --to <checkout>`**: a per-ticket
   worktree accumulated the learnings for that ticket and took them to the bin
   when it was torn down. Promote carries the durable ones into the main

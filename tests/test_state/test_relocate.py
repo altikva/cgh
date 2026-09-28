@@ -257,3 +257,88 @@ def test_relocate_over_a_target_graph_this_process_holds_open(tmp_path):
     con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
     assert con.execute("SELECT path FROM file").fetchall() == [(f"{dst}/a.py",)]
     con.close()
+
+
+# --- federation links do not travel with the seed ----------------------------
+
+_SEEDED_CONFIG = """\
+[codegraph]
+# how far the watcher looks
+include_dirs = ["docs"]
+subrepos = [
+    "/abs/ondonne-frontend",
+    "./nested-child",
+]
+extra_dirs = ["../gcp-modules"]
+
+[mcp]
+port = 0
+
+[plugin.codegen]
+command = "claude -p --model haiku"
+allow_pii = true
+"""
+
+
+def _seed_with_config(tmp_path, config_text):
+    src, dst = _roots(tmp_path)
+    _sqlite_source(src)
+    (src / ".codegraph" / "config.toml").write_text(config_text)
+    return src, dst, relocate_store(src, dst)
+
+
+def test_relocate_drops_subrepos_and_reports_them(tmp_path):
+    import tomllib
+
+    _, dst, result = _seed_with_config(tmp_path, _SEEDED_CONFIG)
+
+    assert result["dropped_subrepos"] == ["/abs/ondonne-frontend", "./nested-child"]
+    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
+    assert "subrepos" not in cfg["codegraph"]
+
+
+def test_relocate_keeps_the_rest_of_the_config_verbatim(tmp_path):
+    # A re-emit of the parsed TOML would lose the comment and flatten the
+    # nested plugin table that the sprint tooling writes; the cut must not.
+    _, dst, _ = _seed_with_config(tmp_path, _SEEDED_CONFIG)
+
+    text = (dst / ".codegraph" / "config.toml").read_text()
+    assert "# how far the watcher looks" in text
+    assert (
+        '[plugin.codegen]\ncommand = "claude -p --model haiku"\nallow_pii = true'
+        in text
+    )
+    assert 'include_dirs = ["docs"]' in text
+    assert 'extra_dirs = ["../gcp-modules"]' in text
+
+
+def test_relocate_only_touches_subrepos_under_codegraph(tmp_path):
+    # A key named subrepos in another table is not federation.
+    config = '[codegraph]\nsubrepos = ["/x"]\n\n[plugin.other]\nsubrepos = ["kept"]\n'
+    _, dst, result = _seed_with_config(tmp_path, config)
+
+    assert result["dropped_subrepos"] == ["/x"]
+    assert (
+        '[plugin.other]\nsubrepos = ["kept"]'
+        in (dst / ".codegraph" / "config.toml").read_text()
+    )
+
+
+def test_relocate_without_subrepos_reports_nothing(tmp_path):
+    config = '[codegraph]\ninclude_dirs = ["docs"]\n'
+    _, dst, result = _seed_with_config(tmp_path, config)
+
+    assert result["dropped_subrepos"] == []
+    assert (dst / ".codegraph" / "config.toml").read_text() == config
+
+
+def test_seeded_checkout_resolves_no_children(tmp_path):
+    from codegraph.analysis.federation import resolve_children
+
+    child = tmp_path.resolve() / "front"
+    (child / ".codegraph").mkdir(parents=True)
+    _, dst, _ = _seed_with_config(
+        tmp_path, f'[codegraph]\nsubrepos = ["{child.as_posix()}"]\n'
+    )
+
+    assert resolve_children(dst) == []

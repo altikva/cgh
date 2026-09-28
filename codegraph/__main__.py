@@ -35,7 +35,11 @@ from codegraph.cli.commands_guard import (
 # ---------------------------------------------------------------------------
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
-from codegraph.cli.commands_hooks import cmd_hook_precheck_grep, cmd_hook_precheck_read
+from codegraph.cli.commands_hooks import (
+    cmd_hook_precheck_bash,
+    cmd_hook_precheck_grep,
+    cmd_hook_precheck_read,
+)
 from codegraph.cli.commands_impact import cmd_impact
 from codegraph.cli.commands_index import (
     cmd_force_index,
@@ -366,10 +370,11 @@ def _register_setup_and_serve(sub) -> None:
     p.add_argument("--watch", action="store_true")
     p.add_argument("--reindex", action="store_true")
 
-    # --- _hook_precheck_grep / _hook_precheck_read (hidden hook entry points) ---
-    # Both read the PreToolUse payload on stdin; no flags.
+    # --- _hook_precheck_{grep,read,bash} (hidden hook entry points) ---
+    # All read the PreToolUse payload on stdin; no flags.
     sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_precheck_bash", help=argparse.SUPPRESS)
 
 
 def _register_inspect(sub) -> None:
@@ -753,6 +758,7 @@ def main() -> None:
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
+        "_hook_precheck_bash": cmd_hook_precheck_bash,
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,

@@ -57,6 +57,10 @@ than reading.
 - **Text/regex pattern search** (*"find every occurrence of X"*):
   1. `pattern_search(pattern, glob?, max_results?)`, INSTEAD of Grep.
      Returns structured {file, line, text}. Then Read only those lines.
+  2. The same holds in the shell: `git grep`, `grep -r`, `rg`, `find -name`
+     and `sed -n` / `cat` on a source file are Grep and Read by another
+     route. Locate with cgh first; keep shell search for logs and files
+     cgh does not index.
 - **Known-preference territory** (commit style, naming, workflow):
   1. `memory_search(query, kind="feedback")` BEFORE asking the user
 - **User hints at a past plan** (*"the refactor we planned"*):
@@ -153,6 +157,8 @@ shrinks and reload it after.
 
 Only use `Read` on the exact line ranges returned by a codegraph tool.
 Never `ls`/`find`/`tree` for structure, `architecture_overview` has it.
+Never `git grep` / `grep -r` / `rg` / `sed -n` to find what to edit:
+`symbol_lookup` and `pattern_search` return the file:line directly.
 Never re-derive a fact that could be looked up via `memory_search` or
 `knowledge_search`.
 """

@@ -168,6 +168,7 @@ mcp = FastMCP(
         "  • Text/regex pattern search ('find every occurrence of X'):\n"
         "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
         "          Returns {file, line, text}. Then Read only those lines.\n"
+        "          Also instead of git grep / grep -r / rg / sed -n in Bash.\n"
         "  • After git pull / checkout / rebase:\n"
         "       1. scan_status, then incremental_reindex if stale\n"
         "  • Adding an external dir: add_directory(path)\n"

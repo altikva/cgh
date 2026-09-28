@@ -18,6 +18,15 @@
             "command": "cgh _hook_precheck_grep"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_precheck_bash"
+          }
+        ]
       }
     ],
     "PostToolUse": [

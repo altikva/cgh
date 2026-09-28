@@ -1360,6 +1360,18 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "async": False,
         },
         {
+            # The Grep hint cannot see the same lookup run as a shell command
+            # (git grep, grep -rn, rg, sed -n on a source file), which is the
+            # usual way an agent drifts off cgh. Advisory, never blocks.
+            "event": "PreToolUse",
+            "matcher": "Bash",
+            "marker": "cgh-precheck-bash",
+            "label": "pre-Bash search hint",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_precheck_bash  # cgh-precheck-bash",
+            "async": False,
+        },
+        {
             "event": "PreToolUse",
             "matcher": "Read|Grep|Glob|Bash",
             "marker": "cgh-guard",
@@ -1602,6 +1614,7 @@ _CLAUDE_HOOK_MARKERS = [
     ),
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
+    ("cgh-precheck-bash", "PreToolUse", "Bash", "pre-Bash search hint", "local"),
 ]
 
 

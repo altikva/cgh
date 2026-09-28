@@ -101,14 +101,28 @@ def build_resume_bundle(
     # terms), but a search that matches nothing must never SHRINK the bucket,
     # so backfill with recent entries up to the limit. The no-task path is pure
     # backfill.
-    knowledge = (
-        knowledge_search(task, limit=_KNOWLEDGE_LIMIT, repo_root=repo_root)
-        if task
-        else []
-    )
+    #
+    # The knowledge bucket is for real learnings (decisions, gotchas, patterns),
+    # NOT session digests, which have their own bucket above. Exclude the
+    # session-digest tag from both paths: without it, a long-lived store whose
+    # recent rows are all auto-checkpoint markers buries every real entry, since
+    # the recency backfill fills up on the markers and never reaches the older
+    # decisions and gotchas. That is how a store with hundreds of checkpoints
+    # returned zero knowledge on resume.
+    knowledge = [
+        k
+        for k in (
+            knowledge_search(task, limit=_KNOWLEDGE_LIMIT, repo_root=repo_root)
+            if task
+            else []
+        )
+        if "session-digest" not in (k.get("tags") or [])
+    ]
     have = {k["id"] for k in knowledge}
     if len(knowledge) < _KNOWLEDGE_LIMIT:
-        for k in knowledge_list(limit=_KNOWLEDGE_LIMIT, repo_root=repo_root):
+        for k in knowledge_list(
+            limit=_KNOWLEDGE_LIMIT, exclude_tag="session-digest", repo_root=repo_root
+        ):
             if len(knowledge) >= _KNOWLEDGE_LIMIT:
                 break
             if k["id"] not in have:

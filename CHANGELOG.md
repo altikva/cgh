@@ -8,6 +8,60 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-28
+
+### Added
+- **`cgh init --from <checkout>` seeds a new checkout from an existing one**: a
+  fresh worktree started empty and paid a full index before an agent could ask
+  it anything, which on a large repo is minutes per ticket. Init now copies the
+  graph, the search index and the knowledge store from another checkout of the
+  same repo, moves every stored path to the new root, and reindexes only the
+  files that differ. The source's owner must be stopped first, since the
+  graph's writer holds an exclusive lock; init stops the new checkout's own.
+  Federation links are not carried: the source's `subrepos` point at other
+  repos' checkouts on their own branches, so the new checkout starts
+  unfederated and init prints the `cgh federate add` lines to restore them.
+  Without the flag nothing changes.
+- **`cgh knowledge promote --from <worktree> --to <checkout>`**: a per-ticket
+  worktree accumulated the learnings for that ticket and took them to the bin
+  when it was torn down. Promote carries the durable ones into the main
+  checkout at merge, skipping session digests and auto-checkpoints, and records
+  where each came from (branch, commit, pull request, session). Re-running it
+  promotes nothing new, so it is safe to call from a merge script.
+- **`cgh doctor --strict` exits non-zero when a blocking check fails**, so CI
+  and setup scripts can gate on a healthy store instead of parsing the table.
+- **Shell code searches get the same cgh hint as Grep**: the hint that points
+  an agent from Grep to cgh's symbol search never saw the same lookup typed as
+  a shell command, and agents drift off cgh exactly that way, with `git grep`,
+  `grep -r`, `rg` or `sed -n` on a source file. `cgh init` now also installs a
+  Bash hook that names the cgh tool answering the command, and the installed
+  usage rule, skill and server instructions say so too. The hint is advisory
+  and never blocks; searches through logs, configs or piped output stay silent.
+  Re-run `cgh init` in an existing repo to add the hook.
+
+### Fixed
+- **`context_for_task` occasionally failed with `KeyError: 'dst_name'`**: an
+  owner answers several tool calls at once, and on the DuckDB backend two graph
+  queries running at the same moment could each get the other's result, so a
+  lookup of what a function calls came back with the columns of a lookup of
+  who calls it. Rare, and more likely on long tasks. Graph queries in one
+  owner now run one after another, which DuckDB was already doing for
+  execution, so nothing gets slower.
+- **Symbol search failed with "database disk image is malformed"**: rebuilding
+  the search index stored symbol names in a different form from the one later
+  deletes remove, so every delete after a rebuild left dangling entries, and a
+  ranked search that reached one failed. `context_for_task` was the usual
+  victim. The repair routine that runs on a damaged index was itself doing
+  those rebuilds, so it kept the damage coming. Rebuilds now store names the
+  way deletes expect, each store is repaired once the first time the new
+  version opens it (well under a second), and a search that still meets a
+  damaged index repairs it and retries instead of failing the tool.
+- **`resume` returned no knowledge in a busy store**: the bundle filled its
+  knowledge slots with the most recent entries whatever their kind, so in a
+  store dominated by automatic session checkpoints the real learnings, being
+  older, never surfaced and a resuming agent restarted from zero. Digests are
+  now kept out of that bucket, which is what the digest section is for.
+
 ## [0.14.0] - 2026-09-22
 
 ### Added
@@ -1617,7 +1671,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/altikva/cgh/compare/v0.11.8...v0.12.0

@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sqlite3
 import sys
 from pathlib import Path
@@ -84,6 +85,128 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
         "to confirm a raw text search is what you want."
     )
+
+
+# The Grep precheck above only sees the Grep tool. The same lookups also run as
+# shell commands through Bash (git grep, grep -rn, rg, sed -n on a source file),
+# which is how an agent drifts off cgh without ever touching Grep. The Bash
+# precheck below covers that path.
+_SHELL_SEARCHERS = frozenset({"rg", "ag", "ack"})
+_SHELL_READERS = frozenset({"sed", "cat", "head", "tail", "awk"})
+_SHELL_WRAPPERS = frozenset({"sudo", "time", "command", "exec", "nice", "env"})
+# Reading one of these through the shell is reading code. Logs, configs and
+# data files stay out, so `tail -f owner.log` or `cat pyproject.toml` pass.
+_SOURCE_EXTS = frozenset(
+    {
+        ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue",
+        ".go", ".rs", ".java", ".kt", ".tf", ".rb", ".php", ".cs", ".c", ".h",
+        ".cc", ".cpp", ".hpp", ".swift", ".scala",
+    }
+)  # fmt: skip
+
+
+def _pipeline_heads(command: str) -> list[list[str]]:
+    """The first command of every pipeline in a shell line, tokenized.
+
+    A command that only receives piped input (``... | grep x``) filters another
+    command's output rather than searching files, so it is never returned.
+    Environment assignments and wrappers like ``time`` are stripped so the real
+    program comes first. Unbalanced quotes fall back to a whitespace split:
+    this is an advisory heuristic, not a shell parser."""
+    heads: list[list[str]] = []
+    for chain in re.split(r"&&|\|\||;|\n", command):
+        first = chain.split("|", 1)[0].strip()
+        if not first:
+            continue
+        try:
+            toks = shlex.split(first)
+        except ValueError:
+            toks = first.split()
+        while toks and (
+            toks[0] in _SHELL_WRAPPERS
+            or ("=" in toks[0] and not toks[0].startswith("-"))
+        ):
+            toks.pop(0)
+        if toks:
+            heads.append(toks)
+    return heads
+
+
+def _is_recursive_grep(args: list[str]) -> bool:
+    for a in args:
+        if a in ("--recursive", "--dereference-recursive"):
+            return True
+        if a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a):
+            return True
+    return False
+
+
+def _shell_search_hint(command: str) -> str | None:
+    """The nudge for a shell command that locates or reads code, else None."""
+    for toks in _pipeline_heads(command):
+        prog, args = os.path.basename(toks[0]), toks[1:]
+        searching = (
+            (prog == "git" and args[:1] == ["grep"])
+            or (prog in ("grep", "egrep", "fgrep") and _is_recursive_grep(args))
+            or prog in _SHELL_SEARCHERS
+        )
+        if searching:
+            label = "git grep" if prog == "git" else prog
+            return (
+                f"[cgh hook] `{label}` over the repo to locate code. cgh answers "
+                "this server-side with exact file:line, at near-zero token cost:\n"
+                "  - pattern_search(pattern, glob?)   text or regex, structured hits\n"
+                "  - symbol_lookup(name) / search_symbols(query)   a definition\n"
+                "  - find_callers(fn) / find_callees(fn)   call sites\n"
+                "Then Read only the returned lines. Shell search stays right for "
+                "logs and files cgh does not index."
+            )
+        if prog == "find" and any(
+            a in ("-name", "-iname", "-path", "-ipath") for a in args
+        ):
+            return (
+                "[cgh hook] `find` to locate files. Prefer search_symbols(query) "
+                "for code by name, or architecture_overview() / domain_map(keyword) "
+                "for structure."
+            )
+        if prog in _SHELL_READERS:
+            sources = [a for a in args if Path(a).suffix.lower() in _SOURCE_EXTS]
+            if sources:
+                return (
+                    f"[cgh hook] `{prog}` to read {sources[0]}. Prefer "
+                    "symbol_lookup(name) for the exact line range, then Read with "
+                    "offset/limit (or file_summary for an outline)."
+                )
+    return None
+
+
+def _in_cgh_repo(start: Path) -> bool:
+    return any((p / ".codegraph").is_dir() for p in (start, *start.parents))
+
+
+def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
+    """
+    PreToolUse hook for Bash. When the command searches or reads code through
+    the shell (git grep, grep -r, rg, find -name, sed or cat on a source file)
+    inside a cgh repo, points at the cgh tool that answers it. Always exits 0,
+    advisory, never blocking: the command still runs.
+    """
+    try:
+        payload = json.loads(sys.stdin.read())
+    except Exception:
+        sys.exit(0)
+
+    command = (payload.get("tool_input") or {}).get("command")
+    if not isinstance(command, str) or not command.strip():
+        sys.exit(0)
+    cwd = payload.get("cwd") or os.getcwd()
+    if not _in_cgh_repo(Path(cwd)):
+        sys.exit(0)
+
+    hint = _shell_search_hint(command)
+    if hint:
+        _emit_nudge(hint)
+    sys.exit(0)
 
 
 def _emit_artifact_recall(target: Path, rel_path: str, body: str) -> None:

@@ -29,13 +29,14 @@ adopting over time):
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--secure] [--no-children] [--tools LIST] [--root DIR]
+cgh init [--yes | -y] [--secure] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
 | `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
+| `--from` | Seed the index and knowledge from another checkout of this repo, then reindex only the files that differ |
 | `--no-children` | Don't initialize / refresh federated subrepos |
 | `--tools` | Comma-separated tools to wire regardless of detection (`claude,cursor,codex,gemini,bob`). For a fresh repo where cgh cannot detect the tool yet |
 
@@ -55,6 +56,23 @@ scripted or empty-repo bootstrap.
 7. Offers Claude-specific auto-accept for MCP tool calls
 8. Counts parseable files by language
 9. Optionally runs `cgh index`
+
+#### Seeding a new checkout with `--from`
+
+A fresh worktree starts with no index and pays a full scan before an agent can
+ask it anything. `--from` points at another checkout of the same repo and copies
+its graph, search index and knowledge store, moves every stored path to the new
+root, then reindexes only the files that differ:
+
+```bash
+cgh init --yes --from ~/code/myrepo    # in the new worktree
+```
+
+Both checkouts' owners must be stopped first (`cgh stop --root <checkout>`): the
+graph's writer holds an exclusive lock for the lifetime of its connection, so a
+live owner both blocks the read and would leave a half-written copy. The target
+mints its own `auth.key` rather than sharing the source's, and the scanners
+regenerate the finding store on the next pass.
 
 ### `reset`
 
@@ -472,13 +490,19 @@ cgh files --check report.xlsx   # indexed? if not, why
 Run a health check that verifies all codegraph components are operational.
 
 ```
-cgh doctor [--root DIR]
+cgh doctor [--strict] [--root DIR]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--strict` | Exit 1 when a blocking check fails, so CI and setup scripts can gate on a healthy store instead of parsing the table. Optional checks (`.cghignore`) and not-yet-created files do not block. |
 
 Checks performed:
 
 1. `.codegraph/` directory exists
-2. Graph DB (`graph.duckdb` or `graph.db`) is accessible
+2. Graph DB (`graph.duckdb` or `graph.sqlite`) is accessible. A graph locked by
+   this checkout's own running owner counts as healthy (the owner holds the
+   write lock for its whole life); a lock with no owner here fails.
 3. `fts.db` (SQLite FTS5) is accessible
 4. `call_log.db` is accessible
 5. `config.toml` is valid TOML
@@ -643,6 +667,29 @@ cgh artifact note <path> --summary "<what it holds>"   # save one (hashes the fi
 Connected agents record and read through the knowledge MCP tools
 (`knowledge_record(..., kind="note", tags="artifact", file_refs=[path])`),
 guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
+
+### `knowledge`
+
+Carries a per-ticket worktree's learnings into its main checkout, so they
+outlive the worktree. Run it at merge, before the worktree is removed.
+
+```
+cgh knowledge promote --from <worktree> --to <checkout> [--since EPOCH] \
+    [--kinds a,b] [--no-notes] [--pr repo#N] [--branch B] [--commit SHA] [--session ID]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--from`, `--to` | Source worktree and target checkout; both must hold a `.codegraph/` store |
+| `--since` | Only entries recorded at or after this epoch timestamp (default: all) |
+| `--kinds` | Kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction) |
+| `--no-notes` | Leave plain notes out and promote only the explicit kinds |
+| `--pr`, `--branch`, `--commit`, `--session` | Provenance stored on each promoted entry; branch and commit default to `--from`'s git state |
+
+Only repo-scoped entries move; session digests and automatic checkpoints never
+do. An entry already present in the target with the same title and body is
+skipped, so re-running promotes nothing new. Each promoted entry keeps its
+original timestamp and records when it was promoted.
 
 ### `guard`
 

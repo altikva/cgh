@@ -40,6 +40,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Re-run `cgh init` in an existing repo to add the hook.
 
 ### Fixed
+- **The npx package (`@altikva/cgh`) was stuck at 0.13.0**: 0.14.0 bumped
+  the Python version but not the npm wrapper's, and the npm publish refuses a
+  mismatch with the tag, so 0.14.0 never reached npm. The wrapper and the
+  Claude Code plugin manifests now carry 0.14.1, and a test fails any pull
+  request where one of them drifts from the Python version.
 - **`context_for_task` occasionally failed with `KeyError: 'dst_name'`**: an
   owner answers several tool calls at once, and on the DuckDB backend two graph
   queries running at the same moment could each get the other's result, so a

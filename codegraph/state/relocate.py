@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -225,6 +226,61 @@ def _rewrite_scan_meta(from_root: Path, to_root: Path) -> None:
     dst.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
 
+_TABLE_HEADER = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$")
+_SUBREPOS_KEY = re.compile(r"^\s*subrepos\s*=")
+
+
+def _drop_subrepos(config_path: Path) -> list[str]:
+    """Remove ``subrepos`` from the ``[codegraph]`` table of a seeded config.
+
+    Federation links one checkout to other checkouts, which the seed does not
+    carry. The source's children are its own: absolute paths to other repos'
+    main checkouts, each on whatever branch it holds. A per-ticket worktree
+    that inherited them would fan its queries out to code on unrelated
+    branches. It starts unfederated instead; ``cgh federate add`` re-links it.
+
+    The assignment is cut line by line rather than by re-emitting the parsed
+    file: a re-emit drops comments and flattens nested tables such as
+    ``[plugin.codegen]``. A multi-line array is followed to its closing
+    bracket. Returns the removed entries, empty when there were none. If the
+    edited text does not parse, the file is left untouched and nothing is
+    reported as removed."""
+    import tomllib
+
+    try:
+        text = config_path.read_text(encoding="utf-8")
+        entries = list(tomllib.loads(text).get("codegraph", {}).get("subrepos", []))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    if not entries:
+        return []
+
+    kept: list[str] = []
+    table = ""
+    depth = 0  # open brackets of a subrepos array still being skipped
+    for line in text.splitlines(keepends=True):
+        if depth:
+            depth += line.count("[") - line.count("]")
+            continue
+        header = _TABLE_HEADER.match(line)
+        if header:
+            table = header.group(1)
+        elif table == "codegraph" and _SUBREPOS_KEY.match(line):
+            value = line.split("=", 1)[1]
+            depth = value.count("[") - value.count("]")
+            continue
+        kept.append(line)
+
+    edited = "".join(kept)
+    try:
+        if "subrepos" in tomllib.loads(edited).get("codegraph", {}):
+            return []
+    except tomllib.TOMLDecodeError:
+        return []
+    config_path.write_text(edited, encoding="utf-8")
+    return [str(e) for e in entries]
+
+
 def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     """Seed ``to_root``'s .codegraph from ``from_root``'s.
 
@@ -282,11 +338,13 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
         )
 
     _rewrite_scan_meta(from_root, to_root)
+    dropped = _drop_subrepos(to_cg / _CONFIG_FILE) if _CONFIG_FILE in copied else []
 
     return {
         "backend": backend,
         "copied": copied,
         "rewritten_rows": rewritten,
+        "dropped_subrepos": dropped,
         "from_root": str(from_root),
         "to_root": str(to_root),
     }

@@ -28,6 +28,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   by another call, was replaced without a word. The target is now checked
   again at the moment of writing; if anyone else touched it, it is left as is
   and the call fails and says so.
+- **`pattern_search` found nothing with a brace glob** such as `*.{ts,vue}`
+  on a machine without ripgrep: git and the Python fallback do not understand
+  braces, so the glob matched no file and the search came back empty without
+  an error. Braces are now expanded into one pattern per alternative.
 
 ## [0.14.1] - 2026-09-28
 

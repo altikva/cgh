@@ -137,6 +137,15 @@ def cmd_index(args: argparse.Namespace) -> None:
                 method=getattr(args, "method", "auto"),
             )
         except RuntimeError as exc:
+            from codegraph.state.index_lock import IndexBusy
+
+            if isinstance(exc, IndexBusy):
+                console.print(
+                    f"\n  [yellow]Index skipped:[/yellow] another index of this repo "
+                    f"is already running (pid {exc.pid}) and covers it. "
+                    "[dim]Follow it with[/dim] cgh tail -f"
+                )
+                return
             if "Could not set lock" in str(exc):
                 console.print()
                 console.print(
@@ -271,12 +280,20 @@ def cmd_watch(args: argparse.Namespace) -> None:
     console.print(LOGO)
     console.print(f"[dim]Watching:[/dim] [bold]{root}[/bold]\n")
 
-    with console.status("[bold blue]Initial index...", spinner="dots"):
-        stats = index_repo(root, verbose=False)
+    from codegraph.state.index_lock import IndexBusy
 
-    console.print(
-        f"[green]Initial index done[/green] -- {stats['indexed']} files in {stats['elapsed_s']}s"
-    )
+    try:
+        with console.status("[bold blue]Initial index...", spinner="dots"):
+            stats = index_repo(root, verbose=False)
+        console.print(
+            f"[green]Initial index done[/green] -- {stats['indexed']} files in "
+            f"{stats['elapsed_s']}s"
+        )
+    except IndexBusy as exc:
+        console.print(
+            f"[yellow]Initial index skipped:[/yellow] another index of this repo is "
+            f"running (pid {exc.pid})"
+        )
     console.print("[dim]Watching for changes... (Ctrl-C to stop)[/dim]\n")
     watch_forever(root)
 

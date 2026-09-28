@@ -189,8 +189,27 @@ def scan_status(repo_root: str | Path) -> dict:
       behind_by                                  (int | None, commits)
       changed_files                              (list[str], since indexed_sha)
       fresh                                      (bool, no drift)
+      indexing                                   ({pid, since} | None)
+
+    ``indexing`` is set while an index of this repo is running. The metadata
+    is only written when an index completes, so during a first index
+    indexed_sha is null although the store is being built; without this flag
+    that read as "never indexed".
     """
+    from codegraph.state.index_lock import holder
+
     root = Path(repo_root)
+    running = holder(root)
+    indexing = (
+        {
+            "pid": running["pid"],
+            "since": datetime.fromtimestamp(running["since"], UTC).isoformat(
+                timespec="seconds"
+            ),
+        }
+        if running
+        else None
+    )
     meta = read_meta(root) or {}
     indexed_sha = meta.get("git_head")
     indexed_branch = meta.get("git_branch")
@@ -228,4 +247,5 @@ def scan_status(repo_root: str | Path) -> dict:
         "behind_by": behind_by,
         "changed_files": changed,
         "fresh": fresh,
+        "indexing": indexing,
     }

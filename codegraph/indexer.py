@@ -1273,7 +1273,30 @@ def index_repo(
     """Index the repo, and if the graph DB is found corrupt mid-index (a
     DuckDB ART index left inconsistent by an earlier crash), rebuild it from
     scratch once and retry a full scan instead of crashing. See _index_repo
-    for the discovery-method details."""
+    for the discovery-method details.
+
+    Holds the repo's index lock: raises IndexBusy (a RuntimeError) when
+    another process or thread is already indexing this repo, rather than
+    running a second full index beside it."""
+    from codegraph.state.index_lock import index_lock
+
+    with index_lock(repo_root):
+        return _index_repo_recovering(
+            repo_root,
+            verbose=verbose,
+            on_file=on_file,
+            on_discovery=on_discovery,
+            method=method,
+        )
+
+
+def _index_repo_recovering(
+    repo_root: str | Path,
+    verbose: bool,
+    on_file: Callable[[Path, str, dict], None] | None,
+    on_discovery: Callable[[int, str], None] | None,
+    method: str,
+) -> dict:
     try:
         return _index_repo(
             repo_root,
@@ -1440,6 +1463,23 @@ def _index_repo(
 
 
 def incremental_reindex(
+    repo_root: str | Path,
+    on_file: Callable[[Path, str, dict], None] | None = None,
+    on_discovery: Callable[[int, str], None] | None = None,
+) -> dict:
+    """Reindex only what changed; see _incremental_reindex. Holds the repo's
+    index lock like index_repo, and keeps it through a fallback to a full
+    index (the lock nests within one thread). Raises IndexBusy when another
+    index of this repo is running."""
+    from codegraph.state.index_lock import index_lock
+
+    with index_lock(repo_root):
+        return _incremental_reindex(
+            repo_root, on_file=on_file, on_discovery=on_discovery
+        )
+
+
+def _incremental_reindex(
     repo_root: str | Path,
     on_file: Callable[[Path, str, dict], None] | None = None,
     on_discovery: Callable[[int, str], None] | None = None,

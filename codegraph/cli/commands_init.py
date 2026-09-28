@@ -1180,6 +1180,13 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
             "    [dim]Re-link the ones this checkout should query:[/dim] "
             + "  ".join(f"cgh federate add {d}" for d in dropped)
         )
+    left_out = result.get("left_out") or []
+    if left_out:
+        console.print(
+            f"  [yellow]![/yellow] not copied, unknown to this cgh version: "
+            f"{', '.join(left_out)}. [dim]The source was indexed by a newer cgh; "
+            "the next full index restores them.[/dim]"
+        )
     return True
 
 

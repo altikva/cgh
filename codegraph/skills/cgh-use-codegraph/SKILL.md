@@ -43,6 +43,9 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 
 - Don't Grep / Read a file "to find where X is" if `symbol_lookup` would
   return it directly.
+- Don't route the same search through Bash: `git grep`, `grep -r`, `rg`,
+  `find -name`, or `sed -n` / `cat` on a source file are Grep and Read by
+  another path. Shell search is for logs and files cgh does not index.
 - Don't read an entire file just to list its functions: use `doc_outline`
   for markdown or walk symbols via `search_symbols`.
 - Don't run manual `cgh` CLI commands during a session; use MCP tools so

@@ -24,6 +24,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   promotes nothing new, so it is safe to call from a merge script.
 - **`cgh doctor --strict` exits non-zero when a blocking check fails**, so CI
   and setup scripts can gate on a healthy store instead of parsing the table.
+- **Shell code searches get the same cgh hint as Grep**: the hint that points
+  an agent from Grep to cgh's symbol search never saw the same lookup typed as
+  a shell command, and agents drift off cgh exactly that way, with `git grep`,
+  `grep -r`, `rg` or `sed -n` on a source file. `cgh init` now also installs a
+  Bash hook that names the cgh tool answering the command, and the installed
+  usage rule, skill and server instructions say so too. The hint is advisory
+  and never blocks; searches through logs, configs or piped output stay silent.
+  Re-run `cgh init` in an existing repo to add the hook.
 
 ### Fixed
 - **Symbol search failed with "database disk image is malformed"**: rebuilding

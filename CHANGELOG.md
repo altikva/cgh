@@ -32,6 +32,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   on a machine without ripgrep: git and the Python fallback do not understand
   braces, so the glob matched no file and the search came back empty without
   an error. Braces are now expanded into one pattern per alternative.
+- **Every owner start re-indexed the whole repo**: `--reindex` ran a full
+  index even when the store was already indexed, so each start re-parsed every
+  file; with a dozen worktree owners starting together the machine saturated,
+  and two full indexes of one worktree could run side by side (init, then the
+  owner). An owner now starts with an incremental pass that only reindexes
+  what changed, and falls back to a full index only when there is nothing to
+  compare against. Only one index of a repo runs at a time: a second one is
+  skipped and says which process holds the repo.
+- **`scan_status` looked empty during a first index**: `indexed_sha` stays
+  null until the index completes, which read as "never indexed". It now
+  reports `indexing` (the process and start time) while an index is running.
 
 ## [0.14.1] - 2026-09-28
 

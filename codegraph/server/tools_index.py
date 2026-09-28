@@ -232,6 +232,10 @@ def register(mcp) -> None:
           behind_by, commits between indexed and HEAD
           dirty, working tree has uncommitted changes
           changed_files, files modified since indexed_sha (up to 200)
+          indexing, {pid, since} while an index of this repo is running, else
+            null. During a first index indexed_sha is still null: wait for it
+            to finish instead of concluding the repo was never indexed, and
+            do not start scan_repo, which would be refused as a duplicate.
         """
         from codegraph.state.scan_meta import scan_status as _scan_status
 

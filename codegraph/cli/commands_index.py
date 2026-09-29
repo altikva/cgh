@@ -137,6 +137,15 @@ def cmd_index(args: argparse.Namespace) -> None:
                 method=getattr(args, "method", "auto"),
             )
         except RuntimeError as exc:
+            from codegraph.state.index_lock import IndexBusy
+
+            if isinstance(exc, IndexBusy):
+                console.print(
+                    f"\n  [yellow]Index skipped:[/yellow] another index of this repo "
+                    f"is already running (pid {exc.pid}) and covers it. "
+                    "[dim]Follow it with[/dim] cgh tail -f"
+                )
+                return
             if "Could not set lock" in str(exc):
                 console.print()
                 console.print(
@@ -271,12 +280,20 @@ def cmd_watch(args: argparse.Namespace) -> None:
     console.print(LOGO)
     console.print(f"[dim]Watching:[/dim] [bold]{root}[/bold]\n")
 
-    with console.status("[bold blue]Initial index...", spinner="dots"):
-        stats = index_repo(root, verbose=False)
+    from codegraph.state.index_lock import IndexBusy
 
-    console.print(
-        f"[green]Initial index done[/green] -- {stats['indexed']} files in {stats['elapsed_s']}s"
-    )
+    try:
+        with console.status("[bold blue]Initial index...", spinner="dots"):
+            stats = index_repo(root, verbose=False)
+        console.print(
+            f"[green]Initial index done[/green] -- {stats['indexed']} files in "
+            f"{stats['elapsed_s']}s"
+        )
+    except IndexBusy as exc:
+        console.print(
+            f"[yellow]Initial index skipped:[/yellow] another index of this repo is "
+            f"running (pid {exc.pid})"
+        )
     console.print("[dim]Watching for changes... (Ctrl-C to stop)[/dim]\n")
     watch_forever(root)
 
@@ -403,7 +420,8 @@ def cmd_stop(args: argparse.Namespace) -> None:
 
 
 def cmd_force_index(args: argparse.Namespace) -> None:
-    from codegraph.indexer import _PARSERS, index_file
+    from codegraph.indexer import index_file
+    from codegraph.parsers import get_parser_for_path
 
     root = Path(os.path.abspath(args.root))
     targets = args.paths
@@ -439,7 +457,7 @@ def cmd_force_index(args: argparse.Namespace) -> None:
                 for dirpath, _, filenames in os.walk(target):
                     for filename in filenames:
                         full = Path(dirpath) / filename
-                        if full.suffix.lower() in _PARSERS:
+                        if get_parser_for_path(full) is not None:
                             ok = index_file(full, root, force=True)
                             if ok:
                                 indexed += 1
@@ -479,7 +497,12 @@ def cmd_reindex_hook(args: argparse.Namespace) -> None:
                 return
 
         from codegraph.indexer import index_repo
+        from codegraph.state.deferred_scan import suspend
 
+        # Structural only: no LLM-backed deferred scanner from a git hook.
+        # It fires on every checkout of every worktree, and would spawn one
+        # backend call per file. `cgh summarize` and friends backfill.
+        suspend()
         index_repo(root, method="incremental")
     except Exception:
         # A reindex failure must never break the user's git operation.

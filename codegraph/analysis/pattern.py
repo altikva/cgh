@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 from codegraph.core.utils import quiet_subprocess_kwargs
@@ -42,6 +43,42 @@ class PatternHit:
     file: str
     line: int
     text: str
+
+
+def _expand_braces(glob: str) -> list[str]:
+    """Shell-style brace expansion: ``*.{ts,vue}`` -> ``["*.ts", "*.vue"]``.
+
+    ripgrep understands braces in a glob, but git pathspecs and fnmatch do
+    not: handed ``*.{ts,vue}`` they match no file at all, and git grep reports
+    that as a clean empty result, so the search silently returned nothing on
+    any machine without ripgrep. Nested and repeated groups expand like the
+    shell does. A brace with no top-level comma, or with no closing brace, is
+    kept as a literal character. Order is preserved and duplicates dropped."""
+    start = glob.find("{")
+    while start != -1:
+        depth = 0
+        commas: list[int] = []
+        for i in range(start, len(glob)):
+            ch = glob[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    if commas:
+                        bounds = [start, *commas, i]
+                        head, tail = glob[:start], glob[i + 1 :]
+                        out: list[str] = []
+                        for a, b in pairwise(bounds):
+                            for g in _expand_braces(head + glob[a + 1 : b] + tail):
+                                if g not in out:
+                                    out.append(g)
+                        return out
+                    break
+            elif ch == "," and depth == 1:
+                commas.append(i)
+        start = glob.find("{", start + 1)
+    return [glob]
 
 
 def pattern_search(
@@ -194,7 +231,8 @@ def _run_git_grep(
         # "-e <pattern>" so a pattern starting with "-" is never read as a flag.
         args.extend(["-e", pattern])
         if glob:
-            args.extend(["--", glob])
+            # One pathspec per brace alternative: git has no brace syntax.
+            args.extend(["--", *_expand_braces(glob)])
         try:
             r = subprocess.run(
                 args,
@@ -254,6 +292,7 @@ def _run_python(
     out: list[PatternHit] = []
     import fnmatch as _fn
 
+    globs = _expand_braces(glob) if glob else []
     for root in roots:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [
@@ -262,7 +301,7 @@ def _run_python(
                 if d not in _IGNORE_DIR_NAMES and not d.startswith(".")
             ]
             for filename in filenames:
-                if glob and not _fn.fnmatch(filename, glob):
+                if globs and not any(_fn.fnmatch(filename, g) for g in globs):
                     continue
                 full = Path(dirpath) / filename
                 try:

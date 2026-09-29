@@ -1016,6 +1016,40 @@ def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _stray_owner_pids(root: Path) -> list[int]:
+    """Pids of `_serve_owner` processes whose --root is exactly ``root``.
+    Empty where `ps` is missing (native Windows): the pidfile stop covers
+    the known owner there."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-axo", "pid=,args="],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            **quiet_subprocess_kwargs(),
+        ).stdout
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return []
+    target = str(root)
+    pids: list[int] = []
+    for line in out.splitlines():
+        pid_str, _, args = line.strip().partition(" ")
+        argv = args.split()
+        if "_serve_owner" not in argv or "--root" not in argv:
+            continue
+        i = argv.index("--root")
+        if i + 1 < len(argv) and os.path.abspath(argv[i + 1]) == target:
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+            if pid != os.getpid():
+                pids.append(pid)
+    return pids
+
+
 def cmd_reset(args: argparse.Namespace) -> None:
     """
     Nuke the graph + FTS DBs, kill the owner, then optionally re-index
@@ -1023,7 +1057,6 @@ def cmd_reset(args: argparse.Namespace) -> None:
     into a weird state.
     """
     import shutil
-    import subprocess
 
     from codegraph.state.ipc import owner_pidfile
 
@@ -1047,19 +1080,14 @@ def cmd_reset(args: argparse.Namespace) -> None:
         except (ValueError, ProcessLookupError, OSError):
             pass
 
-    # Defensive: kill any stray cgh serve / owner. pkill is POSIX-only, so it
-    # is missing on native Windows and in Git Bash (raising FileNotFoundError);
-    # the pidfile-based stop above already handled the known owner, so just
-    # skip the name-based sweep where pkill is unavailable.
-    try:
-        subprocess.run(
-            ["pkill", "-9", "-f", "codegraph _serve_owner"],
-            capture_output=True,
-            timeout=3,
-            **quiet_subprocess_kwargs(),
-        )
-    except (FileNotFoundError, OSError):
-        pass
+    # Defensive: kill a stray owner of THIS repo whose pidfile was lost. Only
+    # this root: a name-only sweep killed every cgh owner on the machine, so
+    # a reset in one worktree took down the servers of all the others.
+    for stray in _stray_owner_pids(root):
+        try:
+            os.kill(stray, 9)
+        except OSError:
+            pass
 
     # 2. Confirm destructive deletion
     targets = []

@@ -8,6 +8,76 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-09-29
+
+### Fixed
+- **Deleted files stayed searchable forever**: when a graph was rebuilt with
+  the search index kept (a backend migration, a corrupt-graph recovery), the
+  files already gone kept their search rows, and `context_for_task` and
+  `search_symbols` kept returning them. `init --from` then copied them into
+  every seeded worktree. Every index now drops the search rows of files the
+  graph does not hold, so existing stores clean themselves on their next index.
+- **A half-built index stayed half built**: an index killed partway (a
+  stopped owner, a killed hook) records no scan, and an owner started without
+  `--reindex` served that partial graph indefinitely. An owner now finishes
+  the index whenever no completed scan is recorded.
+- **`init --from` seeded under a running index**, which kept writing into
+  the store being replaced. It now refuses and says which process to wait for.
+- **`cgh reset` stopped every cgh server on the machine**, not just its
+  repo's, so a reset in one worktree took down all the others. It now stops
+  only the owner of the repo being reset.
+- **`find_callers` listed the same caller twice** when several functions
+  share the name, such as a method and its test double: calls are matched by
+  name, so the caller links to both, and each link showed as its own identical
+  row. Each caller now appears once, with `targets` naming the files of the
+  matched definitions.
+- **Two re-indexes of one file at the same moment collided in DuckDB**
+  ("Conflict on tuple deletion"), such as the watcher reacting to a save while
+  a reindex touched the same file. Single-file indexing now waits its turn on
+  the repo's index lock.
+- **The git-hook reindex ran the LLM summarizer on every file**, even in a
+  worktree whose config disabled it: the hook read the plugin settings when it
+  started, and a script that wrote `[plugins] disabled` right after the
+  checkout came too late. A dozen fresh worktrees meant a dozen `claude -p`
+  storms. The hook reindex is now structural only (`cgh summarize` backfills),
+  and a plugin disabled in the config stops scanning without a restart.
+- **`cgh force-index` crashed on start** with an ImportError, so the verb
+  for repairing a wrong index could not run at all. It runs again.
+- **A tool call slower than 60 seconds ran up to three times**: the
+  `cgh serve` bridge between the agent and the owner gave up waiting after
+  60 seconds, took the silence for a dead owner and sent the same request
+  again, twice. The owner ran every copy. A slow `codegen_write` generated and
+  wrote its file three times, the later copies overwriting the earlier ones,
+  and a long reindex could run beside a copy of itself. A request is now only
+  sent again when it never reached the owner, and the bridge waits for the
+  answer as long as the tool runs.
+- **`cgh init --from` failed on some DuckDB stores** with "Failed to delete
+  all rows from index": moving the stored paths rewrote key columns in place,
+  and DuckDB lost index entries doing it, although the source store was
+  sound. The new checkout's graph is now built fresh and filled with the
+  paths already moved, so no key is ever rewritten. It is also faster.
+- **cgh-codegen 0.1.1: a file written during generation was overwritten**:
+  codegen checked the target before calling the model and wrote after, and
+  the call can take minutes. A file created or edited in between, by hand or
+  by another call, was replaced without a word. The target is now checked
+  again at the moment of writing; if anyone else touched it, it is left as is
+  and the call fails and says so.
+- **`pattern_search` found nothing with a brace glob** such as `*.{ts,vue}`
+  on a machine without ripgrep: git and the Python fallback do not understand
+  braces, so the glob matched no file and the search came back empty without
+  an error. Braces are now expanded into one pattern per alternative.
+- **Every owner start re-indexed the whole repo**: `--reindex` ran a full
+  index even when the store was already indexed, so each start re-parsed every
+  file; with a dozen worktree owners starting together the machine saturated,
+  and two full indexes of one worktree could run side by side (init, then the
+  owner). An owner now starts with an incremental pass that only reindexes
+  what changed, and falls back to a full index only when there is nothing to
+  compare against. Only one index of a repo runs at a time: a second one is
+  skipped and says which process holds the repo.
+- **`scan_status` looked empty during a first index**: `indexed_sha` stays
+  null until the index completes, which read as "never indexed". It now
+  reports `indexing` (the process and start time) while an index is running.
+
 ## [0.14.1] - 2026-09-28
 
 ### Added
@@ -1676,7 +1746,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0

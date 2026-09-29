@@ -287,23 +287,14 @@ def register(mcp) -> None:
         Find all functions that call `fn_name`. Federated across subrepos,
         each result tagged with `scope`. Note: cross-repo CALLS edges are
         not inferred (each subrepo's graph is canonical for its own code).
+        Calls are matched by name: when several functions share `fn_name`
+        (a method and its test double), each caller lists the matched
+        definitions' files in `targets`.
         """
 
-        def query(conn):
-            return [
-                {
-                    "caller": row["src_name"],
-                    "file": row["src_file_path"],
-                    "line": row["src_start_line"],
-                }
-                for row in conn.find_neighbors(
-                    "CALLS",
-                    dst_where={"name": fn_name},
-                    return_src=["name", "file_path", "start_line"],
-                )
-            ]
+        from codegraph.analysis.callers import callers_of
 
-        callers, warnings = _federate(query)
+        callers, warnings = _federate(lambda conn: callers_of(conn, fn_name))
         out = {"fn": fn_name, "callers": callers}
         if warnings:
             out["partial"] = True

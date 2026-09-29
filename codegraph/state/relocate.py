@@ -66,29 +66,6 @@ def _copy_sqlite(src: Path, dst: Path) -> None:
         s.close()
 
 
-def _copy_duckdb(src: Path, dst: Path) -> None:
-    """Copy a DuckDB file with its WAL, dropping any stale target WAL.
-
-    DuckDB replays ``<file>.wal`` on open, so the source's WAL must travel with
-    it (the source owner is down, so the pair is consistent) and a WAL left by
-    the target's previous store must not survive to be replayed onto the copy."""
-    (dst_wal,) = _sidecars(dst, (".wal",))
-    dst.unlink(missing_ok=True)
-    dst_wal.unlink(missing_ok=True)
-    shutil.copy2(src, dst)
-    (src_wal,) = _sidecars(src, (".wal",))
-    if src_wal.exists():
-        shutil.copy2(src_wal, dst_wal)
-
-
-def _text_columns_duckdb(con) -> list[tuple[str, str]]:
-    rows = con.execute(
-        "SELECT table_name, column_name FROM information_schema.columns "
-        "WHERE table_schema = 'main' AND data_type IN ('VARCHAR', 'TEXT')"
-    ).fetchall()
-    return [(t, c) for t, c in rows]
-
-
 def _rewrite_prefix_generic(con, columns, old_prefix: str, new_prefix: str) -> int:
     """Rewrite the leading ``old_prefix`` to ``new_prefix`` in every listed
     (table, column). Match by a substring-equality anchor rather than LIKE so a
@@ -115,18 +92,106 @@ def _rewrite_prefix_generic(con, columns, old_prefix: str, new_prefix: str) -> i
     return changed
 
 
-def _rewrite_duckdb(path: Path, old_prefix: str, new_prefix: str) -> int:
+def _quote(ident: str) -> str:
+    return '"' + ident.replace('"', '""') + '"'
+
+
+def _relocate_duckdb(
+    src: Path, dst: Path, old_prefix: str, new_prefix: str
+) -> tuple[int, list[str]]:
+    """Build the target graph fresh and copy the source rows into it with the
+    paths already rewritten.
+
+    Rewriting in place with UPDATE touches key columns (every node id and edge
+    key embeds the path), and DuckDB runs an UPDATE of an indexed column as an
+    index delete plus insert. On some real stores that delete loses keys and
+    the whole database is invalidated ("Failed to delete all rows from index.
+    Only deleted 181 out of 191 rows"), although the source is consistent. So
+    no key is ever updated here: the target schema comes from init_schema and
+    each row is inserted once with its final values, which also builds every
+    index from correct keys. Columns and tables the current schema does not
+    know (a store written by a newer cgh) are not copied, and are returned so
+    the caller can say so. Row counts are checked per table.
+
+    Returns (values rewritten, tables or columns left out)."""
     import duckdb
 
-    con = duckdb.connect(str(path))
+    from codegraph.core.schema_duckdb import init_schema
+
+    for p in (dst, *_sidecars(dst, (".wal",))):
+        p.unlink(missing_ok=True)
+
+    plen = len(old_prefix)
+    rewritten = 0
+    left_out: list[str] = []
+    con = duckdb.connect(str(dst))
     try:
-        changed = _rewrite_prefix_generic(
-            con, _text_columns_duckdb(con), old_prefix, new_prefix
+        init_schema(con)
+        target_db = con.execute("SELECT current_database()").fetchone()[0]
+        con.execute(
+            f"ATTACH '{str(src).replace(chr(39), chr(39) * 2)}' AS src_db (READ_ONLY)"
         )
+
+        def columns(catalog: str, table: str) -> dict[str, str]:
+            return dict(
+                con.execute(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_catalog = ? AND table_schema = 'main' "
+                    "AND table_name = ? ORDER BY ordinal_position",
+                    [catalog, table],
+                ).fetchall()
+            )
+
+        tables = [
+            r[0]
+            for r in con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_catalog = 'src_db' AND table_schema = 'main' "
+                "AND table_type = 'BASE TABLE'"
+            ).fetchall()
+        ]
+        for table in tables:
+            src_cols, dst_cols = columns("src_db", table), columns(target_db, table)
+            if not dst_cols:
+                left_out.append(table)
+                continue
+            left_out.extend(f"{table}.{c}" for c in src_cols if c not in dst_cols)
+            shared = [c for c in dst_cols if c in src_cols]
+            exprs = []
+            for c in shared:
+                qc = _quote(c)
+                if src_cols[c] in ("VARCHAR", "TEXT"):
+                    rewritten += con.execute(
+                        f"SELECT count(*) FROM src_db.main.{_quote(table)} "
+                        f"WHERE substr({qc}, 1, {plen}) = $old",
+                        {"old": old_prefix},
+                    ).fetchone()[0]
+                    exprs.append(
+                        f"CASE WHEN substr({qc}, 1, {plen}) = $old "
+                        f"THEN $new || substr({qc}, {plen + 1}) ELSE {qc} END"
+                    )
+                else:
+                    exprs.append(qc)
+            con.execute(
+                f"INSERT INTO main.{_quote(table)} ({', '.join(map(_quote, shared))}) "
+                f"SELECT {', '.join(exprs)} FROM src_db.main.{_quote(table)}",
+                {"old": old_prefix, "new": new_prefix},
+            )
+            n_src = con.execute(
+                f"SELECT count(*) FROM src_db.main.{_quote(table)}"
+            ).fetchone()[0]
+            n_dst = con.execute(
+                f"SELECT count(*) FROM main.{_quote(table)}"
+            ).fetchone()[0]
+            if n_src != n_dst:
+                raise RelocateError(
+                    f"{table}: copied {n_dst} of {n_src} rows into the new graph"
+                )
+        con.execute("DETACH src_db")
         con.commit()
-        return changed
     finally:
         con.close()
+    return rewritten, left_out
 
 
 def _sqlite_text_columns(con, table: str) -> list[tuple[str, str]]:
@@ -309,6 +374,11 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     # so every cached connection to the target is released before anything moves.
     reset_connection(to_root)
 
+    old_prefix = str(from_root) + os.sep
+    new_prefix = str(to_root) + os.sep
+    rewritten = 0
+    left_out: list[str] = []
+
     copied: list[str] = []
     for name in (graph_file, _FTS_FILE, _CALL_LOG_FILE, _CONFIG_FILE):
         src = from_cg / name
@@ -316,19 +386,15 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
             continue
         dst = to_cg / name
         if name == _DUCKDB_FILE:
-            _copy_duckdb(src, dst)
+            # Built, not copied: see _relocate_duckdb for why no key is updated.
+            rewritten, left_out = _relocate_duckdb(src, dst, old_prefix, new_prefix)
         elif name == _CONFIG_FILE:
             shutil.copy2(src, dst)
         else:
             _copy_sqlite(src, dst)
         copied.append(name)
 
-    old_prefix = str(from_root) + os.sep
-    new_prefix = str(to_root) + os.sep
-    rewritten = 0
-    if backend == "duckdb":
-        rewritten += _rewrite_duckdb(to_cg / graph_file, old_prefix, new_prefix)
-    else:
+    if backend != "duckdb":
         rewritten += _rewrite_sqlite_graph(to_cg / graph_file, old_prefix, new_prefix)
     if _FTS_FILE in copied:
         rewritten += _rewrite_fts(to_cg / _FTS_FILE, old_prefix, new_prefix)
@@ -345,6 +411,7 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
         "copied": copied,
         "rewritten_rows": rewritten,
         "dropped_subrepos": dropped,
+        "left_out": left_out,
         "from_root": str(from_root),
         "to_root": str(to_root),
     }

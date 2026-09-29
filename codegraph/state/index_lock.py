@@ -30,6 +30,11 @@ _GUARD = threading.Lock()
 _THREAD_LOCKS: dict[str, threading.RLock] = {}
 _DEPTH: dict[str, int] = {}
 
+# How long an index run waits on another thread of this process before it
+# reports the repo busy. A single-file write (the watcher) holds the lock for
+# well under this; a full index run holds it far longer.
+_BUSY_WAIT_S = 10.0
+
 
 class IndexBusy(RuntimeError):
     """Another index run holds this repo. A RuntimeError so callers that already
@@ -102,7 +107,7 @@ def index_lock(repo_root: str | Path) -> Generator[None]:
     key = str(Path(repo_root).resolve())
     with _GUARD:
         thread_lock = _THREAD_LOCKS.setdefault(key, threading.RLock())
-    if not thread_lock.acquire(blocking=False):
+    if not thread_lock.acquire(timeout=_BUSY_WAIT_S):
         raise IndexBusy(os.getpid())
     try:
         with _GUARD:
@@ -121,3 +126,20 @@ def index_lock(repo_root: str | Path) -> Generator[None]:
                 _DEPTH[key] -= 1
     finally:
         thread_lock.release()
+
+
+@contextlib.contextmanager
+def write_lock(repo_root: str | Path) -> Generator[None]:
+    """Serialise a single-file write with every other index write of this repo
+    in this process, waiting for its turn instead of failing.
+
+    Two threads re-indexing one file at once (the watcher on a save, a reindex
+    touching the same path) delete and insert the same rows and collide in
+    DuckDB. Only this process's threads are coordinated: another process
+    cannot open the graph for writing while this one holds it.
+    """
+    key = str(Path(repo_root).resolve())
+    with _GUARD:
+        thread_lock = _THREAD_LOCKS.setdefault(key, threading.RLock())
+    with thread_lock:
+        yield

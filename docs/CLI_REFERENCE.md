@@ -76,7 +76,7 @@ regenerate the finding store on the next pass.
 
 ### `reset`
 
-Nuke the graph + FTS DBs, kill the running owner, and re-index from scratch. Useful after schema migrations or when the graph gets into a weird state.
+Nuke the graph + FTS DBs, stop this repo's owner (owners of other repos are left alone), and re-index from scratch. Useful after schema migrations or when the graph gets into a weird state.
 
 ```
 cgh reset [--yes | -y] [--drop-extra-dirs] [--no-reindex] [--root DIR]
@@ -206,7 +206,7 @@ cgh serve [--watch] [--reindex] [--background] [--stop] [--root DIR]
 | Flag | Description |
 |------|-------------|
 | `--watch` | Enable live file watcher alongside the MCP server |
-| `--reindex` | Rebuild the graph before accepting MCP connections |
+| `--reindex` | Catch the graph up on start, in the background: an incremental reindex of what changed while no owner ran (a full index when there is nothing to compare against). A store with no completed scan is indexed on start even without this flag |
 | `--background`, `-b` | Spawn the owner in the background and exit, keeping the graph alive across sessions |
 | `--stop` | Stop the running owner and unregister this worker (see also `cgh stop`) |
 

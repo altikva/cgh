@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-09-29
+
 ### Fixed
 - **Deleted files stayed searchable forever**: when a graph was rebuilt with
   the search index kept (a backend migration, a corrupt-graph recovery), the
@@ -1744,7 +1746,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/altikva/cgh/compare/v0.12.0...v0.13.0

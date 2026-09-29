@@ -30,6 +30,12 @@ _LOCK = threading.Lock()
 # one sample path and flushed as a single summary line when the queue
 # drains, so identical errors read as one line and different errors each
 # get their own.
+_SUSPENDED = threading.Event()
+
+# [plugins] enabled/disabled as the config says now, keyed on the repo
+# root and cached on the project config's mtime.
+_PLUGIN_CFG: dict[str, tuple[float, frozenset[str], frozenset[str] | None]] = {}
+
 _ERR_LOCK = threading.Lock()
 _ERR_COUNTS: dict[str, int] = {}
 _ERR_SAMPLE: dict[str, str] = {}
@@ -65,9 +71,22 @@ def _flush_errors() -> None:
             )
 
 
+def suspend() -> None:
+    """Stop queueing work for the deferred scanners in this process.
+
+    For short-lived structural runs such as the git-hook reindex: the
+    deferred scanners call LLM backends, one process per file, and a hook
+    fired on every checkout of every worktree must not fan that out.
+    """
+    _SUSPENDED.set()
+
+
 def enqueue(repo_root: str | Path, path: str | Path, blob_sha: str) -> None:
     """Queue a file for every registered deferred scanner. Cheap and
-    non-blocking; starts the worker thread on first use."""
+    non-blocking; starts the worker thread on first use. A no-op once
+    suspend() ran."""
+    if _SUSPENDED.is_set():
+        return
     _QUEUE.put((str(repo_root), str(path), blob_sha))
     _ensure_worker()
 
@@ -122,11 +141,45 @@ def _reparse(p: Path):
         return None
 
 
+def _plugin_allowed(repo_root: str, name: str) -> bool:
+    """Whether [plugins] enables `name` for this repo as the config says
+    NOW. Plugins are loaded once per process, so a disable written after
+    the start (a script appending [plugins] to a fresh worktree) would
+    otherwise be ignored until a restart, while every file still costs
+    a backend call."""
+    cfg_path = Path(repo_root) / ".codegraph" / "config.toml"
+    try:
+        mtime = cfg_path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    hit = _PLUGIN_CFG.get(repo_root)
+    if hit is None or hit[0] != mtime:
+        try:
+            from codegraph.core.config import load_config
+
+            cfg = load_config(repo_root)
+            enabled = cfg.plugins_enabled
+            hit = (
+                mtime,
+                frozenset(cfg.plugins_disabled),
+                None if enabled is None else frozenset(enabled),
+            )
+        except Exception:
+            hit = (mtime, frozenset(), None)
+        _PLUGIN_CFG[repo_root] = hit
+    _, disabled, enabled = hit
+    return name not in disabled and (enabled is None or name in enabled)
+
+
 def _process(repo_root: str, path: str, blob_sha: str) -> None:
     from codegraph.plugins import scanners as _plugin_scanners
     from codegraph.state.findings import already_scanned, record_findings
 
-    deferred = [(n, s) for n, s in _plugin_scanners() if getattr(s, "deferred", False)]
+    deferred = [
+        (n, s)
+        for n, s in _plugin_scanners()
+        if getattr(s, "deferred", False) and _plugin_allowed(repo_root, n)
+    ]
     if not deferred:
         return
 

@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **The git-hook reindex ran the LLM summarizer on every file**, even in a
+  worktree whose config disabled it: the hook read the plugin settings when it
+  started, and a script that wrote `[plugins] disabled` right after the
+  checkout came too late. A dozen fresh worktrees meant a dozen `claude -p`
+  storms. The hook reindex is now structural only (`cgh summarize` backfills),
+  and a plugin disabled in the config stops scanning without a restart.
+- **`cgh force-index` crashed on start** with an ImportError, so the verb
+  for repairing a wrong index could not run at all. It runs again.
 - **A tool call slower than 60 seconds ran up to three times**: the
   `cgh serve` bridge between the agent and the owner gave up waiting after
   60 seconds, took the silence for a dead owner and sent the same request

@@ -9,6 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`find_callers` listed the same caller twice** when several functions
+  share the name, such as a method and its test double: calls are matched by
+  name, so the caller links to both, and each link showed as its own identical
+  row. Each caller now appears once, with `targets` naming the files of the
+  matched definitions.
+- **Two re-indexes of one file at the same moment collided in DuckDB**
+  ("Conflict on tuple deletion"), such as the watcher reacting to a save while
+  a reindex touched the same file. Single-file indexing now waits its turn on
+  the repo's index lock.
 - **The git-hook reindex ran the LLM summarizer on every file**, even in a
   worktree whose config disabled it: the hook read the plugin settings when it
   started, and a script that wrote `[plugins] disabled` right after the

@@ -59,7 +59,8 @@ def test_a_lock_left_by_a_dead_process_is_taken_over(root, other_process):
     assert holder(root) is None
 
 
-def test_another_thread_of_this_process_is_refused(root):
+def test_another_thread_of_this_process_is_refused(root, monkeypatch):
+    monkeypatch.setattr("codegraph.state.index_lock._BUSY_WAIT_S", 0.2)
     inside, release = threading.Event(), threading.Event()
 
     def hold():

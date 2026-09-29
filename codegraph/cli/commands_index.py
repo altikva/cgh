@@ -420,7 +420,8 @@ def cmd_stop(args: argparse.Namespace) -> None:
 
 
 def cmd_force_index(args: argparse.Namespace) -> None:
-    from codegraph.indexer import _PARSERS, index_file
+    from codegraph.indexer import index_file
+    from codegraph.parsers import get_parser_for_path
 
     root = Path(os.path.abspath(args.root))
     targets = args.paths
@@ -456,7 +457,7 @@ def cmd_force_index(args: argparse.Namespace) -> None:
                 for dirpath, _, filenames in os.walk(target):
                     for filename in filenames:
                         full = Path(dirpath) / filename
-                        if full.suffix.lower() in _PARSERS:
+                        if get_parser_for_path(full) is not None:
                             ok = index_file(full, root, force=True)
                             if ok:
                                 indexed += 1
@@ -496,7 +497,12 @@ def cmd_reindex_hook(args: argparse.Namespace) -> None:
                 return
 
         from codegraph.indexer import index_repo
+        from codegraph.state.deferred_scan import suspend
 
+        # Structural only: no LLM-backed deferred scanner from a git hook.
+        # It fires on every checkout of every worktree, and would spawn one
+        # backend call per file. `cgh summarize` and friends backfill.
+        suspend()
         index_repo(root, method="incremental")
     except Exception:
         # A reindex failure must never break the user's git operation.

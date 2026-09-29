@@ -438,13 +438,11 @@ def cmd_lookup(args: argparse.Namespace) -> None:
 
 
 def _callers_conn(conn, fn_name: str) -> list[tuple]:
+    from codegraph.analysis.callers import callers_of
+
     return [
-        (row["src_name"], row["src_file_path"], row["src_start_line"])
-        for row in conn.find_neighbors(
-            "CALLS",
-            dst_where={"name": fn_name},
-            return_src=["name", "file_path", "start_line"],
-        )
+        (c["caller"], c["file"], c["line"], c.get("targets", []))
+        for c in callers_of(conn, fn_name)
     ]
 
 
@@ -476,10 +474,15 @@ def cmd_callers(args: argparse.Namespace) -> None:
         return
 
     tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
-    for scope, name, fp, line in rows:
+    for scope, name, fp, line, targets in rows:
         short = _short_path(fp, root)
         scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
-        tree.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{scope_tag}")
+        via = (
+            "  [dim]-> " + ", ".join(_short_path(t, root) for t in targets) + "[/dim]"
+            if targets
+            else ""
+        )
+        tree.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via}{scope_tag}")
     console.print(tree)
 
 

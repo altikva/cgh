@@ -729,6 +729,19 @@ def index_file(
              ignore-pattern gate doesn't re-read config.toml per file. When
              None (standalone callers) it is loaded once for this call.
     """
+    from codegraph.state.index_lock import write_lock
+
+    with write_lock(repo_root or Path.cwd()):
+        return _index_file(path, repo_root, force, git_blob_sha, cfg)
+
+
+def _index_file(
+    path: str | Path,
+    repo_root: str | Path | None,
+    force: bool,
+    git_blob_sha: str | None,
+    cfg,
+) -> bool:
     path = Path(path)
     suffix = path.suffix.lower()
     parser = get_parser(suffix)

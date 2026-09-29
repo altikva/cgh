@@ -9,6 +9,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **Deleted files stayed searchable forever**: when a graph was rebuilt with
+  the search index kept (a backend migration, a corrupt-graph recovery), the
+  files already gone kept their search rows, and `context_for_task` and
+  `search_symbols` kept returning them. `init --from` then copied them into
+  every seeded worktree. Every index now drops the search rows of files the
+  graph does not hold, so existing stores clean themselves on their next index.
+- **A half-built index stayed half built**: an index killed partway (a
+  stopped owner, a killed hook) records no scan, and an owner started without
+  `--reindex` served that partial graph indefinitely. An owner now finishes
+  the index whenever no completed scan is recorded.
+- **`init --from` seeded under a running index**, which kept writing into
+  the store being replaced. It now refuses and says which process to wait for.
+- **`cgh reset` stopped every cgh server on the machine**, not just its
+  repo's, so a reset in one worktree took down all the others. It now stops
+  only the owner of the repo being reset.
 - **`find_callers` listed the same caller twice** when several functions
   share the name, such as a method and its test double: calls are matched by
   name, so the caller links to both, and each link showed as its own identical

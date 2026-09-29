@@ -1159,6 +1159,20 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
             "  [dim]--from: stopped this checkout's owner before seeding[/dim]"
         )
 
+    from codegraph.state.index_lock import holder
+
+    running = holder(root)
+    if running is not None and running["pid"] != os.getpid():
+        # An index already writing here (often a git hook fired by `git
+        # worktree add`) would keep writing into the store the seed replaces,
+        # and a kill leaves it half built. Refuse rather than race it.
+        console.print(
+            f"  [red]--from:[/red] an index of this checkout is running "
+            f"(pid {running['pid']}); seeding now would replace the store under it.\n"
+            "  [dim]Wait for it to finish ([/dim]cgh tail -f[dim]) and re-run.[/dim]"
+        )
+        raise SystemExit(1)
+
     with phase_status("[bold cyan]Seeding the index from the source checkout..."):
         try:
             result = relocate_store(from_root, root)

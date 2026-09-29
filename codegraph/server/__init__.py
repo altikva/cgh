@@ -329,6 +329,21 @@ def main() -> None:
     sys.exit(exit_code)
 
 
+def _startup_index_needed(root, reindex: bool) -> bool:
+    """Whether the owner indexes on start: on --reindex, and also whenever the
+    store records no completed scan. An index killed halfway (a stopped owner,
+    a killed hook) writes no scan record, and an owner started without the
+    flag would otherwise serve that partial graph indefinitely."""
+    if reindex:
+        return True
+    from codegraph.state.scan_meta import read_meta
+
+    if read_meta(root) is None:
+        _log.info("no completed scan recorded for %s, indexing it", root)
+        return True
+    return False
+
+
 def owner_main(
     root: str | None = None, watch: bool = False, reindex: bool = False
 ) -> None:
@@ -394,7 +409,7 @@ def owner_main(
         _log.warning("plugin loading failed: %s", exc)
 
     # Reindex + watcher (if requested)
-    if reindex:
+    if _startup_index_needed(_root, reindex):
         import threading as _th_startup
 
         from codegraph.indexer import incremental_reindex

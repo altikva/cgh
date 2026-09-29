@@ -729,6 +729,19 @@ def index_file(
              ignore-pattern gate doesn't re-read config.toml per file. When
              None (standalone callers) it is loaded once for this call.
     """
+    from codegraph.state.index_lock import write_lock
+
+    with write_lock(repo_root or Path.cwd()):
+        return _index_file(path, repo_root, force, git_blob_sha, cfg)
+
+
+def _index_file(
+    path: str | Path,
+    repo_root: str | Path | None,
+    force: bool,
+    git_blob_sha: str | None,
+    cfg,
+) -> bool:
     path = Path(path)
     suffix = path.suffix.lower()
     parser = get_parser(suffix)
@@ -1190,6 +1203,49 @@ def _delete_gone(repo_root: Path, deletions: list[Path], activity_log) -> None:
             activity_log(repo_root, "scan_error", f"delete {gone}: {exc}")
 
 
+def _purge_fts_orphans(repo_root: Path, activity_log) -> int:
+    """Drop the FTS rows of files the graph no longer holds.
+
+    Deletions are driven by the graph's File nodes, so a file that left the
+    graph without its FTS rows (a graph rebuilt while fts.db was kept: a
+    backend migration, a corrupt-graph recovery) was never looked at again.
+    Its symbols stayed searchable for good, and `init --from` copied them into
+    every seeded checkout. Returns the number of files purged.
+    """
+    fts_conn = _get_fts(repo_root)
+    if fts_conn is None:
+        return 0
+    try:
+        in_graph = {
+            path
+            for (path,) in get_connection(repo_root).list_node_fields("File", ["path"])
+        }
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"fts reconcile skipped: {exc}")
+        return 0
+    if not in_graph:
+        return 0  # an empty graph proves nothing, never wipe the FTS on it
+    in_fts = {
+        path for (path,) in fts_conn.execute("SELECT DISTINCT file_path FROM symbols")
+    }
+    orphans = sorted(in_fts - in_graph)
+    if not orphans:
+        return 0
+    from codegraph.state.findings import purge_file_findings
+
+    for path in orphans:
+        try:
+            delete_file_symbols(fts_conn, path)
+            purge_file_findings(repo_root, path)
+        except Exception as exc:
+            activity_log(repo_root, "scan_error", f"fts reconcile {path}: {exc}")
+    fts_commit(fts_conn)
+    activity_log(
+        repo_root, "fts_reconciled", f"{len(orphans)} file(s) not in the graph"
+    )
+    return len(orphans)
+
+
 def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
     """Index the sibling directories declared in config.toml. A
     malformed config must not silently shrink coverage."""
@@ -1273,7 +1329,30 @@ def index_repo(
     """Index the repo, and if the graph DB is found corrupt mid-index (a
     DuckDB ART index left inconsistent by an earlier crash), rebuild it from
     scratch once and retry a full scan instead of crashing. See _index_repo
-    for the discovery-method details."""
+    for the discovery-method details.
+
+    Holds the repo's index lock: raises IndexBusy (a RuntimeError) when
+    another process or thread is already indexing this repo, rather than
+    running a second full index beside it."""
+    from codegraph.state.index_lock import index_lock
+
+    with index_lock(repo_root):
+        return _index_repo_recovering(
+            repo_root,
+            verbose=verbose,
+            on_file=on_file,
+            on_discovery=on_discovery,
+            method=method,
+        )
+
+
+def _index_repo_recovering(
+    repo_root: str | Path,
+    verbose: bool,
+    on_file: Callable[[Path, str, dict], None] | None,
+    on_discovery: Callable[[int, str], None] | None,
+    method: str,
+) -> dict:
     try:
         return _index_repo(
             repo_root,
@@ -1413,6 +1492,9 @@ def _index_repo(
             print(f"  + {rel}")
 
     extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
+    purged = _purge_fts_orphans(repo_root, _activity_log)
+    if purged:
+        stats["fts_orphans_purged"] = purged
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
     stats["imports"] = take_import_coverage()
@@ -1440,6 +1522,23 @@ def _index_repo(
 
 
 def incremental_reindex(
+    repo_root: str | Path,
+    on_file: Callable[[Path, str, dict], None] | None = None,
+    on_discovery: Callable[[int, str], None] | None = None,
+) -> dict:
+    """Reindex only what changed; see _incremental_reindex. Holds the repo's
+    index lock like index_repo, and keeps it through a fallback to a full
+    index (the lock nests within one thread). Raises IndexBusy when another
+    index of this repo is running."""
+    from codegraph.state.index_lock import index_lock
+
+    with index_lock(repo_root):
+        return _incremental_reindex(
+            repo_root, on_file=on_file, on_discovery=on_discovery
+        )
+
+
+def _incremental_reindex(
     repo_root: str | Path,
     on_file: Callable[[Path, str, dict], None] | None = None,
     on_discovery: Callable[[int, str], None] | None = None,
@@ -1636,6 +1735,8 @@ def incremental_reindex(
             errors += 1
         _progress(full, ok)
 
+    purged = _purge_fts_orphans(repo_root, _act_log)
+
     elapsed = round(time.time() - t0, 2)
     result = {
         "mode": "incremental",
@@ -1643,6 +1744,7 @@ def incremental_reindex(
         "reindexed_count": len(reindexed),
         "deleted": to_delete,
         "deleted_count": deleted_count,
+        "fts_orphans_purged": purged,
         "unchanged_count": max(0, len(head_shas) - len(to_index)),
         "errors": errors,
         "elapsed_s": elapsed,

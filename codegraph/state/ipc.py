@@ -569,9 +569,27 @@ def proxy_stdio_to_http(
     url_path = "/mcp"
 
     def _open() -> http.client.HTTPConnection:
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        # A short timeout covers the connect only: a live owner on localhost
+        # accepts at once, so a refusal or a stall here means there is no owner
+        # to talk to. The response then gets no timeout at all. Tools such as
+        # codegen or a full reindex legitimately run for minutes, and a read
+        # timeout used to look like a dead owner and trigger a resend (see the
+        # retry loop below). The MCP client already bounds how long it waits.
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         c.connect()
+        sock = getattr(c, "sock", None)
+        if sock is not None:
+            sock.settimeout(None)
         return c
+
+    def _emit_error(line: str, message: str) -> None:
+        err = {
+            "jsonrpc": "2.0",
+            "id": json.loads(line).get("id") if line else None,
+            "error": {"code": -32000, "message": message},
+        }
+        sys.stdout.write(json.dumps(err) + "\n")
+        sys.stdout.flush()
 
     session_id: str | None = None
 
@@ -590,35 +608,24 @@ def proxy_stdio_to_http(
 
         body = line.encode("utf-8")
 
-        # One request, with retries. A refused connection means the owner
-        # died (it shuts down when its last worker leaves); recover a live
-        # owner between attempts and retry against the new port, rather
-        # than failing the request against a dead port.
+        # A request is retried only while it has not reached the owner. A
+        # refused connection means the owner died (it shuts down when its last
+        # worker leaves), so recover a live owner and try again against its
+        # port. Once the request is sent it is never sent again, whatever
+        # happens to the response: the owner may already be running the tool,
+        # and a second copy would run it twice, writing a file twice or
+        # starting a second reindex beside the first. This used to happen to
+        # every tool slower than the old 60 s read timeout, which raised an
+        # OSError and looked like a dead owner, so one call could run 3 times.
         response_body: bytes = b""
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
                 conn = _open()
                 conn.request("POST", url_path, body=body, headers=headers)
-                resp = conn.getresponse()
-                # Capture session header if present
-                new_sid = resp.getheader("Mcp-Session-Id") or resp.getheader(
-                    "mcp-session-id"
-                )
-                if new_sid:
-                    session_id = new_sid
-                response_body = resp.read()
-                conn.close()
-                break
             except (ConnectionError, OSError) as exc:
                 if attempt == max_attempts:
-                    err = {
-                        "jsonrpc": "2.0",
-                        "id": json.loads(line).get("id") if line else None,
-                        "error": {"code": -32000, "message": f"proxy: {exc}"},
-                    }
-                    sys.stdout.write(json.dumps(err) + "\n")
-                    sys.stdout.flush()
+                    _emit_error(line, f"proxy: {exc}")
                     break
                 # Try to bring an owner back before the next attempt. A
                 # fresh owner means a fresh port and a dropped session, so
@@ -628,6 +635,24 @@ def proxy_stdio_to_http(
                     port = recovered
                     session_id = None
                 time.sleep(0.1)
+                continue
+            try:
+                resp = conn.getresponse()
+                # Capture session header if present
+                new_sid = resp.getheader("Mcp-Session-Id") or resp.getheader(
+                    "mcp-session-id"
+                )
+                if new_sid:
+                    session_id = new_sid
+                response_body = resp.read()
+                conn.close()
+            except (ConnectionError, OSError, http.client.HTTPException) as exc:
+                _emit_error(
+                    line,
+                    f"proxy: the owner dropped the request after receiving it "
+                    f"({exc}); not resent, since the tool may already have run",
+                )
+            break
 
         if not response_body:
             continue

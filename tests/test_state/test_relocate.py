@@ -130,40 +130,44 @@ def test_relocate_without_a_graph_raises(tmp_path):
         relocate_store(src, dst)
 
 
+def _duckdb_source(src):
+    """A source store in the real DuckDB schema, holding source-root paths in
+    key columns (node ids, edge keys) as an index does."""
+    duckdb = pytest.importorskip("duckdb")
+    from codegraph.core.schema_duckdb import init_schema
+
+    (src / ".codegraph").mkdir(parents=True)
+    con = duckdb.connect(str(src / ".codegraph" / "graph.duckdb"))
+    init_schema(con)
+    con.execute(
+        "INSERT INTO file (path, git_blob_sha) VALUES (?, ?)",
+        [f"{src}/pkg/mod.py", "cd" * 20],
+    )
+    con.execute(
+        "INSERT INTO function (id, name, file_path, start_line) VALUES (?, ?, ?, ?)",
+        [f"{src}/pkg/mod.py::fn", "fn", f"{src}/pkg/mod.py", 12],
+    )
+    for to_id in (f"{src}/pkg/other.py::helper", "json::loads"):
+        con.execute(
+            "INSERT INTO edge_calls (from_id, to_id) VALUES (?, ?)",
+            [f"{src}/pkg/mod.py::fn", to_id],
+        )
+    return con
+
+
 def test_relocate_rewrites_the_duckdb_backend(tmp_path):
-    # The pip default. Its columns are enumerated from information_schema, a
-    # different path from sqlite's, so it gets its own coverage.
+    # The pip default, and a different path from sqlite's: the target graph is
+    # built fresh and filled, not copied and updated.
     duckdb = pytest.importorskip("duckdb")
     src, dst = _roots(tmp_path)
-    (src / ".codegraph").mkdir(parents=True)
-
-    con = duckdb.connect(str(src / ".codegraph" / "graph.duckdb"))
-    con.execute("CREATE TABLE file (path VARCHAR PRIMARY KEY, git_blob_sha VARCHAR)")
-    con.execute(
-        "CREATE TABLE function (id VARCHAR, file_path VARCHAR, start_line INTEGER)"
-    )
-    con.execute("CREATE TABLE calls (from_id VARCHAR, to_id VARCHAR)")
-    con.execute("INSERT INTO file VALUES (?, ?)", [f"{src}/pkg/mod.py", "cd" * 20])
-    con.execute(
-        "INSERT INTO function VALUES (?, ?, ?)",
-        [f"{src}/pkg/mod.py::fn", f"{src}/pkg/mod.py", 12],
-    )
-    con.execute(
-        "INSERT INTO calls VALUES (?, ?)",
-        [f"{src}/pkg/mod.py::fn", f"{src}/pkg/other.py::helper"],
-    )
-    con.execute(
-        "INSERT INTO calls VALUES (?, ?)", [f"{src}/pkg/mod.py::fn", "json::loads"]
-    )
-    con.commit()
-    con.close()
+    _duckdb_source(src).close()
 
     result = relocate_store(src, dst)
-    assert result["backend"] == "duckdb"
+    assert result["backend"] == "duckdb" and result["left_out"] == []
 
     con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
     fns = con.execute("SELECT id, file_path, start_line FROM function").fetchall()
-    calls = con.execute("SELECT from_id, to_id FROM calls").fetchall()
+    calls = con.execute("SELECT from_id, to_id FROM edge_calls").fetchall()
     shas = [r[0] for r in con.execute("SELECT git_blob_sha FROM file").fetchall()]
     con.close()
 
@@ -172,6 +176,73 @@ def test_relocate_rewrites_the_duckdb_backend(tmp_path):
     assert (f"{dst}/pkg/mod.py::fn", f"{dst}/pkg/other.py::helper") in calls
     assert (f"{dst}/pkg/mod.py::fn", "json::loads") in calls
     assert shas == ["cd" * 20]
+
+
+def test_relocated_keys_stay_unique_and_indexed(tmp_path):
+    # The rebuilt primary keys must hold: a point lookup on the new id finds
+    # the row, and inserting the same id again is refused.
+    duckdb = pytest.importorskip("duckdb")
+    src, dst = _roots(tmp_path)
+    _duckdb_source(src).close()
+
+    relocate_store(src, dst)
+
+    con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
+    new_id = f"{dst}/pkg/mod.py::fn"
+    assert (
+        con.execute("SELECT count(*) FROM function WHERE id = ?", [new_id]).fetchone()[
+            0
+        ]
+        == 1
+    )
+    with pytest.raises(duckdb.ConstraintException):
+        con.execute("INSERT INTO function (id, name) VALUES (?, 'dup')", [new_id])
+    con.close()
+
+
+def test_relocate_reports_what_the_current_schema_does_not_know(tmp_path):
+    # A store written by a newer cgh can carry a table or column this version
+    # has no place for; it is left out and named, never dropped silently.
+    src, dst = _roots(tmp_path)
+    con = _duckdb_source(src)
+    con.execute("CREATE TABLE from_the_future (x TEXT)")
+    con.execute("ALTER TABLE file ADD COLUMN newer_col TEXT")
+    con.close()
+
+    result = relocate_store(src, dst)
+
+    assert set(result["left_out"]) == {"from_the_future", "file.newer_col"}
+
+
+def test_relocate_never_updates_the_duckdb_graph(tmp_path, monkeypatch):
+    # DuckDB runs an UPDATE of a key column as an index delete plus insert, and
+    # on some real stores that delete loses keys and invalidates the database
+    # ("Failed to delete all rows from index"). It could not be reproduced on
+    # synthetic data, so this pins the approach that avoids it: relocation
+    # inserts every row once and never issues an UPDATE on the graph.
+    duckdb = pytest.importorskip("duckdb")
+    src, dst = _roots(tmp_path)
+    _duckdb_source(src).close()
+
+    statements: list[str] = []
+    real_connect = duckdb.connect
+
+    class _Spy:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args, **kwargs):
+            statements.append(sql)
+            return self._con.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: _Spy(real_connect(*a, **k)))
+    relocate_store(src, dst)
+
+    assert statements, "the spy saw no DuckDB statements"
+    assert not [s for s in statements if s.lstrip().upper().startswith("UPDATE")]
 
 
 def _wal_fts(path: Path, rows: int) -> sqlite3.Connection:

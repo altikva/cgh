@@ -329,6 +329,21 @@ def main() -> None:
     sys.exit(exit_code)
 
 
+def _startup_index_needed(root, reindex: bool) -> bool:
+    """Whether the owner indexes on start: on --reindex, and also whenever the
+    store records no completed scan. An index killed halfway (a stopped owner,
+    a killed hook) writes no scan record, and an owner started without the
+    flag would otherwise serve that partial graph indefinitely."""
+    if reindex:
+        return True
+    from codegraph.state.scan_meta import read_meta
+
+    if read_meta(root) is None:
+        _log.info("no completed scan recorded for %s, indexing it", root)
+        return True
+    return False
+
+
 def owner_main(
     root: str | None = None, watch: bool = False, reindex: bool = False
 ) -> None:
@@ -394,15 +409,23 @@ def owner_main(
         _log.warning("plugin loading failed: %s", exc)
 
     # Reindex + watcher (if requested)
-    if reindex:
+    if _startup_index_needed(_root, reindex):
         import threading as _th_startup
 
-        from codegraph.indexer import index_repo
+        from codegraph.indexer import incremental_reindex
 
         def _bg_reindex() -> None:
+            # Incremental, not a full index: a store that is already indexed
+            # only needs the files that changed while no owner was watching.
+            # incremental_reindex falls back to a full index by itself when
+            # there is nothing to compare against (no index yet, a moved root).
+            # Every owner start used to re-parse the whole repo, which with a
+            # dozen worktrees owners running at once saturated the machine.
+            # When another index of this repo is already running (init, a
+            # CLI index), the lock raises IndexBusy and this one is skipped.
             _log.info("indexing %s ...", _root)
             try:
-                stats = index_repo(_root, verbose=False)
+                stats = incremental_reindex(_root)
                 _log.info("done: %s", stats)
             except RuntimeError as exc:
                 _log.warning("reindex skipped: %s", exc)

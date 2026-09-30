@@ -164,6 +164,8 @@ cgh setup all        # writes configs for all tools
 
 Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, SQLite via `CGH_DB=sqlite`) and BM25 FTS index.
 
+A CLI index builds the graph and search index only: plugins that call an LLM per file (summaries) are skipped, so the command never waits on a model. Run `cgh summarize` to backfill summaries.
+
 ```
 cgh index [--verbose | -v] [--root DIR]
 ```

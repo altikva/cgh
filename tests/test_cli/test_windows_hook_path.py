@@ -14,24 +14,26 @@ from __future__ import annotations
 from codegraph.cli import commands_init as ci
 
 
-def test_windows_launcher_path_uses_forward_slashes(monkeypatch):
-    monkeypatch.setattr(ci.os, "name", "nt")
+def test_windows_launcher_path_uses_forward_slashes():
+    # Passed explicitly: patching os.name to "nt" makes pathlib build
+    # WindowsPath objects, which Python 3.11 refuses on Linux.
     exe = r"C:\Users\jn532e9l\AppData\Local\Python\pythoncore-3.14-64\Scripts\cghw.EXE"
-    assert ci._hook_exe_path(exe) == (
+    assert ci._hook_exe_path(exe, windows=True) == (
         "C:/Users/jn532e9l/AppData/Local/Python/pythoncore-3.14-64/Scripts/cghw.EXE"
     )
-    assert ci._hook_exe_path(r"C:\Program Files\cgh\cghw.exe") == (
+    assert ci._hook_exe_path(r"C:\Program Files\cgh\cghw.exe", windows=True) == (
         '"C:/Program Files/cgh/cghw.exe"'
     )
 
 
 def test_posix_paths_are_left_alone():
-    if ci.os.name == "nt":
-        return
-    assert ci._hook_exe_path("/Users/joy/.local/bin/cgh") == "/Users/joy/.local/bin/cgh"
+    assert (
+        ci._hook_exe_path("/Users/joy/.local/bin/cgh", windows=False)
+        == "/Users/joy/.local/bin/cgh"
+    )
 
 
-def test_init_replaces_a_backslashed_hook(monkeypatch):
+def test_init_replaces_a_backslashed_hook():
     spec = next(
         s
         for s in ci._claude_hook_specs("C:/x/cghw.EXE")

@@ -1569,14 +1569,16 @@ def _hook_launcher(cli_prefix: str) -> str:
     """
     import shutil
 
-    # which() returns `...\\Scripts\\cgh.EXE` there, so compare the stem.
-    if os.name != "nt" or Path(cli_prefix).stem.lower() != "cgh":
+    # which() returns `...\\Scripts\\cgh.EXE` there, so compare the bare
+    # name. String ops, not Path: a Path here would be a WindowsPath.
+    name = cli_prefix.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if os.name != "nt" or name.removesuffix(".exe") != "cgh":
         return cli_prefix
     windowless = shutil.which("cghw")
     return windowless if windowless else cli_prefix
 
 
-def _hook_exe_path(path: str) -> str:
+def _hook_exe_path(path: str, windows: bool | None = None) -> str:
     """An executable path a hook command can start with on every shell.
 
     Claude Code on Windows runs hook commands through Git Bash, which reads
@@ -1584,7 +1586,7 @@ def _hook_exe_path(path: str) -> str:
     for `C:Users...cghw.EXE`. Forward slashes work in both Git Bash and cmd;
     a path with a space is quoted. Other platforms are returned unchanged.
     """
-    if os.name != "nt":
+    if not (os.name == "nt" if windows is None else windows):
         return path
     path = path.replace("\\", "/")
     return f'"{path}"' if " " in path else path

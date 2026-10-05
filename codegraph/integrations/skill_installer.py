@@ -151,6 +151,11 @@ shrinks and reload it after.
   SessionStart header gave you. A cgh nudge or a blocked tool call
   asking for a checkpoint means do it now, then go on.
 
+- **Before a `/clear`, or when the user wants to wrap up**: run the
+  `cgh-checkpoint` skill (`/cgh-checkpoint` in Claude Code). It writes the
+  goal, what is done, the decisions, what is open and the next step. The
+  lifecycle hooks only record what changed, not why.
+
 - **Immediately after context compaction / session resume**:
   1. `knowledge_list(limit=20)`, reload recent learnings
   2. `knowledge_search(query)`, targeted reload for the current task

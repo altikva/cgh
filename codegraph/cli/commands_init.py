@@ -1555,6 +1555,39 @@ def _mcp_command() -> tuple[str, list[str]]:
     ]
 
 
+_BOB_MCP_TIMEOUT_MS = 120_000
+
+# Tools that keep Bob's confirmation prompt: deleting a knowledge entry, a
+# network fetch, and indexing a directory outside the repo. Everything else
+# reads the graph or writes only to the repo's own .codegraph store.
+_BOB_CONFIRM_TOOLS = frozenset({"knowledge_forget", "fetch_and_index", "add_directory"})
+
+
+def _bob_always_allow() -> list[str]:
+    """Names of the MCP tools Bob may run without asking.
+
+    Read statically from the @mcp.tool() functions in codegraph/server/
+    tools_*.py: importing the server to list them costs seconds, and a tool
+    added later is picked up without editing a list here."""
+    import ast
+
+    server_dir = Path(__file__).resolve().parent.parent / "server"
+    names: set[str] = set()
+    for path in server_dir.glob("tools_*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(
+                isinstance(d, ast.Call)
+                and isinstance(d.func, ast.Attribute)
+                and d.func.attr == "tool"
+                for d in node.decorator_list
+            ):
+                names.add(node.name)
+    return sorted(names - _BOB_CONFIRM_TOOLS)
+
+
 def _hook_launcher(cli_prefix: str) -> str:
     """On Windows, point the hooks at the windowless launcher.
 
@@ -1989,12 +2022,14 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         # the project root so the executable and `--root .` both resolve.
         # Bob's stdio schema is command/args with an optional cwd; there is
         # no "type" field for stdio.
+        #
+        # Bob's "timeout" is in MILLISECONDS and bounds both the handshake
+        # and every tool call; its 60 s default is shorter than a cold start
+        # on a slow Windows machine (interpreter start + owner spawn), and a
+        # timed-out call makes Bob kill and respawn the server, which takes
+        # the owner down with it. "alwaysAllow" lists the tools Bob runs
+        # without a confirmation prompt (exact names, no wildcard).
         command, args = _mcp_command()
-        bob_entry = {
-            "command": command,
-            "args": args,
-            "cwd": str(root.resolve()),
-        }
         bob_dir = root / ".bob"
         bob_dir.mkdir(exist_ok=True)
         mcp_path = bob_dir / "mcp.json"
@@ -2002,6 +2037,21 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
         else:
             data = {"mcpServers": {}}
+        previous = data.get("mcpServers", {}).get("codegraph") or {}
+        timeout = previous.get("timeout")
+        if not isinstance(timeout, int) or timeout < _BOB_MCP_TIMEOUT_MS:
+            timeout = _BOB_MCP_TIMEOUT_MS
+        # Keep any tool the user approved by hand on top of the safe set.
+        always_allow = sorted(
+            set(_bob_always_allow()) | set(previous.get("alwaysAllow") or [])
+        )
+        bob_entry = {
+            "command": command,
+            "args": args,
+            "cwd": str(root.resolve()),
+            "timeout": timeout,
+            "alwaysAllow": always_allow,
+        }
         data.setdefault("mcpServers", {})["codegraph"] = bob_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")

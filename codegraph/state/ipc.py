@@ -560,6 +560,14 @@ def proxy_stdio_to_http(
 
     from codegraph.state.auth import ensure_auth_key
 
+    # MCP stdio is UTF-8 on the wire. On Windows the std streams default to
+    # the ANSI codepage (cp1252), which garbles non-ASCII both ways: a
+    # client's "purgé" reaches the owner as mojibake, and the server's "•"
+    # goes out as a byte strict UTF-8 clients reject.
+    for _stream in (sys.stdin, sys.stdout):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
+
     auth_token = (
         ensure_auth_key(repo_root)
         if repo_root

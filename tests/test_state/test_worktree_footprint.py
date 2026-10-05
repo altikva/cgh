@@ -76,3 +76,18 @@ def test_main_checkout_is_left_alone(repo_and_worktree):
     (main / "CLAUDE.md").write_text("original\n\ny\n")
     hidden = hide_footprint(main)
     assert hidden == []
+
+
+def test_missing_git_binary_is_not_fatal(repo_and_worktree, monkeypatch):
+    """git absent from PATH must degrade to "not a worktree", not crash init."""
+    from codegraph.integrations import worktree
+
+    _main, wt = repo_and_worktree
+
+    def _no_git(*_a, **_k):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(worktree.subprocess, "run", _no_git)
+    assert worktree.in_git_worktree(wt) is False
+    assert worktree.hide_footprint(wt, enabled=True) == []
+    assert worktree.worktree_sibling(wt, _main) is None

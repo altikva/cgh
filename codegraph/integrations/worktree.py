@@ -43,14 +43,20 @@ _FOOTPRINT_GLOBS = (
 def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     from codegraph.plugin_api import quiet_subprocess_kwargs
 
-    return subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=15,
-        **quiet_subprocess_kwargs(),
-    )
+    cmd = ["git", "-C", str(root), *args]
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+            **quiet_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # git missing from PATH or hung: report a failed run so every caller
+        # takes its "not a git repo" path instead of aborting init.
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
 
 
 def in_git_worktree(root: Path) -> bool:

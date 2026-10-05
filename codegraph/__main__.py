@@ -682,6 +682,15 @@ def main() -> None:
     # in a carriage return or newline, so this is safe.
     sys.argv[:] = [a.rstrip("\r\n") for a in sys.argv]
 
+    # A Windows console or pipe defaults to the ANSI codepage (cp1252), which
+    # cannot encode rich's spinner frames or box glyphs: printing one raised
+    # UnicodeEncodeError and aborted `cgh init` mid-run (seen under Git Bash,
+    # where the progress console is forced on). Degrade the glyph instead.
+    for _stream in (sys.stdout, sys.stderr):
+        enc = (getattr(_stream, "encoding", "") or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(errors="replace")
+
     # Show pretty help if no args
     if len(sys.argv) <= 1 or sys.argv[1] in ("-h", "--help", "help"):
         _print_help()

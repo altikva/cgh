@@ -9,6 +9,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **Bob: cgh's MCP server worked only after manual tweaks**, especially on
+  Windows. `.bob/mcp.json` now sets a 120 s timeout (Bob's 60 s default is
+  shorter than a cold Windows start, and a timed-out call makes Bob kill the
+  server) and pre-approves cgh's read and index tools; deleting knowledge,
+  fetching a URL and adding a directory still ask first. A longer timeout or
+  tools approved by hand survive a re-init.
+- **Accented text came out garbled on Windows**: the MCP stdio bridge used the
+  ANSI codepage instead of UTF-8 in both directions. It is UTF-8 now.
+- **`cgh init` crashed on a Windows console** that could not print the
+  spinner, and **without git on the PATH**. Both now degrade instead.
+- **Bob skipped two bundled skills** (cgh-artifacts, cgh-papercuts): their
+  descriptions were invalid YAML. They are quoted now.
 - **cgh's Claude Code hooks failed on Windows** with "cghw.EXE: command not
   found": init wrote the launcher as `C:\Users\...\cghw.EXE`, and Claude Code
   runs hook commands through Git Bash, which reads the backslashes as escapes.

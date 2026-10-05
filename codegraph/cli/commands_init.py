@@ -1588,6 +1588,81 @@ def _bob_always_allow() -> list[str]:
     return sorted(names - _BOB_CONFIRM_TOOLS)
 
 
+_BOB_HOOK_MARKER = "# cgh-bob-"
+
+
+def _bob_hook_specs(cli: str, gate: bool) -> list[tuple[str, str | None, str, int]]:
+    """(event, matcher, command, timeout) for each cgh Bob hook. The gate
+    runs before every tool call, so it is only installed when enabled."""
+    specs = [
+        (
+            "SessionStart",
+            None,
+            f"{cli} _bob_session_start  {_BOB_HOOK_MARKER}start",
+            10,
+        ),
+        ("UserPromptSubmit", None, f"{cli} _bob_prompt  {_BOB_HOOK_MARKER}prompt", 10),
+        ("PostToolUse", ".*", f"{cli} _bob_tool_log  {_BOB_HOOK_MARKER}log", 10),
+        ("Stop", None, f"{cli} _bob_stop  {_BOB_HOOK_MARKER}stop", 30),
+        # Documented for Bob Shell; an IDE without the event ignores it.
+        ("PreCompact", None, f"{cli} _bob_stop  {_BOB_HOOK_MARKER}precompact", 30),
+    ]
+    if gate:
+        specs.append(
+            ("PreToolUse", ".*", f"{cli} _bob_gate  {_BOB_HOOK_MARKER}gate", 10)
+        )
+    return specs
+
+
+def _install_bob_hooks(root: Path, cli: str) -> list[str]:
+    """Write cgh's Bob lifecycle hooks into .bob/settings.json.
+
+    Entries are recognised by their marker comment and replaced, so a
+    re-init refreshes them; every other hook and setting in the file is
+    kept. The gate follows [bob] checkpoint_gate in the cgh config.
+    Returns the events written."""
+    import json as _json
+
+    from codegraph.cli.commands_bob import _settings
+
+    path = root / ".bob" / "settings.json"
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    hooks = data.setdefault("hooks", {})
+    for event in list(hooks):
+        kept = [
+            group
+            for group in hooks[event] or []
+            if not any(
+                _BOB_HOOK_MARKER in str(h.get("command", ""))
+                for h in (group.get("hooks") or [])
+            )
+        ]
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+
+    written: list[str] = []
+    for event, matcher, command, timeout in _bob_hook_specs(
+        cli, gate=_settings(root)["gate"] > 0
+    ):
+        group: dict = {
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}]
+        }
+        if matcher is not None:
+            group = {"matcher": matcher, **group}
+        hooks.setdefault(event, []).append(group)
+        written.append(event)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return written
+
+
 def _hook_launcher(cli_prefix: str) -> str:
     """On Windows, point the hooks at the windowless launcher.
 
@@ -2055,6 +2130,15 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         data.setdefault("mcpServers", {})["codegraph"] = bob_entry
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
+        if command == sys.executable:
+            bob_cli = f"{_hook_exe_path(sys.executable)} -m codegraph"
+        else:
+            bob_cli = _hook_exe_path(_hook_launcher(command))
+        hooks = _install_bob_hooks(root, bob_cli)
+        console.print(
+            f"    [green]+[/green] .bob/settings.json [dim](session hooks: "
+            f"{', '.join(hooks)})[/dim]"
+        )
         _skills_line(".bob/skills/", install_bob(root))
         console.print(
             "    [dim]every workspace instead: copy that entry into "

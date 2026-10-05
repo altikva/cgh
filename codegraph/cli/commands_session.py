@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import sys
@@ -97,7 +99,25 @@ def cmd_hook_resume_header(args: argparse.Namespace) -> None:
         root = _find_root(payload)
         if root is None:
             return
-        print_resume_header(root, payload)
+        # Claude Code only hands plain SessionStart stdout to the model, so the
+        # user saw nothing after a /clear. As JSON, the same text still reaches
+        # the model as additionalContext and systemMessage shows a line to the
+        # user.
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            notice = print_resume_header(root, payload)
+        context = buffer.getvalue().strip()
+        if not context:
+            return
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+        if notice:
+            output["systemMessage"] = notice
+        print(json.dumps(output, ensure_ascii=False))
     except Exception:
         pass
 
@@ -139,9 +159,10 @@ def previous_session_recap(root: Path, current_session: str) -> str:
     return "\n".join(lines)
 
 
-def print_resume_header(root: Path, payload: dict) -> None:
+def print_resume_header(root: Path, payload: dict) -> str:
     """Print the resume header for ``root``; shared by the Claude Code and
-    Bob SessionStart hooks. Prints nothing when the store is empty."""
+    Bob SessionStart hooks. Prints nothing when the store is empty. Returns
+    a one-line notice for the user ("" when there is nothing to say)."""
     from codegraph.core.fts import get_fts_conn, list_plan_entries
     from codegraph.state.call_log import knowledge_list
 
@@ -154,6 +175,7 @@ def print_resume_header(root: Path, payload: dict) -> None:
         plans = len(list_plan_entries(get_fts_conn(root), limit=50))
     except Exception:
         plans = 0
+    notice = ""
 
     # A SessionStart fired with source "compact" means the conversation was
     # just summarized: everything not already written down is gone. PreCompact
@@ -174,6 +196,7 @@ def print_resume_header(root: Path, payload: dict) -> None:
             if "auto-checkpoint" not in str(e.get("tags", "") or "")
         ]
         if not model_digests:
+            notice = "cgh: session compacted, no digest of it was written yet."
             print(
                 "This session was just compacted and cgh has NO "
                 "model-written digest for it, so the summary above is all "
@@ -186,9 +209,21 @@ def print_resume_header(root: Path, payload: dict) -> None:
         recap = previous_session_recap(root, str(payload.get("session_id", "") or ""))
         if recap:
             print(recap)
+            title = next(
+                (
+                    line.removeprefix("Checkpoint: ")
+                    for line in recap.splitlines()
+                    if line.startswith("Checkpoint: ")
+                ),
+                "",
+            )
+            notice = "cgh: previous session recapped" + (
+                f" ({title[:80]})" if title else ""
+            )
+            notice += ". Send a message to pick it up, or start something new."
 
     if not (instructions or digests):
-        return
+        return notice
     print(
         "cgh holds a resume bundle for this project: "
         f"{instructions} standing instruction(s), {digests} session "
@@ -203,6 +238,10 @@ def print_resume_header(root: Path, payload: dict) -> None:
             f"cgh session id: {payload['session_id']} (use it as session_id "
             "when you checkpoint)."
         )
+    return notice or (
+        f"cgh: resume bundle ready ({instructions} standing instruction(s), "
+        f"{digests} session digest(s), {plans} plan(s))."
+    )
 
 
 def cmd_memory(args: argparse.Namespace) -> None:

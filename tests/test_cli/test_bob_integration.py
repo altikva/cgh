@@ -68,3 +68,65 @@ class TestSetupWritesTheBobMcpJson:
         entry = json.loads(mcp.read_text())["mcpServers"]["codegraph"]
         assert entry["command"] == "/opt/bin/cgh"
         assert entry["cwd"] == str(tmp_path.resolve())
+
+    def test_timeout_is_in_milliseconds(self, tmp_path, monkeypatch):
+        """Bob reads "timeout" in ms: 300 meant 0.3 s and cancelled every
+        tool call, so the entry must carry a value Bob snaps to 2 minutes."""
+        from codegraph.cli.commands_init import _install_integration
+
+        monkeypatch.setattr(shutil, "which", lambda n: None)
+        _install_integration(tmp_path, "bob")
+
+        entry = json.loads((tmp_path / ".bob" / "mcp.json").read_text())
+        assert entry["mcpServers"]["codegraph"]["timeout"] == 120_000
+
+    def test_always_allow_covers_safe_tools_only(self, tmp_path, monkeypatch):
+        from codegraph.cli.commands_init import _install_integration
+
+        monkeypatch.setattr(shutil, "which", lambda n: None)
+        _install_integration(tmp_path, "bob")
+
+        allow = json.loads((tmp_path / ".bob" / "mcp.json").read_text())["mcpServers"][
+            "codegraph"
+        ]["alwaysAllow"]
+        assert {"context_for_task", "architecture_overview", "resume"} <= set(allow)
+        assert not {"knowledge_forget", "fetch_and_index", "add_directory"} & set(allow)
+
+    def test_reinit_keeps_user_approvals_and_larger_timeout(
+        self, tmp_path, monkeypatch
+    ):
+        from codegraph.cli.commands_init import _install_integration
+
+        monkeypatch.setattr(shutil, "which", lambda n: None)
+        bob = tmp_path / ".bob"
+        bob.mkdir()
+        (bob / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codegraph": {
+                            "timeout": 300_000,
+                            "alwaysAllow": ["fetch_and_index"],
+                        },
+                        "other": {"command": "x"},
+                    }
+                }
+            )
+        )
+        _install_integration(tmp_path, "bob")
+
+        servers = json.loads((bob / "mcp.json").read_text())["mcpServers"]
+        assert servers["other"] == {"command": "x"}
+        assert servers["codegraph"]["timeout"] == 300_000
+        assert "fetch_and_index" in servers["codegraph"]["alwaysAllow"]
+
+
+def test_bob_always_allow_matches_registered_tools():
+    """The static scan must see the same tools the server registers."""
+    import asyncio
+
+    import codegraph.server as srv
+    from codegraph.cli.commands_init import _BOB_CONFIRM_TOOLS, _bob_always_allow
+
+    registered = {t.name for t in asyncio.run(srv.mcp.list_tools())}
+    assert set(_bob_always_allow()) == registered - _BOB_CONFIRM_TOOLS

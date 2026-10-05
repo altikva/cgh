@@ -8,6 +8,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **cgh's Claude Code hooks failed on Windows** with "cghw.EXE: command not
+  found": init wrote the launcher as `C:\Users\...\cghw.EXE`, and Claude Code
+  runs hook commands through Git Bash, which reads the backslashes as escapes.
+  The error was non-blocking, so the hooks silently did nothing. Hook commands
+  now use forward slashes, and re-running `cgh init` replaces the broken ones.
+- **`cgh init --from` could take twenty minutes**: the index it runs after
+  the seed called the LLM summarizer for every changed file, one `claude -p`
+  each, so a seed source that lagged behind turned seconds into minutes. A
+  CLI index (`cgh index`, `init`, `force-index`) now builds the graph and
+  search index only; `cgh summarize` backfills summaries.
+- **`init --from` re-enabled plugins the checkout had disabled**: the seed
+  copied the source's config over the target's, `[plugins]` included. The
+  target's own `[plugins]` table is now kept.
+
 ## [0.14.2] - 2026-09-29
 
 ### Fixed

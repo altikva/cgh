@@ -1602,10 +1602,39 @@ def _hook_launcher(cli_prefix: str) -> str:
     """
     import shutil
 
-    if os.name != "nt" or not cli_prefix.endswith("cgh"):
+    # which() returns `...\\Scripts\\cgh.EXE` there, so compare the bare
+    # name. String ops, not Path: a Path here would be a WindowsPath.
+    name = cli_prefix.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if os.name != "nt" or name.removesuffix(".exe") != "cgh":
         return cli_prefix
     windowless = shutil.which("cghw")
     return windowless if windowless else cli_prefix
+
+
+def _hook_exe_path(path: str, windows: bool | None = None) -> str:
+    """An executable path a hook command can start with on every shell.
+
+    Claude Code on Windows runs hook commands through Git Bash, which reads
+    the backslashes of `C:\\Users\\...\\cghw.EXE` as escapes and looks
+    for `C:Users...cghw.EXE`. Forward slashes work in both Git Bash and cmd;
+    a path with a space is quoted. Other platforms are returned unchanged.
+    """
+    if not (os.name == "nt" if windows is None else windows):
+        return path
+    path = path.replace("\\", "/")
+    return f'"{path}"' if " " in path else path
+
+
+def _hook_command(settings: dict, spec: dict) -> str | None:
+    """The command of the installed hook tagged with spec['marker'], or None."""
+    bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
+    for h in bucket:
+        if (h.get("matcher") or "") != (spec["matcher"] or ""):
+            continue
+        command = str(h.get("hooks", [{}])[0].get("command", ""))
+        if spec["marker"] in command:
+            return command
+    return None
 
 
 def _ensure_claude_hooks(
@@ -1638,6 +1667,12 @@ def _ensure_claude_hooks(
                 shared_changed = True
 
         in_right = _find_hook(right, spec)
+        installed = _hook_command(right, spec) if in_right else None
+        if installed is not None and "\\" in installed:
+            # Written by an older init with a backslashed Windows path, which
+            # Git Bash cannot run: replace it with the current command.
+            _drop_hook(right, spec)
+            in_right = False
         if not in_right:
             _append_hook(right, spec)
             if right_is_shared:
@@ -1894,8 +1929,10 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         )
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
-        cli_prefix = cli if cli != sys.executable else f"{sys.executable} -m codegraph"
-        cli_prefix = _hook_launcher(cli_prefix)
+        if cli == sys.executable:
+            cli_prefix = f"{_hook_exe_path(sys.executable)} -m codegraph"
+        else:
+            cli_prefix = _hook_exe_path(_hook_launcher(cli))
 
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 

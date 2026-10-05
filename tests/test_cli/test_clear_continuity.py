@@ -119,10 +119,14 @@ def test_start_after_clear_recaps_the_previous_session(
         cmd_hook_resume_header,
         {"source": "clear", "session_id": "s2", "cwd": str(root)},
     )
-    out = capsys.readouterr().out
-    assert "Before this /clear" in out
-    assert "Fix the login redirect" in out
-    assert "cgh session id: s2" in out
+    out = json.loads(capsys.readouterr().out)
+    context = out["hookSpecificOutput"]["additionalContext"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "Before this /clear" in context
+    assert "Fix the login redirect" in context
+    assert "cgh session id: s2" in context
+    # The user sees a line too, not only the model.
+    assert out["systemMessage"].startswith("cgh: previous session recapped")
 
 
 def test_a_plain_start_shows_no_recap(monkeypatch, root, transcript, capsys):

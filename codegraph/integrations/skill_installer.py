@@ -143,6 +143,14 @@ shrinks and reload it after.
      a structured summary of the full session into knowledge.
   3. These survive compaction, raw conversation context does not.
 
+- **When you cannot see your context usage** (IBM Bob compacts a task
+  around 190k tokens and caps it at 270k, with no warning to you): do
+  not wait for a signal. Call `checkpoint(session_id, digest)` after each
+  finished step and before any long sub-task, with what is done, the
+  decisions and what is still open. The session id is the one the
+  SessionStart header gave you. A cgh nudge or a blocked tool call
+  asking for a checkpoint means do it now, then go on.
+
 - **Immediately after context compaction / session resume**:
   1. `knowledge_list(limit=20)`, reload recent learnings
   2. `knowledge_search(query)`, targeted reload for the current task

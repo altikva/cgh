@@ -54,6 +54,24 @@ Skills standard as Claude Code), and drops the usage guidelines in
 `.bob/rules/`. The `cli:bob` summarize backend uses BobShell headless
 (`bob -p`).
 
+Bob compacts a task around 190k tokens and caps it at 270k, without telling
+the model, and its hooks cannot make the model write anything at the end of
+a task. `cgh setup bob` (and `cgh init --tools bob`) therefore also writes
+session hooks into `.bob/settings.json`, next to any hooks already there:
+
+| Event | What cgh does |
+|---|---|
+| `SessionStart` | gives the model its session id and the resume header |
+| `PostToolUse` | journals the files the agent writes and the commands it runs |
+| `UserPromptSubmit` | asks for a checkpoint after `checkpoint_every` tool calls without one |
+| `Stop`, `PreCompact` | turns the journal into an automatic session digest |
+| `PreToolUse` | only with `checkpoint_gate` set: blocks one tool call until the model checkpoints |
+
+The automatic digest records what changed, not why; the model's own
+`checkpoint` carries the decisions. `PreCompact` is documented for Bob
+Shell; an IDE without the event ignores it. Tune both thresholds in the
+`[bob]` table of the cgh config.
+
 ### Automatic Setup
 
 ```bash

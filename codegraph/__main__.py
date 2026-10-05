@@ -21,6 +21,13 @@ from rich.table import Table
 from codegraph.cli import LOGO, VERSION, console
 from codegraph.cli.commands_artifact import cmd_artifact, register_artifact_parser
 from codegraph.cli.commands_backend import cmd_backend, register_backend_parser
+from codegraph.cli.commands_bob import (
+    cmd_bob_gate,
+    cmd_bob_prompt,
+    cmd_bob_session_start,
+    cmd_bob_stop,
+    cmd_bob_tool_log,
+)
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_findings import cmd_findings
@@ -660,6 +667,8 @@ def _register_state_and_hooks(sub) -> None:
     # --- session continuity (lifecycle hooks + memory hygiene) ---
     sub.add_parser("_hook_checkpoint", help=argparse.SUPPRESS)
     sub.add_parser("_hook_resume_header", help=argparse.SUPPRESS)
+    for _bob_hook in ("session_start", "tool_log", "prompt", "gate", "stop"):
+        sub.add_parser(f"_bob_{_bob_hook}", help=argparse.SUPPRESS)
     p = sub.add_parser("memory", help="Shared memory hygiene (review stale entries)")
     p.add_argument("action", nargs="?", default="review", choices=["review"])
     p.add_argument("--days", type=int, default=90)
@@ -804,6 +813,11 @@ def main() -> None:
         "_hook_guard_codex": cmd_hook_guard_codex,
         "_hook_checkpoint": cmd_hook_checkpoint,
         "_hook_resume_header": cmd_hook_resume_header,
+        "_bob_session_start": cmd_bob_session_start,
+        "_bob_tool_log": cmd_bob_tool_log,
+        "_bob_prompt": cmd_bob_prompt,
+        "_bob_gate": cmd_bob_gate,
+        "_bob_stop": cmd_bob_stop,
         "memory": cmd_memory,
     }
 

@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **IBM Bob sessions save to cgh before they are compacted or closed.** Bob
+  compacts a task around 190k tokens and caps it at 270k without telling the
+  model. `cgh setup bob` now also writes session hooks into
+  `.bob/settings.json`: the model gets its session id at start, cgh journals
+  the files and commands of the task and turns them into an automatic digest
+  on Stop and PreCompact, and after 40 tool calls without a checkpoint the
+  next prompt asks for one. An opt-in `[bob] checkpoint_gate` blocks a tool
+  call until the model saves. Existing hooks in that file are kept.
+
 ### Fixed
 - **Bob: cgh's MCP server worked only after manual tweaks**, especially on
   Windows. `.bob/mcp.json` now sets a 120 s timeout (Bob's 60 s default is

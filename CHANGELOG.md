@@ -8,13 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-06
+
 ### Added
 - **A Claude Code `/clear` no longer loses the task in progress.** At
   `SessionEnd` and `PreCompact`, cgh reads the session transcript and records
   a digest without calling the model: the last requests, the files edited, the
   commands run and the end of the last answer. After a `/clear`, the new
   session starts with a short recap of the previous one and can continue it
-  with `resume`. A new `cgh-checkpoint` skill (`/cgh-checkpoint`) has the model
+  with `resume`, and the user sees a one-line notice that the recap was
+  loaded. A new `cgh-checkpoint` skill (`/cgh-checkpoint`) has the model
   write the goal, what is done, the decisions and the next step before
   clearing.
 - **IBM Bob sessions save to cgh before they are compacted or closed.** Bob
@@ -1791,7 +1794,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0

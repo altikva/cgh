@@ -10,8 +10,31 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 import unicodedata
 from pathlib import Path
+
+
+def ensure_dir(path: Path, attempts: int = 5) -> None:
+    """mkdir -p that tolerates network/WebDAV drives.
+
+    On a WebDAV mount (``net use Z: \\\\localhost@port\\DavWWWRoot``) the
+    redirector can answer ERROR_ALREADY_EXISTS to mkdir while its stat
+    cache still says the directory is absent, so pathlib's own
+    ``exist_ok`` check (``is_dir()``) fails and FileExistsError escapes.
+    Re-check a few times before giving up; a real file in the way still
+    raises.
+    """
+    for i in range(attempts):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return
+        except FileExistsError:
+            if path.is_dir():
+                return
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (2**i))
 
 
 def rows(result) -> list[dict]:

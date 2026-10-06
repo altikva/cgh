@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import sys
@@ -38,25 +40,46 @@ def cmd_hook_checkpoint(args: argparse.Namespace) -> None:
         if root is None:
             return
         session_id = str(payload.get("session_id", "") or "")
-        trigger = str(
-            payload.get("trigger") or payload.get("hook_event_name") or "lifecycle"
-        )
+        event = str(payload.get("hook_event_name") or "lifecycle")
+        # SessionEnd says why ("clear", "logout"...), PreCompact how.
+        trigger = str(payload.get("reason") or payload.get("trigger") or event)
         from codegraph.state.call_log import knowledge_list, knowledge_record
 
-        # One auto-marker per session, superseded on repeat, so PreCompact
+        # One auto entry per session, superseded on repeat, so PreCompact
         # storms never pile up rows.
         previous = knowledge_list(
             tag="auto-checkpoint", session_id=session_id, limit=1, repo_root=root
         )
         stamp = time.strftime("%Y-%m-%d %H:%M")
-        knowledge_record(
-            title=f"Auto checkpoint ({trigger})",
-            body=(
+        digest = None
+        if payload.get("transcript_path"):
+            from codegraph.state.transcript_digest import digest_from_transcript
+
+            digest = digest_from_transcript(payload["transcript_path"])
+        if digest is not None:
+            # What the session did, read from its transcript: survives a
+            # /clear or a compaction even when the model never checkpointed.
+            from codegraph.state.transcript_digest import format_digest
+
+            last = digest["requests"][-1] if digest["requests"] else "session"
+            title = f"Auto digest ({event} {trigger}, {stamp}): {last[:70]}"
+            body = (
+                format_digest(digest, root)
+                + "\nRecorded by the cgh lifecycle hook from the transcript, not "
+                "by the model: what was asked and changed, not the decisions. "
+                "A model checkpoint of the same session carries those."
+            )
+        else:
+            title = f"Auto checkpoint ({trigger})"
+            body = (
                 f"Context event '{trigger}' at {stamp} for session "
                 f"{session_id or 'unknown'}. If no model-written digest exists "
                 "for this session, its details are gone; standing instructions "
                 "and knowledge below survive."
-            ),
+            )
+        knowledge_record(
+            title=title,
+            body=body,
             kind="note",
             tags="auto-checkpoint,session-digest",
             session_id=session_id,
@@ -76,59 +99,149 @@ def cmd_hook_resume_header(args: argparse.Namespace) -> None:
         root = _find_root(payload)
         if root is None:
             return
-        from codegraph.core.fts import get_fts_conn, list_plan_entries
-        from codegraph.state.call_log import knowledge_list
-
-        instructions = len(
-            knowledge_list(kind="standing_instruction", limit=50, repo_root=root)
-        )
-        digest_entries = knowledge_list(tag="session-digest", limit=50, repo_root=root)
-        digests = len(digest_entries)
-        try:
-            plans = len(list_plan_entries(get_fts_conn(root), limit=50))
-        except Exception:
-            plans = 0
-
-        # A SessionStart fired with source "compact" means the conversation was
-        # just summarized: everything not already written down is gone. PreCompact
-        # cannot inject text (it is purely advisory), so this is the one hook that
-        # can push the model to record a real digest. Nudge whenever no
-        # model-written digest exists for this session (auto-checkpoint markers,
-        # which the lifecycle hook drops on its own, do not count).
-        if str(payload.get("source") or "") == "compact":
-            session_id = str(payload.get("session_id", "") or "")
-            model_digests = [
-                e
-                for e in knowledge_list(
-                    tag="session-digest",
-                    session_id=session_id,
-                    limit=50,
-                    repo_root=root,
-                )
-                if "auto-checkpoint" not in str(e.get("tags", "") or "")
-            ]
-            if not model_digests:
-                print(
-                    "This session was just compacted and cgh has NO "
-                    "model-written digest for it, so the summary above is all "
-                    "that survived. Call the codegraph `compact_session` tool "
-                    "now with what you did, the decisions you made, and the open "
-                    "threads, so the next compaction does not lose them."
-                )
-
-        if not (instructions or digests):
+        # Claude Code only hands plain SessionStart stdout to the model, so the
+        # user saw nothing after a /clear. As JSON, the same text still reaches
+        # the model as additionalContext and systemMessage shows a line to the
+        # user.
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            notice = print_resume_header(root, payload)
+        context = buffer.getvalue().strip()
+        if not context:
             return
-        print(
-            "cgh holds a resume bundle for this project: "
-            f"{instructions} standing instruction(s), {digests} session "
-            f"digest(s), {plans} plan(s)."
-        )
-        print(
-            "Call the codegraph `resume` tool (optionally with your task) "
-            "to load it before re-deriving anything."
-        )
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+        if notice:
+            output["systemMessage"] = notice
+        print(json.dumps(output, ensure_ascii=False))
     except Exception:
         pass
+
+
+def previous_session_recap(root: Path, current_session: str) -> str:
+    """A short recap of the session before a /clear: its model checkpoint if
+    one exists, then what the lifecycle hook read from its transcript. The
+    model decides whether to continue it (via resume) or to start fresh."""
+    from codegraph.state.call_log import knowledge_list
+
+    entries = knowledge_list(tag="session-digest", limit=30, repo_root=root)
+    previous = next(
+        (e for e in entries if (e.get("session_id") or "") != current_session), None
+    )
+    if previous is None:
+        return ""
+    sid = previous.get("session_id") or ""
+    same = (
+        [e for e in entries if (e.get("session_id") or "") == sid]
+        if sid
+        else [previous]
+    )
+    model = [e for e in same if "auto-checkpoint" not in str(e.get("tags") or "")]
+    auto = [e for e in same if "auto-checkpoint" in str(e.get("tags") or "")]
+
+    def clip(text: str, limit: int) -> str:
+        text = str(text or "").strip()
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    lines = ["Before this /clear, the previous session was working on:"]
+    if model:
+        lines.append(f"Checkpoint: {model[0]['title']}\n{clip(model[0]['body'], 500)}")
+    if auto:
+        lines.append(clip(auto[0]["body"], 900))
+    lines.append(
+        "To pick it up, call the codegraph `resume` tool with that task; if the "
+        "user starts something new, ignore this."
+    )
+    return "\n".join(lines)
+
+
+def print_resume_header(root: Path, payload: dict) -> str:
+    """Print the resume header for ``root``; shared by the Claude Code and
+    Bob SessionStart hooks. Prints nothing when the store is empty. Returns
+    a one-line notice for the user ("" when there is nothing to say)."""
+    from codegraph.core.fts import get_fts_conn, list_plan_entries
+    from codegraph.state.call_log import knowledge_list
+
+    instructions = len(
+        knowledge_list(kind="standing_instruction", limit=50, repo_root=root)
+    )
+    digest_entries = knowledge_list(tag="session-digest", limit=50, repo_root=root)
+    digests = len(digest_entries)
+    try:
+        plans = len(list_plan_entries(get_fts_conn(root), limit=50))
+    except Exception:
+        plans = 0
+    notice = ""
+
+    # A SessionStart fired with source "compact" means the conversation was
+    # just summarized: everything not already written down is gone. PreCompact
+    # cannot inject text (it is purely advisory), so this is the one hook that
+    # can push the model to record a real digest. Nudge whenever no
+    # model-written digest exists for this session (auto-checkpoint markers,
+    # which the lifecycle hook drops on its own, do not count).
+    if str(payload.get("source") or "") == "compact":
+        session_id = str(payload.get("session_id", "") or "")
+        model_digests = [
+            e
+            for e in knowledge_list(
+                tag="session-digest",
+                session_id=session_id,
+                limit=50,
+                repo_root=root,
+            )
+            if "auto-checkpoint" not in str(e.get("tags", "") or "")
+        ]
+        if not model_digests:
+            notice = "cgh: session compacted, no digest of it was written yet."
+            print(
+                "This session was just compacted and cgh has NO "
+                "model-written digest for it, so the summary above is all "
+                "that survived. Call the codegraph `compact_session` tool "
+                "now with what you did, the decisions you made, and the open "
+                "threads, so the next compaction does not lose them."
+            )
+
+    if str(payload.get("source") or "") == "clear":
+        recap = previous_session_recap(root, str(payload.get("session_id", "") or ""))
+        if recap:
+            print(recap)
+            title = next(
+                (
+                    line.removeprefix("Checkpoint: ")
+                    for line in recap.splitlines()
+                    if line.startswith("Checkpoint: ")
+                ),
+                "",
+            )
+            notice = "cgh: previous session recapped" + (
+                f" ({title[:80]})" if title else ""
+            )
+            notice += ". Send a message to pick it up, or start something new."
+
+    if not (instructions or digests):
+        return notice
+    print(
+        "cgh holds a resume bundle for this project: "
+        f"{instructions} standing instruction(s), {digests} session "
+        f"digest(s), {plans} plan(s)."
+    )
+    print(
+        "Call the codegraph `resume` tool (optionally with your task) "
+        "to load it before re-deriving anything."
+    )
+    if payload.get("session_id"):
+        print(
+            f"cgh session id: {payload['session_id']} (use it as session_id "
+            "when you checkpoint)."
+        )
+    return notice or (
+        f"cgh: resume bundle ready ({instructions} standing instruction(s), "
+        f"{digests} session digest(s), {plans} plan(s))."
+    )
 
 
 def cmd_memory(args: argparse.Namespace) -> None:

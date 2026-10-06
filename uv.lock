@@ -191,7 +191,7 @@ wheels = [
 
 [[package]]
 name = "cgh"
-version = "0.14.2"
+version = "0.14.3"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
@@ -250,8 +250,8 @@ requires-dist = [
     { name = "cgh-bugreport", marker = "extra == 'plugins'", specifier = ">=0.1.1" },
     { name = "cgh-classify", marker = "extra == 'full'", specifier = ">=0.1.3" },
     { name = "cgh-classify", marker = "extra == 'plugins'", specifier = ">=0.1.3" },
-    { name = "cgh-codegen", marker = "extra == 'full'", specifier = ">=0.1" },
-    { name = "cgh-codegen", marker = "extra == 'plugins'", specifier = ">=0.1" },
+    { name = "cgh-codegen", marker = "extra == 'full'", specifier = ">=0.1.1" },
+    { name = "cgh-codegen", marker = "extra == 'plugins'", specifier = ">=0.1.1" },
     { name = "cgh-docs", marker = "extra == 'full'", specifier = ">=0.2" },
     { name = "cgh-docs", marker = "extra == 'plugins'", specifier = ">=0.2" },
     { name = "cgh-pii", marker = "extra == 'full'", specifier = ">=0.3.1" },
@@ -305,11 +305,11 @@ wheels = [
 
 [[package]]
 name = "cgh-codegen"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c1/4e/fcea310dca24b58749c73d67397ba20f3f0aea55cc22aa18ecccf37ae36b/cgh_codegen-0.1.0.tar.gz", hash = "sha256:43991cde0c796d46101e122fb69e3494813566871ca2a3659ddcf0b20f7d0ae1", size = 31555, upload-time = "2026-09-22T06:01:22.388Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/fa/63f7c316ab34469ec91170cd3e1e0f35b5d4717af46f2402b7b2241a1b6f/cgh_codegen-0.1.1.tar.gz", hash = "sha256:0c2b82168f8a070853f3a0daa0d5b91e4f5a6faf80450f4a6bc5ae0c0d86401a", size = 33036, upload-time = "2026-09-29T18:02:24.231Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/c9/3064db0fd3bc85247ba17dabf01b9a78f64f04374e736732c3e9cd4a5a4c/cgh_codegen-0.1.0-py3-none-any.whl", hash = "sha256:a0e8bf2dabdc046401fc98ff29a239176edad363617ef866d183182d87f54314", size = 26460, upload-time = "2026-09-22T06:01:21.055Z" },
+    { url = "https://files.pythonhosted.org/packages/55/b3/6918344b26220dca2c211842d62e31864a29b97e7a3a92eca50bd6d1771f/cgh_codegen-0.1.1-py3-none-any.whl", hash = "sha256:51c5a300dff9686c2e1411332a431e821f0c8733888d3fb7ccb170435ce6ead0", size = 27180, upload-time = "2026-09-29T18:02:22.957Z" },
 ]
 
 [[package]]

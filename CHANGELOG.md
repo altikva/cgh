@@ -8,6 +8,54 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-06
+
+### Added
+- **A Claude Code `/clear` no longer loses the task in progress.** At
+  `SessionEnd` and `PreCompact`, cgh reads the session transcript and records
+  a digest without calling the model: the last requests, the files edited, the
+  commands run and the end of the last answer. After a `/clear`, the new
+  session starts with a short recap of the previous one and can continue it
+  with `resume`, and the user sees a one-line notice that the recap was
+  loaded. A new `cgh-checkpoint` skill (`/cgh-checkpoint`) has the model
+  write the goal, what is done, the decisions and the next step before
+  clearing.
+- **IBM Bob sessions save to cgh before they are compacted or closed.** Bob
+  compacts a task around 190k tokens and caps it at 270k without telling the
+  model. `cgh setup bob` now also writes session hooks into
+  `.bob/settings.json`: the model gets its session id at start, cgh journals
+  the files and commands of the task and turns them into an automatic digest
+  on Stop and PreCompact, and after 40 tool calls without a checkpoint the
+  next prompt asks for one. An opt-in `[bob] checkpoint_gate` blocks a tool
+  call until the model saves. Existing hooks in that file are kept.
+
+### Fixed
+- **Bob: cgh's MCP server worked only after manual tweaks**, especially on
+  Windows. `.bob/mcp.json` now sets a 120 s timeout (Bob's 60 s default is
+  shorter than a cold Windows start, and a timed-out call makes Bob kill the
+  server) and pre-approves cgh's read and index tools; deleting knowledge,
+  fetching a URL and adding a directory still ask first. A longer timeout or
+  tools approved by hand survive a re-init.
+- **Accented text came out garbled on Windows**: the MCP stdio bridge used the
+  ANSI codepage instead of UTF-8 in both directions. It is UTF-8 now.
+- **`cgh init` crashed on a Windows console** that could not print the
+  spinner, and **without git on the PATH**. Both now degrade instead.
+- **Bob skipped two bundled skills** (cgh-artifacts, cgh-papercuts): their
+  descriptions were invalid YAML. They are quoted now.
+- **cgh's Claude Code hooks failed on Windows** with "cghw.EXE: command not
+  found": init wrote the launcher as `C:\Users\...\cghw.EXE`, and Claude Code
+  runs hook commands through Git Bash, which reads the backslashes as escapes.
+  The error was non-blocking, so the hooks silently did nothing. Hook commands
+  now use forward slashes, and re-running `cgh init` replaces the broken ones.
+- **`cgh init --from` could take twenty minutes**: the index it runs after
+  the seed called the LLM summarizer for every changed file, one `claude -p`
+  each, so a seed source that lagged behind turned seconds into minutes. A
+  CLI index (`cgh index`, `init`, `force-index`) now builds the graph and
+  search index only; `cgh summarize` backfills summaries.
+- **`init --from` re-enabled plugins the checkout had disabled**: the seed
+  copied the source's config over the target's, `[plugins]` included. The
+  target's own `[plugins]` table is now kept.
+
 ## [0.14.2] - 2026-09-29
 
 ### Fixed
@@ -1746,7 +1794,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/altikva/cgh/compare/v0.13.0...v0.14.0

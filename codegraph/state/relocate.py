@@ -346,6 +346,50 @@ def _drop_subrepos(config_path: Path) -> list[str]:
     return [str(e) for e in entries]
 
 
+def _split_table(text: str, name: str) -> tuple[str, str]:
+    """Cut the ``[name]`` table out of a TOML text, line by line: returns the
+    text without it and the table's own lines (header included), empty when
+    absent. Line-level for the same reason as _drop_subrepos."""
+    kept: list[str] = []
+    block: list[str] = []
+    inside = False
+    for line in text.splitlines(keepends=True):
+        header = _TABLE_HEADER.match(line)
+        if header:
+            inside = header.group(1) == name
+        (block if inside else kept).append(line)
+    return "".join(kept), "".join(block)
+
+
+def _keep_target_plugins(config_path: Path, target_text: str | None) -> bool:
+    """Put the target's own ``[plugins]`` table back into a seeded config.
+
+    The seed copies the source's config over the target's, so a plugin the
+    target had disabled (summarize, in a per-ticket worktree) came back on and
+    the follow-up index called it for every changed file. Returns True when
+    the target's table was restored; on a text that would not parse, the
+    copied config is left as is."""
+    import tomllib
+
+    if not target_text:
+        return False
+    _, block = _split_table(target_text, "plugins")
+    if not block.strip():
+        return False
+    try:
+        copied = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    without, _ = _split_table(copied, "plugins")
+    edited = without.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+    try:
+        tomllib.loads(edited)
+    except tomllib.TOMLDecodeError:
+        return False
+    config_path.write_text(edited, encoding="utf-8")
+    return True
+
+
 def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     """Seed ``to_root``'s .codegraph from ``from_root``'s.
 
@@ -379,6 +423,11 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     rewritten = 0
     left_out: list[str] = []
 
+    try:
+        target_config: str | None = (to_cg / _CONFIG_FILE).read_text(encoding="utf-8")
+    except OSError:
+        target_config = None
+
     copied: list[str] = []
     for name in (graph_file, _FTS_FILE, _CALL_LOG_FILE, _CONFIG_FILE):
         src = from_cg / name
@@ -405,6 +454,8 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
 
     _rewrite_scan_meta(from_root, to_root)
     dropped = _drop_subrepos(to_cg / _CONFIG_FILE) if _CONFIG_FILE in copied else []
+    if _CONFIG_FILE in copied:
+        _keep_target_plugins(to_cg / _CONFIG_FILE, target_config)
 
     return {
         "backend": backend,

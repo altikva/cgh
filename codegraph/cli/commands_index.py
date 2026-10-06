@@ -39,6 +39,24 @@ from codegraph.cli import (
 # ---------------------------------------------------------------------------
 
 
+def _structural_only() -> None:
+    """Keep a CLI index to the graph: no LLM-backed deferred scanner.
+
+    A foreground index (cgh index, init, force-index) would otherwise wait on
+    one backend call per changed file, which turned a 3 s `init --from` into
+    twenty minutes of `claude -p` once the seed source lagged behind. The
+    owner keeps them for files it indexes; `cgh summarize` backfills."""
+    from codegraph.plugins import scanners
+    from codegraph.state.deferred_scan import suspend
+
+    suspend()
+    if any(getattr(s, "deferred", False) for _, s in scanners()):
+        console.print(
+            "[dim]LLM scanners skipped for this index; run [/dim]"
+            "[cyan]cgh summarize[/cyan][dim] to backfill summaries.[/dim]"
+        )
+
+
 def cmd_index(args: argparse.Namespace) -> None:
     from codegraph.indexer import index_repo
     from codegraph.state.ipc import is_owner_alive, read_owner_port
@@ -88,6 +106,7 @@ def cmd_index(args: argparse.Namespace) -> None:
                 _scan_claude_state(root)
             return
 
+    _structural_only()
     task_id = None
 
     with Progress(
@@ -425,6 +444,7 @@ def cmd_force_index(args: argparse.Namespace) -> None:
 
     root = Path(os.path.abspath(args.root))
     targets = args.paths
+    _structural_only()
 
     if not args.yes:
         console.print(

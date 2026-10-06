@@ -85,6 +85,12 @@ auto_watch = true
 # Rebuild the index before accepting MCP connections.
 reindex_on_start = true
 
+[bob]
+# IBM Bob session hooks: ask for a checkpoint after this many tool calls
+# without one, and (opt-in, 0 = off) block a tool call past this many.
+checkpoint_every = 40
+checkpoint_gate = 0
+
 
 [plugins]
 # Narrow or bar installed plugins without uninstalling them.
@@ -147,6 +153,13 @@ If `enabled` is set, only those parsers are active. `disabled` is then applied o
 |-----|------|---------|-------------|
 | `auto_watch` | `bool` | `true` | Start file watcher alongside MCP server |
 | `reindex_on_start` | `bool` | `true` | Rebuild index when `cgh serve` starts |
+
+#### `[bob]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `checkpoint_every` | `int` | `40` | Tool calls without a cgh checkpoint before Bob's next prompt carries a reminder |
+| `checkpoint_gate` | `int` | `0` | When above 0, block one tool call past this many calls without a checkpoint, until the model saves. Re-run `cgh setup bob` after changing it |
 
 ---
 

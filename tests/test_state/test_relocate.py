@@ -413,3 +413,34 @@ def test_seeded_checkout_resolves_no_children(tmp_path):
     )
 
     assert resolve_children(dst) == []
+
+
+def test_relocate_keeps_the_target_plugins_table(tmp_path):
+    # A per-ticket worktree that disabled summarize must not get it back from
+    # the source config: the follow-up index would call it for every file.
+    import tomllib
+
+    src, dst = _roots(tmp_path)
+    _sqlite_source(src)
+    (src / ".codegraph" / "config.toml").write_text(
+        '[codegraph]\ninclude_dirs = ["docs"]\n\n[plugins]\nenabled = ["summarize"]\n'
+        '\n[plugin.codegen]\ncommand = "claude -p"\n'
+    )
+    (dst / ".codegraph" / "config.toml").write_text(
+        '[plugins]\ndisabled = ["summarize"]\n'
+    )
+    relocate_store(src, dst)
+
+    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
+    assert cfg["plugins"] == {"disabled": ["summarize"]}
+    assert cfg["codegraph"]["include_dirs"] == ["docs"]
+    assert cfg["plugin"]["codegen"]["command"] == "claude -p"
+
+
+def test_relocate_takes_the_source_plugins_when_the_target_has_none(tmp_path):
+    import tomllib
+
+    config = '[codegraph]\ninclude_dirs = ["docs"]\n\n[plugins]\ndisabled = ["pii"]\n'
+    _, dst, _ = _seed_with_config(tmp_path, config)
+    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
+    assert cfg["plugins"] == {"disabled": ["pii"]}

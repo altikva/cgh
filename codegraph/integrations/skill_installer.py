@@ -23,6 +23,8 @@ import re
 import shutil
 from pathlib import Path
 
+from codegraph.core.utils import ensure_dir as _ensure_dir
+
 _BLOCK_START = "<!-- codegraph-skills:start -->"
 _BLOCK_END = "<!-- codegraph-skills:end -->"
 
@@ -253,18 +255,18 @@ def install_claude(
     """
     project_root = Path(project_root)
     dest_root = project_root / ".claude" / "skills"
-    dest_root.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(dest_root)
 
     installed: list[str] = []
     for name, _fm, _body, skill_dir in _iter_skills():
         target_dir = dest_root / name
-        target_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(target_dir)
         for f in skill_dir.rglob("*"):
             if not f.is_file():
                 continue
             rel = f.relative_to(skill_dir)
             dest = target_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_dir(dest.parent)
             if (
                 not overwrite_modified
                 and dest.exists()
@@ -312,7 +314,7 @@ def install_cursor(project_root: Path) -> list[str]:
     Cursor uses MDC format: YAML frontmatter + markdown body.
     """
     rules_dir = project_root / ".cursor" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(rules_dir)
 
     installed: list[str] = []
     for name, fm, body, _skill_dir in _iter_skills():
@@ -342,18 +344,18 @@ def install_bob(project_root: Path) -> list[str]:
     ~/.bob/skills/."""
     project_root = Path(project_root)
     dest_root = project_root / ".bob" / "skills"
-    dest_root.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(dest_root)
 
     installed: list[str] = []
     for name, _fm, _body, skill_dir in _iter_skills():
         target_dir = dest_root / name
-        target_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(target_dir)
         for f in skill_dir.rglob("*"):
             if not f.is_file():
                 continue
             rel = f.relative_to(skill_dir)
             dest = target_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_dir(dest.parent)
             shutil.copy2(f, dest)
         installed.append(name)
     return installed
@@ -523,7 +525,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     project_root = Path(project_root)
     if tool == "cursor":
         target = project_root / ".cursor" / "rules" / "codegraph-usage.mdc"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(target.parent)
         mdc = (
             "---\n"
             "description: When and how to use the codegraph MCP tools for this repo.\n"
@@ -537,7 +539,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         # Workspace rules live under .bob/rules/; the mode-specific
         # siblings (.bob/rules-agent, -ask, -plan) hold AGENTS.md.
         target = project_root / ".bob" / "rules" / "cgh-usage.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(target.parent)
         target.write_text(
             "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
             encoding="utf-8",
@@ -548,7 +550,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         # Native rules dir: a file cgh owns outright, auto-discovered by
         # Claude Code, versioned with the repo, overwritten on update.
         target = project_root / ".claude" / "rules" / "cgh-usage.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(target.parent)
         target.write_text(
             "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
             encoding="utf-8",

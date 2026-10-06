@@ -8,6 +8,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh init` and the skill install failed on a WebDAV or network drive** on
+  Windows with `FileExistsError`: such a drive can report a folder as already
+  existing before it shows up as a directory. Creating `.claude`, `.cursor`,
+  `.bob` and the skill folders now retries briefly instead of failing.
+
 ## [0.14.3] - 2026-10-06
 
 ### Added

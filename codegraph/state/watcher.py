@@ -169,6 +169,18 @@ class _CodeGraphHandler(FileSystemEventHandler):
         except Exception as exc:
             _log.error("error %s: %s", path, exc)
             _activity_log(self._root, "error", f"{path}: {exc}")
+            self._heal(exc)
+
+    def _heal(self, exc: Exception) -> None:
+        """A fatal graph error poisons the shared connection, so every MCP
+        call after it would fail until the owner restarts. Rebuild now."""
+        from codegraph.indexer import rebuild_corrupt_graph
+
+        try:
+            if rebuild_corrupt_graph(self._root, exc) is not None:
+                _log.warning("graph was corrupt, rebuilt from source")
+        except Exception as heal_exc:
+            _log.error("graph rebuild failed: %s", heal_exc)
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:

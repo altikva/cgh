@@ -1532,21 +1532,31 @@ def cmd_diff(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+# How long a freshly started owner may stay silent before the probe calls it
+# stuck. Callers wait up to 90 s for a cold start on a large repo.
+_OWNER_STARTUP_GRACE_S = 120.0
+
+
 def owner_probe(root: str | Path, timeout: float = 5.0) -> tuple[bool, str]:
     """Is this repo's owner healthy, for a supervisor to poll.
 
     An owner only lives while an agent needs it, so NO owner is a healthy
     state: the probe never starts one and a supervisor must not either. The
-    one unhealthy state is an owner process that is alive but does not answer
-    a real tool call, which is what a wedged owner or a poisoned graph
-    connection looks like from outside. The cure is `cgh stop`: the next
+    one unhealthy state is an owner process that is alive, past its startup
+    window, and does not answer a real tool call, which is what a wedged owner
+    or a poisoned graph connection looks like from outside. The cure is `cgh stop`: the next
     agent call starts a fresh owner.
 
     Returns (healthy, one-line detail)."""
     import time as _time
 
     from codegraph.state.index_lock import holder
-    from codegraph.state.ipc import is_pid_alive, read_owner_pid, read_owner_port
+    from codegraph.state.ipc import (
+        is_pid_alive,
+        owner_pidfile,
+        read_owner_pid,
+        read_owner_port,
+    )
 
     root = str(root)
     pid = read_owner_pid(root)
@@ -1555,6 +1565,17 @@ def owner_probe(root: str | Path, timeout: float = 5.0) -> tuple[bool, str]:
     if holder(root):
         # A long index keeps the owner busy; slow answers are expected.
         return True, f"owner pid {pid} is indexing"
+    try:
+        age = _time.time() - owner_pidfile(root).stat().st_mtime
+    except OSError:
+        age = None
+    if age is not None and age < _OWNER_STARTUP_GRACE_S:
+        # A cold start on a large repo can take over a minute before the
+        # port answers; a supervisor must not stop an owner that is coming up.
+        port = read_owner_port(root)
+        if port is not None and _ask_owner_live_stats(root, port, timeout=timeout):
+            return True, f"owner pid {pid} answers on port {port}"
+        return True, f"owner pid {pid} is starting ({int(age)} s old)"
     for attempt in range(2):
         port = read_owner_port(root)
         if port is not None and _ask_owner_live_stats(root, port, timeout=timeout):

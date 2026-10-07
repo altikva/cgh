@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-07
+
 ### Fixed
 - **A fatal DuckDB error left every graph call failing until `cgh stop`**, and
   `scan_status` kept reporting the index as fresh. It happened when the file
@@ -1808,7 +1810,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.4...HEAD
+[0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/altikva/cgh/compare/v0.14.0...v0.14.1

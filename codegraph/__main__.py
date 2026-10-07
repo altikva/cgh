@@ -693,12 +693,24 @@ def _register_state_and_hooks(sub) -> None:
     p.add_argument("--json", action="store_true")
 
 
+_HOOK_COMMAND_PREFIXES = ("_hook_", "_bob_")
+
+
 def main() -> None:
     # Strip trailing CR/LF from every argument. On Windows a wrapper script
     # or config saved with CRLF line endings can pass a token like "serve\r",
     # which argparse then rejects as an invalid choice. No real argument ends
     # in a carriage return or newline, so this is safe.
     sys.argv[:] = [a.rstrip("\r\n") for a in sys.argv]
+
+    # Hook commands take no arguments, but the commands cgh writes into an
+    # agent's settings end with a marker comment (`cgh _bob_prompt  # cgh-bob-
+    # prompt`) so a re-init can find its own hooks. A host that runs the
+    # command without a POSIX shell passes `#` and the marker through as
+    # arguments; argparse then exits 2, and in Bob exit 2 BLOCKS the event
+    # (UserPromptSubmit, PreCompact). Drop whatever follows a hook command.
+    if len(sys.argv) > 2 and sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES):
+        del sys.argv[2:]
 
     # A Windows console or pipe defaults to the ANSI codepage (cp1252), which
     # cannot encode rich's spinner frames or box glyphs: printing one raised

@@ -1,6 +1,6 @@
 {
   "name": "cgh",
-  "version": "0.14.3",
+  "version": "0.14.4",
   "description": "Local code graph + memory + plans + knowledge for AI coding agents. 52 MCP tools that return exact file:line server-side, so navigation costs near-zero model tokens. Requires the cgh binary on PATH (uvx cgh, pip install cgh, or the standalone binary).",
   "author": {
     "name": "Joy Ndjama",

@@ -525,6 +525,15 @@ def _register_inspect(sub) -> None:
         action="store_true",
         help="Exit non-zero if any blocking check fails (for scripts/CI)",
     )
+    p.add_argument(
+        "--owner",
+        action="store_true",
+        help=(
+            "Probe only this repo's running owner, for a supervisor: exit 0 "
+            "when no owner runs or it answers, 1 when it is alive but stuck. "
+            "Never starts an owner"
+        ),
+    )
 
 
 def _register_analysis(sub) -> None:

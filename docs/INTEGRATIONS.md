@@ -82,6 +82,50 @@ The automatic digest records what changed, not why; the model's own
 Shell; an IDE without the event ignores it. Tune both thresholds in the
 `[bob]` table of the cgh config.
 
+### Supervising the owner (Spero, Monit, cron)
+
+The owner of a repo lives only while an agent needs it: it starts on the
+first MCP call and exits when the last agent disconnects. A supervisor must
+therefore never keep it alive. The one thing worth watching is an owner that
+is still running but no longer answers (a stuck process, a poisoned graph
+connection), because every agent call then fails until someone runs
+`cgh stop`.
+
+`cgh doctor --owner` is the probe for that. It exits 0 when no owner runs,
+when the owner answers, or when it is busy indexing, and 1 only when the
+owner is alive and silent. It never starts an owner.
+
+With [Spero](https://github.com/altikva/spero), one target per indexed repo:
+
+```yaml
+version: 1
+frozen: false
+
+targets:
+  - name: cgh-owner-myrepo
+    provider: local
+    probe:
+      type: command
+      params:
+        command: "cgh doctor --owner --root /path/to/myrepo"
+        timeout: 30
+      interval: 60
+    remediations:
+      # Stops the stuck owner and does NOT restart it: the next agent call
+      # starts a fresh one, and no agent means no owner.
+      - type: respawn
+        params:
+          start: "cgh stop --root /path/to/myrepo"
+        autonomy: auto
+        max_attempts: 2
+```
+
+`max_attempts: 2` makes `spero watch` act on the second failed probe in a
+row, so one slow answer does not stop a healthy owner. A one-shot
+`spero run` starts its failure count at zero each time; use `max_attempts: 1`
+there. Any other supervisor works the same way: run the probe, and on a
+non-zero exit run `cgh stop --root <repo>`.
+
 ### Automatic Setup
 
 ```bash

@@ -56,6 +56,29 @@ def test_index_repo_self_heals_corrupt_graph(tmp_path, monkeypatch):
     assert get_db_path(tmp_path).exists()
 
 
+@pytest.fixture(autouse=True)
+def _no_rebuild_cooldown():
+    idx._last_rebuild.clear()
+    yield
+    idx._last_rebuild.clear()
+
+
+def _fatal() -> Exception:
+    import duckdb
+
+    return duckdb.InvalidInputException(_CORRUPT)
+
+
+def _invalidated() -> Exception:
+    import duckdb
+
+    return duckdb.FatalException(
+        "FATAL Error: Failed: database has been invalidated because of a "
+        "previous fatal error. The database must be restarted prior to being "
+        "used again."
+    )
+
+
 def _healthy_repo(tmp_path):
     (tmp_path / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     idx.index_repo(tmp_path, method="os_walk")
@@ -68,9 +91,40 @@ def _has_foo(root) -> bool:
     return bool(get_connection(root).find_node_keys("Function", "name", "foo"))
 
 
+def test_fatal_check_accepts_only_duckdb_errors_that_start_with_the_report():
+    import duckdb
+
+    assert idx.is_fatal_graph_error(_fatal())
+    assert idx.is_fatal_graph_error(_invalidated())
+    # Wrapped by another layer: still found through the cause chain.
+    try:
+        try:
+            raise _invalidated()
+        except Exception as inner:
+            raise RuntimeError("tool failed") from inner
+    except RuntimeError as wrapped:
+        assert idx.is_fatal_graph_error(wrapped)
+
+    # The same words from anything that is not DuckDB must not count: a file
+    # or a tool argument named after the sentence would otherwise wipe the
+    # graph.
+    assert not idx.is_fatal_graph_error(RuntimeError(_CORRUPT))
+    assert not idx.is_fatal_graph_error(
+        OSError("cannot read 'database has been invalidated because.py'")
+    )
+    # A DuckDB error that only quotes the sentence further in.
+    assert not idx.is_fatal_graph_error(
+        duckdb.CatalogException(
+            "Catalog Error: Table with name 'Failed to delete all rows from "
+            "index.' does not exist"
+        )
+    )
+
+
 def test_rebuild_ignores_other_errors(tmp_path):
     root = _healthy_repo(tmp_path)
     assert idx.rebuild_corrupt_graph(root, ValueError("unrelated")) is None
+    assert idx.rebuild_corrupt_graph(root, RuntimeError(_CORRUPT)) is None
     assert _has_foo(root)
     reset_connection(root)
 
@@ -89,10 +143,19 @@ def test_rebuild_wipes_and_reindexes(tmp_path, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(idx, "_index_repo", spy)
-    stats = idx.rebuild_corrupt_graph(root, RuntimeError(_CORRUPT))
+    stats = idx.rebuild_corrupt_graph(root, _fatal())
     assert stats is not None and stats["indexed"] >= 1
     assert seen["meta_during_rebuild"] is None
     assert scan_meta.read_meta(root) is not None  # written again by the rebuild
+    assert _has_foo(root)
+    reset_connection(root)
+
+
+def test_rebuild_does_not_loop(tmp_path):
+    root = _healthy_repo(tmp_path)
+    assert idx.rebuild_corrupt_graph(root, _fatal()) is not None
+    # The same error again right away: no second wipe.
+    assert idx.rebuild_corrupt_graph(root, _fatal()) is None
     assert _has_foo(root)
     reset_connection(root)
 
@@ -103,7 +166,7 @@ def test_watcher_rebuilds_after_a_fatal_reindex(tmp_path, monkeypatch):
     root = _healthy_repo(tmp_path)
 
     def poisoned(*args, **kwargs):
-        raise RuntimeError(_CORRUPT)
+        raise _fatal()
 
     monkeypatch.setattr(watcher, "index_file", poisoned)
     handler = watcher._CodeGraphHandler(root)
@@ -122,18 +185,21 @@ def test_tool_call_on_corrupt_graph_starts_a_rebuild(tmp_path, monkeypatch):
 
     @srv._logged_tool
     def broken_tool() -> str:
-        raise RuntimeError("FatalException: database has been invalidated")
+        raise _invalidated()
 
     with pytest.raises(RuntimeError, match="being rebuilt from source"):
         broken_tool()
     srv._rebuild_thread.join(timeout=30)
     assert not srv._rebuild_thread.is_alive()
     assert _has_foo(root)
+    log = (root / ".codegraph" / "activity.log").read_text(encoding="utf-8")
+    assert "graph_corrupt_recover" in log
 
+    # An error that only repeats the words is passed through untouched.
     @srv._logged_tool
-    def other_failure() -> str:
-        raise ValueError("bad argument")
+    def echoing_tool() -> str:
+        raise ValueError("no symbol named 'database has been invalidated'")
 
-    with pytest.raises(ValueError, match="bad argument"):
-        other_failure()
+    with pytest.raises(ValueError, match="no symbol named"):
+        echoing_tool()
     reset_connection(root)

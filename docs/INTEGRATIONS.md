@@ -92,8 +92,10 @@ connection), because every agent call then fails until someone runs
 `cgh stop`.
 
 `cgh doctor --owner` is the probe for that. It exits 0 when no owner runs,
-when the owner answers, or when it is busy indexing, and 1 only when the
-owner is alive and silent. It never starts an owner.
+when the owner answers, when it is busy indexing or still starting (its
+first two minutes), and 1 only when the owner is alive and silent. A repo
+directory that was deleted counts as no owner, so a stale target does no
+harm. It never starts an owner.
 
 With [Spero](https://github.com/altikva/spero), one target per indexed repo:
 

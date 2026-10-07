@@ -68,9 +68,9 @@ def _start_graph_rebuild(exc: BaseException) -> bool:
     Returns True when ``exc`` is such an error (a rebuild is running or was
     just started)."""
     global _rebuild_thread
-    from codegraph.indexer import _is_graph_corrupt, rebuild_corrupt_graph
+    from codegraph.indexer import is_fatal_graph_error, rebuild_corrupt_graph
 
-    if _root is None or not _is_graph_corrupt(exc):
+    if _root is None or not is_fatal_graph_error(exc):
         return False
     root = _root
 

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -1319,6 +1320,42 @@ def _recover_corrupt_graph(repo_root: Path) -> None:
         pass
 
 
+_FATAL_GRAPH_ERROR = re.compile(
+    r"^(?:[A-Za-z]+(?: [A-Za-z]+)? Error: ){0,3}"
+    r"(?:Failed to delete all rows from index\."
+    r"|(?:Failed: )?database has been invalidated because of a previous fatal error)",
+    re.IGNORECASE,
+)
+_REBUILD_COOLDOWN_S = 300.0
+_last_rebuild: dict[str, float] = {}
+
+
+def is_fatal_graph_error(exc: BaseException) -> bool:
+    """True only for an error raised by DuckDB itself whose message STARTS
+    with one of its two corruption reports.
+
+    Stricter than _is_graph_corrupt on purpose. That one matches a substring
+    of any exception text, which is fine inside a reindex the user asked for,
+    but this result wipes the graph on its own: an unrelated error that merely
+    quotes such a sentence (a file named after it, a tool argument echoed in
+    a message) must never count. So the exception has to be a duckdb.Error,
+    here or in its cause chain, and the text has to match from the start."""
+    try:
+        import duckdb
+    except ImportError:
+        return False
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, duckdb.Error) and _FATAL_GRAPH_ERROR.match(
+            str(current).lstrip()
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def rebuild_corrupt_graph(repo_root: str | Path, exc: BaseException) -> dict | None:
     """Rebuild the graph after a corruption error met outside a reindex: the
     file watcher re-indexing a saved file, or an MCP tool reading the graph.
@@ -1330,15 +1367,27 @@ def rebuild_corrupt_graph(repo_root: str | Path, exc: BaseException) -> dict | N
     the scan metadata is dropped (the index is not fresh until the rebuild
     writes it again) and the repo is re-indexed in full.
 
-    Returns the index stats, or None when ``exc`` is not a corruption error
-    or another index run already holds the repo (it will do the rebuild)."""
-    if not _is_graph_corrupt(exc):
+    Returns the index stats, or None when ``exc`` is not a fatal DuckDB error
+    (see is_fatal_graph_error), when this repo was rebuilt less than five
+    minutes ago, or when another index run already holds the repo."""
+    if not is_fatal_graph_error(exc):
         return None
     from codegraph.state.activity import log as _activity_log
     from codegraph.state.index_lock import IndexBusy, index_lock
     from codegraph.state.scan_meta import clear_meta
 
     root = Path(repo_root)
+    key = str(root.resolve())
+    now = time.time()
+    last = _last_rebuild.get(key)
+    if last is not None and now - last < _REBUILD_COOLDOWN_S:
+        # Just rebuilt: do not loop on an error that keeps coming. Still drop
+        # the poisoned connection so the next call reopens the database.
+        from codegraph.core.db import reset_connection
+
+        reset_connection(root)
+        return None
+    _last_rebuild[key] = now
     try:
         with index_lock(root):
             _activity_log(root, "graph_corrupt_recover", str(exc)[:200])

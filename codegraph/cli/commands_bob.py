@@ -69,8 +69,10 @@ def _session_id(payload: dict) -> str:
 
 
 def _state_dir(root: Path) -> Path:
+    from codegraph.core.utils import ensure_dir
+
     path = root / ".codegraph" / "sessions"
-    path.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path)
     return path
 
 

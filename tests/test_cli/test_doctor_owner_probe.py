@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 import pytest
 
@@ -20,13 +21,15 @@ import codegraph.state.ipc as ipc
 
 
 @pytest.fixture
-def owner(monkeypatch):
+def owner(monkeypatch, tmp_path):
     """Fake an owner: pid 4242 on port 5555, alive, not indexing."""
     state = {"pid": 4242, "port": 5555, "alive": True, "answers": True, "asked": 0}
     monkeypatch.setattr(ipc, "read_owner_pid", lambda root: state["pid"])
     monkeypatch.setattr(ipc, "read_owner_port", lambda root: state["port"])
     monkeypatch.setattr(ipc, "is_pid_alive", lambda pid: state["alive"])
     monkeypatch.setattr(index_lock, "holder", lambda root: None)
+    # No pid file on disk: the owner is past its startup window.
+    monkeypatch.setattr(ipc, "owner_pidfile", lambda root: tmp_path / "absent.pid")
 
     def ask(root, port, timeout=1.5):
         state["asked"] += 1
@@ -81,3 +84,25 @@ def test_doctor_owner_exit_code(owner, tmp_path, capsys):
         mon.cmd_doctor(args)
     assert stuck.value.code == 1
     assert "does not answer" in capsys.readouterr().out
+
+
+def test_a_starting_owner_is_not_reported_stuck(owner, tmp_path, monkeypatch):
+    # The pid file was just written: the owner is coming up and silent.
+    pidfile = tmp_path / "owner.pid"
+    pidfile.write_text("4242", encoding="utf-8")
+    monkeypatch.setattr(ipc, "owner_pidfile", lambda root: pidfile)
+    owner["answers"] = False
+    healthy, detail = mon.owner_probe(tmp_path)
+    assert healthy and "starting" in detail
+
+    # Past the startup window the same silence is a stuck owner.
+    old = pidfile.stat().st_mtime - mon._OWNER_STARTUP_GRACE_S - 5
+    os.utime(pidfile, (old, old))
+    healthy, detail = mon.owner_probe(tmp_path)
+    assert not healthy and "cgh stop" in detail
+
+
+def test_a_missing_repo_directory_is_healthy(tmp_path):
+    # A worktree deleted while still listed in a supervisor policy.
+    healthy, detail = mon.owner_probe(tmp_path / "gone")
+    assert healthy and "no owner" in detail

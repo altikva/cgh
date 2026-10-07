@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh doctor --owner`, a probe for supervisors.** It exits 1 only when a
+  repo's owner process is alive but no longer answers, and 0 otherwise,
+  including when no owner runs: an owner lives only while an agent needs it,
+  so the probe never starts one. The integrations guide shows a Spero policy
+  that stops a stuck owner and leaves the restart to the next agent call.
+
 ## [0.14.4] - 2026-10-07
 
 ### Fixed

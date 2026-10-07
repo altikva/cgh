@@ -492,11 +492,12 @@ cgh files --check report.xlsx   # indexed? if not, why
 Run a health check that verifies all codegraph components are operational.
 
 ```
-cgh doctor [--strict] [--root DIR]
+cgh doctor [--strict] [--owner] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
+| `--owner` | Probe only this repo's running owner and print one line, for a supervisor to poll. Exit 0 when no owner runs (an owner lives only while an agent needs it), when it answers a real tool call, or when it is busy indexing. Exit 1 when the owner process is alive but does not answer; `cgh stop` is the cure, and the next agent call starts a fresh owner. Never starts an owner. |
 | `--strict` | Exit 1 when a blocking check fails, so CI and setup scripts can gate on a healthy store instead of parsing the table. Optional checks (`.cghignore`) and not-yet-created files do not block. |
 
 Checks performed:

@@ -26,7 +26,7 @@ from codegraph.cli import (
 from codegraph.cli import (
     status as phase_status,
 )
-from codegraph.core.utils import quiet_subprocess_kwargs
+from codegraph.core.utils import ensure_dir, quiet_subprocess_kwargs
 
 # Wildcards that cover every codegraph MCP tool (current + future). The
 # two-form shape matches what both older and current Claude Code builds
@@ -44,7 +44,7 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
     import json as _json
 
     settings_dir = root / ".claude"
-    settings_dir.mkdir(exist_ok=True)
+    ensure_dir(settings_dir)
     settings_path = settings_dir / "settings.local.json"
 
     if settings_path.exists():
@@ -1452,7 +1452,7 @@ def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[s
     import json as _json
 
     settings_dir = Path(root) / ".claude"
-    settings_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(settings_dir)
     shared_path = settings_dir / "settings.json"
     local_path = settings_dir / "settings.local.json"
 
@@ -1658,7 +1658,7 @@ def _install_bob_hooks(root: Path, cli: str) -> list[str]:
             group = {"matcher": matcher, **group}
         hooks.setdefault(event, []).append(group)
         written.append(event)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent)
     path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return written
 
@@ -1988,7 +1988,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         # on cgh being on the user's PATH) go into settings.local.json so
         # they don't break teammates who haven't installed cgh.
         settings_dir = root / ".claude"
-        settings_dir.mkdir(exist_ok=True)
+        ensure_dir(settings_dir)
         shared_path = settings_dir / "settings.json"
         local_path = settings_dir / "settings.local.json"
 
@@ -2045,7 +2045,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 
     elif tool == "cursor":
         cursor_dir = root / ".cursor"
-        cursor_dir.mkdir(exist_ok=True)
+        ensure_dir(cursor_dir)
         mcp_path = cursor_dir / "mcp.json"
         data = {"mcpServers": {"codegraph": mcp_entry}}
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -2106,7 +2106,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         # without a confirmation prompt (exact names, no wildcard).
         command, args = _mcp_command()
         bob_dir = root / ".bob"
-        bob_dir.mkdir(exist_ok=True)
+        ensure_dir(bob_dir)
         mcp_path = bob_dir / "mcp.json"
         if mcp_path.exists():
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))

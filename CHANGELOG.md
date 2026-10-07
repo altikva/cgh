@@ -8,12 +8,23 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-10-07
+
 ### Added
 - **`cgh doctor --owner`, a probe for supervisors.** It exits 1 only when a
   repo's owner process is alive but no longer answers, and 0 otherwise,
   including when no owner runs: an owner lives only while an agent needs it,
-  so the probe never starts one. The integrations guide shows a Spero policy
+  so the probe never starts one. An owner that is still starting or busy
+  indexing counts as healthy. The integrations guide shows a Spero policy
   that stops a stuck owner and leaves the restart to the next agent call.
+
+### Fixed
+- **Bob IDE: the `UserPromptSubmit` and `PreCompact` hooks failed and blocked
+  the event.** The hook commands cgh writes end with a `# marker` comment. A
+  host that runs them without a POSIX shell passes the marker as arguments,
+  cgh exited with a usage error, and Bob treats that exit code as a block.
+  Hook commands now ignore anything that follows them, so upgrading cgh fixes
+  existing `.bob/settings.json` files without a re-init.
 
 ## [0.14.4] - 2026-10-07
 
@@ -1817,7 +1828,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.4...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.5...HEAD
+[0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/altikva/cgh/compare/v0.14.1...v0.14.2

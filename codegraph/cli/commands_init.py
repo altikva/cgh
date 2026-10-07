@@ -1658,7 +1658,7 @@ def _install_bob_hooks(root: Path, cli: str) -> list[str]:
             group = {"matcher": matcher, **group}
         hooks.setdefault(event, []).append(group)
         written.append(event)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent)
     path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return written
 

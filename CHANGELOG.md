@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **A fatal DuckDB error left every graph call failing until `cgh stop`**, and
+  `scan_status` kept reporting the index as fresh. It happened when the file
+  watcher re-indexed a saved file, or a tool read the graph, and DuckDB
+  invalidated the database. cgh now rebuilds the graph from source by itself
+  on those two paths as it already did during a reindex: the watcher rebuilds
+  at once, a tool call starts the rebuild in the background and says so, and
+  the index is not reported fresh until the rebuild is done. Knowledge,
+  memory and config are untouched.
 - **`cgh init` and the skill install failed on a WebDAV or network drive** on
   Windows with `FileExistsError`: such a drive can report a folder as already
   existing before it shows up as a directory. Creating `.claude`, `.cursor`,

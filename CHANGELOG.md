@@ -18,6 +18,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   indexing counts as healthy. The integrations guide shows a Spero policy
   that stops a stuck owner and leaves the restart to the next agent call.
 
+### Fixed
+- **Bob IDE: the `UserPromptSubmit` and `PreCompact` hooks failed and blocked
+  the event.** The hook commands cgh writes end with a `# marker` comment. A
+  host that runs them without a POSIX shell passes the marker as arguments,
+  cgh exited with a usage error, and Bob treats that exit code as a block.
+  Hook commands now ignore anything that follows them, so upgrading cgh fixes
+  existing `.bob/settings.json` files without a re-init.
+
 ## [0.14.4] - 2026-10-07
 
 ### Fixed

@@ -17,6 +17,7 @@ import argparse
 import functools
 import os
 import sys
+import threading
 import time as _time
 from pathlib import Path
 
@@ -57,6 +58,37 @@ _root: Path | None = None
 _fts_conn = None
 
 
+_rebuild_thread: threading.Thread | None = None
+_rebuild_guard = threading.Lock()
+
+
+def _start_graph_rebuild(exc: BaseException) -> bool:
+    """When a tool call fails on a corrupt graph, rebuild it in the
+    background instead of failing every call until the owner restarts.
+    Returns True when ``exc`` is such an error (a rebuild is running or was
+    just started)."""
+    global _rebuild_thread
+    from codegraph.indexer import _is_graph_corrupt, rebuild_corrupt_graph
+
+    if _root is None or not _is_graph_corrupt(exc):
+        return False
+    root = _root
+
+    def run() -> None:
+        try:
+            rebuild_corrupt_graph(root, exc)
+        except Exception:
+            pass  # the next failing call starts another attempt
+
+    with _rebuild_guard:
+        if _rebuild_thread is None or not _rebuild_thread.is_alive():
+            _rebuild_thread = threading.Thread(
+                target=run, name="cgh-graph-rebuild", daemon=True
+            )
+            _rebuild_thread.start()
+    return True
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
@@ -75,6 +107,13 @@ def _logged_tool(fn):
         except Exception as exc:
             success = False
             error = str(exc)[:500]
+            if _start_graph_rebuild(exc):
+                raise RuntimeError(
+                    "The graph index hit a fatal database error and is being "
+                    "rebuilt from source. Retry in a moment; scan_status shows "
+                    "the rebuild while it runs. Use pattern_search meanwhile. "
+                    f"Original error: {error[:200]}"
+                ) from exc
             raise
         finally:
             latency = (_time.perf_counter() - t0) * 1000

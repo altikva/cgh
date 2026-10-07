@@ -1319,6 +1319,36 @@ def _recover_corrupt_graph(repo_root: Path) -> None:
         pass
 
 
+def rebuild_corrupt_graph(repo_root: str | Path, exc: BaseException) -> dict | None:
+    """Rebuild the graph after a corruption error met outside a reindex: the
+    file watcher re-indexing a saved file, or an MCP tool reading the graph.
+
+    index_repo and incremental_reindex already recover on their own, but a
+    fatal DuckDB error on those two paths left the connection poisoned, so
+    every later call failed until the owner was restarted, and the stored
+    scan metadata went on calling the index fresh. Here the graph is wiped,
+    the scan metadata is dropped (the index is not fresh until the rebuild
+    writes it again) and the repo is re-indexed in full.
+
+    Returns the index stats, or None when ``exc`` is not a corruption error
+    or another index run already holds the repo (it will do the rebuild)."""
+    if not _is_graph_corrupt(exc):
+        return None
+    from codegraph.state.activity import log as _activity_log
+    from codegraph.state.index_lock import IndexBusy, index_lock
+    from codegraph.state.scan_meta import clear_meta
+
+    root = Path(repo_root)
+    try:
+        with index_lock(root):
+            _activity_log(root, "graph_corrupt_recover", str(exc)[:200])
+            _recover_corrupt_graph(root)
+            clear_meta(root)
+            return _index_repo(root, method="os_walk")
+    except IndexBusy:
+        return None
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,

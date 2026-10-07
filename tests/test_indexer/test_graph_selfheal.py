@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import codegraph.indexer as idx
 from codegraph.core.db import get_db_path, reset_connection
 
@@ -52,3 +54,86 @@ def test_index_repo_self_heals_corrupt_graph(tmp_path, monkeypatch):
     assert stats["indexed"] >= 1  # and rebuilt the graph on retry
     reset_connection(tmp_path)
     assert get_db_path(tmp_path).exists()
+
+
+def _healthy_repo(tmp_path):
+    (tmp_path / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+    idx.index_repo(tmp_path, method="os_walk")
+    return tmp_path
+
+
+def _has_foo(root) -> bool:
+    from codegraph.core.db import get_connection
+
+    return bool(get_connection(root).find_node_keys("Function", "name", "foo"))
+
+
+def test_rebuild_ignores_other_errors(tmp_path):
+    root = _healthy_repo(tmp_path)
+    assert idx.rebuild_corrupt_graph(root, ValueError("unrelated")) is None
+    assert _has_foo(root)
+    reset_connection(root)
+
+
+def test_rebuild_wipes_and_reindexes(tmp_path, monkeypatch):
+    from codegraph.state import scan_meta
+
+    root = _healthy_repo(tmp_path)
+    seen = {}
+    real = idx._index_repo
+
+    def spy(*args, **kwargs):
+        # At rebuild time the old scan must be forgotten: the index is not
+        # fresh while the graph is empty.
+        seen["meta_during_rebuild"] = scan_meta.read_meta(root)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(idx, "_index_repo", spy)
+    stats = idx.rebuild_corrupt_graph(root, RuntimeError(_CORRUPT))
+    assert stats is not None and stats["indexed"] >= 1
+    assert seen["meta_during_rebuild"] is None
+    assert scan_meta.read_meta(root) is not None  # written again by the rebuild
+    assert _has_foo(root)
+    reset_connection(root)
+
+
+def test_watcher_rebuilds_after_a_fatal_reindex(tmp_path, monkeypatch):
+    import codegraph.state.watcher as watcher
+
+    root = _healthy_repo(tmp_path)
+
+    def poisoned(*args, **kwargs):
+        raise RuntimeError(_CORRUPT)
+
+    monkeypatch.setattr(watcher, "index_file", poisoned)
+    handler = watcher._CodeGraphHandler(root)
+    handler._reindex(str(root / "a.py"))  # must not raise
+    assert _has_foo(root)
+    log = (root / ".codegraph" / "activity.log").read_text(encoding="utf-8")
+    assert "graph_corrupt_recover" in log
+    reset_connection(root)
+
+
+def test_tool_call_on_corrupt_graph_starts_a_rebuild(tmp_path, monkeypatch):
+    import codegraph.server as srv
+
+    root = _healthy_repo(tmp_path)
+    monkeypatch.setattr(srv, "_root", root)
+
+    @srv._logged_tool
+    def broken_tool() -> str:
+        raise RuntimeError("FatalException: database has been invalidated")
+
+    with pytest.raises(RuntimeError, match="being rebuilt from source"):
+        broken_tool()
+    srv._rebuild_thread.join(timeout=30)
+    assert not srv._rebuild_thread.is_alive()
+    assert _has_foo(root)
+
+    @srv._logged_tool
+    def other_failure() -> str:
+        raise ValueError("bad argument")
+
+    with pytest.raises(ValueError, match="bad argument"):
+        other_failure()
+    reset_connection(root)

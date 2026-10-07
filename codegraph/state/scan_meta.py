@@ -138,6 +138,15 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         pass
 
 
+def clear_meta(repo_root: str | Path) -> None:
+    """Forget the last scan, so scan_status stops reporting the index fresh.
+    Used when the graph was wiped and has to be rebuilt."""
+    try:
+        _meta_path(repo_root).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def read_meta(repo_root: str | Path) -> dict | None:
     """Load scan metadata, or None if missing/invalid."""
     path = _meta_path(repo_root)

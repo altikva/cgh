@@ -1,0 +1,372 @@
+{
+  "__all__": [
+    "CapabilityMissing",
+    "CodegraphError",
+    "InMemoryFindingStore",
+    "SDK_API",
+    "ScanFinding",
+    "Verdict",
+    "egress_decision",
+    "extract_chart",
+    "extract_diagram",
+    "extract_table",
+    "image_inventory",
+    "pseudonymize",
+    "scan_text",
+    "summarize"
+  ],
+  "exports": {
+    "CapabilityMissing": {
+      "bases": [
+        "CodegraphError",
+        "RuntimeError"
+      ],
+      "init": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "capability"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "package"
+        },
+        {
+          "returns": "None"
+        }
+      ],
+      "kind": "class"
+    },
+    "CodegraphError": {
+      "bases": [
+        "Exception"
+      ],
+      "kind": "class"
+    },
+    "InMemoryFindingStore": {
+      "fields": [
+        {
+          "name": "_records",
+          "type": "list[_Record]"
+        },
+        {
+          "name": "_scanned",
+          "type": "set[tuple[str, str, str]]"
+        }
+      ],
+      "kind": "class",
+      "methods": {
+        "already_scanned": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "scanner"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "blob_sha"
+          },
+          {
+            "returns": "bool"
+          }
+        ],
+        "query": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "key_prefix"
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "severity"
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "returns": "list[ScanFinding]"
+          }
+        ],
+        "record": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "scanner"
+          },
+          {
+            "annotation": "Iterable[ScanFinding]",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "findings"
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "blob_sha"
+          },
+          {
+            "returns": "int"
+          }
+        ]
+      }
+    },
+    "SDK_API": {
+      "kind": "constant",
+      "value": "1"
+    },
+    "ScanFinding": {
+      "fields": [
+        {
+          "name": "key",
+          "type": "str"
+        },
+        {
+          "name": "value",
+          "type": "str"
+        },
+        {
+          "name": "line",
+          "type": "int"
+        },
+        {
+          "name": "severity",
+          "type": "str"
+        }
+      ],
+      "kind": "class"
+    },
+    "Verdict": {
+      "fields": [
+        {
+          "name": "allowed",
+          "type": "bool"
+        },
+        {
+          "name": "reason",
+          "type": "str"
+        }
+      ],
+      "kind": "class"
+    },
+    "egress_decision": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "Iterable[ScanFinding]",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "findings"
+        },
+        {
+          "annotation": "str | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "mode"
+        },
+        {
+          "annotation": "bool",
+          "default": "False",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "allow_pii"
+        },
+        {
+          "annotation": "bool",
+          "default": "False",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "labeled_non_confidential"
+        },
+        {
+          "returns": "Verdict"
+        }
+      ]
+    },
+    "extract_chart": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "returns": "list[dict]"
+        }
+      ]
+    },
+    "extract_diagram": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "returns": "dict"
+        }
+      ]
+    },
+    "extract_table": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "returns": "list[dict]"
+        }
+      ]
+    },
+    "image_inventory": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "returns": "dict"
+        }
+      ]
+    },
+    "pseudonymize": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "key"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "value"
+        },
+        {
+          "annotation": "bytes",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "secret"
+        },
+        {
+          "returns": "str"
+        }
+      ]
+    },
+    "scan_text": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "text"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "annotation": "Iterable[str] | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "scanners"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "returns": "list[ScanFinding]"
+        }
+      ]
+    },
+    "summarize": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "text"
+        },
+        {
+          "annotation": "dict | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "annotation": "bool",
+          "default": "False",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "cloud_allowed"
+        },
+        {
+          "returns": "str"
+        }
+      ]
+    }
+  }
+}

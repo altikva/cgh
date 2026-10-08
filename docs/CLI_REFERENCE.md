@@ -722,25 +722,42 @@ guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
 ### `knowledge`
 
 Carries a per-ticket worktree's learnings into its main checkout, so they
-outlive the worktree. Run it at merge, before the worktree is removed.
+outlive the worktree. Run it at merge, before the worktree is removed. It is
+safe while the main checkout's owner is running: the knowledge store is
+SQLite in WAL mode, not the locked graph.
 
 ```
-cgh knowledge promote --from <worktree> --to <checkout> [--since EPOCH] \
-    [--kinds a,b] [--no-notes] [--pr repo#N] [--branch B] [--commit SHA] [--session ID]
+cgh knowledge promote --to <checkout> [--from <worktree>] [--pr repo#N] \
+    [--kinds a,b] [--no-notes] [--since EPOCH] [--archive DIR] [--dry-run] [--json] \
+    [--branch B] [--commit SHA] [--session ID]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--from`, `--to` | Source worktree and target checkout; both must hold a `.codegraph/` store |
+| `--to` | Target checkout; must hold a `.codegraph/` store |
+| `--from` | Source worktree (default: the current directory) |
+| `--pr` | Pull request stored on each promoted entry, e.g. `ondonne-api#2142` |
+| `--kinds` | Exact kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction, and plain notes) |
+| `--no-notes` | Leave plain notes out of the default kinds |
 | `--since` | Only entries recorded at or after this epoch timestamp (default: all) |
-| `--kinds` | Kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction) |
-| `--no-notes` | Leave plain notes out and promote only the explicit kinds |
-| `--pr`, `--branch`, `--commit`, `--session` | Provenance stored on each promoted entry; branch and commit default to `--from`'s git state |
+| `--archive DIR` | First write every row of the source store, digests and superseded entries included, to `DIR/knowledge-<branch>-<time>.jsonl` |
+| `--dry-run` | Report the outcome without writing to the target |
+| `--json` | Print the counts and one line per entry as JSON |
+| `--branch`, `--commit`, `--session` | Provenance overrides; branch and commit default to `--from`'s git state |
 
-Only repo-scoped entries move; session digests and automatic checkpoints never
-do. An entry already present in the target with the same title and body is
-skipped, so re-running promotes nothing new. Each promoted entry keeps its
-original timestamp and records when it was promoted.
+What moves: live, repo-scoped entries of the wanted kinds. Session digests,
+checkpoints and superseded entries stay behind. For each entry:
+
+- the same kind, title and body already in the target, even superseded there:
+  skipped as a duplicate, so a re-run adds nothing and never brings back an
+  entry the main checkout has replaced;
+- an entry that replaced older ones on the branch (`supersedes`) whose copies
+  are live in the target: inserted, and those copies are superseded by it;
+- anything else: inserted.
+
+Each promoted entry keeps its original timestamp and records its branch,
+commit, pull request, source worktree, id in the source store and promotion
+time. `knowledge_list` and `knowledge_search` return these under `provenance`.
 
 ### `guard`
 

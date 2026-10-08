@@ -17,6 +17,15 @@ that connects:
 - What Claude learns in the morning, Gemini knows in the afternoon:
   writes go through cgh, agent-native memories are indexed read-only.
 
+## Worktrees: promote at merge
+
+Each checkout has its own store, so a per-ticket worktree's learnings go
+with it when it is removed. Before removing it, run
+`cgh knowledge promote --to <main checkout> --pr <repo#N> --archive <dir>`
+from the worktree. Durable entries move into the main checkout with their
+branch and pull request attached, digests and checkpoints stay behind, and a
+re-run is a no-op. See [`cgh knowledge`](CLI_REFERENCE.md#knowledge).
+
 ---
 
 ---

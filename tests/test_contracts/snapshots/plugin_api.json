@@ -1,0 +1,965 @@
+{
+  "API_VERSION": 1,
+  "consumed_extension_namespaces": [
+    "integration",
+    "scanner.on_demand"
+  ],
+  "core_plugin_readers": {
+    "cli_registrars": [
+      {
+        "returns": "list[tuple[str, object]]"
+      }
+    ],
+    "extension_entries": [
+      {
+        "annotation": "str",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "returns": "list[tuple[str, object]]"
+      }
+    ],
+    "get_extensions": [
+      {
+        "annotation": "str",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "returns": "list[object]"
+      }
+    ],
+    "load_plugins": [
+      {
+        "annotation": "str | Path | None",
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "repo_root"
+      },
+      {
+        "returns": "list[LoadedPlugin]"
+      }
+    ],
+    "loaded_plugins": [
+      {
+        "returns": "list[LoadedPlugin]"
+      }
+    ],
+    "mcp_registrars": [
+      {
+        "returns": "list[tuple[str, object]]"
+      }
+    ],
+    "scanners": [
+      {
+        "returns": "list[tuple[str, object]]"
+      }
+    ]
+  },
+  "entry_point_group": "cgh",
+  "names": {
+    "API_VERSION": {
+      "kind": "constant",
+      "value": "1"
+    },
+    "BaseParser": {
+      "kind": "class",
+      "methods": {
+        "can_parse": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "Path",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "returns": "bool"
+          }
+        ],
+        "parse": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "Path",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "returns": "FileIndex"
+          }
+        ]
+      }
+    },
+    "FileIndex": {
+      "fields": [
+        {
+          "name": "path",
+          "type": "str"
+        },
+        {
+          "name": "lang",
+          "type": "str"
+        },
+        {
+          "name": "functions",
+          "type": "list[SymbolDef]"
+        },
+        {
+          "name": "classes",
+          "type": "list[ClassDef]"
+        },
+        {
+          "name": "imports",
+          "type": "list[ImportRef]"
+        },
+        {
+          "name": "resources",
+          "type": "list[ResourceDef]"
+        },
+        {
+          "name": "sections",
+          "type": "list[SectionDef]"
+        },
+        {
+          "name": "code_refs",
+          "type": "list[CodeRef]"
+        },
+        {
+          "name": "links",
+          "type": "list[LinkRef]"
+        },
+        {
+          "name": "scan_text",
+          "type": "str"
+        }
+      ],
+      "kind": "class"
+    },
+    "FileScanner": {
+      "init": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "kind": "VAR_POSITIONAL",
+          "name": "args"
+        },
+        {
+          "kind": "VAR_KEYWORD",
+          "name": "kwargs"
+        }
+      ],
+      "kind": "class",
+      "methods": {
+        "scan": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "Path",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "path"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "text"
+          },
+          {
+            "annotation": "FileIndex",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "index"
+          },
+          {
+            "returns": "list[ScanFinding]"
+          }
+        ]
+      }
+    },
+    "PluginAPI": {
+      "init": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "self"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "plugin_name"
+        },
+        {
+          "annotation": "Path | None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "config"
+        },
+        {
+          "annotation": "_Registries",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "registries"
+        },
+        {
+          "returns": "None"
+        }
+      ],
+      "kind": "class",
+      "methods": {
+        "get_extensions": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "namespace"
+          },
+          {
+            "returns": "list[object]"
+          }
+        ],
+        "register_cli": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "Callable[[Any], None]",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "fn"
+          },
+          {
+            "returns": "None"
+          }
+        ],
+        "register_extension": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "namespace"
+          },
+          {
+            "annotation": "object",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "obj"
+          },
+          {
+            "returns": "None"
+          }
+        ],
+        "register_mcp_tools": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "Callable[[Any], None]",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "fn"
+          },
+          {
+            "returns": "None"
+          }
+        ],
+        "register_parser": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "str",
+            "kind": "VAR_POSITIONAL",
+            "name": "extensions"
+          }
+        ],
+        "register_scanner": [
+          {
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "FileScanner",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "scanner"
+          },
+          {
+            "returns": "None"
+          }
+        ]
+      }
+    },
+    "ScanFinding": {
+      "fields": [
+        {
+          "name": "key",
+          "type": "str"
+        },
+        {
+          "name": "value",
+          "type": "str"
+        },
+        {
+          "name": "line",
+          "type": "int"
+        },
+        {
+          "name": "severity",
+          "type": "str"
+        }
+      ],
+      "kind": "class"
+    },
+    "SectionDef": {
+      "fields": [
+        {
+          "name": "id",
+          "type": "str"
+        },
+        {
+          "name": "title",
+          "type": "str"
+        },
+        {
+          "name": "level",
+          "type": "int"
+        },
+        {
+          "name": "file_path",
+          "type": "str"
+        },
+        {
+          "name": "start_line",
+          "type": "int"
+        },
+        {
+          "name": "end_line",
+          "type": "int"
+        },
+        {
+          "name": "body_preview",
+          "type": "str"
+        },
+        {
+          "name": "anchor",
+          "type": "str"
+        },
+        {
+          "name": "kind",
+          "type": "str"
+        }
+      ],
+      "kind": "class"
+    },
+    "activity_log": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path | None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "event"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "detail"
+        },
+        {
+          "returns": "None"
+        }
+      ]
+    },
+    "activity_tail": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "int",
+          "default": "50",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "n"
+        },
+        {
+          "returns": "list[tuple[float, str, str]]"
+        }
+      ]
+    },
+    "add_format_option": {
+      "kind": "function",
+      "signature": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "parser"
+        },
+        {
+          "annotation": "tuple[str, ...]",
+          "default": "('md', 'json')",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "formats"
+        },
+        {
+          "returns": "None"
+        }
+      ]
+    },
+    "add_out_option": {
+      "kind": "function",
+      "signature": [
+        {
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "parser"
+        },
+        {
+          "annotation": "str",
+          "default": "'the result'",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "what"
+        },
+        {
+          "returns": "None"
+        }
+      ]
+    },
+    "emit_result": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "text"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "out"
+        },
+        {
+          "annotation": "str",
+          "default": "'result.md'",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "hint"
+        },
+        {
+          "returns": "None"
+        }
+      ]
+    },
+    "find_codegraph_root": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "start"
+        },
+        {
+          "returns": "Path | None"
+        }
+      ]
+    },
+    "find_symbol_files": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path | None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "query"
+        },
+        {
+          "annotation": "int",
+          "default": "20",
+          "kind": "KEYWORD_ONLY",
+          "name": "limit"
+        },
+        {
+          "returns": "list[dict] | None"
+        }
+      ]
+    },
+    "findings_db_path": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "returns": "Path"
+        }
+      ]
+    },
+    "findings_for_file": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "file_path"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "key_prefix"
+        },
+        {
+          "returns": "list[dict]"
+        }
+      ]
+    },
+    "get_parser_for_path": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "returns": "BaseParser | None"
+        }
+      ]
+    },
+    "git_hash_object": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "returns": "str | None"
+        }
+      ]
+    },
+    "is_loopback_url": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "url"
+        },
+        {
+          "returns": "bool"
+        }
+      ]
+    },
+    "is_supported": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "path"
+        },
+        {
+          "returns": "bool"
+        }
+      ]
+    },
+    "knowledge_record": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "title"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "body"
+        },
+        {
+          "annotation": "str",
+          "default": "'note'",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "kind"
+        },
+        {
+          "annotation": "list[str] | str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "tags"
+        },
+        {
+          "annotation": "list[str] | str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "file_refs"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "session_id"
+        },
+        {
+          "annotation": "str | Path | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "int",
+          "default": "0",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "supersedes"
+        },
+        {
+          "annotation": "str",
+          "default": "'repo'",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "scope"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "source_branch"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "source_commit"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "source_pr"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "source_session"
+        },
+        {
+          "annotation": "float | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "origin_ts"
+        },
+        {
+          "annotation": "float | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "promoted_at"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "source_worktree"
+        },
+        {
+          "annotation": "int | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "origin_id"
+        },
+        {
+          "returns": "int"
+        }
+      ]
+    },
+    "load_config": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path | None",
+          "default": "None",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "project_root"
+        },
+        {
+          "returns": "CodegraphConfig"
+        }
+      ]
+    },
+    "loaded_plugins": {
+      "kind": "function",
+      "signature": [
+        {
+          "returns": "list[LoadedPlugin]"
+        }
+      ]
+    },
+    "query_findings": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "key_prefix"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "severity"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "file_path"
+        },
+        {
+          "annotation": "int",
+          "default": "200",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "limit"
+        },
+        {
+          "returns": "list[dict]"
+        }
+      ]
+    },
+    "query_findings_ro": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "db_path"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "key_prefix"
+        },
+        {
+          "annotation": "int",
+          "default": "200",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "limit"
+        },
+        {
+          "returns": "list[dict]"
+        }
+      ]
+    },
+    "quiet_subprocess_kwargs": {
+      "kind": "function",
+      "signature": [
+        {
+          "returns": "dict"
+        }
+      ]
+    },
+    "record_findings": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "file_path"
+        },
+        {
+          "annotation": "str",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "scanner"
+        },
+        {
+          "annotation": "list",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "findings"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "blob_sha"
+        },
+        {
+          "returns": "int"
+        }
+      ]
+    },
+    "resolve_children": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "returns": "list[Path]"
+        }
+      ]
+    },
+    "server_root": {
+      "kind": "function",
+      "signature": [
+        {
+          "returns": "Path | None"
+        }
+      ]
+    },
+    "sync_static_rules": {
+      "kind": "function",
+      "signature": [
+        {
+          "annotation": "str | Path",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "repo_root"
+        },
+        {
+          "returns": "tuple[int, int]"
+        }
+      ]
+    }
+  },
+  "plugin_module_hooks": {
+    "CGH_PLUGIN_API": "optional int, must equal API_VERSION",
+    "register": "module-level callable register(api: PluginAPI)"
+  },
+  "registration_methods": {
+    "get_extensions": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "str",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "returns": "list[object]"
+      }
+    ],
+    "register_cli": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "Callable[[Any], None]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fn"
+      },
+      {
+        "returns": "None"
+      }
+    ],
+    "register_extension": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "str",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "annotation": "object",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "obj"
+      },
+      {
+        "returns": "None"
+      }
+    ],
+    "register_mcp_tools": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "Callable[[Any], None]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fn"
+      },
+      {
+        "returns": "None"
+      }
+    ],
+    "register_parser": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "str",
+        "kind": "VAR_POSITIONAL",
+        "name": "extensions"
+      }
+    ],
+    "register_scanner": [
+      {
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "annotation": "FileScanner",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scanner"
+      },
+      {
+        "returns": "None"
+      }
+    ]
+  }
+}

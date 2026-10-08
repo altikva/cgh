@@ -41,6 +41,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 
 ### Fixed
+- **cgh-bugreport refused about one crash report in 50,000** (0.1.3). Its
+  random report id could look like an international phone number, which
+  its own PII tripwire then rejected, with a message blaming cgh-bugreport.
+  The id now starts with a letter.
 - **`find_callers` and every tool built on CALLS edges silently missed
   callers in other files.** A call into a file indexed after the caller was
   never linked, and saving the callee's file erased all its callers in other

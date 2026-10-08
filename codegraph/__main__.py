@@ -171,7 +171,7 @@ def _print_help():
                     "Index files bypassing .gitignore (requires confirmation)",
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
-                ("guard", "Confidentiality guard: agent-side enforcement"),
+                ("guard", "Deprecated: removes deny entries older cgh wrote"),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("knowledge", "Promote a worktree's learnings to its main checkout"),
@@ -282,11 +282,9 @@ def _register_setup_and_serve(sub) -> None:
         action="store_true",
         help="Don't initialize / refresh federated subrepos",
     )
-    p.add_argument(
-        "--secure",
-        action="store_true",
-        help='Enable secure mode (mode = "secure") without prompting',
-    )
+    # Secure mode was removed in 0.15.0; the flag stays accepted so old
+    # scripts do not break, and only prints a deprecation note.
+    p.add_argument("--secure", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--tools",
         default="",
@@ -679,7 +677,8 @@ def _register_state_and_hooks(sub) -> None:
     p.add_argument("--json", action="store_true")
 
     # --- guard ---
-    p = sub.add_parser("guard", help="Confidentiality guard: agent-side enforcement")
+    p = sub.add_parser("guard", help="Deprecated: removes deny entries older cgh wrote")
+    # The old actions stay accepted so scripts keep working; both clean up.
     p.add_argument("action", nargs="?", default="status", choices=["status", "sync"])
     _add_root(p)
 
@@ -725,6 +724,16 @@ def main() -> None:
     # (UserPromptSubmit, PreCompact). Drop whatever follows a hook command.
     if len(sys.argv) > 2 and sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES):
         del sys.argv[2:]
+    if len(sys.argv) > 1 and (
+        sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES)
+        or sys.argv[1] in ("status", "doctor")
+    ):
+        # Agents parse hook output: the legacy mode = "secure" notice must
+        # not ride along with a hook, not even on stderr. status and
+        # doctor print it in their own output instead.
+        from codegraph.core.config import suppress_legacy_mode_warning
+
+        suppress_legacy_mode_warning()
 
     # A Windows console or pipe defaults to the ANSI codepage (cp1252), which
     # cannot encode rich's spinner frames or box glyphs: printing one raised

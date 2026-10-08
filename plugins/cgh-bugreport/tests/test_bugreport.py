@@ -221,16 +221,37 @@ class TestSend:
             )
 
 
-class TestModeProbe:
-    def test_probe_failure_reads_as_secure(self, monkeypatch, tmp_path):
-        """The mode gates the pre-send confirmation, so an unreadable
-        config must land on the strict branch, never the permissive."""
-        from cgh_bugreport.cli import _mode
+class TestConfirm:
+    """The payload is shown and confirmed before any send unless --yes,
+    whatever the config says."""
 
-        import codegraph.plugin_api as api
+    def _setup(self, tmp_path, monkeypatch, answer: str):
+        from rich.console import Console
 
-        def boom(root):
-            raise OSError("unreadable config")
+        TestSend()._spooled(tmp_path)
+        calls, fake = TestSend()._gh_script(
+            {"repo view": (0, "PRIVATE\n"), "issue list": (0, "\n")}
+        )
+        monkeypatch.setattr("subprocess.run", fake)
+        monkeypatch.setattr(Console, "input", lambda self, prompt="": answer)
+        return calls
 
-        monkeypatch.setattr(api, "load_config", boom)
-        assert _mode(tmp_path) == "secure"
+    def test_declined_confirmation_sends_nothing(self, tmp_path, monkeypatch):
+        from cgh_bugreport.cli import _dispatch
+
+        calls = self._setup(tmp_path, monkeypatch, "n")
+        _dispatch(
+            Namespace(action="send", report="last", root=str(tmp_path), yes=False),
+            {"github_repo": "org/reports"},
+        )
+        assert not any(c[1:3] == ["issue", "create"] for c in calls)
+
+    def test_accepted_confirmation_sends(self, tmp_path, monkeypatch):
+        from cgh_bugreport.cli import _dispatch
+
+        calls = self._setup(tmp_path, monkeypatch, "y")
+        _dispatch(
+            Namespace(action="send", report="last", root=str(tmp_path), yes=False),
+            {"github_repo": "org/reports"},
+        )
+        assert any(c[1:3] == ["issue", "create"] for c in calls)

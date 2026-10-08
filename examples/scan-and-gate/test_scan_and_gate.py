@@ -5,8 +5,8 @@
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The scan + gate contract, fully offline: the regex tier
-#              finds the planted PII and both gate postures answer the
-#              way the README promises.
+#              finds the planted PII and the gate answers the way the
+#              README promises.
 
 from __future__ import annotations
 
@@ -25,13 +25,11 @@ def test_scan_finds_the_planted_pii():
     assert any(k.startswith("pii.") for k in keys)
 
 
-def test_assist_blocks_pii_by_default():
+def test_pii_blocks_by_default():
     findings = sdk.scan_text("mail me: someone@example.com", scanners=["pii"])
-    assert not sdk.egress_decision(findings, mode="assist")
-    assert sdk.egress_decision(findings, mode="assist", allow_pii=True)
+    assert not sdk.egress_decision(findings)
+    assert sdk.egress_decision(findings, allow_pii=True)
 
 
-def test_secure_requires_the_human_label():
-    clean: list = []
-    assert not sdk.egress_decision(clean, mode="secure")
-    assert sdk.egress_decision(clean, mode="secure", labeled_non_confidential=True)
+def test_clean_content_clears():
+    assert sdk.egress_decision([])

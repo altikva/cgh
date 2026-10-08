@@ -98,15 +98,16 @@ class TestGate:
         assert cloud_allowed(root, "/r/a.py", {"allow_pii": True})[0]
 
     def test_strict_requires_explicit_label(self, tmp_path):
-        root = _repo(tmp_path, mode="secure")
-        assert egress_posture(root, {}) == "strict"
-        assert not cloud_allowed(root, "/r/a.py", {})[0]
+        root = _repo(tmp_path)
+        strict = {"egress": "strict"}
+        assert egress_posture(root, strict) == "strict"
+        assert not cloud_allowed(root, "/r/a.py", strict)[0]
         _flag(root, "/r/a.py", "confidential", "false", "info")
-        assert cloud_allowed(root, "/r/a.py", {})[0]
+        assert cloud_allowed(root, "/r/a.py", strict)[0]
 
-    def test_explicit_egress_key_wins_over_mode(self, tmp_path):
+    def test_legacy_secure_mode_no_longer_implies_strict(self, tmp_path):
         root = _repo(tmp_path, mode="secure")
-        assert egress_posture(root, {"egress": "open"}) == "open"
+        assert egress_posture(root, {}) == "open"
 
 
 class TestBackendSelection:

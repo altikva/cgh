@@ -5,10 +5,10 @@
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The egress gate. Decides, from the finding store, whether
-#              a file's content may reach a cloud backend. Two postures
-#              derived from the global cgh mode: open (block on what the
-#              store knows) and strict (allowlist, only files explicitly
-#              labeled non-confidential go out). Local backends never
+#              a file's content may reach a cloud backend. Two postures,
+#              set by [plugin.summarize] egress: open (the default, block
+#              on what the store knows) and strict (allowlist, only files
+#              explicitly labeled non-confidential go out). Local backends never
 #              consult the gate: nothing leaves the machine.
 
 from __future__ import annotations
@@ -17,14 +17,10 @@ from pathlib import Path
 
 
 def egress_posture(repo_root: str | Path, config: dict) -> str:
-    """ "open" or "strict". The explicit [plugin.summarize] egress key
-    wins; otherwise the global cgh mode decides (secure = strict)."""
+    """ "open" or "strict". "open" unless the plugin's own egress key asks
+    for "strict" (cgh's global secure mode was removed in 0.15.0)."""
     explicit = str(config.get("egress", "")).strip().lower()
-    if explicit in ("open", "strict"):
-        return explicit
-    from codegraph.plugin_api import load_config
-
-    return "strict" if load_config(repo_root).mode == "secure" else "open"
+    return "strict" if explicit == "strict" else "open"
 
 
 def cloud_allowed(

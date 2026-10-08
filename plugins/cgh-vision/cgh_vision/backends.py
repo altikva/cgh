@@ -55,7 +55,7 @@ def endpoint_url(config: dict) -> str:
 def is_local(config: dict) -> bool:
     """Does the active endpoint live on this machine? The promise
     'nothing leaves the machine' is only true for a loopback URL, so
-    the secure posture checks the real endpoint, not the backend name.
+    this checks the real endpoint, not the backend name.
     A llama-server on 127.0.0.1 is local; a cloud gateway is not."""
     from codegraph.plugin_api import is_loopback_url
 

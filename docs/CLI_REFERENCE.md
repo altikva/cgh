@@ -29,13 +29,13 @@ adopting over time):
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--secure] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
+cgh init [--yes | -y] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
-| `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
+| `--secure` | Deprecated and ignored (secure mode was removed in 0.15.0); prints a note so old scripts keep running |
 | `--from` | Seed the index and knowledge from another checkout of this repo, then reindex only the files that differ |
 | `--no-children` | Don't initialize / refresh federated subrepos |
 | `--tools` | Comma-separated tools to wire regardless of detection (`claude,cursor,codex,gemini,bob`). For a fresh repo where cgh cannot detect the tool yet |
@@ -50,7 +50,7 @@ scripted or empty-repo bootstrap.
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
-5. Offers secure mode (guards fail closed, egress allowlist); assist stays the default
+5. Removes the deny rules, `.bobignore` block and guard hooks an older cgh wrote (only those)
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
 6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the codegraph usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
 7. Offers Claude-specific auto-accept for MCP tool calls
@@ -125,7 +125,6 @@ Refresh stats every 500 ms (Rich Live). Ctrl-C to stop.
 ```bash
 cgh init
 cgh init --yes    # CI-friendly, no prompts
-cgh init --secure # harden the repo from the start
 ```
 
 ---
@@ -733,25 +732,20 @@ original timestamp and records when it was promoted.
 
 ### `guard`
 
-Agent-side confidentiality enforcement. A pre-tool-use hook installed in
-Claude Code (`cgh setup claude` / `cgh init`) consults the finding store
-before every Read, Grep, Glob or Bash call and denies access to files
-flagged confidential or carrying block-severity findings.
+Deprecated. cgh stopped guarding agent file access in 0.15.0; use your
+agent's own permission rules (for example `permissions.deny` in Claude
+Code settings) to keep files out of reach.
 
 ```
 cgh guard [status|sync] [--root DIR]
 ```
 
-- `status`: active mode, flagged file count, and an honest per-agent map
-  (enforce / advisory / unprotected). An unprotected agent's only barrier
-  is cgh's MCP-side gate.
-- `sync`: mirror flagged paths into static `Read()` deny rules in
-  `.claude/settings.local.json` (secure mode only; user-authored rules
-  are never touched). Runs automatically after `cgh classify train`.
-
-Fail posture follows the mode: `assist` fails open with a logged
-warning, `secure` fails closed, a broken guard reads as blocked. Every
-denial is logged to `.codegraph/activity.log`.
+Both actions do the same thing: print the deprecation note and remove
+what an older cgh wrote into the repo, namely the `Read()` deny rules
+recorded in `.codegraph/guard_denies.json`, the managed block in
+`.bobignore`, and the guard hook entries in the Claude Code, Gemini CLI
+and Codex configs. Entries you wrote yourself are never touched.
+`cgh init` and `cgh setup` run the same cleanup.
 
 ### `memory`
 

@@ -206,6 +206,7 @@ _REEXPORTS: dict[str, tuple[str, str]] = {
     # read-only graph query (parent scope) for plugins that need to find a
     # file by the symbols it defines, e.g. reference selection for codegen
     "find_symbol_files": ("codegraph.analysis.plugin_queries", "find_symbol_files"),
+    # deprecated since 0.15.0: only removes deny rules an older cgh wrote
     "sync_static_rules": ("codegraph.state.guard", "sync_static_rules"),
     "loaded_plugins": ("codegraph.plugins", "loaded_plugins"),
     # parser building blocks (BaseParser subclassing per the docs)

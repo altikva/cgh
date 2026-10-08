@@ -57,11 +57,10 @@ python vision_no_ollama.py path/to/diagram.png
 ## Egress stays correct
 
 cgh judges "local" from the endpoint URL, not the backend name. A
-loopback llama-server (127.0.0.1) is local, so secure mode is
-satisfied and image bytes never leave the machine. A remote gateway is
-cloud: allowed in assist mode with an audit line, refused in secure
-mode, exactly like a remote Ollama. Keep confidential images on a
-loopback server.
+loopback llama-server (127.0.0.1) is local and image bytes never leave
+the machine. A remote gateway is cloud: the call goes through and an
+audit line records it, exactly like a remote Ollama. Keep confidential
+images on a loopback server.
 
 ## What you give up versus Ollama
 

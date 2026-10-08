@@ -24,14 +24,10 @@ from pathlib import Path
 
 
 def egress_posture(repo_root: str | Path, config: dict) -> str:
-    """ "open" or "strict". An explicit config egress key wins; otherwise the
-    global cgh mode decides (secure = strict)."""
+    """ "open" or "strict". "open" unless the plugin's own egress key asks
+    for "strict" (cgh's global secure mode was removed in 0.15.0)."""
     explicit = str(config.get("egress", "")).strip().lower()
-    if explicit in ("open", "strict"):
-        return explicit
-    from codegraph.plugin_api import load_config
-
-    return "strict" if load_config(repo_root).mode == "secure" else "open"
+    return "strict" if explicit == "strict" else "open"
 
 
 def egress_decision(

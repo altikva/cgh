@@ -33,8 +33,8 @@ extension namespace without touching this plugin.
 Before any cloud backend sees a file, its findings are checked: a
 `confidential` flag or any block-severity finding (private keys, cloud
 credentials) stops it, PII findings stop it unless `allow_pii = true`.
-With `mode = "secure"` in the cgh config, the gate switches to
-allowlist: only files explicitly labeled non-confidential go out.
+With `egress = "strict"` under `[plugin.summarize]`, the gate switches
+to allowlist: only files explicitly labeled non-confidential go out.
 Local backends (`ollama`, `structural`) bypass the gate since nothing
 leaves the machine. Every cloud call is logged to
 `.codegraph/activity.log`.

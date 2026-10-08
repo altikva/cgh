@@ -283,6 +283,22 @@ class DuckDBGraphDB:
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+
+    # --- Writer stamps --------------------------------------------------
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute(
+            "INSERT INTO file_stamp (path, mtime) VALUES (?, ?)", [file_path, mtime]
+        )
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        from codegraph.core.graph_model import ORPHAN_REFS_SQL, STALE_FILES_SQL
+
+        stale = self._conn.execute(STALE_FILES_SQL).fetchall()
+        orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
+        return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
 
     # --- Name references ------------------------------------------------
 

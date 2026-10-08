@@ -43,8 +43,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   bm25, and takes `--limit` and `--json`. It reads the index read-only, so it
   works while the owner runs. The `fts_search` MCP tool now retries a query
   that matches nothing as written the same way; its response is unchanged.
+- **`cgh knowledge promote` recognises what it already carried and follows
+  revisions.** Each promoted entry now records its source worktree and its id
+  there, so an entry revised on the branch (`supersedes`) replaces its earlier
+  copy in the main checkout instead of sitting next to it, and a re-run never
+  brings back an entry the main checkout has since replaced. `--from` defaults
+  to the current directory; new `--dry-run`, `--json`, and `--archive DIR`
+  (every row of the source store as JSON lines, written before promoting).
+  `--kinds` is now the exact list, without plain notes added on top.
+  `knowledge_list`, `knowledge_search` and the resume bundle give a promoted
+  entry a `provenance` object (branch, PR, worktree, origin id, promoted_at);
+  other entries are unchanged.
 
 ### Fixed
+- **Opening a knowledge store held its write lock until the next write.** Any
+  other process writing the same store, such as a CLI command or a hook next to
+  a running owner, waited five seconds and failed with "database is locked".
 - **cgh could fail to start with pydantic 2.14** when an older fastmcp was
   installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed.
   The fastmcp floor is now 2.12.

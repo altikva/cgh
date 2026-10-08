@@ -178,7 +178,9 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     # for the repo, promotable) or 'branch' (true only on an unmerged branch, not
     # promoted); the source_* columns and the two timestamps carry provenance so
     # a promoted entry keeps its origin instead of looking native. Guarded ALTERs
-    # for databases created before the columns existed.
+    # for databases created before the columns existed. source_worktree and
+    # origin_id (the entry's id in the source store) make a re-run recognise
+    # what it already carried, and let a revised entry replace its earlier copy.
     for _col, _type in (
         ("scope", "TEXT"),
         ("source_branch", "TEXT"),
@@ -187,18 +189,29 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         ("source_session", "TEXT"),
         ("origin_ts", "REAL"),
         ("promoted_at", "REAL"),
+        ("source_worktree", "TEXT"),
+        ("origin_id", "INTEGER"),
     ):
         try:
             _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
         except sqlite3.OperationalError:
             pass  # column already there
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_origin "
+        "ON knowledge(origin_id, source_worktree)"
+    )
     _conn.commit()
     # Self-heal: if the FTS references rowids that no longer exist, rebuild
     # from the content table. Cheap at open time (runs once per connection).
+    # The check is spelled as an INSERT, so sqlite3 opens an implicit
+    # transaction for it; end it, or this connection keeps the write lock until
+    # its next commit and every other process writing the store (a CLI promote
+    # next to a running owner, a hook) times out on "database is locked".
     try:
         _conn.execute(
             "INSERT INTO knowledge_fts(knowledge_fts) VALUES('integrity-check')"
         ).fetchall()
+        _conn.commit()
     except sqlite3.DatabaseError:
         try:
             _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
@@ -321,6 +334,8 @@ def knowledge_record(
     source_session: str = "",
     origin_ts: float | None = None,
     promoted_at: float | None = None,
+    source_worktree: str = "",
+    origin_id: int | None = None,
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -329,9 +344,10 @@ def knowledge_record(
     tags can be a list or a comma/space-separated string.
     file_refs is similar, canonical paths the entry refers to.
     scope is 'repo' (default, promotable) or 'branch' (true only on an unmerged
-    branch, not promoted). The source_* fields and promoted_at carry provenance
-    when an entry is promoted from another checkout; origin_ts defaults to now
-    for a native entry and preserves the source entry's timestamp on promotion.
+    branch, not promoted). The source_* fields, origin_id and promoted_at carry
+    provenance when an entry is promoted from another checkout; origin_ts
+    defaults to now for a native entry and preserves the source entry's
+    timestamp on promotion.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
@@ -346,7 +362,8 @@ def knowledge_record(
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
         "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
-        "promoted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "promoted_at, source_worktree, origin_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -362,6 +379,8 @@ def knowledge_record(
             source_session or "",
             origin_ts if origin_ts is not None else now,
             promoted_at,
+            source_worktree or None,
+            origin_id,
         ),
     )
     row_id = cur.lastrowid
@@ -373,6 +392,32 @@ def knowledge_record(
         )
     conn.commit()
     return int(row_id or 0)
+
+
+# Tags that mark session state rather than knowledge: digests, checkpoints
+# (manual, compaction and auto) and IBM Bob's auto digests all carry one.
+_SESSION_STATE_TAGS = frozenset({"session-digest", "auto-checkpoint", "auto-digest"})
+
+
+def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
+    """Map each entry id to the ids it replaced, directly or through a chain."""
+    direct: dict[int, list[int]] = {}
+    for old_id, new_id in src.execute(
+        "SELECT id, superseded_by FROM knowledge WHERE superseded_by IS NOT NULL"
+    ).fetchall():
+        direct.setdefault(int(new_id), []).append(int(old_id))
+    chains: dict[int, list[int]] = {}
+    for head in direct:
+        seen: list[int] = []
+        stack = list(direct[head])
+        while stack:
+            cur = stack.pop()
+            if cur in seen or cur == head:
+                continue
+            seen.append(cur)
+            stack.extend(direct.get(cur, []))
+        chains[head] = seen
+    return chains
 
 
 @_locked
@@ -387,65 +432,167 @@ def promote_knowledge(
     source_commit: str = "",
     source_pr: str = "",
     source_session: str = "",
+    source_worktree: str = "",
+    dry_run: bool = False,
 ) -> dict:
     """Copy durable learnings from one store into another, the case being a
     per-ticket worktree promoted into its main checkout at merge.
 
-    Only ``scope='repo'`` entries are carried (a NULL scope from before the
-    column existed counts as repo). Session digests and auto-checkpoint markers
-    are never carried. Deduplicates on exact (title, body) against the target,
-    so a re-run promotes nothing new. Each promoted entry keeps its origin
-    timestamp and records where it came from. Returns counts.
+    Carried: live (not superseded), ``scope='repo'`` entries (a NULL scope from
+    before the column existed counts as repo) of the wanted kinds. Session
+    digests and checkpoints never move. ``kinds`` replaces the default set
+    outright; without it the durable kinds move, plus plain notes unless
+    ``include_plain_notes`` is False.
+
+    Per entry, in order:
+
+    - the same kind, title and body anywhere in the target, live or
+      superseded: skipped as a duplicate, so a re-run adds nothing and an
+      entry the target has since replaced is not resurrected;
+    - it replaced older source entries (``supersedes``) whose copies are live
+      in the target, matched by origin id or by content: inserted, and those
+      copies are superseded by it (a copy is matched by origin id from this
+      same worktree and branch, or by content);
+    - otherwise: inserted.
+
+    Every inserted row carries provenance (branch, commit, PR, session,
+    worktree, origin id, origin timestamp, promoted_at). ``dry_run`` computes
+    the same outcome and writes nothing. Returns counts plus one line per
+    considered entry under ``entries``.
     """
-    wanted = set(kinds) if kinds else set(_PROMOTABLE_KINDS)
+    if kinds:
+        wanted = set(kinds)
+    else:
+        wanted = set(_PROMOTABLE_KINDS) | ({"note"} if include_plain_notes else set())
+    worktree = source_worktree or str(Path(from_root).resolve())
+
     src = _get_conn(from_root)
-    rows = src.execute(
-        "SELECT title, body, kind, tags, file_refs, session_id, ts, scope "
-        "FROM knowledge WHERE superseded_by IS NULL ORDER BY ts ASC"
-    ).fetchall()
+    cols = (
+        "id, title, body, kind, tags, file_refs, session_id, ts, scope, superseded_by"
+    )
+    all_rows = src.execute(f"SELECT {cols} FROM knowledge ORDER BY ts ASC").fetchall()
+    by_id = {r[0]: r for r in all_rows}
+    chains = _supersede_chain(src)
+
     tgt = _get_conn(to_root)
-    existing = {
-        (r[0], r[1])
-        for r in tgt.execute(
-            "SELECT title, body FROM knowledge WHERE superseded_by IS NULL"
-        ).fetchall()
-    }
-    promoted = skipped = 0
-    for title, body, kind, tags, file_refs, sess, ts, scope in rows:
+    # Every target row, superseded ones included: a re-run must not resurrect
+    # an entry the target has since replaced.
+    content_rows: dict[tuple, list[tuple[int, bool]]] = {}
+    origin_rows: dict[int, list[tuple[int, bool]]] = {}
+    for tid, kind, title, body, sup, oid, wt, br in tgt.execute(
+        "SELECT id, kind, title, body, superseded_by, origin_id, source_worktree, "
+        "source_branch FROM knowledge"
+    ).fetchall():
+        content_rows.setdefault((kind, title, body), []).append((tid, sup is None))
+        if oid is not None and wt == worktree and (br or "") == source_branch:
+            origin_rows.setdefault(int(oid), []).append((tid, sup is None))
+
+    copied = superseded = skipped = considered = 0
+    entries: list[dict] = []
+    next_fake_id = -1  # dry-run stand-in ids, never written
+    for row in all_rows:
+        sid, title, body, kind, tags, file_refs, sess, ts, scope, sup = row
+        if sup is not None:
+            continue
         tagset = {t.strip() for t in (tags or "").split(",") if t.strip()}
-        if "session-digest" in tagset or "auto-checkpoint" in tagset:
+        if tagset & _SESSION_STATE_TAGS:
             continue
         if (scope or "repo") != "repo":
             continue
-        if kind not in wanted and not (kind == "note" and include_plain_notes):
+        if kind not in wanted:
             continue
         if (ts or 0.0) < since_ts:
             continue
-        if (title, body) in existing:
+        considered += 1
+        content = (kind, title, body)
+        line = {"source_id": sid, "kind": kind, "title": title}
+
+        if content in content_rows:
             skipped += 1
+            entries.append({**line, "action": "duplicate"})
             continue
-        knowledge_record(
-            title,
-            body,
-            kind=kind,
-            tags=tags or "",
-            file_refs=file_refs or "",
-            repo_root=to_root,
-            scope="repo",
-            source_branch=source_branch,
-            source_commit=source_commit,
-            source_pr=source_pr,
-            source_session=source_session or sess or "",
-            origin_ts=ts,
-            promoted_at=time.time(),
-        )
-        existing.add((title, body))
-        promoted += 1
+
+        # Live target copies of the entries this one replaced.
+        replaces: list[int] = []
+        for old_id in chains.get(sid, []):
+            for tid, live in origin_rows.get(old_id, []):
+                if live and tid not in replaces:
+                    replaces.append(tid)
+            old = by_id.get(old_id)
+            if old is not None:
+                for tid, live in content_rows.get((old[3], old[1], old[2]), []):
+                    if live and tid not in replaces:
+                        replaces.append(tid)
+
+        if dry_run:
+            new_id = next_fake_id
+            next_fake_id -= 1
+        else:
+            new_id = knowledge_record(
+                title,
+                body,
+                kind=kind,
+                tags=tags or "",
+                file_refs=file_refs or "",
+                repo_root=to_root,
+                scope="repo",
+                source_branch=source_branch,
+                source_commit=source_commit,
+                source_pr=source_pr,
+                source_session=source_session or sess or "",
+                origin_ts=ts,
+                promoted_at=time.time(),
+                source_worktree=worktree,
+                origin_id=sid,
+            )
+            if replaces:
+                tgt.executemany(
+                    "UPDATE knowledge SET superseded_by = ? "
+                    "WHERE id = ? AND superseded_by IS NULL",
+                    [(new_id, tid) for tid in replaces],
+                )
+                tgt.commit()
+        # Keep the in-memory view current so later rows in this run see it.
+        if replaces:
+            gone = set(replaces)
+            for view in (*content_rows.values(), *origin_rows.values()):
+                view[:] = [(rid, live and rid not in gone) for rid, live in view]
+        content_rows.setdefault(content, []).append((new_id, True))
+        origin_rows.setdefault(sid, []).append((new_id, True))
+
+        if replaces:
+            superseded += 1
+            entries.append(
+                {**line, "action": "superseded", "target_id": new_id,
+                 "supersedes": replaces}
+            )  # fmt: skip
+        else:
+            copied += 1
+            entries.append({**line, "action": "copied", "target_id": new_id})
+
+    if dry_run:
+        for e in entries:
+            e.pop("target_id", None)
     return {
-        "promoted": promoted,
+        "promoted": copied + superseded,
+        "copied": copied,
+        "superseded": superseded,
         "skipped_duplicate": skipped,
-        "considered": len(rows),
+        "considered": considered,
+        "dry_run": dry_run,
+        "entries": entries,
     }
+
+
+def knowledge_export(repo_root: str | Path | None = None) -> list[dict]:
+    """Every knowledge row with every column, superseded ones and session
+    digests included, oldest first. Used to archive a store before its
+    worktree is removed."""
+    with _LOG_LOCK:
+        conn = _get_conn(repo_root)
+        cur = conn.execute("SELECT * FROM knowledge ORDER BY id ASC")
+        names = [d[0] for d in cur.description]
+        return [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
 
 
 @_locked
@@ -460,7 +607,7 @@ def knowledge_search(
     out: list[dict] = []
     try:
         sql = (
-            "SELECT k.id, k.kind, k.title, k.body, k.tags, k.file_refs, k.session_id, k.ts, rank AS score "
+            f"SELECT {_k_cols('k.')}, rank AS score "
             "FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
             "WHERE knowledge_fts MATCH ? AND k.superseded_by IS NULL "
         )
@@ -471,11 +618,11 @@ def knowledge_search(
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
         for row in conn.execute(sql, params).fetchall():
-            out.append(_knowledge_row_to_dict(row, score=-row[8]))
+            out.append(_knowledge_row_to_dict(row, score=-row[-1]))
     except sqlite3.OperationalError:
         like = f"%{query}%"
         sql = (
-            "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
+            f"SELECT {_k_cols()} FROM knowledge "
             "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
         )
         params = [like, like, like]
@@ -541,7 +688,7 @@ def knowledge_list(
     fetch limit+1 to detect has_more.
     """
     conn = _get_conn(repo_root)
-    sql = "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge"
+    sql = f"SELECT {_k_cols()} FROM knowledge"
     where: list[str] = ["superseded_by IS NULL"]
     params: list = []
     if kind:
@@ -636,8 +783,28 @@ def knowledge_forget(
     return True
 
 
+_K_BASE_COLS = ("id", "kind", "title", "body", "tags", "file_refs", "session_id", "ts")
+# Provenance of a promoted entry, read after the base columns. Only rows with
+# promoted_at set get a `provenance` object, so native entries keep the shape
+# they always had.
+_K_PROV_COLS = (
+    "promoted_at",
+    "source_branch",
+    "source_worktree",
+    "source_pr",
+    "source_commit",
+    "source_session",
+    "origin_id",
+    "origin_ts",
+)
+
+
+def _k_cols(prefix: str = "") -> str:
+    return ", ".join(prefix + c for c in (*_K_BASE_COLS, *_K_PROV_COLS))
+
+
 def _knowledge_row_to_dict(row, score: float = 0.0) -> dict:
-    return {
+    out = {
         "id": row[0],
         "kind": row[1],
         "title": row[2],
@@ -648,6 +815,13 @@ def _knowledge_row_to_dict(row, score: float = 0.0) -> dict:
         "ts": row[7] if len(row) > 7 else 0.0,
         "score": round(score, 4),
     }
+    n_base = len(_K_BASE_COLS)
+    if len(row) >= n_base + len(_K_PROV_COLS) and row[n_base] is not None:
+        prov = dict(
+            zip(_K_PROV_COLS, row[n_base : n_base + len(_K_PROV_COLS)], strict=True)
+        )
+        out["provenance"] = {k: v for k, v in prov.items() if v not in (None, "")}
+    return out
 
 
 @_locked

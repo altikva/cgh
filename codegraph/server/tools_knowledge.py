@@ -137,7 +137,9 @@ def register(mcp) -> None:
 
         Pagination: pass `offset` to page through results. Response includes
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
-        follow up without counting locally.
+        follow up without counting locally. An entry promoted from another
+        worktree (`cgh knowledge promote`) carries a `provenance` object:
+        source branch, PR, worktree, origin id, promoted_at.
         """
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list

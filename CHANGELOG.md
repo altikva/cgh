@@ -42,7 +42,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
   split (new `by_origin` fields; existing fields unchanged), so hook traffic
   no longer reads as agent choices. Existing logs are migrated in place;
-  their older rows show as `unknown`.
+  their older rows show as `unknown`. The log stays in
+  `.codegraph/call_log.db`: cgh sends it nowhere, and crash reports do not
+  include it.
 
 ### Fixed
 - **cgh-bugreport refused about one crash report in 50,000** (0.1.3). Its
@@ -64,6 +66,32 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   another file (a Django `urls.py` pointing at `views.user_detail`) is now
   linked to it when the route file imports that module. Existing indexes
   re-parse once automatically, as above.
+- **Coming back from a rollback to 0.15 no longer leaves stale edges.**
+  cgh 0.15 can read and update a 0.16 index, but files it saves or deletes
+  lose the edges other files had into them and keep their old stored
+  references. Each file is now stamped when indexed, and the next index or
+  owner start parses again the files an older cgh touched. Interrupting
+  the one-time re-parse is safe: it starts over on the next run. See
+  `docs/UPGRADING-0.16.md` for the rollback steps.
+- **`cgh status` said "fresh" for an index that still needed its
+  one-time re-parse**, and kept saying it while the re-parse ran. It now
+  reads `outdated` (with the command to run) or `reindexing`; `--json`
+  gains `scan.state`, `scan.indexing`, `scan.graph_format`,
+  `scan.graph_format_current` and `scan.format_outdated`, and
+  `scan.fresh` is false until the re-parse is done. `cgh stats` and the
+  `scan_status` tool follow. `cgh doctor` shows an outdated index as a
+  `!!` line that never fails `--strict`.
+- `cgh init --from` now says up front when the source index is in an
+  older graph format: the seed is then followed by a full re-parse, slower
+  than a fresh index, and reindexing the source first makes seeds cheap
+  again.
+- `cgh callers` on a name with several definitions repeated the list of
+  candidate files on every row (one repo went from 710 to 3,794 lines).
+  Callers are now grouped under each distinct list, printed once. The
+  `find_callers` tool output is unchanged.
+- `cgh graph` waited 15 seconds or more on a stuck owner, ignoring
+  `CGH_OWNER_TIMEOUT`, then tried the locked graph. It now uses that
+  timeout and exits with the same hint as `cgh lookup`.
 - `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` no longer stall
   for about 12 seconds while an agent session runs. They now ask the running
   owner, like `cgh callers` does since 0.15.0, and answer from the graph:

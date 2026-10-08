@@ -418,6 +418,13 @@ def _startup_index_needed(root, reindex: bool) -> bool:
         # this triggers falls back to one full re-parse.
         _log.info("graph format of %s is outdated, re-indexing it", root)
         return True
+    from codegraph.indexer import older_writer_pending
+
+    if older_writer_pending(root):
+        # An older cgh (a rollback) rewrote files without their references;
+        # the incremental reindex parses those files again.
+        _log.info("files of %s were written by an older cgh, re-indexing them", root)
+        return True
     return False
 
 

@@ -702,15 +702,27 @@ def cmd_callers(args: argparse.Namespace) -> None:
         return
 
     tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
+    # When the name matches several definitions, each caller lists the files
+    # it may reach. Repeating that list on every row made a common name
+    # unreadable (thousands of lines), so callers are grouped under each
+    # distinct list instead, printed once.
+    groups: dict[tuple, list[tuple]] = {}
     for scope, name, fp, line, targets in rows:
-        short = _short_path(fp, root)
-        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
-        via = (
-            "  [dim]-> " + ", ".join(_short_path(t, root) for t in targets) + "[/dim]"
-            if targets
-            else ""
-        )
-        tree.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via}{scope_tag}")
+        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line))
+    for targets, members in groups.items():
+        branch = tree
+        if targets:
+            branch = tree.add(
+                "[dim]-> "
+                + ", ".join(_short_path(t, root) for t in targets)
+                + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
+            )
+        for scope, name, fp, line in members:
+            short = _short_path(fp, root)
+            scope_tag = (
+                f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+            )
+            branch.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{scope_tag}")
     console.print(tree)
 
 

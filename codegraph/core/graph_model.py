@@ -224,3 +224,24 @@ STATS_EDGE_TYPES: tuple[str, ...] = (
     "TF_VAR_DEPENDS",
     "TF_VAR_REFS",
 )
+
+
+# Files whose stored data was written by an indexer that keeps no stamp (cgh
+# 0.15 after a rollback, or a run killed between purge and stamp): a File
+# node indexed from disk (mtime set) with no stamp, or a stamp taken at
+# another mtime. Import targets never indexed carry no mtime and are skipped.
+STALE_FILES_SQL = (
+    "SELECT f.path FROM file f LEFT JOIN file_stamp s ON s.path = f.path "
+    "WHERE f.mtime IS NOT NULL AND (s.path IS NULL OR s.mtime <> f.mtime)"
+)
+
+# Paths that still hold call sites, name references or a stamp but no longer
+# have an indexed File node: an older writer deleted the file without knowing
+# these tables, and their rows would relink edges from nodes that are gone.
+ORPHAN_REFS_SQL = (
+    "SELECT path FROM ("
+    " SELECT path FROM file_stamp"
+    " UNION SELECT file_path AS path FROM call_site"
+    " UNION SELECT file_path AS path FROM name_ref"
+    ") r WHERE path NOT IN (SELECT path FROM file WHERE mtime IS NOT NULL)"
+)

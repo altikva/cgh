@@ -580,7 +580,8 @@ class TestReadCommandsParity:
         _absent(monkeypatch)
         local = _run(monkeypatch, cq.cmd_lookup, args, cq)
         assert via_owner == local
-        for want in ("lib.py:1-2", "main.tf:4-4", "Using helper  README.md:5-7"):
+        # A terraform variable is found by address, with its full line range.
+        for want in ("lib.py:1-2", "main.tf:4-6", "Using helper  README.md:5-7"):
             assert want in local
 
     @pytest.mark.parametrize("json_out", [False, True])

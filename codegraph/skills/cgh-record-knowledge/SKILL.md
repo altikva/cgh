@@ -72,16 +72,13 @@ system warns about approaching limits):
        tags="<topics>,session-digest"
    )
    ```
-   This persists a `kind=note` entry stamped with the session_id. For the
-   state of the task itself (what is done, what is open, the next step),
-   call `checkpoint(session_id, digest)`: `resume()` reloads it.
+   This persists a `kind=note` entry stamped with the session_id.
 
 ### After compaction / session resume
 
 This is CRITICAL: without this step you restart from zero:
 
-1. `resume(session_id, task)`: one call, standing instructions, session
-   digests, task-relevant notes and open plans
+1. `knowledge_list(limit=20)`: reload recent learnings
 2. `knowledge_search(query)`: targeted reload for the current task
 3. `memory_search(query)`: reload user preferences and feedback
 4. `plan_search(query)`: reload any active plan
@@ -99,9 +96,8 @@ Then supplement with targeted `knowledge_search` if needed.
 ## Before recording: check for duplicates
 
 1. `knowledge_search(query="<your planned title>")`
-2. If a near-duplicate exists, record the richer version with
-   `knowledge_record(..., supersedes=<old id>)` rather than a second
-   entry: the old one stops appearing in searches and bundles.
+2. If a near-duplicate exists, consider `knowledge_forget(id)` then
+   re-record with richer content, rather than creating a second entry.
 
 ## Don't
 

@@ -15,14 +15,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `summarize-local` example went with them.
 
 ### Changed
-- Every MCP tool description now opens with the question it answers and
-  names the tool to use instead when it is the wrong one, so agents stop
-  picking tools by guesswork (one searched code with `knowledge_search` for
-  a whole task). Descriptions are about a fifth shorter, which lowers the
-  per-session token cost. Tool names and arguments are unchanged. The usage
-  rules, bundled skills, integration guides and `docs/MCP_TOOLS.md` (now
-  listing all 54 tools) match the new wording; rerunning `cgh setup`
-  refreshes installed rules.
 - **Config keys nothing reads any more load with one notice.** Besides
   `mode = "secure"`, the cgh-summarize keys its 0.3.0 release dropped
   (`allow_pii`, `egress`, `claude_model`, `gemini_model` under
@@ -40,7 +32,6 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   their older rows show as `unknown`. The log stays in
   `.codegraph/call_log.db`: cgh sends it nowhere, and crash reports do not
   include it.
-
 
 ### Fixed
 - **cgh-bugreport refused about one crash report in 50,000** (0.1.3). Its

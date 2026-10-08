@@ -19,11 +19,14 @@ def register(mcp) -> None:
     @_logged_tool
     def memory_search(query: str, kind: str = "", limit: int = 10) -> str:
         """
-        What did the user tell me before about this?
-        Searches the user's agent memory files (preferences, feedback, past
-        decisions). Call BEFORE asking the user about a preference. Not the
-        code, and not cgh's notes (knowledge_search). Results carry the file
-        path; the snippet is usually enough.
+        Search the user's agent memory files (Claude Code auto-memory at
+        ~/.claude/projects/<slug>/memory/): preferences, feedback, past
+        decisions. Not the code, and not cgh's knowledge store
+        (knowledge_search).
+
+        Use this BEFORE asking the user about preferences / past decisions.
+        Results include the file path so you can read the full entry if
+        needed, but the snippet is usually enough.
 
         Args:
             query:  keywords or natural language
@@ -58,9 +61,9 @@ def register(mcp) -> None:
     @_logged_tool
     def memory_list(kind: str = "") -> str:
         """
-        Which memory entries exist?
-        Lists every agent memory entry newest first, optionally by kind.
-        Cheap browse; to find one on a topic use memory_search.
+        List every memory entry known to codegraph, newest first.
+        Cheap browse, doesn't touch FTS. Useful to see what's been
+        recorded about the user / project.
 
         Args:
             kind: optional filter (user / feedback / project / reference)
@@ -91,10 +94,9 @@ def register(mcp) -> None:
     @_logged_tool
     def memory_rescan() -> str:
         """
-        How do I make a memory file I just edited searchable?
-        Re-scans the memory directory into the search index. Rarely needed:
-        the watcher does it; call only if memory_search misses a fresh
-        edit.
+        Re-scan the memory directory and refresh the FTS index. Call this
+        after adding / editing memory files if the watcher hasn't caught
+        them yet.
         """
         from codegraph.claude_state.memory import scan_memory_dir
 

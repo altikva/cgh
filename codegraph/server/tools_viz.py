@@ -42,11 +42,8 @@ def register(mcp) -> None:
         format: str = "mermaid",
     ) -> str:
         """
-        Can I see these relationships as a diagram?
-        Returns Mermaid (or DOT) source for imports, a call graph, a class
-        tree, a file's symbols, docs or layers; see `scope`. For a human to
-        look at; to answer a question yourself the query tools are
-        cheaper.
+        Generate a visual graph diagram of code relationships.
+        Returns Mermaid markdown that can be rendered in any Mermaid viewer.
 
         Args:
             scope: what to visualize:
@@ -125,9 +122,8 @@ def register(mcp) -> None:
     @_logged_tool
     def graph_stats() -> str:
         """
-        Is the index populated?
-        Returns node counts per type. Edge counts and freshness too:
-        live_graph_stats. Staleness against git: scan_status.
+        Return counts of all node types in the index.
+        Useful to confirm the index is populated.
         """
         conn = _get_conn()
         stats = {
@@ -147,10 +143,14 @@ def register(mcp) -> None:
     @_logged_tool
     def live_graph_stats() -> str:
         """
-        How big and how fresh is the index right now?
-        Node counts, `edges` per type (non-empty only), FTS symbol count and
-        scan freshness in one cheap call, built for polling during a scan.
-        Node counts only: graph_stats.
+        Lightweight snapshot of the index: node counts, FTS symbol count,
+        scan freshness (git HEAD vs indexed), and a timestamp. Designed
+        for polling, call it repeatedly to watch the graph change during
+        an ongoing scan or watcher burst.
+
+        Differs from graph_stats: also includes scan_status and FTS count
+        so you don't need multiple tool calls to assess the index health.
+        `edges` holds the count per edge type, non-empty types only.
         """
         from codegraph.core.fts import get_fts_conn
         from codegraph.core.graph_model import STATS_EDGE_TYPES, STATS_NODE_LABELS

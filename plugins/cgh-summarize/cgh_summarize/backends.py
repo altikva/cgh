@@ -4,22 +4,19 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Summarizer backends. A backend declares a name, an egress
-#              class ("cloud" or "local", which is what the gate reads),
-#              an availability probe, and summarize(prompt). Built-ins:
-#              the agent CLIs (claude, gemini, codex, bob) in headless
-#              mode,
-#              a local Ollama daemon, any OpenAI-compatible endpoint,
-#              and "structural" which returns the outline with no model.
-#              Third-party backends join through the summarize.backend
-#              extension namespace.
+# Description: Summarizer backends, local only since 0.3.0. A backend
+#              declares a name, an egress class ("local" or "cloud"), an
+#              availability probe, and summarize(prompt). Built-ins: a
+#              loopback Ollama daemon, a loopback OpenAI-compatible server
+#              (llama.cpp, vLLM, LM Studio) and "structural", which
+#              returns the outline with no model. Third-party backends
+#              join through the summarize.backend extension namespace;
+#              any backend that classifies as "cloud" is never picked.
 
 from __future__ import annotations
 
 import json
-import shutil
 import socket
-import subprocess
 import time
 import urllib.request
 
@@ -115,69 +112,11 @@ class StructuralBackend:
         return outline.replace("OUTLINE:", "", 1).strip()[:2000]
 
 
-class CliBackend:
-    """An agent CLI in headless mode. Uses the CLI's own auth and billing.
-
-    Windows note: npm-installed CLIs are `.cmd` shims. `shutil.which`
-    finds them (so the backend reports available), but CreateProcess
-    cannot launch a `.cmd` directly, subprocess raises WinError 2 as if
-    a file were missing. The resolved path is therefore used verbatim
-    and `.cmd`/`.bat` shims run through `cmd /c`.
-    """
-
-    egress = "cloud"
-
-    def __init__(self, tool: str) -> None:
-        self.tool = tool
-        self.name = f"cli:{tool}"
-
-    def _resolved(self) -> str | None:
-        return shutil.which(self.tool)
-
-    def _command(self, prompt: str, config: dict) -> list[str]:
-        exe = self._resolved() or self.tool
-        if self.tool == "claude":
-            model = config.get("claude_model", "haiku")
-            argv = [exe, "-p", prompt, "--model", str(model)]
-        elif self.tool == "gemini":
-            model = config.get("gemini_model", "gemini-2.5-flash")
-            argv = [exe, "-m", str(model), "-p", prompt]
-        elif self.tool == "codex":
-            argv = [exe, "exec", prompt]
-        else:  # bob (IBM BobShell) and anything else claude-shaped
-            argv = [exe, "-p", prompt]
-        if exe.lower().endswith((".cmd", ".bat")):
-            argv = ["cmd", "/c", *argv]
-        return argv
-
-    def available(self, config: dict) -> bool:
-        return self._resolved() is not None
-
-    def summarize(self, prompt: str, config: dict) -> str:
-        from codegraph.plugin_api import quiet_subprocess_kwargs
-
-        proc = subprocess.run(
-            self._command(prompt.replace("\x00", ""), config),
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT,
-            # Without this every summarized file flashes a console
-            # window on Windows: the owner is detached, so each agent
-            # CLI it spawns gets a fresh conhost.
-            **quiet_subprocess_kwargs(),
-        )
-        if proc.returncode != 0:
-            raise SummarizeError(
-                f"{self.tool} exited {proc.returncode}: {proc.stderr.strip()[:200]}"
-            )
-        return proc.stdout.strip()
-
-
 class OllamaBackend:
     """An Ollama daemon. Local only when the URL says so: the egress
     class is computed from the configured host, because a static "local"
     label plus a configurable ollama_url would let content leave the
-    machine without ever meeting the gate."""
+    machine. A remote URL classifies as cloud and is never picked."""
 
     name = "ollama"
     egress = "local"  # earned only for loopback URLs, see egress_class
@@ -231,11 +170,19 @@ class OllamaBackend:
 
 
 class OpenAICompatibleBackend:
-    """Any OpenAI-compatible chat endpoint: vLLM, LM Studio, watsonx,
-    hosted APIs. base_url plus a key env var covers most of the market."""
+    """An OpenAI-compatible chat server on this machine: llama.cpp's
+    llama-server, vLLM, LM Studio. Like Ollama, "local" is earned by a
+    loopback base URL; a remote one classifies as cloud and is never
+    picked."""
 
     name = "openai"
-    egress = "cloud"
+    egress = "local"  # earned only for loopback URLs, see egress_class
+
+    def egress_class(self, config: dict) -> str:
+        from codegraph.plugin_api import is_loopback_url
+
+        base = str(config.get("openai_base_url", ""))
+        return "local" if base and is_loopback_url(base) else "cloud"
 
     def available(self, config: dict) -> bool:
         return bool(config.get("openai_base_url")) and bool(config.get("openai_model"))
@@ -262,14 +209,11 @@ class OpenAICompatibleBackend:
         return data["choices"][0]["message"]["content"].strip()
 
 
-# Auto-selection order: agent CLIs first (already authenticated, light
-# models), then the local daemon, then a configured endpoint, then the
-# model-free fallback.
+# Auto-selection order: the local daemon, then a configured loopback
+# endpoint, then the model-free fallback. The agent CLI backends (claude
+# -p and friends) were removed in 0.3.0: they sent file content to a
+# cloud model on every index.
 _BUILTINS = [
-    CliBackend("claude"),
-    CliBackend("gemini"),
-    CliBackend("codex"),
-    CliBackend("bob"),
     OllamaBackend(),
     OpenAICompatibleBackend(),
     StructuralBackend(),
@@ -292,15 +236,18 @@ def resolve_backends(config: dict, extras: list | None = None) -> list:
     return list(extras or []) + list(_BUILTINS)
 
 
-def pick_backend(config: dict, extras: list | None = None, cloud_allowed: bool = True):
-    """First available backend honoring the egress constraint, or None.
-    An explicit ``backend`` config key restricts the choice to that name
-    (still subject to the egress constraint and availability)."""
+def pick_backend(config: dict, extras: list | None = None, cloud_allowed: bool = False):
+    """First available local backend, or None. An explicit ``backend``
+    config key restricts the choice to that name (still subject to
+    availability). ``cloud_allowed`` is accepted for callers written
+    against 0.2 (codegraph.sdk.summarize passes it) and ignored: a
+    backend classified "cloud" is never picked."""
+    del cloud_allowed
     wanted = str(config.get("backend", "auto"))
     for backend in resolve_backends(config, extras):
         if wanted != "auto" and backend.name != wanted:
             continue
-        if not cloud_allowed and egress_of(backend, config) == "cloud":
+        if egress_of(backend, config) == "cloud":
             continue
         try:
             if backend.available(config):

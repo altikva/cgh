@@ -6,9 +6,10 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Field fixes from a Windows monorepo: scanner text never
 #              carries embedded nulls (binary docx/xlsx decoded with
-#              errors=replace used to poison subprocess argv), and the
-#              summarize CLI backends run npm .cmd shims through cmd /c
-#              instead of raising WinError 2 blamed on the scanned file.
+#              errors=replace used to poison subprocess argv), binary
+#              documents summarize from their section previews, and a
+#              failing summarize backend is named in the error instead of
+#              the scanned file.
 
 from __future__ import annotations
 
@@ -54,44 +55,6 @@ class TestNullStripping:
         assert len(rows) == 1
 
 
-class TestCliBackendWindowsShim:
-    def _backend_calls(self, monkeypatch, which_result: str):
-        pytest.importorskip("cgh_summarize")
-        import cgh_summarize.backends as backends
-
-        calls: list[list[str]] = []
-
-        def fake_run(cmd, *args, **kwargs):
-            from types import SimpleNamespace
-
-            calls.append(cmd)
-            return SimpleNamespace(returncode=0, stdout="ok summary", stderr="")
-
-        monkeypatch.setattr(backends.shutil, "which", lambda tool: which_result)
-        monkeypatch.setattr(backends.subprocess, "run", fake_run)
-        return backends.CliBackend("claude"), calls
-
-    def test_cmd_shim_runs_through_cmd_slash_c(self, monkeypatch):
-        backend, calls = self._backend_calls(
-            monkeypatch, r"C:\Users\x\AppData\Roaming\npm\claude.CMD"
-        )
-        assert backend.available({}) is True
-        assert backend.summarize("hello", {}) == "ok summary"
-        assert calls[0][:2] == ["cmd", "/c"]
-        assert calls[0][2].lower().endswith("claude.cmd")
-
-    def test_plain_binary_runs_directly(self, monkeypatch):
-        backend, calls = self._backend_calls(monkeypatch, "/usr/local/bin/claude")
-        backend.summarize("hello", {})
-        assert calls[0][0] == "/usr/local/bin/claude"
-        assert calls[0][1] == "-p"
-
-    def test_prompt_nulls_stripped_defensively(self, monkeypatch):
-        backend, calls = self._backend_calls(monkeypatch, "/usr/local/bin/claude")
-        backend.summarize("bad\x00prompt", {})
-        assert "\x00" not in calls[0][2]
-
-
 class TestBinaryExcerpt:
     def test_replacement_soup_uses_section_previews(self, tmp_path, monkeypatch):
         pytest.importorskip("cgh_summarize")
@@ -132,7 +95,7 @@ class TestBackendErrorContext:
         (tmp_path / ".codegraph").mkdir()
 
         class Broken:
-            name = "cli:claude"
+            name = "broken-local"
             egress = "local"
 
             def available(self, config):
@@ -143,5 +106,5 @@ class TestBackendErrorContext:
 
         scanner = SummarizeScanner({}, tmp_path, extras_fn=lambda: [Broken()])
         big = "x = 1\n" * 2000
-        with pytest.raises(RuntimeError, match=r"summarize backend cli:claude"):
+        with pytest.raises(RuntimeError, match=r"summarize backend broken-local"):
             scanner.scan(Path("/r/big.py"), big, None)

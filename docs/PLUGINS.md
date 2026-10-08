@@ -12,24 +12,31 @@ Control which plugins load per repo in `.codegraph/config.toml`:
 ```toml
 [plugins]
 # disabled = ["heavy-plugin"]     # skip without uninstalling
-# enabled = ["docs", "pii"]       # allowlist mode: load ONLY these
+# enabled = ["docs", "codegen"]   # allowlist mode: load ONLY these
 
 [plugin.pii]                      # per-plugin settings, passed verbatim
-# ner = false
+# scan_on_index = false
 ```
 
 A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
 
-First-party plugins live in [plugins/](./plugins) and install separately, so the core stays lean; grab all five at once with `pip install "cgh[plugins]"`:
+First-party plugins live in [plugins/](../plugins) and install separately, so the core stays lean. `pip install "cgh[plugins]"` brings the first three:
 
-| Plugin | What it adds |
-|---|---|
-| `cgh-docs` | pdf, docx and xlsx files become searchable sections |
-| `cgh-pii` | inline PII and secret detection (emails, IBANs, cards, keys), optional NER and LLM tiers for names and what regex misses |
-| `cgh-classify` | human-trainable confidentiality labels + a local classifier |
-| `cgh-summarize` | file summaries via your agent CLIs (Claude, Gemini, Codex, IBM Bob), Ollama or any OpenAI-compatible endpoint, plus `cgh insights` |
-| `cgh-vision` | image understanding: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models via Ollama |
-| `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo |
+| Plugin | What it adds | Install |
+|---|---|---|
+| `cgh-docs` | pdf, docx and xlsx files become searchable sections | `cgh[plugins]` |
+| `cgh-codegen` | boilerplate written by a cheap model, mirroring a reference file cgh picks from the graph | `cgh[plugins]` |
+| `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo | `cgh[plugins]` |
+| `cgh-pii` | `cgh pii scan` for secrets on demand (exit 1 on a private or cloud key, for CI), `cgh pii redact` for documents | by name |
+| `cgh-vision` | `cgh vision <file>`: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models | by name |
+| `cgh-summarize` | frozen: local-model file summaries, `cgh summarize run` | by name |
+| `cgh-classify` | frozen: human-trainable confidentiality labels | by name |
+
+cgh-pii, cgh-vision and cgh-classify do not scan while cgh indexes unless
+you set `scan_on_index = true` in their `[plugin.<name>]` table (see
+[CONFIGURATION.md](CONFIGURATION.md)); cgh-summarize never does. The
+plugin interface for index-time scanners is unchanged, for any plugin
+that wants one.
 
 On a locked-down machine where the Ollama registry is blocked,
 `cgh-vision` runs from Hugging Face GGUF weights instead: download the

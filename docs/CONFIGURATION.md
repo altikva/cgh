@@ -93,17 +93,24 @@ checkpoint_gate = 0
 
 [plugins]
 # Narrow or bar installed plugins without uninstalling them.
-# enabled = ["pii", "summarize"]
-# disabled = ["classify"]
+# enabled = ["docs", "codegen"]
+# disabled = ["bugreport"]
 
 # Per-plugin settings live in [plugin.<name>] tables (singular). See each
 # plugin's README for its keys; the template written by `cgh init` lists
 # the first-party ones commented out.
-# [plugin.summarize]
-# backend = "auto"
+# [plugin.pii]
+# scan_on_index = false
 ```
 
 ### Section Details
+
+#### `[plugin.<name>]` index-time scanning
+
+| Key | Plugin | Default | Description |
+|-----|--------|---------|-------------|
+| `scan_on_index` | pii, vision, classify | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`, `cgh classify`). |
+| `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `codegraph.sdk.scan_text` keeps them on unless this is set to `false`. |
 
 #### `[codegraph]`
 

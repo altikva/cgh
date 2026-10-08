@@ -99,7 +99,9 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
 
         try:
             module = ep.load()
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # A plugin built against an older cgh may import a name core
+            # has since removed; that is a broken plugin, never a dead CLI.
             record.status = "broken"
             record.reason = f"import failed: {type(exc).__name__}: {exc}"
             _warn(f"plugin {name}: {record.reason}")
@@ -130,7 +132,12 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
         )
         try:
             register(api)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # Drop whatever the plugin registered before it failed, so a
+            # half-registered plugin cannot leave a CLI verb or a scanner
+            # behind while `cgh plugins` reports it broken. Parsers go
+            # through the global parser table and are not rolled back.
+            _drop_registrations(name)
             record.status = "broken"
             record.reason = f"register() raised: {type(exc).__name__}: {exc}"
             _warn(f"plugin {name}: {record.reason}")
@@ -139,6 +146,19 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
         record.surfaces = api.surfaces
 
     return list(_loaded.values())
+
+
+def _drop_registrations(plugin_name: str) -> None:
+    reg = _registries
+    reg.scanners[:] = [e for e in reg.scanners if e[0] != plugin_name]
+    reg.mcp_registrars[:] = [e for e in reg.mcp_registrars if e[0] != plugin_name]
+    reg.cli_registrars[:] = [e for e in reg.cli_registrars if e[0] != plugin_name]
+    for namespace, entries in list(reg.extensions.items()):
+        kept = [e for e in entries if e[0] != plugin_name]
+        if kept:
+            reg.extensions[namespace] = kept
+        else:
+            del reg.extensions[namespace]
 
 
 def loaded_plugins() -> list[LoadedPlugin]:
@@ -161,6 +181,11 @@ def scanners() -> list[tuple[str, object]]:
 def get_extensions(namespace: str) -> list[object]:
     """Objects published under ``namespace``, in registration order."""
     return [obj for _, obj in _registries.extensions.get(namespace, [])]
+
+
+def extension_entries(namespace: str) -> list[tuple[str, object]]:
+    """``(plugin_name, obj)`` pairs published under ``namespace``."""
+    return list(_registries.extensions.get(namespace, []))
 
 
 def _warn(message: str) -> None:

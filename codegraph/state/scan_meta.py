@@ -19,6 +19,15 @@ from codegraph.core.utils import quiet_subprocess_kwargs
 
 _META_FILE = "scan_meta.json"
 
+# Version of what a completed scan leaves in the graph. Bump it when a release
+# changes what indexing stores so an existing index is only correct after
+# every file is parsed again: the next index (CLI, owner start, incremental)
+# then re-parses the whole repo once. A meta file without the key predates
+# versioning and counts as 1.
+#   2: call sites are persisted (call_site table) to resolve CALLS edges
+#      independently of file order and across reindexes of the callee file.
+GRAPH_FORMAT = 2
+
 
 def _meta_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _META_FILE
@@ -129,6 +138,7 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
         "stats": _kept_stats(repo_root, stats),
+        "graph_format": GRAPH_FORMAT,
     }
     try:
         path = _meta_path(repo_root)
@@ -156,6 +166,20 @@ def read_meta(repo_root: str | Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def graph_format_outdated(repo_root: str | Path) -> bool:
+    """True when the last completed scan was written by an older graph
+    format and the graph needs one full re-parse. No scan record at all is
+    not outdated: that is a fresh or interrupted index, which the caller
+    already handles as a full scan."""
+    meta = read_meta(repo_root)
+    if meta is None:
+        return False
+    try:
+        return int(meta.get("graph_format", 1)) < GRAPH_FORMAT
+    except (TypeError, ValueError):
+        return True
 
 
 def git_tree_blob_shas(repo_root: str | Path) -> dict[str, str] | None:

@@ -164,3 +164,28 @@ def test_flag_off_collision_resolves_to_same_file(tmp_path):
     conn = get_connection(tmp_path)
     targets = _calls_targets(conn, f"{a_py}::caller")
     assert targets == {f"{a_py}::helper"}
+
+
+def test_precise_edges_survive_callee_reindex_without_name_fanout(tmp_path):
+    # The caller's sites are stored by exact target. Indexing the callee
+    # after the caller, and reindexing it, keeps the one precise edge; a
+    # same-named function indexed later is NOT linked by name.
+    _write_config(tmp_path, "[codegraph]\nprecise_calls = true\n")
+    a_py = tmp_path / "a.py"
+    a_py.write_text(
+        "from b import helper\n\n\ndef caller():\n    return helper()\n",
+        encoding="utf-8",
+    )
+    b_py = tmp_path / "b.py"
+    b_py.write_text("def helper():\n    return 2\n", encoding="utf-8")
+    c_py = tmp_path / "c.py"
+    c_py.write_text("def helper():\n    return 3\n", encoding="utf-8")
+
+    cfg = load_config(tmp_path)
+    index_file(a_py, tmp_path, cfg=cfg)
+    index_file(b_py, tmp_path, cfg=cfg)
+    index_file(c_py, tmp_path, cfg=cfg)
+    index_file(b_py, tmp_path, force=True, cfg=cfg)
+
+    conn = get_connection(tmp_path)
+    assert _calls_targets(conn, f"{a_py}::caller") == {f"{b_py}::helper"}

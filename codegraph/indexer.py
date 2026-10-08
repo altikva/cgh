@@ -325,37 +325,96 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn: GraphDB, functions: list, lang: str = "") -> None:
+def _call_site_rows(functions: list, lang: str = "") -> list[tuple[str, str, str]]:
+    """The by-name call sites of ``functions`` as (from_id, name, "") rows.
+
+    Names matching a language built-in callable are filtered out (see
+    parsers/builtins.py) so callees like isinstance / println / parseInt
+    don't accumulate spurious edges.
+    """
+    from codegraph.parsers.builtins import is_builtin
+
+    rows: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for fn in functions:
+        for called_name in fn.calls:
+            if (fn.id, called_name) in seen:
+                continue
+            if lang and is_builtin(lang, called_name):
+                continue
+            seen.add((fn.id, called_name))
+            rows.append((fn.id, called_name, ""))
+    return rows
+
+
+def _resolve_calls(
+    conn: GraphDB,
+    functions: list,
+    lang: str = "",
+    rows: list[tuple[str, str, str]] | None = None,
+) -> None:
     """
     After all Function nodes exist, create CALLS edges by matching call
     names to known function names. Best-effort: unresolved names are skipped.
 
-    Names matching a language built-in callable are filtered first (see
-    parsers/builtins.py) so callees like isinstance / println / parseInt
-    don't accumulate spurious edges. The actual edge-link work goes
-    through find_node_keys + ensure_edge so it stays backend-neutral.
+    Only links to functions already in the graph: calls into a file indexed
+    later are linked by that file's _resolve_inbound_calls, from the call
+    sites this file recorded.
     """
-    from codegraph.parsers.builtins import is_builtin
+    if rows is None:
+        rows = _call_site_rows(functions, lang)
+    if not rows:
+        return
+    file_of = {fn.id: fn.file_path for fn in functions}
+    defs: dict[str, list[tuple[str, str]]] = {}
+    for fn_id, name, file_path in conn.function_defs_named(
+        sorted({name for _, name, _ in rows})
+    ):
+        defs.setdefault(name, []).append((fn_id, file_path))
+    edges: list[tuple[str, str]] = []
+    for from_id, called_name, _ in rows:
+        candidates = defs.get(called_name, [])
+        # Prefer a definition in the same file. A local call like run()
+        # almost never means "every function named run in the repo"; only
+        # fan out across files when there is no same-file match.
+        same_file = [c for c, fp in candidates if fp == file_of[from_id]]
+        for callee_id in same_file or [c for c, _ in candidates]:
+            edges.append((from_id, callee_id))
+    conn.ensure_edges("CALLS", edges)
 
-    # Memoize name -> candidate ids for this file's resolution pass: many
-    # functions in a file call the same names, and the Function node set is
-    # stable while we only add edges.
-    name_cache: dict[str, list[str]] = {}
+
+def _resolve_inbound_calls(conn: GraphDB, file_path: str, functions: list) -> None:
+    """Link call sites in OTHER files to the functions ``file_path`` defines.
+
+    purge_file_data drops every CALLS edge into a file's symbols, and a
+    caller indexed before this file could not see its functions at all, so
+    without this pass a cross-file call depends on indexing order and is
+    erased by every reindex of the callee's file. Applies the outbound rule
+    from the caller's side: a caller whose own file defines the name keeps
+    linking only there. Precisely resolved sites (to_id set) relink only to
+    their exact target, never by name.
+    """
+    if not functions:
+        return
+    by_name: dict[str, list[str]] = {}
     for fn in functions:
-        same_file_prefix = f"{fn.file_path}::"
-        for called_name in fn.calls:
-            if lang and is_builtin(lang, called_name):
-                continue
-            candidates = name_cache.get(called_name)
-            if candidates is None:
-                candidates = list(conn.find_node_keys("Function", "name", called_name))
-                name_cache[called_name] = candidates
-            # Prefer a definition in the same file. A local call like run()
-            # almost never means "every function named run in the repo"; only
-            # fan out across files when there is no same-file match.
-            same_file = [c for c in candidates if c.startswith(same_file_prefix)]
-            for callee_id in same_file or candidates:
-                conn.ensure_edge("CALLS", fn.id, callee_id)
+        by_name.setdefault(fn.name, []).append(fn.id)
+    ids = {fn.id for fn in functions}
+    sites = conn.call_sites_into(sorted(by_name), sorted(ids), file_path)
+    if not sites:
+        return
+    named = sorted({name for _, _, name, to_id in sites if not to_id})
+    defined_in = {(name, fp) for _, name, fp in conn.function_defs_named(named)}
+    edges: list[tuple[str, str]] = []
+    for from_id, caller_file, name, to_id in sites:
+        if to_id:
+            if to_id in ids:
+                edges.append((from_id, to_id))
+            continue
+        if (name, caller_file) in defined_in:
+            continue
+        edges.extend((from_id, callee_id) for callee_id in by_name.get(name, ()))
+    conn.ensure_edges("CALLS", edges)
 
 
 def _resolve_inherits(conn: GraphDB, classes: list) -> None:
@@ -380,19 +439,22 @@ def _precise_calls_enabled(cfg, lang: str) -> bool:
     return jedi_available()
 
 
-def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bool:
+def _resolve_calls_precise(
+    conn: GraphDB, idx: FileIndex, repo_root: Path
+) -> list[tuple[str, str]] | None:
     """Create CALLS edges for one Python file using the jedi-backed resolver.
 
-    Returns True when it ran (even with zero edges), False when it could not
-    run and the caller should fall back to the name-matched resolver. Never
-    raises: any error returns False so resolution degrades to the old path.
+    Returns the (caller_id, callee_id) pairs it resolved (possibly none) when
+    it ran, None when it could not run and the caller should fall back to the
+    name-matched resolver. Never raises: any error returns None so resolution
+    degrades to the old path.
     """
     try:
         from codegraph.analysis.precise_calls import resolve_calls_for_file
 
         edges = resolve_calls_for_file(idx.path, repo_root)
     except Exception:
-        return False
+        return None
 
     dropped = 0
     for caller_id, _target_file, callee_id in edges:
@@ -409,7 +471,7 @@ def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bo
         _act_log(
             repo_root, "scan_error", f"{dropped} CALLS edge(s) dropped for {idx.path}"
         )
-    return True
+    return [(caller_id, callee_id) for caller_id, _t, callee_id in edges]
 
 
 def _ingest_code(
@@ -452,13 +514,20 @@ def _ingest_code(
             conn.ensure_edge("HAS_METHOD", class_id, fn.id)
 
     # Precise CALLS (opt-in, Python only, jedi installed). When it runs we
-    # skip the name-matched resolver for this file so edges aren't doubled.
-    # Any failure or the flag being off falls straight back to the old path.
-    used_precise = False
+    # skip the name-matched resolver for this file so edges aren't doubled,
+    # and record its sites by exact target so a reindex of the callee file
+    # relinks them without name fan-out. Any failure or the flag being off
+    # falls straight back to the old path.
+    precise = None
     if repo_root is not None and _precise_calls_enabled(cfg, idx.lang):
-        used_precise = _resolve_calls_precise(conn, idx, repo_root)
-    if not used_precise:
-        _resolve_calls(conn, idx.functions, idx.lang)
+        precise = _resolve_calls_precise(conn, idx, repo_root)
+    if precise is None:
+        rows = _call_site_rows(idx.functions, idx.lang)
+        conn.replace_call_sites(str(idx.path), rows)
+        _resolve_calls(conn, idx.functions, idx.lang, rows=rows)
+    else:
+        conn.replace_call_sites(str(idx.path), sorted({(c, "", t) for c, t in precise}))
+    _resolve_inbound_calls(conn, str(idx.path), idx.functions)
     _resolve_inherits(conn, idx.classes)
 
 
@@ -716,6 +785,7 @@ def index_file(
     force: bool = False,
     git_blob_sha: str | None = None,
     cfg=None,
+    reparse: bool = False,
 ) -> bool:
     """
     Parse and ingest a single file into the graph.
@@ -729,11 +799,14 @@ def index_file(
         cfg: Pre-loaded CodegraphConfig. index_repo passes one so the size /
              ignore-pattern gate doesn't re-read config.toml per file. When
              None (standalone callers) it is loaded once for this call.
+        reparse: Skip only the mtime cache check (unlike force, the ignore
+             rules still apply). Used by a full index after a graph format
+             upgrade, when unchanged files still need their new data.
     """
     from codegraph.state.index_lock import write_lock
 
     with write_lock(repo_root or Path.cwd()):
-        return _index_file(path, repo_root, force, git_blob_sha, cfg)
+        return _index_file(path, repo_root, force, git_blob_sha, cfg, reparse)
 
 
 def _index_file(
@@ -742,6 +815,7 @@ def _index_file(
     force: bool,
     git_blob_sha: str | None,
     cfg,
+    reparse: bool = False,
 ) -> bool:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -778,8 +852,8 @@ def _index_file(
     conn = get_connection(repo_root)
     mtime = path.stat().st_mtime
 
-    # Check if already indexed and unchanged (skip if force)
-    if not force:
+    # Check if already indexed and unchanged (skip if force or reparse)
+    if not force and not reparse:
         try:
             stored_mtime = conn.query_node_field("File", "path", str(path), "mtime")
             if stored_mtime is not None and abs(float(stored_mtime) - mtime) < 0.01:
@@ -1247,7 +1321,9 @@ def _purge_fts_orphans(repo_root: Path, activity_log) -> int:
     return len(orphans)
 
 
-def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
+def _index_extra_dirs(
+    repo_root: Path, stats: dict, activity_log, reparse: bool = False
+) -> list[str]:
     """Index the sibling directories declared in config.toml. A
     malformed config must not silently shrink coverage."""
     extra_dirs: list[str] = []
@@ -1281,7 +1357,7 @@ def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
                 if not is_supported(full_path):
                     continue
                 try:
-                    ok = index_file(full_path, repo_root)
+                    ok = index_file(full_path, repo_root, reparse=reparse)
                     if ok:
                         stats["indexed"] += 1
                     else:
@@ -1504,6 +1580,18 @@ def _index_repo(
             repo_root, on_file=on_file, on_discovery=on_discovery
         )
 
+    # An index written by an older graph format lacks data that only a parse
+    # produces (call sites, for format 2), so every file is parsed again once,
+    # mtime cache or not. git_diff would only see changed files: widen it.
+    from codegraph.state.scan_meta import graph_format_outdated
+
+    method_requested = method
+    reparse = graph_format_outdated(repo_root)
+    if reparse:
+        _activity_log(repo_root, "graph_format_upgrade", "full re-parse")
+        if method == "git_diff":
+            method = "auto"
+
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     take_import_coverage()  # drop anything a watcher left behind
     take_import_coverage_partial()
@@ -1551,7 +1639,9 @@ def _index_repo(
         sha = blob_shas.get(rel)
         if sha is None:
             sha = _git_hash(repo_root, full_path)
-        ok = index_file(full_path, repo_root, git_blob_sha=sha, cfg=scan_cfg)
+        ok = index_file(
+            full_path, repo_root, git_blob_sha=sha, cfg=scan_cfg, reparse=reparse
+        )
         status = "indexed" if ok else "error"
         if ok:
             stats["indexed"] += 1
@@ -1570,7 +1660,7 @@ def _index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
+    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log, reparse)
     purged = _purge_fts_orphans(repo_root, _activity_log)
     if purged:
         stats["fts_orphans_purged"] = purged
@@ -1579,7 +1669,7 @@ def _index_repo(
     stats["imports"] = take_import_coverage()
     stats["imports_partial"] = take_import_coverage_partial()
     stats["method"] = actual_method
-    stats["method_requested"] = method
+    stats["method_requested"] = method_requested
     stats["extra_dirs"] = extra_dirs
     if deletions:
         stats["deleted"] = len(deletions)
@@ -1672,6 +1762,17 @@ def _incremental_reindex(
 
     # Drop any path that lives under a federated subrepo. The subrepo
     # owns its own index; the parent acts as a passe-plat.
+    # An index from an older graph format needs one full re-parse; the blob
+    # diff below would leave every unchanged file without the new data.
+    from codegraph.state.scan_meta import graph_format_outdated
+
+    if graph_format_outdated(repo_root):
+        _activity_log(repo_root, "incremental_fallback", "graph format upgrade")
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
+
     if subrepos:
         head_shas = {
             rel: sha

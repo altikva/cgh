@@ -82,13 +82,42 @@ class GraphDB(Protocol):
         IMPORTS with a symbol field) include them via ``edge_props``.
         """
 
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, Any]]) -> None:
+        """Batched ``ensure_edge`` of (src_key, dst_key) pairs, for an edge
+        type without properties. Duplicates are ignored."""
+
     def purge_file_data(self, file_path: str) -> None:
         """Delete every node + edge associated with ``file_path``.
 
         Deletes across all node labels keyed on file_path, plus the
-        File-keyed IMPORTS edges. Used by the indexer before re-indexing
-        a changed file.
+        File-keyed IMPORTS edges and the file's call sites. Used by the
+        indexer before re-indexing a changed file.
         """
+
+    # --- Call sites ---------------------------------------------------------
+    # CALLS edges are derived from call sites. Keeping the sites lets the
+    # indexer relink callers in other files whenever a callee's file is
+    # (re)indexed, independent of the order files are indexed in.
+
+    def replace_call_sites(
+        self, file_path: str, rows: list[tuple[str, str, str]]
+    ) -> None:
+        """Replace the call sites recorded for ``file_path`` with ``rows`` of
+        (from_id, name, to_id). ``to_id`` is "" for a site resolved by callee
+        name, or the target Function id for a precisely resolved one.
+        purge_file_data drops a file's call sites too.
+        """
+
+    def call_sites_into(
+        self, names: list[str], ids: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str]]:
+        """Call sites outside ``exclude_file`` that can target it: by-name
+        sites whose name is in ``names`` plus resolved sites whose to_id is
+        in ``ids``. Rows are (from_id, file_path, name, to_id).
+        """
+
+    def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
+        """Every Function whose name is in ``names``, as (id, name, file_path)."""
 
     def find_node_keys(
         self,

@@ -184,6 +184,23 @@ EDGE_TABLES = [
 
 
 # ---------------------------------------------------------------------------
+# Call sites
+# ---------------------------------------------------------------------------
+# Every call a function makes, kept by callee NAME (to_id empty) or, for the
+# precise resolver, by resolved target id. CALLS edges are derived from these
+# rows, so reindexing a callee's file can relink the callers in other files
+# instead of losing them. No PK: the indexer dedupes before writing.
+SIDE_TABLES = [
+    """CREATE TABLE IF NOT EXISTS call_site (
+        from_id    TEXT,
+        file_path  TEXT,
+        name       TEXT,
+        to_id      TEXT NOT NULL DEFAULT ''
+    )""",
+]
+
+
+# ---------------------------------------------------------------------------
 # Reverse-lookup indexes
 # ---------------------------------------------------------------------------
 # Edges already get an index for free via their composite PK, but queries
@@ -197,6 +214,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_class_file ON class(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_md_section_file ON md_section(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_endpoint_file ON endpoint(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_name ON call_site(name)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_file ON call_site(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
 ]
 
 
@@ -209,7 +229,7 @@ MIGRATIONS = [
 
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Create the DuckDB tables and indexes. Idempotent via IF NOT EXISTS."""
-    for ddl in NODE_TABLES + EDGE_TABLES + INDEXES:
+    for ddl in NODE_TABLES + EDGE_TABLES + SIDE_TABLES + INDEXES:
         conn.execute(ddl)
     for migration in MIGRATIONS:
         conn.execute(migration)

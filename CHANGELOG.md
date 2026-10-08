@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`find_callers` and every tool built on CALLS edges silently missed
+  callers in other files.** A call into a file indexed after the caller was
+  never linked, and saving the callee's file erased all its callers in other
+  files until the next full index. Call sites are now stored, so edges are
+  resolved from both ends whatever the order. No action needed: the first
+  index after upgrading (`cgh index`, or the owner's start) re-parses the
+  whole repo once.
+
 ## [0.15.0] - 2026-10-08
 
 ### Removed

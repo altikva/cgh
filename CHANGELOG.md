@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`find_callers` and every tool built on CALLS edges silently missed
+  callers in other files.** A call into a file indexed after the caller was
+  never linked, and saving the callee's file erased all its callers in other
+  files until the next full index. Call sites are now stored, so edges are
+  resolved from both ends whatever the order. No action needed: the first
+  index after upgrading (`cgh index`, or the owner's start) re-parses the
+  whole repo once.
 - `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` no longer stall
   for about 12 seconds while an agent session runs. They now ask the running
   owner, like `cgh callers` does since 0.15.0, and answer from the graph:

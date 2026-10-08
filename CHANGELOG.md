@@ -52,6 +52,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   resolved from both ends whatever the order. No action needed: the first
   index after upgrading (`cgh index`, or the owner's start) re-parses the
   whole repo once.
+- **Inheritance, docs references and route handlers had the same blind
+  spot.** A base class, a function or class mentioned in a Markdown doc, or
+  a file a doc links to was missed when defined in a file indexed later, and
+  saving that file dropped the links from other files. These now hold
+  whatever the order and after saves. An endpoint whose handler lives in
+  another file (a Django `urls.py` pointing at `views.user_detail`) is now
+  linked to it when the route file imports that module. Existing indexes
+  re-parse once automatically, as above.
 - `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` no longer stall
   for about 12 seconds while an agent session runs. They now ask the running
   owner, like `cgh callers` does since 0.15.0, and answer from the graph:

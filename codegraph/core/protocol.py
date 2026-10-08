@@ -82,17 +82,41 @@ class GraphDB(Protocol):
         IMPORTS with a symbol field) include them via ``edge_props``.
         """
 
-    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, Any]]) -> None:
-        """Batched ``ensure_edge`` of (src_key, dst_key) pairs, for an edge
-        type without properties. Duplicates are ignored."""
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, ...]]) -> None:
+        """Batched ``ensure_edge`` of (src_key, dst_key, *props) rows, the
+        props in the edge's prop_columns order (none for an edge without
+        properties). Duplicates are ignored."""
 
     def purge_file_data(self, file_path: str) -> None:
         """Delete every node + edge associated with ``file_path``.
 
         Deletes across all node labels keyed on file_path, plus the
-        File-keyed IMPORTS edges and the file's call sites. Used by the
-        indexer before re-indexing a changed file.
+        File-keyed IMPORTS edges, the file's call sites and its name
+        references. Used by the indexer before re-indexing a changed file.
         """
+
+    # --- Name references ----------------------------------------------------
+    # INHERITS, MD_REFS_*, MD_LINKS_TO and cross-file IMPLEMENTED_BY edges
+    # are resolved by name. Keeping the references lets the indexer link them
+    # from the target's side when the target is indexed later or reindexed.
+
+    def replace_name_refs(
+        self, file_path: str, rows: list[tuple[str, str, str, str]]
+    ) -> None:
+        """Replace the name references recorded for ``file_path`` with
+        ``rows`` of (kind, from_id, name, extra)."""
+
+    def name_refs_into(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        """Name references outside ``exclude_file`` whose name is in
+        ``names``, as (kind, from_id, file_path, name, extra) rows."""
+
+    def node_keys_matching(
+        self, label: str, field: str, values: list[Any]
+    ) -> list[tuple[Any, Any]]:
+        """(key, field value) of every ``label`` node whose ``field`` is in
+        ``values``. Batched counterpart of ``find_node_keys``."""
 
     # --- Call sites ---------------------------------------------------------
     # CALLS edges are derived from call sites. Keeping the sites lets the

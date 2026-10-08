@@ -14,7 +14,7 @@
 #                   one by one, in reverse sorted order
 #              and every edge table is compared row for row (ids made
 #              relative to the repo root). Each edge kind is its own test id
-#              so a fix flips exactly the xfail it repairs.
+#              so a regression names the edge kind it breaks.
 
 from __future__ import annotations
 
@@ -30,47 +30,6 @@ from codegraph.indexer import index_file, index_repo
 
 BACKENDS = ["duckdb", "sqlite"]
 SEED = 1337
-
-# Edge kinds whose targets are resolved by name only when the SOURCE file is
-# ingested, and dropped when the TARGET file is purged. Each entry says which
-# comparison breaks; the fix should flip these to passing (strict xfail).
-KNOWN_ORDER_DEPENDENT: dict[str, str] = {
-    "INHERITS": (
-        "base classes are resolved by name only while the subclass file is "
-        "ingested: a base defined in a file indexed later is never linked"
-    ),
-    "MD_REFS_SYMBOL": (
-        "markdown symbol refs resolve only at ingestion: a function defined "
-        "in a file indexed after the doc is never linked"
-    ),
-    "MD_REFS_CLASS": (
-        "markdown class refs resolve only at ingestion: a class defined in a "
-        "file indexed after the doc is never linked"
-    ),
-    "MD_LINKS_TO": (
-        "a markdown link only lands on a File node that already exists when "
-        "the doc is ingested"
-    ),
-}
-KNOWN_RESAVE_DEPENDENT: dict[str, str] = {
-    "INHERITS": (
-        "re-saving a base class's file purges every INHERITS edge into it and "
-        "nothing relinks the subclasses in other files; re-saving a subclass "
-        "file links bases graph A had missed"
-    ),
-    "MD_REFS_SYMBOL": (
-        "re-saving a code file purges the doc refs into its functions and "
-        "nothing relinks them; re-saving a doc links refs A had missed"
-    ),
-    "MD_REFS_CLASS": (
-        "re-saving a code file purges the doc refs into its classes and "
-        "nothing relinks them; re-saving a doc links refs A had missed"
-    ),
-    "MD_LINKS_TO": (
-        "re-saving a doc links files that did not exist yet when graph A ingested it"
-    ),
-}
-
 
 # ---------------------------------------------------------------------------
 # Fixture repo: every name-resolved edge kind, across files
@@ -316,42 +275,24 @@ def graphs(request, tmp_path_factory):
     reset_connection()
 
 
-def _cases(known: dict[str, str]) -> list:
-    return [
-        pytest.param(
-            kind,
-            marks=pytest.mark.xfail(strict=True, reason=known[kind]),
-            id=kind,
-        )
-        if kind in known
-        else pytest.param(kind, id=kind)
-        for kind in EDGES
-    ]
-
-
 def test_fixture_exercises_every_edge_kind(graphs):
     seen = {k: frozenset().union(*(g[k] for g in graphs.values())) for k in EDGES}
     empty = [k for k in EXPECTED_NONEMPTY if not seen[k]]
     assert not empty, f"fixture produced no {empty} edges in any graph"
 
 
-@pytest.mark.parametrize("kind", _cases(KNOWN_ORDER_DEPENDENT))
+@pytest.mark.parametrize("kind", list(EDGES))
 def test_edges_independent_of_ingestion_order(graphs, kind):
     problems = _diff(graphs, kind, ("B-reversed", "B-shuffled"))
     assert not problems, "\n".join(problems)
 
 
-@pytest.mark.parametrize("kind", _cases(KNOWN_RESAVE_DEPENDENT))
+@pytest.mark.parametrize("kind", list(EDGES))
 def test_edges_survive_resaving_every_file(graphs, kind):
     problems = _diff(graphs, kind, ("C",))
     assert not problems, "\n".join(problems)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="IMPLEMENTED_BY only links a handler defined in the route's own "
-    "file: a Django view in views.py is never linked from urls.py",
-)
 def test_cross_file_handler_is_linked(graphs):
     assert ("pkg/urls.py::ANY::/users/<int:pk>/", "pkg/views.py::user_detail") in (
         graphs["A"]["IMPLEMENTED_BY"]
@@ -363,12 +304,6 @@ def test_cross_file_handler_is_linked(graphs):
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# Kinds known to hold on the fixture: checked on the real tree too.
-SELF_KINDS = sorted(
-    k
-    for k in EDGES
-    if k not in KNOWN_ORDER_DEPENDENT and k not in KNOWN_RESAVE_DEPENDENT
-)
 
 
 @pytest.fixture(scope="module")
@@ -391,7 +326,7 @@ def self_graphs(tmp_path_factory):
     reset_connection()
 
 
-@pytest.mark.parametrize("kind", SELF_KINDS)
+@pytest.mark.parametrize("kind", list(EDGES))
 def test_cgh_tree_invariant(self_graphs, kind):
     problems = _diff(self_graphs, kind, ("B-reversed", "B-shuffled", "C"))
     assert not problems, "\n".join(problems)

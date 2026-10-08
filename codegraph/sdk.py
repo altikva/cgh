@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,16 +103,28 @@ class Verdict:
 
 def egress_decision(
     findings: Iterable[ScanFinding],
-    mode: str = "secure",
+    mode: str | None = None,
     allow_pii: bool = False,
     labeled_non_confidential: bool = False,
 ) -> Verdict:
     """May content carrying these findings be sent to a cloud model?
 
-    assist: deny on any block-severity finding, a confidential = true
-    finding, or pii.* findings unless allow_pii. secure: all of the
-    above, and the gate is an allowlist: content must be explicitly
-    labeled non-confidential by the caller or it stays local."""
+    Denies on any block-severity finding, a confidential = true finding,
+    or pii.* findings unless allow_pii. That is the "assist" behavior,
+    the default since 0.15.0.
+
+    ``mode`` is deprecated: passing it emits a DeprecationWarning.
+    mode="secure" still turns the gate into an allowlist (content must
+    be labeled non-confidential by the caller or it stays local); for
+    that, check ``labeled_non_confidential`` in your own code instead."""
+    if mode is not None:
+        warnings.warn(
+            "egress_decision(mode=...) is deprecated since cgh 0.15.0; the "
+            'default is "assist". Drop the argument, and enforce any '
+            "allowlist in your own code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     findings = list(findings)
     for f in findings:
         if getattr(f, "severity", "info") == "block":
@@ -127,7 +140,7 @@ def egress_decision(
     if mode == "secure" and not labeled_non_confidential:
         return Verdict(
             False,
-            "secure mode is an allowlist: pass labeled_non_confidential=True "
+            'mode="secure" is an allowlist: pass labeled_non_confidential=True '
             "for content a human cleared",
         )
     return Verdict(True)

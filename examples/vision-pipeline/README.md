@@ -65,9 +65,9 @@ Read `config.example.toml` for every knob (profile, models, timeout).
 **Egress warning**: only a loopback URL keeps the promise that image
 bytes never leave the machine. If you point `ollama_url` at another
 host (a GPU box on the LAN, a hosted endpoint), the raw image travels
-there. Inside a cgh repo the vision scanner refuses non-loopback URLs
-in secure mode and audit-logs them in assist mode; when embedding
-through the SDK, that responsibility is yours. Keep confidential
+there. Inside a cgh repo the vision scanner audit-logs every call to a
+non-loopback URL; when embedding through the SDK, that responsibility
+is yours. Keep confidential
 images on loopback.
 
 ## Changing models or profiles
@@ -116,7 +116,6 @@ store, so the agent does not run models at question time. Ask
 something like "what does the architecture diagram in docs/ show?"
 and the agent calls the `findings` tool (key `diagram.mermaid` or
 `diagram.entities`) or `fts_search` to pull the extracted structure.
-In secure mode the identities it sees are pseudonyms.
 
 ## Tests
 

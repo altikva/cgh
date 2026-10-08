@@ -8,8 +8,8 @@
 #              explicit, goes through the user's own gh CLI, refuses
 #              public repositories, dedups by fingerprint (a new
 #              occurrence comments on the existing issue), shows and
-#              confirms the payload in secure mode, and audit-logs every
-#              departure.
+#              confirms the payload unless --yes is given, and audit-logs
+#              every departure.
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def make_cli_registrar(config: dict):
         p.add_argument("report", nargs="?", default="last", help="Report id or 'last'")
         p.add_argument("--root", default=os.getcwd())
         p.add_argument(
-            "--yes", action="store_true", help="Skip the secure-mode confirmation"
+            "--yes", action="store_true", help="Send without showing the payload first"
         )
         p.set_defaults(func=lambda args: _dispatch(args, config))
 
@@ -135,8 +135,8 @@ def _cmd_send(console, root: Path, report_id: str, config: dict, assume_yes: boo
         console.print(f"[red]{repo} is public; refusing to send.[/red]")
         raise SystemExit(1)
 
-    # Secure mode: show the exact payload and confirm before departure.
-    if _mode(root) == "secure" and not assume_yes:
+    # Show the exact payload and confirm before departure, unless --yes.
+    if not assume_yes:
         print(json.dumps(payload, indent=2))
         try:
             answer = console.input("Send this payload? [y/N] ").strip().lower()
@@ -193,18 +193,6 @@ def _anchor(payload: dict) -> str:
         if frame != "<external>":
             return frame.split(":", 1)[0]
     return "<external>"
-
-
-def _mode(root: Path) -> str:
-    try:
-        from codegraph.plugin_api import load_config
-
-        return load_config(root).mode
-    except Exception:
-        # Fail CLOSED: this answer gates the secure-mode confirmation
-        # before a send, so an unreadable config must behave as secure,
-        # never as the permissive default.
-        return "secure"
 
 
 def _audit(root: Path, message: str) -> None:

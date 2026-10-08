@@ -4,15 +4,14 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The two P0 audit fixes. The secure-mode probe of
-#              record_findings fails CLOSED: a broken guard_mode probe
-#              pseudonymizes instead of silently writing raw PII. And
-#              the add_directory MCP tool refuses paths outside the
-#              repo root unless a human declared them in extra_dirs.
+# Description: Findings are stored as scanners report them, whatever
+#              the config says (pseudonymization at rest ended with
+#              secure mode in 0.15.0), and pseudonyms written before
+#              read back untouched. The add_directory MCP tool refuses
+#              paths outside the repo root unless a human declared them
+#              in extra_dirs.
 
 from __future__ import annotations
-
-import re
 
 import pytest
 
@@ -27,32 +26,11 @@ def clean_state():
     store.reset_for_tests()
 
 
-class TestProbeFailsClosed:
-    def test_broken_probe_still_pseudonymizes(self, tmp_path, monkeypatch):
-        (tmp_path / ".codegraph").mkdir()
-
-        import codegraph.state.guard as guard
-
-        def boom(repo_root):
-            raise OSError("config unreadable")
-
-        monkeypatch.setattr(guard, "guard_mode", boom)
-
-        store.record_findings(
-            tmp_path,
-            "/r/a.py",
-            "pii",
-            [ScanFinding(key="pii.email", value="joy@altikva.com", severity="warn")],
-        )
-        rows = store.query_findings(tmp_path, key_prefix="pii.")
-        assert re.match(r"^<pii\.email:[0-9a-f]{10}>$", rows[0]["value"])
-        blob = store.findings_db_path(tmp_path).read_bytes()
-        assert b"joy@altikva.com" not in blob
-
-    def test_working_probe_in_assist_stays_raw(self, tmp_path):
+class TestFindingsStoredAsIs:
+    def test_legacy_secure_config_stores_raw_values(self, tmp_path):
         (tmp_path / ".codegraph").mkdir()
         (tmp_path / ".codegraph" / "config.toml").write_text(
-            '[codegraph]\nmode = "assist"\n', encoding="utf-8"
+            '[codegraph]\nmode = "secure"\n', encoding="utf-8"
         )
         store.record_findings(
             tmp_path,
@@ -62,6 +40,19 @@ class TestProbeFailsClosed:
         )
         rows = store.query_findings(tmp_path, key_prefix="pii.")
         assert rows[0]["value"] == "joy@altikva.com"
+        assert not (tmp_path / ".codegraph" / "pseudo.key").exists()
+
+    def test_existing_pseudonyms_are_left_alone(self, tmp_path):
+        (tmp_path / ".codegraph").mkdir()
+        old = "<pii.email:3fa2b4c5d6>"
+        store.record_findings(
+            tmp_path,
+            "/r/a.py",
+            "pii",
+            [ScanFinding(key="pii.email", value=old, severity="warn")],
+        )
+        rows = store.query_findings(tmp_path, key_prefix="pii.")
+        assert rows[0]["value"] == old
 
 
 class TestAddDirectoryContainment:

@@ -81,8 +81,7 @@ switches the transport to `/chat/completions` with a base64
   edges_model = "qwen2.5-vl"
   fallback_model = ""
   ```
-  A loopback endpoint stays "local", so secure mode is satisfied and
-  nothing leaves the machine.
+  A loopback endpoint stays "local": nothing leaves the machine.
 
 - **LM Studio, vLLM, or an approved internal gateway**, same config,
   just a different `openai_base_url`. A key is read from the env var
@@ -95,8 +94,8 @@ switches the transport to `/chat/completions` with a base64
 
 - **Hosted vision models** (a corporate LLM gateway serving qwen-vl,
   GLM-4V, and such). These are non-loopback, so cgh treats them as
-  cloud: allowed in assist mode with an audit line, refused in secure
-  mode, exactly like a remote Ollama.
+  cloud: the call goes through and an audit line records it, exactly
+  like a remote Ollama.
 
 ## Installing Ollama
 
@@ -228,8 +227,8 @@ question, so you do not have to come back here.
 6. **Post-processing**: fuzzy-duplicate merge, arrow annotations
    dropped from node lists, reversed-edge dedup, and identity
    separation: IPs, CIDRs, FQDNs, emails and server names split out
-   of labels, recorded as `pii.image_identity` findings so the
-   secure-at-rest layer pseudonymizes them.
+   of labels, recorded as `pii.image_identity` findings so the egress
+   gates treat them as PII.
 
 ## Findings
 

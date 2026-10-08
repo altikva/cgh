@@ -8,6 +8,8 @@
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
 #              SQLite alike, and federate across subrepos with a scope tag.
+#              callers / callees / outline ask a live owner first (it holds
+#              the graph DB lock), search / lookup fall back to the FTS.
 
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import os
 from pathlib import Path
 
 from rich import box
+from rich.markup import escape
 from rich.table import Table
 from rich.tree import Tree
 
@@ -146,6 +149,48 @@ def _print_scope_warnings(warnings: list[str]) -> None:
         console.print(f"[yellow]⚠ subrepo {w}[/yellow]")
 
 
+def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:
+    """Run ``tool`` on this repo's live owner, which holds the graph DB for
+    writing and so blocks our own read-only open while it runs.
+
+    Returns the tool's JSON dict when the owner served it, None when no owner
+    answered (the caller then opens the DB itself). A timed-out owner still
+    holds the lock, so a local open would only wait and fail: print the
+    remedy and exit 1 instead. Same for an owner from an older cgh that
+    lacks ``tool``: it holds the lock all the same.
+    """
+    from codegraph.cli.owner_client import (
+        call_owner_tool,
+        note_route,
+        older_owner_hint,
+        stuck_owner_hint,
+    )
+
+    reply = call_owner_tool(root, tool, arguments)
+    if reply.status == "timeout":
+        console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
+        raise SystemExit(1)
+    if reply.status == "unknown_tool":
+        console.print(f"[yellow]{older_owner_hint(root, tool)}[/yellow]")
+        raise SystemExit(1)
+    if reply.ok and isinstance(reply.data, dict):
+        note_route(command, "owner")
+        return reply.data
+    note_route(command, "local read-only open")
+    return None
+
+
+def _owner_warnings(data: dict) -> list[str]:
+    """The owner's per-scope federation warnings, as CLI warning strings."""
+    return _fmt_scope_errors(
+        [
+            (w.get("scope", "?"), w.get("error", ""))
+            for w in data.get("warnings") or []
+            if isinstance(w, dict)
+        ]
+    )
+
+
 # ---------------------------------------------------------------------------
 # cmd_search
 # ---------------------------------------------------------------------------
@@ -185,10 +230,98 @@ def _child_fts_fallback(
     return [(scope, _fts_rows(hits)) for scope, hits in buckets], failures
 
 
+def _text_search(root: str, text: str, limit: int) -> tuple[list[tuple], list[str]]:
+    """Free-text search over the FTS store of the repo and each subrepo.
+
+    Every scope is opened read-only through SQLite, which takes concurrent
+    readers alongside a running owner (only the graph DB is write-locked).
+    Returns ``(rows, warnings)``; rows are ``(scope, FTSResult)`` sorted by
+    score, best first. Scores are bm25 per scope, not renormalized across
+    scopes.
+    """
+    from codegraph.analysis.federation import for_each_fts
+    from codegraph.core.fts import fts_search
+
+    rows: list[tuple] = []
+    warnings: list[str] = []
+    for scoped in for_each_fts(
+        root, lambda conn, _r: fts_search(conn, text, limit=limit, prose=True)
+    ):
+        if scoped.error:
+            warnings.append(f"{scoped.scope}: {scoped.error}")
+            continue
+        rows.extend((scoped.scope, hit) for hit in scoped.payload or [])
+    rows.sort(key=lambda r: -r[1].score)
+    return rows[:limit], warnings
+
+
+def _cmd_search_text(args: argparse.Namespace, root: str) -> None:
+    from codegraph.core.fts import prose_terms
+
+    text = args.text
+    limit = args.limit if args.limit is not None else 20
+    terms = prose_terms(text)
+    rows, warnings = _text_search(root, text, limit) if terms else ([], [])
+
+    if args.json:
+        out: dict = {
+            "text": text,
+            "terms": terms,
+            "returned": len(rows),
+            "results": [
+                {
+                    "scope": scope,
+                    "file": hit.file_path,
+                    "line": hit.start_line,
+                    "symbol": hit.name,
+                    "kind": hit.kind,
+                    "snippet": hit.docstring,
+                    "score": round(hit.score, 4),
+                }
+                for scope, hit in rows
+            ],
+        }
+        if warnings:
+            out["warnings"] = warnings
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+
+    _print_scope_warnings(warnings)
+    if not terms:
+        console.print("[dim]Nothing left to search once stopwords are removed.[/dim]")
+        return
+    console.print(f"[dim]terms: {' '.join(terms)}[/dim]")
+    if not rows:
+        console.print("[dim]No indexed text matches.[/dim]")
+        return
+
+    federated = has_subrepos(root)
+    for scope, hit in rows:
+        where = f"{_short_path(hit.file_path, root)}:{hit.start_line}"
+        tag = f"  [dim]({scope})[/dim]" if federated else ""
+        console.print(
+            f"  [dim]{hit.score:6.2f}[/dim]  [cyan]{where}[/cyan]  "
+            f"[bold]{escape(hit.name)}[/bold] [dim]{hit.kind}[/dim]{tag}"
+        )
+        snippet = " ".join(hit.docstring.split())
+        if snippet:
+            console.print(f"          [dim]{escape(snippet[:160])}[/dim]")
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    text = getattr(args, "text", None)
+    if text is not None:
+        if args.query:
+            console.print("[red]Pass either a query or --text, not both.[/red]")
+            raise SystemExit(2)
+        _cmd_search_text(args, root)
+        return
     query = args.query
-    limit = args.limit
+    if not query:
+        console.print("[red]A query (or --text) is required.[/red]")
+        raise SystemExit(2)
+    limit = args.limit if args.limit is not None else 100
     offset = getattr(args, "offset", 0) or 0
     # Fetch offset+limit+1 so we can detect whether more results exist.
     fetch = offset + limit + 1
@@ -451,20 +584,35 @@ def cmd_callers(args: argparse.Namespace) -> None:
     federated = has_subrepos(root)
     rows: list[tuple] = []
 
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        console.print(
-            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
-            if federated
-            else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
-        )
+    served = _ask_owner(root, "callers", "find_callers", {"fn_name": args.fn_name})
+    if served is not None:
+        # The owner already federates, every row carries its scope.
+        rows = [
+            (
+                c.get("scope", "parent"),
+                c["caller"],
+                c["file"],
+                c["line"],
+                c.get("targets", []),
+            )
+            for c in served.get("callers") or []
+        ]
+        warnings = _owner_warnings(served)
     else:
-        rows = [("parent", *r) for r in _callers_conn(conn, args.fn_name)]
+        conn = _get_conn(root, readonly=True)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+                if federated
+                else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            )
+        else:
+            rows = [("parent", *r) for r in _callers_conn(conn, args.fn_name)]
 
-    child_rows, warnings = _query_children(
-        root, lambda c: _callers_conn(c, args.fn_name)
-    )
-    rows.extend(child_rows)
+        child_rows, warnings = _query_children(
+            root, lambda c: _callers_conn(c, args.fn_name)
+        )
+        rows.extend(child_rows)
     _print_scope_warnings(warnings)
 
     if not rows:
@@ -507,20 +655,31 @@ def cmd_callees(args: argparse.Namespace) -> None:
     federated = has_subrepos(root)
     rows: list[tuple] = []
 
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        console.print(
-            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
-            if federated
-            else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
-        )
-    else:
-        rows = [("parent", *r) for r in _callees_conn(conn, args.fn_name)]
-
-    child_rows, warnings = _query_children(
-        root, lambda c: _callees_conn(c, args.fn_name)
+    served = _ask_owner(
+        root, "callees", "find_callees", {"fn_name": args.fn_name, "max_depth": 1}
     )
-    rows.extend(child_rows)
+    if served is not None:
+        # The owner already federates, every row carries its scope.
+        rows = [
+            (c.get("scope", "parent"), c["callee"], c["file"], c["line"])
+            for c in served.get("callees") or []
+        ]
+        warnings = _owner_warnings(served)
+    else:
+        conn = _get_conn(root, readonly=True)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+                if federated
+                else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            )
+        else:
+            rows = [("parent", *r) for r in _callees_conn(conn, args.fn_name)]
+
+        child_rows, warnings = _query_children(
+            root, lambda c: _callees_conn(c, args.fn_name)
+        )
+        rows.extend(child_rows)
     _print_scope_warnings(warnings)
 
     if not rows:
@@ -568,7 +727,6 @@ def _outline_conn(conn, abs_path: str, rel_arg: str) -> list[dict]:
 
 def cmd_outline(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
-    conn = _get_conn(root, readonly=True)
 
     file_path = args.file
     if not os.path.isabs(file_path):
@@ -576,12 +734,29 @@ def cmd_outline(args: argparse.Namespace) -> None:
 
     rows: list[dict] = []
     scope = "parent"
-    if conn is None:
-        console.print(
-            "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
-        )
+    served = _ask_owner(root, "outline", "doc_outline", {"file_path": file_path})
+    if served is not None:
+        # Parent rows only: subrepo files resolve against their own root in
+        # the child loop below, as on the local path. The owner matches the
+        # exact path, so the suffix fallback only runs on a local open.
+        rows = [
+            {
+                "title": r["title"],
+                "level": r["level"],
+                "start_line": r["line"],
+                "end_line": r.get("end_line"),
+            }
+            for r in served.get("outline") or []
+            if r.get("scope", "parent") == "parent"
+        ]
     else:
-        rows = _outline_conn(conn, file_path, args.file)
+        conn = _get_conn(root, readonly=True)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+            )
+        else:
+            rows = _outline_conn(conn, file_path, args.file)
 
     if not rows and has_subrepos(root):
         # The file may belong to a federated subrepo, first scope wins.

@@ -29,13 +29,13 @@ adopting over time):
 Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
-cgh init [--yes | -y] [--secure] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
+cgh init [--yes | -y] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Accept all defaults, skip interactive prompts |
-| `--secure` | Enable secure mode (`mode = "secure"`) without prompting |
+| `--secure` | Deprecated and ignored (secure mode was removed in 0.15.0); prints a note so old scripts keep running |
 | `--from` | Seed the index and knowledge from another checkout of this repo, then reindex only the files that differ |
 | `--no-children` | Don't initialize / refresh federated subrepos |
 | `--tools` | Comma-separated tools to wire regardless of detection (`claude,cursor,codex,gemini,bob`). For a fresh repo where cgh cannot detect the tool yet |
@@ -50,7 +50,7 @@ scripted or empty-repo bootstrap.
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
-5. Offers secure mode (guards fail closed, egress allowlist); assist stays the default
+5. Removes the guard hooks an older cgh wrote (only those); keeps its deny rules and `.bobignore` block and prints how many remain (`cgh guard --remove-rules` removes them)
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
 6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the codegraph usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
 7. Offers Claude-specific auto-accept for MCP tool calls
@@ -73,6 +73,11 @@ graph's writer holds an exclusive lock for the lifetime of its connection, so a
 live owner both blocks the read and would leave a half-written copy. The target
 mints its own `auth.key` rather than sharing the source's, and the scanners
 regenerate the finding store on the next pass.
+
+The source's `config.toml` is copied with two exceptions. Its `subrepos` list
+is dropped, since those paths point at other checkouts on their own branches;
+init prints the `cgh federate add` lines to restore the ones this checkout
+should query. And the target keeps its own `[plugins]` table.
 
 ### `reset`
 
@@ -120,7 +125,6 @@ Refresh stats every 500 ms (Rich Live). Ctrl-C to stop.
 ```bash
 cgh init
 cgh init --yes    # CI-friendly, no prompts
-cgh init --secure # harden the repo from the start
 ```
 
 ---
@@ -239,17 +243,32 @@ cgh stop [--root DIR]
 
 ## Query
 
+**Graph queries work while the owner runs.** A live owner keeps the graph DB
+open for writing, which blocks a read-only open from any other process. So
+`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline` and `cgh graph` first
+ask the repo's running owner over its local HTTP port, and open the graph
+read-only themselves only when no owner answers (in CI, say). They never start
+an owner, and the output and `--json` shape are the same either way.
+`cgh search` and `cgh lookup` fall back to the full-text index instead.
+
+A call to the owner gives up after 30 seconds (`CGH_OWNER_TIMEOUT` changes
+that) and prints how to recover: `cgh doctor --owner` to probe it, `cgh stop`
+to restart it. Set `CGH_DEBUG_ROUTE=1` to see on stderr which path answered.
+
 ### `search`
 
 Fuzzy search symbols (functions, classes, doc sections) by substring match.
 
 ```
-cgh search <query> [--limit N | -n N] [--json] [--root DIR]
+cgh search <query> [--limit N | -n N] [--offset N] [--json] [--root DIR]
+cgh search --text "<prose>" [--limit N | -n N] [--json] [--root DIR]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--limit`, `-n` | 20 | Maximum results |
+| `--text`, `-t` | | Free-text search instead of a symbol-name match (see below) |
+| `--limit`, `-n` | 100, 20 with `--text` | Maximum results |
+| `--offset`, `-o` | 0 | Skip the first N results (name search only) |
 | `--json` | | Output as JSON instead of a table |
 
 **Example:**
@@ -259,6 +278,35 @@ cgh search "Handler"
 cgh search "receipt" --limit 5
 cgh search "validate" --json
 ```
+
+#### Free-text search with `--text`
+
+`--text` searches the full-text index (symbol names, docstrings and Markdown
+sections, the same store as the `fts_search` MCP tool) with a sentence, such
+as the prose of a ticket. A sentence handed to FTS5 as written requires every
+word, so it rarely matches. `--text` keeps only the meaningful terms and
+matches any of them, ranked by bm25:
+
+- English and French stopwords are dropped, compared without accents
+  (`à`, `a`, `été` and `ete` are all stopwords).
+- Elided articles are split at the apostrophe: `l'utilisateur` searches
+  `utilisateur`.
+- camelCase identifiers also contribute their parts.
+- Every term is quoted, so FTS5 operators, quotes or parentheses in the text
+  cannot break the query.
+
+```bash
+cgh search --text "comment le serveur gère la reprise de session après un clear"
+cgh search --text "where is an expired token rejected" -n 5 --json
+```
+
+`--json` prints `{text, terms, returned, results}`, each result being
+`{scope, file, line, symbol, kind, snippet, score}`. The score is the negated
+bm25 value (higher is better) and is relative to one repo's index; in a
+federated workspace each subrepo is searched too and tagged with its `scope`.
+
+The search opens the FTS store read-only through SQLite, so it works while the
+repo's MCP owner is running (only the graph DB is write-locked).
 
 ---
 
@@ -605,7 +653,7 @@ cgh plugins [--json] [--root DIR]
 
 | Column | Meaning |
 |--------|---------|
-| `status` | `active`, `disabled` (via `[plugins]` config), `incompatible` (API version mismatch), `broken` (import or registration failed), `duplicate` |
+| `status` | `active`, `disabled` (via `[plugins]` config), `incompatible` (API version mismatch), `broken` (import or registration failed, or a first-party plugin older than this cgh accepts, never imported), `duplicate` |
 | `api` | The `CGH_PLUGIN_API` version the plugin declares |
 | `surfaces` | What it registered: `parsers`, `scanners`, `mcp`, `cli`, `extensions` |
 | `note` | The reason for any non-active status |
@@ -674,47 +722,61 @@ guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
 ### `knowledge`
 
 Carries a per-ticket worktree's learnings into its main checkout, so they
-outlive the worktree. Run it at merge, before the worktree is removed.
+outlive the worktree. Run it at merge, before the worktree is removed. It is
+safe while the main checkout's owner is running: the knowledge store is
+SQLite in WAL mode, not the locked graph.
 
 ```
-cgh knowledge promote --from <worktree> --to <checkout> [--since EPOCH] \
-    [--kinds a,b] [--no-notes] [--pr repo#N] [--branch B] [--commit SHA] [--session ID]
+cgh knowledge promote --to <checkout> [--from <worktree>] [--pr repo#N] \
+    [--kinds a,b] [--no-notes] [--since EPOCH] [--archive DIR] [--dry-run] [--json] \
+    [--branch B] [--commit SHA] [--session ID]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--from`, `--to` | Source worktree and target checkout; both must hold a `.codegraph/` store |
+| `--to` | Target checkout; must hold a `.codegraph/` store |
+| `--from` | Source worktree (default: the current directory) |
+| `--pr` | Pull request stored on each promoted entry, e.g. `ondonne-api#2142` |
+| `--kinds` | Exact kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction, and plain notes) |
+| `--no-notes` | Leave plain notes out of the default kinds |
 | `--since` | Only entries recorded at or after this epoch timestamp (default: all) |
-| `--kinds` | Kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction) |
-| `--no-notes` | Leave plain notes out and promote only the explicit kinds |
-| `--pr`, `--branch`, `--commit`, `--session` | Provenance stored on each promoted entry; branch and commit default to `--from`'s git state |
+| `--archive DIR` | First write every row of the source store, digests and superseded entries included, to `DIR/knowledge-<branch>-<time>.jsonl` |
+| `--dry-run` | Report the outcome without writing to the target |
+| `--json` | Print the counts and one line per entry as JSON |
+| `--branch`, `--commit`, `--session` | Provenance overrides; branch and commit default to `--from`'s git state |
 
-Only repo-scoped entries move; session digests and automatic checkpoints never
-do. An entry already present in the target with the same title and body is
-skipped, so re-running promotes nothing new. Each promoted entry keeps its
-original timestamp and records when it was promoted.
+What moves: live, repo-scoped entries of the wanted kinds. Session digests,
+checkpoints and superseded entries stay behind. For each entry:
+
+- the same kind, title and body already in the target, even superseded there:
+  skipped as a duplicate, so a re-run adds nothing and never brings back an
+  entry the main checkout has replaced;
+- an entry that replaced older ones on the branch (`supersedes`) whose copies
+  are live in the target: inserted, and those copies are superseded by it;
+- anything else: inserted.
+
+Each promoted entry keeps its original timestamp and records its branch,
+commit, pull request, source worktree, id in the source store and promotion
+time. `knowledge_list` and `knowledge_search` return these under `provenance`.
 
 ### `guard`
 
-Agent-side confidentiality enforcement. A pre-tool-use hook installed in
-Claude Code (`cgh setup claude` / `cgh init`) consults the finding store
-before every Read, Grep, Glob or Bash call and denies access to files
-flagged confidential or carrying block-severity findings.
+Deprecated. cgh stopped guarding agent file access in 0.15.0; use your
+agent's own permission rules (for example `permissions.deny` in Claude
+Code settings) to keep files out of reach.
 
 ```
-cgh guard [status|sync] [--root DIR]
+cgh guard [status|sync] [--remove-rules] [--root DIR]
 ```
 
-- `status`: active mode, flagged file count, and an honest per-agent map
-  (enforce / advisory / unprotected). An unprotected agent's only barrier
-  is cgh's MCP-side gate.
-- `sync`: mirror flagged paths into static `Read()` deny rules in
-  `.claude/settings.local.json` (secure mode only; user-authored rules
-  are never touched). Runs automatically after `cgh classify train`.
-
-Fail posture follows the mode: `assist` fails open with a logged
-warning, `secure` fails closed, a broken guard reads as blocked. Every
-denial is logged to `.codegraph/activity.log`.
+Both actions do the same thing: print the deprecation note and remove
+the guard hook entries an older cgh wrote into the Claude Code, Gemini
+CLI and Codex configs (they do nothing any more). The `Read()` deny rules
+it recorded in `.codegraph/guard_denies.json` and its managed block in
+`.bobignore` still keep files from your agent, so they are kept and
+counted. `--remove-rules` removes exactly those, and the sidecar.
+Entries you wrote yourself are never touched. `cgh init` and `cgh setup`
+run the same cleanup without `--remove-rules`.
 
 ### `memory`
 

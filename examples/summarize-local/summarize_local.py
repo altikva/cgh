@@ -29,7 +29,7 @@ def main() -> None:
     print(summary or "(no local backend available, install/start Ollama)")
 
     findings = sdk.scan_text(TEXT, scanners=["pii"])
-    verdict = sdk.egress_decision(findings, mode="assist")
+    verdict = sdk.egress_decision(findings)
     summary = sdk.summarize(TEXT, cloud_allowed=bool(verdict))
     print(summary)
 

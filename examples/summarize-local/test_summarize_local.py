@@ -6,8 +6,8 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Deterministic without any model: forcing the structural
 #              backend exercises the whole pick + summarize path and
-#              returns the excerpt fallback. Also proves the egress
-#              default excludes cloud backends.
+#              returns the excerpt fallback. Also proves only local
+#              backends are ever picked.
 
 from __future__ import annotations
 
@@ -25,11 +25,12 @@ def test_structural_backend_needs_nothing():
     assert "def add" in summary
 
 
-def test_local_default_excludes_cloud_backends():
-    from cgh_summarize.backends import CliBackend, pick_backend
+def test_picked_backend_is_always_local():
+    from cgh_summarize.backends import egress_of, pick_backend
 
-    picked = pick_backend({}, cloud_allowed=False)
-    assert picked is None or not isinstance(picked, CliBackend)
+    for cloud_allowed in (False, True):
+        picked = pick_backend({}, cloud_allowed=cloud_allowed)
+        assert picked is None or egress_of(picked, {}) == "local"
 
 
 def test_remote_ollama_counts_as_cloud():

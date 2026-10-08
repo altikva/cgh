@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 53 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -31,6 +31,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus wh
 | `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS` |
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
+| `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
 | `untested(role?, layer?)` | Source files that no test file imports |
 | `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
 | `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |
@@ -50,7 +51,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus wh
 | `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
 | `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
-| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused in secure mode unless `allow_fetch`) |
+| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[codegraph] allow_fetch = true`) |
 | `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |
 | `purge_fetched(url?)` | Drop one URL's chunks, or all fetched content |
 

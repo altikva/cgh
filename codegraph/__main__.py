@@ -122,7 +122,7 @@ def _print_help():
         (
             "Query",
             [
-                ("search", "Fuzzy search symbols by name"),
+                ("search", "Fuzzy search symbols by name; --text for free-text prose"),
                 ("lookup", "Find exact symbol definition"),
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
@@ -171,7 +171,10 @@ def _print_help():
                     "Index files bypassing .gitignore (requires confirmation)",
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
-                ("guard", "Confidentiality guard: agent-side enforcement"),
+                (
+                    "guard",
+                    "Deprecated: cleans up what older cgh wrote (--remove-rules)",
+                ),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("knowledge", "Promote a worktree's learnings to its main checkout"),
@@ -282,11 +285,9 @@ def _register_setup_and_serve(sub) -> None:
         action="store_true",
         help="Don't initialize / refresh federated subrepos",
     )
-    p.add_argument(
-        "--secure",
-        action="store_true",
-        help='Enable secure mode (mode = "secure") without prompting',
-    )
+    # Secure mode was removed in 0.15.0; the flag stays accepted so old
+    # scripts do not break, and only prints a deprecation note.
+    p.add_argument("--secure", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--tools",
         default="",
@@ -480,11 +481,25 @@ def _register_inspect(sub) -> None:
     p.add_argument("--json", action="store_true")
     _add_root(p)
 
-    p = sub.add_parser("search", help="Search symbols by name (fuzzy)")
-    p.add_argument("query", help="Search query")
+    p = sub.add_parser(
+        "search", help="Search symbols by name (fuzzy), or free text with --text"
+    )
+    p.add_argument("query", nargs="?", help="Symbol name query")
+    p.add_argument(
+        "--text",
+        "-t",
+        metavar="PROSE",
+        help="Free-text search over names, docstrings and Markdown sections: "
+        "stopwords (English + French) dropped, any remaining term matches, "
+        "ranked by bm25",
+    )
     _add_root(p)
     p.add_argument(
-        "--limit", "-n", type=int, default=100, help="Page size (default: 100)"
+        "--limit",
+        "-n",
+        type=int,
+        default=None,
+        help="Page size (default: 100, or 20 with --text)",
     )
     p.add_argument(
         "--offset",
@@ -665,8 +680,19 @@ def _register_state_and_hooks(sub) -> None:
     p.add_argument("--json", action="store_true")
 
     # --- guard ---
-    p = sub.add_parser("guard", help="Confidentiality guard: agent-side enforcement")
+    p = sub.add_parser(
+        "guard",
+        help="Deprecated: cleans up what older cgh wrote (--remove-rules)",
+    )
+    # The old actions stay accepted so scripts keep working; both clean up.
     p.add_argument("action", nargs="?", default="status", choices=["status", "sync"])
+    p.add_argument(
+        "--remove-rules",
+        action="store_true",
+        help="Also remove the Read() deny rules and the .bobignore block an "
+        "older cgh wrote (recorded in .codegraph/guard_denies.json). Without "
+        "it they are kept, since they still keep files from your agent.",
+    )
     _add_root(p)
 
     # --- _hook_guard (internal: invoked by agent pre-tool-use hooks) ---
@@ -711,6 +737,16 @@ def main() -> None:
     # (UserPromptSubmit, PreCompact). Drop whatever follows a hook command.
     if len(sys.argv) > 2 and sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES):
         del sys.argv[2:]
+    if len(sys.argv) > 1 and (
+        sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES)
+        or sys.argv[1] in ("status", "doctor")
+    ):
+        # Agents parse hook output: the legacy mode = "secure" notice must
+        # not ride along with a hook, not even on stderr. status and
+        # doctor print it in their own output instead.
+        from codegraph.core.config import suppress_legacy_mode_warning
+
+        suppress_legacy_mode_warning()
 
     # A Windows console or pipe defaults to the ANSI codepage (cp1252), which
     # cannot encode rich's spinner frames or box glyphs: printing one raised

@@ -5,7 +5,7 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: fetch_and_index gated and cached: SSRF hosts refused,
-#              secure mode blocks unless allow_fetch, the TTL cache
+#              every fetch refused unless allow_fetch, the TTL cache
 #              avoids a second network hit, and search_fetched reads the
 #              indexed chunks back. Network is always mocked.
 
@@ -22,8 +22,16 @@ PAGE = (
 )
 
 
+ON = {"allow_fetch": True}
+
+
 def _repo(tmp_path):
     (tmp_path / ".codegraph").mkdir()
+    return tmp_path
+
+
+def _repo_once(tmp_path):
+    (tmp_path / ".codegraph").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -103,38 +111,53 @@ def test_redirect_to_private_is_reguarded(tmp_path):
         )
 
 
-def test_secure_mode_blocks_without_allow_fetch(tmp_path, monkeypatch):
-    _mock_fetch(monkeypatch)
-
-    class _Cfg:
-        mode = "secure"
-
+def test_refused_without_allow_fetch(tmp_path, monkeypatch):
+    """The opt-in applies to everyone, and a refusal never reaches the
+    network (not even DNS)."""
+    calls = _mock_fetch(monkeypatch)
+    resolved = []
     monkeypatch.setattr(
-        "codegraph.core.config.load_config", lambda root: _Cfg(), raising=True
+        fx.socket, "getaddrinfo", lambda *a, **k: resolved.append(a) or []
     )
-    with pytest.raises(fx.FetchError, match="secure mode"):
-        fx.fetch_and_index(_repo(tmp_path), "https://x.example/doc", config={})
+    for cfg in ({}, {"allow_fetch": False}, None):
+        with pytest.raises(fx.FetchError, match="allow_fetch = true"):
+            fx.fetch_and_index(
+                _repo_once(tmp_path), "https://x.example/doc", config=cfg
+            )
+    assert calls["n"] == 0 and resolved == []
 
 
-def test_secure_mode_allows_with_flag(tmp_path, monkeypatch):
+def test_refused_in_assist_config_without_the_flag(tmp_path, monkeypatch):
+    """Assist used to allow fetches; now the config flag is the only key."""
     _mock_fetch(monkeypatch)
+    from codegraph.core.config import load_config
 
-    class _Cfg:
-        mode = "secure"
+    root = _repo(tmp_path)
+    (root / ".codegraph" / "config.toml").write_text(
+        '[codegraph]\nmode = "assist"\n', encoding="utf-8"
+    )
+    cfg = {"allow_fetch": load_config(root).allow_fetch}
+    with pytest.raises(fx.FetchError, match="allow_fetch"):
+        fx.fetch_and_index(root, "https://x.example/doc", config=cfg)
 
-    monkeypatch.setattr(
-        "codegraph.core.config.load_config", lambda root: _Cfg(), raising=True
+
+def test_allowed_with_flag(tmp_path, monkeypatch):
+    _mock_fetch(monkeypatch)
+    from codegraph.core.config import load_config
+
+    root = _repo(tmp_path)
+    (root / ".codegraph" / "config.toml").write_text(
+        "[codegraph]\nallow_fetch = true\n", encoding="utf-8"
     )
-    out = fx.fetch_and_index(
-        _repo(tmp_path), "https://x.example/doc", config={"allow_fetch": True}
-    )
+    cfg = {"allow_fetch": load_config(root).allow_fetch}
+    out = fx.fetch_and_index(root, "https://x.example/doc", config=cfg)
     assert out["chunks"] >= 1 and out["cached"] is False
 
 
 def test_fetch_index_and_search(tmp_path, monkeypatch):
     _mock_fetch(monkeypatch)
     root = _repo(tmp_path)
-    out = fx.fetch_and_index(root, "https://x.example/guide", config={})
+    out = fx.fetch_and_index(root, "https://x.example/guide", config=ON)
     assert out["title"] == "Guide"
     hits = fx.search_fetched(root, "flux capacitor")
     assert hits and "flux capacitor" in hits[0]["snippet"]
@@ -144,23 +167,23 @@ def test_fetch_index_and_search(tmp_path, monkeypatch):
 def test_ttl_cache_skips_the_network(tmp_path, monkeypatch):
     calls = _mock_fetch(monkeypatch)
     root = _repo(tmp_path)
-    fx.fetch_and_index(root, "https://x.example/g", config={}, ttl_hours=24)
-    fx.fetch_and_index(root, "https://x.example/g", config={}, ttl_hours=24)
+    fx.fetch_and_index(root, "https://x.example/g", config=ON, ttl_hours=24)
+    fx.fetch_and_index(root, "https://x.example/g", config=ON, ttl_hours=24)
     assert calls["n"] == 1  # second call served from cache
 
 
 def test_force_refetches(tmp_path, monkeypatch):
     calls = _mock_fetch(monkeypatch)
     root = _repo(tmp_path)
-    fx.fetch_and_index(root, "https://x.example/g", config={})
-    fx.fetch_and_index(root, "https://x.example/g", config={}, force=True)
+    fx.fetch_and_index(root, "https://x.example/g", config=ON)
+    fx.fetch_and_index(root, "https://x.example/g", config=ON, force=True)
     assert calls["n"] == 2
 
 
 def test_purge(tmp_path, monkeypatch):
     _mock_fetch(monkeypatch)
     root = _repo(tmp_path)
-    fx.fetch_and_index(root, "https://x.example/g", config={})
+    fx.fetch_and_index(root, "https://x.example/g", config=ON)
     removed = fx.purge_fetched(root)
     assert removed >= 1
     assert fx.search_fetched(root, "flux") == []

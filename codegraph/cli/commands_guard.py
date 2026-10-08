@@ -4,192 +4,89 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: `cgh guard status|sync` plus the hidden `_hook_guard`
-#              handler wired into agent pre-tool-use hooks: reads the
-#              hook payload on stdin, checks the finding store, exit 2
-#              with a reason denies, exit 0 allows. Fail posture follows
-#              the mode: assist fails open with a logged warning, secure
-#              fails closed.
+# Description: `cgh guard` plus the hidden `_hook_guard` /
+#              `_hook_guard_codex` hook entry points. The guard was
+#              removed in 0.15.0: the hook commands stay because agent
+#              configs written by older versions still call them, and
+#              they always allow. `cgh guard` prints a deprecation note
+#              and removes the guard hooks cgh wrote earlier; the deny
+#              rules it wrote stay unless `--remove-rules` is passed.
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 
 
-def cmd_hook_guard(args: argparse.Namespace) -> None:
-    """Decide one agent tool call. Speed matters: this runs on every
-    Read/Grep/Glob/Bash of a hooked agent."""
-    from codegraph.state.guard import audit, check_tool_call, guard_mode
-
-    mode = "assist"
-    root = None
+def _drain_stdin() -> None:
+    """Read the hook payload so the agent never sees a broken pipe."""
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
-        cwd = payload.get("cwd") or os.getcwd()
-        from codegraph.core.config import find_codegraph_root
+        sys.stdin.read()
+    except Exception:
+        pass
 
-        root = find_codegraph_root(cwd)
-        if root is None:
-            return  # not a cgh repo, nothing to guard
-        mode = guard_mode(root)
-        reason = check_tool_call(
-            root,
-            str(payload.get("tool_name", "")),
-            payload.get("tool_input") or {},
-            mode,
-        )
-        if reason:
-            audit(root, f"deny: {reason}")
-            print(reason, file=sys.stderr)
-            sys.exit(2)
-    except SystemExit:
-        raise
-    except Exception as exc:
-        if mode == "secure":
-            # A broken guard reads as blocked, never as leaked.
-            print(
-                f"cgh guard failed closed (secure mode): {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        if root is not None:
-            audit(root, f"guard error, failing open (assist): {exc}")
+
+def cmd_hook_guard(args: argparse.Namespace) -> None:
+    """Allow-only shim for the Claude Code / Gemini CLI hook: exit 0,
+    print nothing."""
+    _drain_stdin()
 
 
 def cmd_hook_guard_codex(args: argparse.Namespace) -> None:
-    """Codex variant of the guard: same decision, different protocol.
-    Codex fires PreToolUse for shell commands only and reads a stdout
-    JSON decision (exit 0 either way). Vendor docs disagree on the
-    field spelling, so the deny carries both accepted forms."""
-    from codegraph.state.guard import audit, check_tool_call, guard_mode
+    """Allow-only shim for the Codex hook: no stdout decision means the
+    command proceeds."""
+    _drain_stdin()
 
-    mode = "assist"
-    root = None
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-        cwd = payload.get("cwd") or os.getcwd()
-        from codegraph.core.config import find_codegraph_root
 
-        root = find_codegraph_root(cwd)
-        if root is None:
-            return
-        mode = guard_mode(root)
-        reason = check_tool_call(
-            root,
-            str(payload.get("tool_name", "") or payload.get("tool", "")),
-            payload.get("tool_input") or payload.get("arguments") or {},
-            mode,
+REMOVE_RULES_COMMAND = "cgh guard --remove-rules"
+
+
+def print_cleanup_report(console, report) -> None:
+    """One line per kind of leftover removed, plus one line when deny rules
+    cgh wrote are kept; nothing when clean."""
+    if report.claude_rules:
+        console.print(
+            f"  [green]-[/green] removed {len(report.claude_rules)} deny rule(s) "
+            "cgh had written to .claude/settings.local.json"
         )
-        if reason:
-            audit(root, f"deny (codex): {reason}")
-            print(
-                json.dumps(
-                    {
-                        "decision": "block",
-                        "reason": reason,
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                )
-            )
-    except Exception as exc:
-        if mode == "secure":
-            print(
-                json.dumps(
-                    {
-                        "decision": "block",
-                        "reason": f"cgh guard failed closed (secure mode): {exc}",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": "cgh guard failed closed",
-                    }
-                )
-            )
-            return
-        if root is not None:
-            audit(root, f"guard error, failing open (assist, codex): {exc}")
+    if report.bobignore_lines:
+        console.print("  [green]-[/green] removed cgh's managed block from .bobignore")
+    for path in report.hooks:
+        console.print(f"  [green]-[/green] removed the cgh guard hook from {path}")
+    if report.sidecar_removed and not report.claude_rules:
+        console.print("  [green]-[/green] removed .codegraph/guard_denies.json")
+    if report.kept_rules:
+        console.print(
+            f"  [dim]kept {report.kept_rules} deny rule(s) an older cgh wrote "
+            "(.claude/settings.local.json, .bobignore); they still keep those "
+            "files from your agent.[/dim]"
+        )
+        # Own line, never wrapped, so the command stays copyable.
+        console.print(
+            f"  [dim]remove them with:[/dim] [cyan]{REMOVE_RULES_COMMAND}[/cyan]",
+            soft_wrap=True,
+        )
 
 
 def cmd_guard(args: argparse.Namespace) -> None:
     from rich.console import Console
 
-    from codegraph.state.guard import blocking_paths, guard_mode, sync_static_rules
+    from codegraph.state.guard import cleanup_guard_leftovers
 
     console = Console()
     root = Path(os.path.abspath(args.root))
-    action = getattr(args, "action", "status")
-
-    if action == "sync":
-        added, removed = sync_static_rules(root)
-        if guard_mode(root) != "secure":
-            console.print(
-                "[dim]Static deny rules only apply in secure mode "
-                '(mode = "secure" under [codegraph]).[/dim]'
-            )
-        else:
-            console.print(
-                f"[green]+[/green] static deny rules synced "
-                f"({added} added, {removed} removed)."
-            )
-        # Bob enforces through .bobignore, keep its managed block fresh.
-        from codegraph.integrations.base import get_integration
-        from codegraph.state.guard import sync_bobignore
-
-        bob = get_integration("bob")
-        if bob is not None and bob.detect(root):
-            b_added, b_removed = sync_bobignore(root)
-            if b_added or b_removed:
-                console.print(
-                    f"[green]+[/green] .bobignore synced "
-                    f"({b_added} added, {b_removed} removed)."
-                )
-        return
-
-    # status
-    mode = guard_mode(root)
-    barred = blocking_paths(root)
     console.print(
-        f"[bold]mode:[/bold] {mode}"
-        + (
-            "  [red](fail-closed)[/red]"
-            if mode == "secure"
-            else "  [dim](fail-open)[/dim]"
-        )
+        "[yellow]cgh guard is deprecated:[/yellow] since 0.15.0 cgh no longer "
+        "blocks agent file access. Use your agent's own permission rules "
+        "(for example Claude Code permissions.deny) to keep files out of reach."
     )
-    console.print(f"[bold]flagged files:[/bold] {len(barred)}")
-
-    from codegraph.integrations.base import all_integrations
-
-    console.print("[bold]agents:[/bold]")
-    badges = {
-        "enforce": "[green]enforce[/green]",
-        "partial": "[yellow]partial[/yellow]",
-        "advisory": "[yellow]advisory[/yellow]",
-        "none": "[red]unprotected[/red]",
-    }
-    missing: list[str] = []
-    for integration in all_integrations():
-        if not integration.detect(root):
-            continue
-        spec = integration.guard_spec()
-        if spec.level == "none":
-            level = "none"
-        elif integration.guard_installed(root):
-            level = spec.level
-        else:
-            level = "none"
-            missing.append(integration.name)
-        note = f"  [dim]{spec.note}[/dim]" if spec.note and level != "none" else ""
-        console.print(f"  {integration.display:<12} {badges[level]}{note}")
-    for name in missing:
-        console.print(
-            f"[dim]Install the {name} guard hook with[/dim] "
-            f"[cyan]cgh setup {name}[/cyan]"
-        )
-    console.print(
-        "[dim]An agent listed unprotected can read anything its own tools "
-        "allow; the only barrier there is cgh's MCP-side gate.[/dim]"
-    )
+    remove_rules = bool(getattr(args, "remove_rules", False))
+    report = cleanup_guard_leftovers(root, remove_rules=remove_rules)
+    if report.changed or report.kept_rules:
+        print_cleanup_report(console, report)
+    elif remove_rules:
+        console.print("[dim]No deny rules written by cgh to remove.[/dim]")
+    else:
+        console.print("[dim]No guard leftovers to clean up.[/dim]")

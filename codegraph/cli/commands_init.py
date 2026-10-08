@@ -469,69 +469,31 @@ def _print_prior_state(prior_state: dict) -> None:
     console.print()
 
 
-def _set_config_mode(root: Path, mode: str) -> bool:
-    """Set [codegraph] mode in .codegraph/config.toml, editing in place.
-    Replaces the template's commented line or an existing assignment;
-    otherwise inserts right under [codegraph]. Returns True on write."""
-    import re as _re
-
-    cfg = root / ".codegraph" / "config.toml"
-    if not cfg.exists():
-        return False
-    # errors="replace": a config.toml carrying a non-UTF-8 byte (a CP1252
-    # em dash pasted into a comment) crashed secure-mode init here. Decode
-    # leniently; the write-back below then re-encodes valid UTF-8, so the
-    # file is repaired for the tomllib reads that follow.
-    text = cfg.read_text(encoding="utf-8", errors="replace")
-    line = f'mode = "{mode}"'
-    new, n = _re.subn(
-        r'(?m)^#?\s*mode\s*=\s*"(?:assist|secure)"\s*$', line, text, count=1
-    )
-    if n == 0:
-        new, n = _re.subn(
-            r"(?m)^\[codegraph\]\s*$", "[codegraph]\n" + line, text, count=1
-        )
-    if n == 0:
-        new = text.rstrip() + "\n\n[codegraph]\n" + line + "\n"
-    cfg.write_text(new, encoding="utf-8")
-    return True
-
-
-def _maybe_enable_secure_mode(root: Path, args: argparse.Namespace, cg_style) -> None:
-    """Offer secure mode during the wizard. --secure enables it without
-    prompting (and is how parents propagate it to federated children);
-    --yes alone never changes posture, non-interactive runs must not
-    harden a repo by surprise. Already-secure repos are left alone."""
-    from codegraph.state.guard import guard_mode
-
-    if guard_mode(root) == "secure":
-        console.print('  [dim]mode = "secure" already set[/dim]\n')
-        return
-
-    wants = bool(getattr(args, "secure", False))
-    if not wants and not args.yes:
-        import questionary
-
-        wants = bool(
-            questionary.confirm(
-                "Enable secure mode? Guards fail closed, agents are denied "
-                "flagged files, egress gates switch to allowlist (default "
-                "assist warns without blocking)",
-                default=False,
-                style=cg_style,
-            ).ask()
-        )
-    if not wants:
-        return
-
-    if _set_config_mode(root, "secure"):
+def _note_deprecated_secure_flag(args: argparse.Namespace) -> None:
+    """--secure is still accepted so old scripts keep running; secure
+    mode itself was removed in 0.15.0, so the flag only says so."""
+    if getattr(args, "secure", False):
         console.print(
-            '  [green]+[/green] .codegraph/config.toml [dim](mode = "secure")[/dim]'
+            "  [yellow]--secure is deprecated and ignored:[/yellow] secure mode "
+            "was removed in 0.15.0. Use your agent's own permission rules "
+            "to keep files out of reach.\n"
         )
-        console.print(
-            "  [dim]Static deny lists sync as findings appear; run "
-            "[cyan]cgh guard sync[/cyan] anytime to refresh them.[/dim]\n"
-        )
+
+
+def _cleanup_guard_leftovers(root: Path) -> None:
+    """Remove the guard hooks older cgh versions wrote into this repo (only
+    those, identified by cgh's markers). The deny rules they wrote are kept
+    and counted, with the command that removes them."""
+    from codegraph.cli.commands_guard import print_cleanup_report
+    from codegraph.state.guard import cleanup_guard_leftovers
+
+    try:
+        report = cleanup_guard_leftovers(root)
+    except Exception as exc:  # cleanup must never abort an init
+        console.print(f"  [dim]guard cleanup skipped: {exc}[/dim]")
+        return
+    if report.changed or report.kept_rules:
+        print_cleanup_report(console, report)
 
 
 def _probe_ai_tools(root: Path, shutil) -> list[tuple[str, str, bool]]:
@@ -969,8 +931,9 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     _setup_ai_tools(root, args, cg_style)
 
-    # -- Step 3d: guard posture (assist stays the default) --
-    _maybe_enable_secure_mode(root, args, cg_style)
+    # -- Step 3d: remove what the retired guard wrote in older versions --
+    _note_deprecated_secure_flag(args)
+    _cleanup_guard_leftovers(root)
 
     _offer_federation(root, args, cg_style)
 
@@ -1250,12 +1213,6 @@ def _init_children(root: Path, assume_yes: bool) -> None:
             )
             return
 
-    # Children inherit the parent's posture: a secure parent must not
-    # federate into assist children that would leak what it blocks.
-    from codegraph.state.guard import guard_mode
-
-    secure_flag = ["--secure"] if guard_mode(root) == "secure" else []
-
     # Each child is a full sub-init subprocess and there can be many, so show
     # a live progress bar while they run (which child, how many done, elapsed)
     # instead of a long silent wait, then print the per-child results.
@@ -1294,7 +1251,6 @@ def _init_children(root: Path, assume_yes: bool) -> None:
                         str(child),
                         "--yes",
                         "--no-children",
-                        *secure_flag,
                     ],
                     capture_output=True,
                     text=True,
@@ -1399,15 +1355,6 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "label": "pre-Bash search hint",
             "target": "local",
             "command": f"{cli_prefix} _hook_precheck_bash  # cgh-precheck-bash",
-            "async": False,
-        },
-        {
-            "event": "PreToolUse",
-            "matcher": "Read|Grep|Glob|Bash",
-            "marker": "cgh-guard",
-            "label": "confidentiality guard",
-            "target": "local",
-            "command": f"{cli_prefix} _hook_guard  # cgh-guard",
             "async": False,
         },
         # Lifecycle hooks (no matcher): session continuity. PreCompact and
@@ -2230,24 +2177,13 @@ def cmd_setup(args) -> None:
     )
 
     console.print(Panel(f"[bold]Setup for {target}[/bold]", border_style="cyan"))
+    # The guard was removed in 0.15.0: drop the deny entries and guard
+    # hooks an older cgh wrote here, whatever the target.
+    _cleanup_guard_leftovers(root)
 
     for tool_key in targets:
         console.print(f"\n[bold]{tool_key}[/bold]")
         _install_integration(root, tool_key, overwrite_skills=True)
-
-        # Guard hooks, through the integration surface. Claude's ride the
-        # shared hook specs above; Gemini and Codex get their own files.
-        from codegraph.integrations.base import get_integration
-
-        integration = get_integration(tool_key)
-        if integration is not None and integration.guard_spec().level != "none":
-            if integration.install_guard(root):
-                console.print(
-                    f"    [green]+[/green] guard hook installed "
-                    f"[dim]({integration.guard_spec().level})[/dim]"
-                )
-            elif integration.guard_installed(root):
-                console.print("    [dim]• guard hook already present[/dim]")
 
         if tool_key == "claude":
             added = _configure_claude_auto_accept(root)

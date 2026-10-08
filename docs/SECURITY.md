@@ -1,45 +1,84 @@
 # Security
 
-## Findings, modes and the guard
+## What cgh is, and what it is not
+
+cgh is a local tool. It parses your repository into `.codegraph/` on
+your machine and serves that index to your agent over MCP (stdio, plus
+a loopback HTTP bridge between cgh processes). The index holds the
+same information as your source tree, organized for lookup.
+
+cgh does not decide what your agent may read. Since 0.15.0 it no
+longer installs blocking hooks or writes deny lists. To keep files out
+of an agent's reach, use that agent's own permission rules, for example
+`permissions.deny` in Claude Code settings, `.bobignore` for IBM Bob,
+or the equivalent in your tool. The agent enforces those itself, which
+an outside hook never could do reliably.
+
+## What can leave the machine
+
+cgh itself sends nothing over the network unless you turn it on.
+Installed plugins can, as described for each one below.
+
+- **Network fetch** (`fetch_and_index` MCP tool, `cgh fetch`): refused
+  unless `.codegraph/config.toml` sets `allow_fetch = true` under
+  `[codegraph]`. Even then only `http`/`https` URLs on public hosts are
+  fetched (private, loopback and link-local addresses are refused,
+  redirects included) and every fetch or refusal is written to
+  `.codegraph/activity.log`.
+- **Code generation** (`cgh-codegen`): the backend is your choice in
+  `[plugin.codegen]`. Every file it would send (the reference, a file
+  being extended) and the spec first go through a built-in secret check.
+  It is regex based and blocks known secret formats: private key blocks,
+  AWS access key ids, GCP service-account key files, GitHub, Slack and
+  Stripe live tokens, bearer tokens and hardcoded `password` / `secret` /
+  `api_key` / `token` assignments. A match refuses the run, for any
+  backend and any egress setting, and the refusal names the file and
+  line, not the value. It is best effort, not a guarantee: a secret in a
+  format it has no pattern for is sent. Before a cloud backend sees a
+  reference, an egress gate also checks its findings (below), and every
+  cloud call is logged.
+- **Summaries** (`cgh-summarize`, frozen): since 0.3.0 it uses local
+  backends only (a loopback Ollama or OpenAI-compatible server) and
+  runs only when you call `cgh summarize run`.
+- **Vision** (`cgh-vision`): images go to the endpoint you configure.
+  A loopback URL stays on the machine; any other URL receives the image
+  bytes, and each such call is logged.
+- **Bug reports** (`cgh-bugreport`): crash reports stay in a local
+  spool until you run `cgh bug send`, which shows the payload and asks
+  before sending (skip the question with `--yes`).
+
+## Findings and the egress gate
 
 Scanner plugins attach **findings** to files (`pii.email`,
 `secret.aws_key`, `confidential`, `summary`, ...), stored in SQLite next
-to the index and queryable anytime with `cgh findings` or the federated
-`findings` MCP tool, even while a server is running.
+to the index and queryable with `cgh findings` or the federated
+`findings` MCP tool.
 
-One switch names your posture in `.codegraph/config.toml`:
+The egress gate in cgh-codegen reads them: a file flagged
+`confidential = true` or carrying a block-severity finding (private
+keys, cloud credentials) is not sent to a cloud backend, and neither is
+a file with PII findings unless `allow_pii = true`. A plugin's own
+`egress = "strict"` setting turns the gate into an allowlist: only
+files a human labeled non-confidential (`cgh classify label --not`) go
+out.
 
-```toml
-[codegraph]
-mode = "assist"   # default: optimize for token savings and flow
-# mode = "secure" # assist + enforcement: nothing turns off, gates are added
-```
+Findings only exist for what a scanner recorded: cgh-pii and
+cgh-classify write them at index time only with `scan_on_index = true`.
+Without them the gate has no PII or confidentiality labels to act on;
+secrets are still caught by cgh-codegen's own check, which reads the
+file itself. An `egress` value other than `"open"` or `"strict"` is
+treated as `"strict"`. Run `cgh pii scan` to check a tree for secrets on
+demand; it knows three secret shapes (AWS access key ids, PEM private
+keys, hardcoded `password` / `secret` / `api_key` / `token` assignments),
+so a clean run is best effort, not proof the tree holds no secret. The
+PII and secret patterns are regex based. They catch common shapes and
+miss what they have no pattern for, so treat the gate as a useful
+filter, not a guarantee. Findings are stored as the scanner reported
+them. Repos indexed before 0.15.0 with `mode = "secure"` may still
+hold pseudonyms such as `<pii.email:3fa2c1b4d5>` for older findings;
+they are left as they are.
 
-What the findings feed:
-
-- **The egress gate** (cgh-summarize): a file flagged confidential, or
-  carrying secrets or PII, never reaches a cloud model. In `secure`
-  mode the gate is an allowlist: only files a human labeled
-  non-confidential go out. Every cloud send is logged.
-- **The guard**: `cgh init` / `cgh setup` install pre-tool-use hooks in
-  your agents, so the agent's own Read, Grep and shell calls are denied
-  on flagged files, with a named reason. `cgh guard status` shows the
-  honest per-agent map: Claude Code and Gemini CLI enforce (read and
-  shell veto), Codex CLI is partial (shell veto only), IBM Bob is
-  partial (static `.bobignore` denies), agents without a veto surface
-  are listed unprotected. In `secure` mode the guard fails closed and
-  flagged paths also sync into static deny lists (Claude settings,
-  `.bobignore`).
-
-This is policy enforcement inside cooperating agent frameworks, not a
-sandbox: an agent free to run arbitrary code can read what the OS
-allows. The guard narrows the path; `mode = "secure"` narrows it hard.
-
----
-
-## Security
-
-### MCP Auth Key
+## MCP auth key
 
 `cgh init` generates a cryptographic auth key at `.codegraph/auth.key` (auto-added to `.gitignore`). The owner process and every worker / CLI caller read that file and send it as a `Bearer` token to the owner's loopback HTTP bridge, which compares it in constant time. The file contents are the shared secret: there is no environment-variable hand-off.
 
@@ -50,26 +89,20 @@ cgh init          # generates the key and the .codegraph/ index dir
 
 The key file has `600` permissions and the `.codegraph/` directory is `700` (owner-only). Never commit either to git.
 
-### Sensitive data at rest (secure mode)
+## Upgrading from secure mode
 
-In `mode = "secure"`, the index never stores the sensitive datum
-itself. Every `pii.*` and `secret.*` finding value is replaced at
-write time by a keyed one-way pseudonym (`<pii.email:3fa2c1b4d5>`),
-computed with a per-repo HMAC key (`.codegraph/pseudo.key`, `600`).
-Pseudonyms are stable, so dedup and cross-file search keep working,
-but irreversible: reading the SQLite files directly, even with the
-key, yields nothing recoverable, because HMAC does not decode and
-the raw value was never written.
-
-The guard closes the direct path too: in secure mode an agent's Read,
-Grep or shell call touching `.codegraph/` is denied with a reason
-pointing at the MCP tools, and the static deny lists (Claude settings,
-`.bobignore`) carry a standing index entry. This is policy inside
-cooperating agent frameworks, not a sandbox; the pseudonymization is
-what protects against a process that reads the files anyway: there is
-nothing sensitive in them to find.
-
----
+`mode = "secure"` was removed in 0.15.0. A config that still sets it
+loads with the normal behavior, prints a one-line notice on stderr, and
+`cgh status` / `cgh doctor` show the same notice; delete the line to
+silence it. `cgh init`, `cgh setup` and `cgh guard` remove the guard
+hooks cgh had added to Claude Code, Gemini CLI and Codex configs (they do
+nothing any more). They keep the deny rules cgh had written to
+`.claude/settings.local.json` and its managed block in `.bobignore`,
+since those still keep files from your agent, and print how many remain.
+`cgh guard --remove-rules` removes exactly those (the deny rules recorded
+in `.codegraph/guard_denies.json` and the managed block) and the sidecar.
+Entries you wrote yourself are left alone either way. See
+[UPGRADING-0.15.md](UPGRADING-0.15.md).
 
 ---
 

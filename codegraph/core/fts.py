@@ -16,6 +16,7 @@ import logging
 import re
 import sqlite3
 import threading
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -373,17 +374,434 @@ def _match_rowids(
     return []
 
 
+# ---------------------------------------------------------------------------
+# Prose queries: a sentence handed to FTS5 as-is is an implicit AND of every
+# word (stopwords included) and almost never matches. These helpers turn free
+# text into an OR of its meaningful terms, each quoted so user text cannot
+# inject FTS5 syntax.
+# ---------------------------------------------------------------------------
+
+STOPWORDS_EN = frozenset(
+    [
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "while",
+        "when",
+        "where",
+        "why",
+        "how",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "having",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "done",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "without",
+        "to",
+        "from",
+        "into",
+        "onto",
+        "off",
+        "over",
+        "under",
+        "above",
+        "below",
+        "up",
+        "down",
+        "out",
+        "about",
+        "as",
+        "per",
+        "via",
+        "vs",
+        "versus",
+        "through",
+        "across",
+        "after",
+        "before",
+        "during",
+        "between",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "there",
+        "here",
+        "also",
+        "more",
+        "most",
+        "less",
+        "some",
+        "any",
+        "each",
+        "all",
+        "every",
+        "few",
+        "many",
+        "much",
+        "no",
+        "nor",
+        "not",
+        "such",
+        "than",
+        "too",
+        "very",
+        "so",
+        "only",
+        "just",
+        "both",
+        "either",
+        "neither",
+        "etc",
+        "eg",
+        "ie",
+        "me",
+        "my",
+        "our",
+        "ours",
+        "us",
+        "you",
+        "your",
+        "yours",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "we",
+        "i",
+        "am",
+        "get",
+        "gets",
+        "got",
+        "use",
+        "used",
+        "using",
+        "make",
+        "makes",
+        "let",
+        "lets",
+        "need",
+        "needs",
+        "want",
+        "wants",
+    ]
+)
+
+STOPWORDS_FR = frozenset(
+    [
+        "le",
+        "la",
+        "les",
+        "l",
+        "un",
+        "une",
+        "des",
+        "du",
+        "de",
+        "d",
+        "et",
+        "ou",
+        "a",
+        "à",
+        "au",
+        "aux",
+        "en",
+        "dans",
+        "sur",
+        "sous",
+        "pour",
+        "par",
+        "avec",
+        "sans",
+        "chez",
+        "vers",
+        "entre",
+        "depuis",
+        "pendant",
+        "avant",
+        "après",
+        "que",
+        "qu",
+        "qui",
+        "quoi",
+        "dont",
+        "ne",
+        "n",
+        "pas",
+        "plus",
+        "moins",
+        "non",
+        "oui",
+        "est",
+        "sont",
+        "être",
+        "etre",
+        "été",
+        "ete",
+        "avoir",
+        "a",
+        "ont",
+        "ai",
+        "as",
+        "avons",
+        "avez",
+        "avait",
+        "avaient",
+        "sera",
+        "seront",
+        "serait",
+        "fait",
+        "faire",
+        "ce",
+        "c",
+        "cet",
+        "cette",
+        "ces",
+        "ceci",
+        "cela",
+        "ça",
+        "il",
+        "elle",
+        "ils",
+        "elles",
+        "on",
+        "nous",
+        "vous",
+        "je",
+        "j",
+        "tu",
+        "se",
+        "s",
+        "sa",
+        "son",
+        "ses",
+        "leur",
+        "leurs",
+        "y",
+        "mon",
+        "ma",
+        "mes",
+        "ton",
+        "ta",
+        "tes",
+        "notre",
+        "nos",
+        "votre",
+        "vos",
+        "lui",
+        "eux",
+        "me",
+        "m",
+        "te",
+        "t",
+        "moi",
+        "toi",
+        "comme",
+        "mais",
+        "donc",
+        "car",
+        "si",
+        "quand",
+        "lors",
+        "lorsque",
+        "alors",
+        "ainsi",
+        "aussi",
+        "très",
+        "tres",
+        "tout",
+        "tous",
+        "toute",
+        "toutes",
+        "même",
+        "meme",
+        "autre",
+        "autres",
+        "quel",
+        "quelle",
+        "quels",
+        "quelles",
+        "comment",
+        "pourquoi",
+        "où",
+        "cas",
+        "faut",
+        "doit",
+        "peut",
+        "peuvent",
+    ]
+)
+
+
+def fold_accents(word: str) -> str:
+    """Lowercase and strip diacritics: "Être" -> "etre"."""
+    decomposed = unicodedata.normalize("NFKD", word.lower())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+# Compared on the folded form, so "à", "a", "été" and "ete" all hit.
+STOPWORDS = frozenset(fold_accents(w) for w in STOPWORDS_EN | STOPWORDS_FR)
+
+# Apostrophes (straight, typographic, backtick) separate an elided article
+# from its word: "l'utilisateur" -> "l utilisateur".
+_APOSTROPHES = re.compile(r"['’‘ʼ`]")
+_WORD = re.compile(r"[^\W_]+", flags=re.UNICODE)
+_MAX_PROSE_TERMS = 32
+
+
+def prose_terms(text: str, min_len: int = 2) -> list[str]:
+    """Meaningful terms of a free-text query, deduplicated in order.
+
+    Elided articles are split off at the apostrophe, stopwords (English and
+    French, compared without accents) are dropped, and camelCase / snake_case
+    identifiers contribute both their whole form and their parts so they
+    match the word-split symbol names as well as raw docstrings.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        folded = fold_accents(term)
+        if len(folded) < min_len or folded in STOPWORDS or folded.isdigit():
+            return
+        if folded not in seen:
+            seen.add(folded)
+            out.append(term.lower())
+
+    for raw in re.split(r"\s+", _APOSTROPHES.sub(" ", text)):
+        for word in _WORD.findall(raw):
+            _add(word)
+            parts = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", word).split()
+            if len(parts) > 1:
+                for part in parts:
+                    _add(part)
+    return out[:_MAX_PROSE_TERMS]
+
+
+def prose_match_query(text: str) -> str:
+    """FTS5 MATCH expression for free text: an OR of quoted terms.
+
+    Each term is wrapped in double quotes (terms hold only word characters,
+    so there is nothing left to escape), which keeps FTS5 operators, column
+    filters, parentheses and stray quotes in user text from being parsed.
+    Returns "" when nothing meaningful is left.
+    """
+    return " OR ".join(f'"{t}"' for t in prose_terms(text))
+
+
+def _prose_search(
+    conn: sqlite3.Connection,
+    text: str,
+    limit: int,
+    kind_filter: str | None,
+) -> list[FTSResult]:
+    """BM25-ranked OR search over symbol names and docstrings.
+
+    The score is the negated bm25 value, so higher is better. Name and
+    docstring weigh the same: a heavier name column pushed test functions
+    named after the words above the docs explaining them. The docstring field carries an FTS5
+    snippet around the matched terms rather than the leading characters.
+    """
+    match = prose_match_query(text)
+    if not match:
+        return []
+    sql = (
+        "SELECT s.kind, s.name, s.file_path, s.start_line, s.end_line, "
+        "snippet(symbols_fts, 1, '', '', '...', 24), "
+        "bm25(symbols_fts) AS score "
+        "FROM symbols_fts JOIN symbols s ON s.rowid = symbols_fts.rowid "
+        "WHERE symbols_fts MATCH ?"
+    )
+    params: list = [match]
+    if kind_filter:
+        sql += " AND s.kind = ?"
+        params.append(kind_filter)
+    sql += " ORDER BY score LIMIT ?"
+    params.append(limit)
+    try:
+        with _FTS_LOCK:
+            rows = conn.execute(sql, params).fetchall()
+    except sqlite3.DatabaseError as exc:
+        _log.warning("fts prose search failed: %s", exc)
+        return []
+    return [
+        FTSResult(
+            kind=row[0],
+            name=row[1],
+            file_path=row[2],
+            start_line=row[3],
+            end_line=row[4],
+            docstring=(row[5] or "")[:200],
+            score=-float(row[6]),
+        )
+        for row in rows
+    ]
+
+
 def fts_search(
     conn: sqlite3.Connection,
     query: str,
     limit: int = 15,
     kind_filter: str | None = None,
+    prose: bool = False,
 ) -> list[FTSResult]:
     """
     Search symbols by name or docstring, fusing a tokenized BM25 ranking
     with a trigram substring ranking (RRF). Falls back to LIKE if both
     FTS indexes fail.
+
+    ``prose=True`` treats the query as free text (see :func:`prose_terms`):
+    an OR of its non-stopword terms ranked by bm25. In the default mode a
+    query that matches nothing as written, a sentence for instance, is
+    retried that way before the LIKE fallback.
     """
+    if prose:
+        return _prose_search(conn, query, limit, kind_filter)
+
     results = []
 
     # Fuse the word-tokenized BM25 ranking with the trigram substring
@@ -422,6 +840,13 @@ def fts_search(
                     score=1.0 / (i + 1),
                 )
             )
+
+    # A sentence matches nothing as an implicit AND of every word, and a query
+    # carrying FTS5 syntax characters fails to parse. Retry as free text.
+    if not results:
+        terms = prose_terms(query)
+        if terms and " ".join(terms) != query.strip().lower():
+            results = _prose_search(conn, query, limit, kind_filter)
 
     # Fallback: LIKE search if FTS returned nothing
     if not results:

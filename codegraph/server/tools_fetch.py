@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP tools to fetch a URL into the searchable index and
 #              query it. A fetch is gated network egress (http/https,
-#              no private hosts, off in secure mode unless allow_fetch,
+#              no private hosts, off unless allow_fetch = true,
 #              always audited); search_fetched then reads it back with
 #              zero further network. Caches by URL with a TTL.
 
@@ -24,8 +24,8 @@ def register(mcp) -> None:
     def fetch_and_index(url: str, ttl_hours: float = 24.0, force: bool = False) -> str:
         """Fetch a URL, reduce it to text, chunk and index it for
         search_fetched. http/https only; private, loopback and
-        link-local hosts are refused (SSRF); refused in secure mode
-        unless [codegraph] allow_fetch is set; every fetch is audited.
+        link-local hosts are refused (SSRF); refused unless
+        [codegraph] allow_fetch = true is set; every fetch is audited.
         A re-fetch inside ttl_hours returns the cached count."""
         from codegraph.analysis.fetch_index import FetchError
         from codegraph.analysis.fetch_index import fetch_and_index as _fi

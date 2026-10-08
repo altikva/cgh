@@ -21,11 +21,11 @@ cgh serve --root .
 The binary ships in two variants, and this launcher picks between them:
 
 - **Sealed (default).** The core graph, the MCP tools, memory / plans /
-  knowledge, and the local-only plugins (PII scrubbing, classification). It
+  knowledge, and the local-only document parsers (pdf, docx, xlsx). It
   contains no code that can reach the network, so it cannot phone home.
-- **Egress.** Adds the plugins that can call an external model (code
-  generation, summarization, bug reports). They stay behind cgh's egress gate
-  and do nothing until configured, and can target a local model too.
+- **Egress.** Adds the plugins that can reach the network (code generation,
+  bug reports). They do nothing until configured or invoked, and code
+  generation can target a local model too.
 
 ```bash
 npx @altikva/cgh --egress serve        # fetch and run the egress build
@@ -38,11 +38,12 @@ straight to `cgh`.
 ## What you get vs pip / uvx
 
 This launcher runs the **light SQLite build**. If you want DuckDB's analytical
-speed, or the heavy `docs` / `vision` plugins, install with Python instead:
+speed, or the opt-in plugins (pii, vision), install with Python instead:
 
 ```bash
 uvx cgh serve                 # bundles DuckDB
-pip install "cgh[full]"       # DuckDB + every first-party plugin
+pip install "cgh[full]"       # DuckDB + the default first-party plugins
+pip install cgh-pii cgh-vision  # the opt-in ones
 ```
 
 ## Environment

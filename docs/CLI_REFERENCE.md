@@ -74,6 +74,11 @@ live owner both blocks the read and would leave a half-written copy. The target
 mints its own `auth.key` rather than sharing the source's, and the scanners
 regenerate the finding store on the next pass.
 
+The source's `config.toml` is copied with two exceptions. Its `subrepos` list
+is dropped, since those paths point at other checkouts on their own branches;
+init prints the `cgh federate add` lines to restore the ones this checkout
+should query. And the target keeps its own `[plugins]` table.
+
 ### `reset`
 
 Nuke the graph + FTS DBs, stop this repo's owner (owners of other repos are left alone), and re-index from scratch. Useful after schema migrations or when the graph gets into a weird state.
@@ -243,12 +248,15 @@ cgh stop [--root DIR]
 Fuzzy search symbols (functions, classes, doc sections) by substring match.
 
 ```
-cgh search <query> [--limit N | -n N] [--json] [--root DIR]
+cgh search <query> [--limit N | -n N] [--offset N] [--json] [--root DIR]
+cgh search --text "<prose>" [--limit N | -n N] [--json] [--root DIR]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--limit`, `-n` | 20 | Maximum results |
+| `--text`, `-t` | | Free-text search instead of a symbol-name match (see below) |
+| `--limit`, `-n` | 100, 20 with `--text` | Maximum results |
+| `--offset`, `-o` | 0 | Skip the first N results (name search only) |
 | `--json` | | Output as JSON instead of a table |
 
 **Example:**
@@ -258,6 +266,35 @@ cgh search "Handler"
 cgh search "receipt" --limit 5
 cgh search "validate" --json
 ```
+
+#### Free-text search with `--text`
+
+`--text` searches the full-text index (symbol names, docstrings and Markdown
+sections, the same store as the `fts_search` MCP tool) with a sentence, such
+as the prose of a ticket. A sentence handed to FTS5 as written requires every
+word, so it rarely matches. `--text` keeps only the meaningful terms and
+matches any of them, ranked by bm25:
+
+- English and French stopwords are dropped, compared without accents
+  (`à`, `a`, `été` and `ete` are all stopwords).
+- Elided articles are split at the apostrophe: `l'utilisateur` searches
+  `utilisateur`.
+- camelCase identifiers also contribute their parts.
+- Every term is quoted, so FTS5 operators, quotes or parentheses in the text
+  cannot break the query.
+
+```bash
+cgh search --text "comment le serveur gère la reprise de session après un clear"
+cgh search --text "where is an expired token rejected" -n 5 --json
+```
+
+`--json` prints `{text, terms, returned, results}`, each result being
+`{scope, file, line, symbol, kind, snippet, score}`. The score is the negated
+bm25 value (higher is better) and is relative to one repo's index; in a
+federated workspace each subrepo is searched too and tagged with its `scope`.
+
+The search opens the FTS store read-only through SQLite, so it works while the
+repo's MCP owner is running (only the graph DB is write-locked).
 
 ---
 

@@ -34,7 +34,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `egress = "strict"` for the allowlist. cgh-bugreport always shows the
   payload before sending unless `--yes`.
 
+### Added
+- **`cgh search --text "<prose>"` searches the full-text index with a
+  sentence.** Looking up a ticket's prose meant importing the internal search
+  function by hand, and a sentence passed as is matched nothing because every
+  word was required. `--text` drops English and French stopwords, splits
+  elided articles (`l'utilisateur`), matches any remaining term ranked by
+  bm25, and takes `--limit` and `--json`. It reads the index read-only, so it
+  works while the owner runs. The `fts_search` MCP tool now retries a query
+  that matches nothing as written the same way; its response is unchanged.
+
 ### Fixed
+- **cgh could fail to start with pydantic 2.14** when an older fastmcp was
+  installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed.
+  The fastmcp floor is now 2.12.
 - **Links to `github.com/altikva/codegraph` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`
   pointed there; they now point at `github.com/altikva/cgh`.

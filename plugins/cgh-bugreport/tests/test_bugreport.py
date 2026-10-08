@@ -67,6 +67,27 @@ class TestAllowlistPayload:
         assert payload["exception_type"] == "KeyError"
         assert payload["command"] == "index"  # name only, arguments dropped
 
+    @pytest.mark.parametrize(
+        "hex_id",
+        [
+            "00491701234567890000000000000000",  # 00 + digits: a phone number
+            "41111111111111110000000000000000",  # Luhn-valid Visa test number
+            "00000000000000000000000000000000",
+        ],
+    )
+    def test_random_report_id_never_trips_the_wire(self, monkeypatch, hex_id):
+        """The report id is the payload's only random field; an unlucky draw
+        used to read as a phone number and the whole report was refused."""
+        import uuid
+
+        import cgh_bugreport.payload as payload_mod
+
+        pytest.importorskip("cgh_pii")
+        monkeypatch.setattr(payload_mod.uuid, "uuid4", lambda: uuid.UUID(hex_id))
+        exc_type, exc, tb = _capture(_boom_external)
+        payload = build_report(exc_type, exc, tb, command="index")
+        assert len(payload["report_id"]) == 12
+
     def test_frames_outside_cgh_reduce_to_external(self):
         exc_type, exc, tb = _capture(_boom_in_cgh)
         payload = build_report(exc_type, exc, tb)

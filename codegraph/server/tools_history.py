@@ -37,10 +37,26 @@ def register(mcp) -> None:
     @_logged_tool
     def hotspots(limit: int = 20) -> str:
         """
-        Where would a regression hurt most?
-        Ranks files that change often in git AND are imported by many
-        files: review and refactor targets, and code to touch carefully. Who
-        knows a file: who_knows.
+        Change-risk hotspots: files that churn a lot AND are central to the
+        import graph. High-churn code that many files depend on is where a
+        regression hurts most, so this surfaces refactor / review targets.
+
+        We join two signals per file:
+          - churn: commit count + recency, from `git log` over the parent
+            repo (analysis.churn.file_churn, bounded to the last N commits).
+          - centrality: in-degree, the number of files that import this one,
+            counted over the IMPORTS edge via the GraphDB protocol.
+
+        Score formula (each term in 0..1, higher is riskier):
+          commit_term = log1p(commits) / log1p(max_commits)
+          import_term = log1p(importers) / log1p(max_importers)
+          recency_term = 1 / (1 + age_days / 30)   # ~1 today, ~0.5 at 30d
+          score = round(100 * (0.45*commit_term
+                               + 0.35*import_term
+                               + 0.20*recency_term), 2)
+        Churn dominates, centrality is the multiplier that says "and it
+        matters", recency is a lighter freshness nudge. log1p compresses a
+        few hot files so they do not crush the scale.
 
         Args:
           limit: how many top files to return (default 20).
@@ -144,10 +160,9 @@ def register(mcp) -> None:
     @_logged_tool
     def who_knows(file_path: str) -> str:
         """
-        Who knows this file?
-        Top authors of `file_path` by commit count and recency, from git
-        log. Use it to pick a reviewer or see who last changed code you are
-        about to edit.
+        Who knows this file: the top authors by commit count and recency,
+        rolled up from `git log -- <file>`. Use it to find a reviewer or to
+        learn who last touched code you are about to change.
 
         Args:
           file_path: repo-relative or absolute path to the file.

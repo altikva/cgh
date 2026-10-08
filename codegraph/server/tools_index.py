@@ -47,11 +47,9 @@ def register(mcp) -> None:
     @_logged_tool
     def scan_repo(verbose: bool = False) -> str:
         """
-        How do I rebuild the whole index?
-        Full reindex of the repository: slow on a large repo. Last resort,
-        when incremental_reindex is not enough or the index looks wrong;
-        refused while another index of this repo runs. Returns files
-        indexed, errors and time taken.
+        Full re-index of the entire repository.
+        Call this after major changes (branch switch, rebase, pull) to refresh
+        the graph. Returns stats: files indexed, errors, time elapsed.
         """
         from codegraph.core.db import reset_connection
         from codegraph.indexer import index_repo
@@ -72,12 +70,12 @@ def register(mcp) -> None:
     @_logged_tool
     def force_index(paths: list[str], confirmed: bool = False) -> str:
         """
-        How do I index files that .gitignore excludes?
-        Indexes `paths` even if .gitignore or .git/info/exclude ignores
-        them, bypassing ignore rules and the mtime cache. This bypasses
-        safety filters: always ask the user. Call with confirmed=False to
-        preview, then confirmed=True after approval. Tracked files never
-        need it.
+        Force-index specific files or directories, even if they are in .gitignore
+        or .git/info/exclude. Bypasses all ignore rules and mtime cache.
+
+        IMPORTANT: This bypasses safety filters. Always confirm with the user first.
+        Call once with confirmed=False (default) to preview what will be indexed,
+        then call again with confirmed=True after user approval.
 
         Args:
             paths: list of file or directory paths (relative to repo root or absolute)
@@ -191,13 +189,15 @@ def register(mcp) -> None:
     @_logged_tool
     def incremental_reindex() -> str:
         """
-        How do I refresh the index after a pull, checkout or rebase?
-        Reindexes only the files whose git blob changed since the last scan
-        and advances the freshness marker scan_status reads. Call it when
-        scan_status says stale; installed git hooks (`cgh hooks install`)
-        run it after pull, merge, checkout and rebase. Falls back to a full
-        scan on a very old index. Returns {mode, reindexed_count,
-        deleted_count, unchanged_count, errors, elapsed_s}.
+        Surgical reindex: compare stored git blob SHAs to the current HEAD
+        and re-index only files whose content changed. Much faster than
+        scan_repo after `git pull`, `git checkout <branch>`, or `git rebase`.
+
+        Falls back automatically to a full scan if the index is too old
+        (pre-0.4 DB without blob SHA tracking).
+
+        Returns JSON: {mode, reindexed_count, deleted_count, unchanged_count,
+        errors, elapsed_s}.
         """
         from codegraph.indexer import incremental_reindex as _incr
 
@@ -218,13 +218,24 @@ def register(mcp) -> None:
     @_logged_tool
     def scan_status() -> str:
         """
-        Is the index up to date with git?
-        Call before trusting graph results after a branch switch, pull,
-        rebase or many edits. Returns fresh, indexed_sha, current_sha,
-        behind_by, dirty, changed_files, and `indexing` ({pid, since} while
-        an index runs). Stale: incremental_reindex. While `indexing` is set
-        (even with indexed_sha null on a first index), wait; do not start
-        scan_repo, it would be refused.
+        Report whether the code graph is fresh relative to the current git HEAD.
+
+        Call this BEFORE trusting symbol_lookup/find_callers results if the user
+        mentions a branch switch, rebase, pull, or recent edits. When `fresh` is
+        false, call scan_repo to refresh the index.
+
+        Returns JSON with:
+          fresh, true if indexed sha == HEAD and working tree is clean
+          indexed_sha, git commit the graph was built at
+          indexed_at, ISO timestamp of last scan
+          current_sha, git HEAD now
+          behind_by, commits between indexed and HEAD
+          dirty, working tree has uncommitted changes
+          changed_files, files modified since indexed_sha (up to 200)
+          indexing, {pid, since} while an index of this repo is running, else
+            null. During a first index indexed_sha is still null: wait for it
+            to finish instead of concluding the repo was never indexed, and
+            do not start scan_repo, which would be refused as a duplicate.
         """
         from codegraph.state.scan_meta import scan_status as _scan_status
 
@@ -242,11 +253,18 @@ def register(mcp) -> None:
     @_logged_tool
     def add_directory(path: str) -> str:
         """
-        How do I add a sibling repo or folder to the graph?
-        Adds `path` (relative to the repo root or absolute) to extra_dirs in
-        .codegraph/config.toml, indexes it now and extends the watcher, no
-        restart. Use when the user wants cross-repo lookups into a related
-        project.
+        Add an external directory to the code graph and hot-index it.
+
+        Use this when the user wants to include a related repo or sub-project
+        in the graph so cross-repo symbol lookups work (e.g., a frontend repo
+        while this MCP server runs inside the backend repo).
+
+        Behavior:
+        - Resolves the path relative to the repo root
+        - Persists it to .codegraph/config.toml (extra_dirs)
+        - Immediately scans all parseable files in the directory
+        - Extends the file watcher to include the new path (hot reload,
+          no need to restart the MCP server)
 
         Args:
             path: absolute or relative path to a directory (e.g., "../frontend")
@@ -392,10 +410,8 @@ def register(mcp) -> None:
     @_logged_tool
     def index_changed_files(since: str = "HEAD~1") -> str:
         """
-        How do I reindex just the files changed since a git ref?
-        Reindexes the files changed since `since` (default HEAD~1, "staged"
-        for staged files). Rarely needed: the watcher reindexes files on
-        save. After a pull or branch switch prefer incremental_reindex.
+        Re-index only files changed since a git ref (default: last commit).
+        Much faster than a full scan, perfect for post-commit or mid-work refresh.
 
         Args:
             since: git ref to diff against ("HEAD~1", "main", "abc1234", "HEAD")

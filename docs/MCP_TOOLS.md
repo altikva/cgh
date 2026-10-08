@@ -1,110 +1,95 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus whatever installed plugins register. Each tool's description opens with the question it answers, says when to pick another tool, and is kept short because every agent session loads all of them.
+When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus whatever installed plugins register.
 
-Questions about the code go to the code tools. `knowledge_search` searches notes saved in earlier sessions, never the code.
+### Architecture Awareness (call these FIRST)
 
-### Find code
+| Tool | Description |
+|------|-------------|
+| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries: no Read needed |
+| `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
+| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers: works cross-repo when `extra_dirs` is configured |
 
-| Tool | Question it answers |
-|------|---------------------|
-| `symbol_lookup(name, role?, layer?)` | Where is X defined? (function, class, TF resource, doc section) |
-| `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Which symbols have a name like X? (half-known name) |
-| `fts_search(query, limit?, kind?)` | Where is the code that does this, described in words? A whole sentence works, French or English |
-| `pattern_search(pattern, glob?, regex?, case_sensitive?, max_results?)` | Where does this exact string or regex occur? Use instead of Grep, `git grep`, `rg` |
-| `context_for_task(task, max_nodes?, session_id?, include_shown?)` | What code, notes and plans matter for this task? Call first on a coding task |
-| `find_callers(fn_name)` | Who calls X? |
-| `find_callees(fn_name, max_depth?)` | What does X call? `max_depth > 1` follows the chain in one call |
-| `file_summary(file_path)` | What is in this file, before I read it? |
-| `imports_of(file_path)` | What does this file import? |
-| `subgraph(file_path, depth?)` | Which files does this file import, and which import it? |
-| `path_between(src, dst, edge?)` | How does A reach B? (over `CALLS` or `IMPORTS`) |
+### Code Navigation
 
-### Structure
+| Tool | Description |
+|------|-------------|
+| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters |
+| `find_callers(fn_name)` | Find all functions that call `fn_name` |
+| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
+| `imports_of(file_path)` | List modules imported by a file |
+| `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
+| `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
+| `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
+| `graph_stats()` | Node and edge counts per type |
 
-| Tool | Question it answers |
-|------|---------------------|
-| `architecture_overview(max_files_per_role?)` | How is this codebase organised? Files by layer and role, no Read needed |
-| `domain_map(keyword, limit_per_role?)` | Which files touch this feature? |
-| `endpoints(path_pattern?, method?)` | Which HTTP routes exist, and which handler serves each? |
+### Code Intelligence
 
-### Change impact and tests
+| Tool | Description |
+|------|-------------|
+| `file_summary(file_path)` | One-shot orientation for a file: role/layer/lang, its functions and classes with line ranges, what it imports, and who imports it |
+| `impact_of(symbol_or_file, max_depth?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints |
+| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS` |
+| `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
+| `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
+| `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
+| `untested(role?, layer?)` | Source files that no test file imports |
+| `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
+| `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |
 
-| Tool | Question it answers |
-|------|---------------------|
-| `impact_of(symbol_or_file, max_depth?, focus?)` | What depends on this symbol or file? (transitive callers or importers) |
-| `impact_report(changed_files)` | What does this change set break, and which tests should I run? Same payload as `cgh impact --json` |
-| `tests_for(symbol_or_file)` | Which tests cover this symbol or file? |
-| `untested(role?, layer?)` | Which source files have no test? |
-| `find_dead_code(file_path?, include_private?)` | What code looks unused? Per-scope candidates, never a verdict |
-| `import_cycles(limit?)` | Are there import cycles? |
-| `hotspots(limit?)` | Where would a regression hurt most? (git churn x import centrality) |
-| `who_knows(file_path)` | Who knows this file? (top authors from git history) |
+### Documentation
 
-### Documentation and diagrams
+| Tool | Description |
+|------|-------------|
+| `search_docs(query, limit?)` | Search Markdown by heading title or body content |
+| `doc_outline(file_path)` | Table of contents of a Markdown file |
+| `doc_refs(symbol_name)` | Find all docs that reference a code symbol |
 
-| Tool | Question it answers |
-|------|---------------------|
-| `search_docs(query, limit?)` | Which Markdown doc covers this topic? |
-| `doc_outline(file_path)` | What sections does this Markdown file have? |
-| `doc_refs(symbol_name)` | Which docs mention this symbol? |
-| `visualize_graph(scope?, file_path?, symbol_name?, max_nodes?, format?)` | Can I see these relationships as a diagram? (Mermaid or DOT) |
+### Full-Text & AI Context
 
-### Notes, memory, plans and sessions (not the code)
+| Tool | Description |
+|------|-------------|
+| `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
+| `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task |
+| `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
+| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[codegraph] allow_fetch = true`) |
+| `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |
+| `purge_fetched(url?)` | Drop one URL's chunks, or all fetched content |
 
-| Tool | Question it answers |
-|------|---------------------|
-| `knowledge_search(query, kind?, limit?, scope?)` | Was this problem solved or decided before? |
-| `knowledge_list(kind?, limit?, offset?, session_id?, tag?)` | What notes were saved in earlier sessions? |
-| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | How do I save what I just learned for future sessions? |
-| `knowledge_terms(min_count?)` | Which topics do the saved notes cover? |
-| `knowledge_forget(entry_id)` | How do I delete a saved note? |
-| `memory_search(query, kind?, limit?)` | What did the user tell me before about this? |
-| `memory_list(kind?)` | Which memory entries exist? |
-| `plan_search(query, limit?)` | Is there a plan for this already? |
-| `plan_list(agent_only?, limit?)` | Which plan files exist? |
-| `resume(session_id?, task?, budget_kb?, scope?)` | Where did the last session leave off? Once at session start |
-| `checkpoint(session_id, digest, title?)` | How do I save where this task stands before a clear or compaction? |
-| `compact_session(session_id, digest, title?, tags?, file_refs?)` | How do I keep a summary of this whole session as a note? |
-| `session_reset(session_id)` | How do I let `context_for_task` show already-seen results again? |
+### Indexing
 
-### Index maintenance
+| Tool | Description |
+|------|-------------|
+| `scan_repo(verbose?)` | Full re-index of the entire repo |
+| `index_changed_files(since?)` | Re-index only files changed since a git ref |
+| `force_index(paths, confirmed?)` | Index files bypassing .gitignore (requires confirmation) |
 
-The watcher reindexes saved files and the git hooks (`cgh hooks install`) run `incremental_reindex` after pull, merge, checkout and rebase, so an agent rarely calls these. `scan_status` is the one to check when results look stale.
+### Visualization
 
-| Tool | Question it answers |
-|------|---------------------|
-| `scan_status()` | Is the index up to date with git? |
-| `incremental_reindex()` | How do I refresh the index after a pull, checkout or rebase? |
-| `index_changed_files(since?)` | How do I reindex just the files changed since a git ref? |
-| `scan_repo(verbose?)` | How do I rebuild the whole index? (last resort) |
-| `force_index(paths, confirmed?)` | How do I index files that .gitignore excludes? Preview, then confirm with the user |
-| `add_directory(path)` | How do I add a sibling repo or folder to the graph? |
-| `memory_rescan()` | How do I make a memory file I just edited searchable? |
-| `plan_rescan()` | How do I make a plan I just wrote searchable? |
+| Tool | Description |
+|------|-------------|
+| `visualize_graph(scope, file_path?, symbol_name?, max_nodes?, format?)` | Generate Mermaid or Graphviz diagrams |
 
-### Diagnostics
+### Statistics
 
-| Tool | Question it answers |
-|------|---------------------|
-| `graph_stats()` | Is the index populated? |
-| `live_graph_stats()` | How big and how fresh is the index right now? |
-| `indexed_files(pattern?, limit?, path?)` | Is this file indexed, or which files are? |
-| `call_stats()` | How has cgh been used in this repo? Includes `by_origin`: agent, hook, cli or internal |
-| `findings(file_path?, key_prefix?, severity?, limit?)` | What do cgh's scanners know about these files? |
+| Tool | Description |
+|------|-------------|
+| `call_stats()` | MCP tool usage statistics (calls, latency, errors) |
+| `live_graph_stats()` | Polling-friendly snapshot: node and edge counts + FTS size + scan freshness + timestamp |
 
-### Web pages
+### Scan Freshness & Incremental Updates
 
-| Tool | Question it answers |
-|------|---------------------|
-| `fetch_and_index(url, ttl_hours?, force?)` | How do I make a web page searchable offline? Refused unless `[codegraph] allow_fetch = true`; http/https only, SSRF-guarded |
-| `search_fetched(query, limit?)` | What did the pages I fetched say about this? No network |
-
-`cgh fetch --purge [url]` drops fetched content; there is no MCP tool for it.
+| Tool | Description |
+|------|-------------|
+| `scan_status()` | Is the graph in sync with `git HEAD`? Returns `fresh`, `indexed_sha`, `behind_by`, `changed_files` |
+| `incremental_reindex()` | Surgical reindex: compares per-file git blob SHAs and touches only what actually changed since the last scan |
+| `add_directory(path)` | Hot-add an external directory (sibling repo) to the graph: persists to config, scans, extends the watcher. No restart needed. |
 
 ### Usage log
 
 Every tool call is logged to `.codegraph/call_log.db` with its `origin`: `agent` (an MCP client through `cgh serve`), `cli` (a `cgh` command asking the running owner), `hook` (the same from an agent or git hook) or `internal` (an in-process call). Rows logged before this column existed have no origin and show as `unknown`. `cgh stats`, `cgh logs` and `call_stats()` show the split, so hook traffic is not read as agent choices.
+
+---
 
 ---
 

@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 53 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -14,11 +14,12 @@ When running as an MCP server (`cgh serve`), codegraph exposes 53 tools, plus wh
 
 | Tool | Description |
 |------|-------------|
-| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined; optional `role` / `layer` filters |
+| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters |
 | `find_callers(fn_name)` | Find all functions that call `fn_name` |
 | `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
 | `imports_of(file_path)` | List modules imported by a file |
-| `search_symbols(query, limit?, role?, layer?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters |
+| `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
+| `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
 | `graph_stats()` | Node and edge counts per type |
 
@@ -74,7 +75,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 53 tools, plus wh
 | Tool | Description |
 |------|-------------|
 | `call_stats()` | MCP tool usage statistics (calls, latency, errors) |
-| `live_graph_stats()` | Polling-friendly snapshot: node counts + FTS size + scan freshness + timestamp |
+| `live_graph_stats()` | Polling-friendly snapshot: node and edge counts + FTS size + scan freshness + timestamp |
 
 ### Scan Freshness & Incremental Updates
 

@@ -8,8 +8,9 @@
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
 #              SQLite alike, and federate across subrepos with a scope tag.
-#              callers / callees / outline ask a live owner first (it holds
-#              the graph DB lock), search / lookup fall back to the FTS.
+#              Every query asks a live owner first (it holds the graph DB
+#              lock); search / lookup fall back to the FTS when an older
+#              owner cannot serve them.
 
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from codegraph.analysis.federation import (
     has_subrepos,
 )
 from codegraph.cli import _get_conn, _short_path, console
+from codegraph.cli.owner_client import note_route
 
 # ---------------------------------------------------------------------------
 # cmd_grep
@@ -149,6 +151,17 @@ def _print_scope_warnings(warnings: list[str]) -> None:
         console.print(f"[yellow]⚠ subrepo {w}[/yellow]")
 
 
+def _say_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
+
+
+def _route(root: str, command: str, tool: str, arguments: dict):
+    """``route_owner_read`` with the remedy printed on this module's console."""
+    from codegraph.cli.owner_client import route_owner_read
+
+    return route_owner_read(root, command, tool, arguments, _say_stuck)
+
+
 def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:
     """Run ``tool`` on this repo's live owner, which holds the graph DB for
     writing and so blocks our own read-only open while it runs.
@@ -159,25 +172,22 @@ def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | No
     remedy and exit 1 instead. Same for an owner from an older cgh that
     lacks ``tool``: it holds the lock all the same.
     """
-    from codegraph.cli.owner_client import (
-        call_owner_tool,
-        note_route,
-        older_owner_hint,
-        stuck_owner_hint,
-    )
+    from codegraph.cli.owner_client import older_owner_hint
 
-    reply = call_owner_tool(root, tool, arguments)
-    if reply.status == "timeout":
-        console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
-        raise SystemExit(1)
-    if reply.status == "unknown_tool":
+    route, data = _route(root, command, tool, arguments)
+    if route == "older":
         console.print(f"[yellow]{older_owner_hint(root, tool)}[/yellow]")
         raise SystemExit(1)
-    if reply.ok and isinstance(reply.data, dict):
-        note_route(command, "owner")
-        return reply.data
-    note_route(command, "local read-only open")
-    return None
+    return data
+
+
+def _group_by_scope(rows: list[dict], to_row) -> list[tuple[str, list]]:
+    """Owner rows (each tagged with ``scope``) as ``[(scope, [row, ...])]``
+    buckets in first-seen scope order, the shape the local path builds."""
+    buckets: dict[str, list] = {}
+    for r in rows:
+        buckets.setdefault(r.get("scope", "parent"), []).append(to_row(r))
+    return list(buckets.items())
 
 
 def _owner_warnings(data: dict) -> list[str]:
@@ -194,6 +204,11 @@ def _owner_warnings(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # cmd_search
 # ---------------------------------------------------------------------------
+
+
+# The kinds `cgh search` matches by name, so the owner's search_symbols tool
+# returns exactly the rows _search_symbols_conn gives on a local open.
+_SEARCH_KINDS = "function,class,md_section"
 
 
 def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
@@ -328,35 +343,57 @@ def cmd_search(args: argparse.Namespace) -> None:
     # Buckets are (scope, [(kind, name, file_path, start_line), …]).
     buckets: list[tuple[str, list]] = []
 
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        # Graph DB locked (MCP server is running). Fall back to FTS, SQLite
-        # supports concurrent readers, so this always works.
-        try:
-            from codegraph.core.fts import fts_search, get_fts_conn
-
-            fts_conn = get_fts_conn(root)
-            buckets.append(
-                ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
-            )
-        except Exception as exc:
-            console.print(
-                f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
-            )
-            return
-    else:
-        buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
-
-    child_buckets, child_failures = _query_children_scoped(
-        root, lambda c: _search_symbols_conn(c, query, fetch)
+    route, served = _route(
+        root,
+        "search",
+        "search_symbols",
+        {"query": query, "limit": fetch, "kinds": _SEARCH_KINDS, "name_only": True},
     )
-    buckets.extend(child_buckets)
-    if child_failures:
-        fts_buckets, child_failures = _child_fts_fallback(
-            root, query, fetch, {scope for scope, _ in child_failures}
+    if route == "owner" and not served.get("name_only"):
+        # An owner from an older cgh ignored the name-only match: its rows
+        # would differ from ours, so answer from the FTS like before.
+        route = "older"
+    if route == "owner":
+        # The owner already federates, every row carries its scope.
+        buckets = _group_by_scope(
+            served.get("results") or [],
+            lambda r: (r["kind"], r["name"], r["file"], r["line"]),
         )
-        buckets.extend(fts_buckets)
-    warnings = _fmt_scope_errors(child_failures)
+        warnings = _owner_warnings(served)
+    else:
+        # No owner: open the graph read-only. An older owner holds the graph
+        # lock, so go straight to the FTS instead of waiting on it.
+        conn = _get_conn(root, readonly=True) if route == "local" else None
+        if conn is None:
+            # Graph DB locked (MCP server is running). Fall back to FTS,
+            # SQLite supports concurrent readers, so this always works.
+            if route == "older":
+                note_route("search", "FTS (older owner)")
+            try:
+                from codegraph.core.fts import fts_search, get_fts_conn
+
+                fts_conn = get_fts_conn(root)
+                buckets.append(
+                    ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
+                )
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+                )
+                return
+        else:
+            buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
+
+        child_buckets, child_failures = _query_children_scoped(
+            root, lambda c: _search_symbols_conn(c, query, fetch)
+        )
+        buckets.extend(child_buckets)
+        if child_failures:
+            fts_buckets, child_failures = _child_fts_fallback(
+                root, query, fetch, {scope for scope, _ in child_failures}
+            )
+            buckets.extend(fts_buckets)
+        warnings = _fmt_scope_errors(child_failures)
     federated = has_subrepos(root)
 
     # Round-robin across scopes: parent-first concatenation would push every
@@ -487,6 +524,30 @@ def _lookup_conn(conn, name: str) -> list[tuple]:
     return out
 
 
+def _owner_lookup_rows(data: dict) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) rows from symbol_lookup.
+
+    ``lines`` is "start-end", or "start" for a terraform variable, which the
+    local path prints as start-start. None when a definition carries no
+    ``name`` (an owner from an older cgh)."""
+    rows: list[tuple] = []
+    for d in data.get("definitions") or []:
+        if "name" not in d:
+            return None
+        start, _, end = str(d.get("lines", "")).partition("-")
+        rows.append(
+            (
+                d.get("scope", "parent"),
+                d["kind"],
+                d["name"],
+                d["file"],
+                start,
+                end or start,
+            )
+        )
+    return rows
+
+
 def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
@@ -509,9 +570,31 @@ def cmd_lookup(args: argparse.Namespace) -> None:
             f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]{scope_tag}"
         )
 
-    conn = _get_conn(root, readonly=True)
+    route, served = _route(root, "lookup", "symbol_lookup", {"name": name})
+    if route == "owner":
+        rows = _owner_lookup_rows(served)
+        if rows is None:
+            # An owner from an older cgh does not name its definitions
+            # (markdown section titles would be missing): use the FTS.
+            route = "older"
+        else:
+            for scope, kind, n, fp, sl, el in rows:
+                found = True
+                _print_hit(scope, kind, n, fp, sl, el)
+            _print_scope_warnings(_owner_warnings(served))
+            if not found:
+                console.print(
+                    f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
+                )
+            return
+
+    # No owner: open the graph read-only. An older owner holds the graph
+    # lock, so go straight to the FTS instead of waiting on it.
+    conn = _get_conn(root, readonly=True) if route == "local" else None
     if conn is None:
         # Fallback to FTS when the graph DB is locked by the MCP server
+        if route == "older":
+            note_route("lookup", "FTS (older owner)")
         try:
             from codegraph.core.fts import fts_search, get_fts_conn
 

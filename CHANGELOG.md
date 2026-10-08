@@ -16,6 +16,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   resolved from both ends whatever the order. No action needed: the first
   index after upgrading (`cgh index`, or the owner's start) re-parses the
   whole repo once.
+- `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` no longer stall
+  for about 12 seconds while an agent session runs. They now ask the running
+  owner, like `cgh callers` does since 0.15.0, and answer from the graph:
+  `stats` shows its node and edge counts again instead of a lock notice, and
+  `files` lists files that define no symbol. Without an owner nothing
+  changes. MCP side: a new read-only `indexed_files` tool, a `name` on each
+  `symbol_lookup` definition, `edges` in `live_graph_stats`, and optional
+  `kinds` / `name_only` arguments on `search_symbols`; existing fields are
+  unchanged.
 
 ## [0.15.0] - 2026-10-08
 

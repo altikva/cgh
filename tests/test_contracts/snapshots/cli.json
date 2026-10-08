@@ -1,0 +1,668 @@
+{
+  "top_level_verbs": [
+    "_bob_gate",
+    "_bob_prompt",
+    "_bob_session_start",
+    "_bob_stop",
+    "_bob_tool_log",
+    "_hook_checkpoint",
+    "_hook_guard",
+    "_hook_guard_codex",
+    "_hook_precheck_bash",
+    "_hook_precheck_grep",
+    "_hook_precheck_read",
+    "_hook_resume_header",
+    "_reindex_hook",
+    "_serve_owner",
+    "add-dir",
+    "artifact",
+    "backend",
+    "callees",
+    "callers",
+    "compact",
+    "diff",
+    "doctor",
+    "ensurepath",
+    "examples",
+    "federate",
+    "fetch",
+    "files",
+    "findings",
+    "force-index",
+    "graph",
+    "grep",
+    "guard",
+    "history",
+    "hooks",
+    "impact",
+    "index",
+    "init",
+    "knowledge",
+    "logs",
+    "lookup",
+    "memory",
+    "memory-index",
+    "outline",
+    "papercut",
+    "parsers",
+    "plan-index",
+    "plugins",
+    "reset",
+    "search",
+    "serve",
+    "setup",
+    "stats",
+    "status",
+    "stop",
+    "tail",
+    "watch"
+  ],
+  "tree": {
+    "options": [
+      "--help",
+      "--root",
+      "--version",
+      "-h"
+    ],
+    "verbs": {
+      "_bob_gate": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_bob_prompt": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_bob_session_start": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_bob_stop": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_bob_tool_log": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_checkpoint": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_guard": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_guard_codex": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_precheck_bash": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_precheck_grep": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_precheck_read": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_resume_header": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_reindex_hook": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ]
+      },
+      "_serve_owner": {
+        "options": [
+          "--help",
+          "--reindex",
+          "--root",
+          "--watch",
+          "-h"
+        ]
+      },
+      "add-dir": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action",
+          "paths"
+        ]
+      },
+      "artifact": {
+        "options": [
+          "--help",
+          "-h"
+        ],
+        "verbs": {
+          "list": {
+            "options": [
+              "--help",
+              "--limit",
+              "--root",
+              "-h"
+            ]
+          },
+          "note": {
+            "options": [
+              "--help",
+              "--root",
+              "--summary",
+              "-h"
+            ],
+            "positionals": [
+              "path"
+            ]
+          },
+          "recall": {
+            "options": [
+              "--help",
+              "--root",
+              "-h"
+            ],
+            "positionals": [
+              "path"
+            ]
+          }
+        }
+      },
+      "backend": {
+        "options": [
+          "--help",
+          "--root",
+          "--yes",
+          "-h"
+        ],
+        "positionals": [
+          "target"
+        ]
+      },
+      "callees": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "fn_name"
+        ]
+      },
+      "callers": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "fn_name"
+        ]
+      },
+      "compact": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ]
+      },
+      "diff": {
+        "options": [
+          "--help",
+          "--root",
+          "--since",
+          "-h"
+        ]
+      },
+      "doctor": {
+        "options": [
+          "--help",
+          "--owner",
+          "--root",
+          "--strict",
+          "-h"
+        ]
+      },
+      "ensurepath": {
+        "options": [
+          "--help",
+          "--yes",
+          "-h",
+          "-y"
+        ]
+      },
+      "examples": {
+        "options": [
+          "--dest",
+          "--force",
+          "--help",
+          "--package",
+          "-h"
+        ],
+        "positionals": [
+          "example_action",
+          "name"
+        ]
+      },
+      "federate": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action",
+          "paths"
+        ]
+      },
+      "fetch": {
+        "options": [
+          "--force",
+          "--help",
+          "--limit",
+          "--purge",
+          "--root",
+          "--search",
+          "--ttl",
+          "-h"
+        ],
+        "positionals": [
+          "url"
+        ]
+      },
+      "files": {
+        "options": [
+          "--check",
+          "--help",
+          "--limit",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "pattern"
+        ]
+      },
+      "findings": {
+        "options": [
+          "--help",
+          "--json",
+          "--key",
+          "--limit",
+          "--root",
+          "--severity",
+          "-h"
+        ],
+        "positionals": [
+          "file"
+        ]
+      },
+      "force-index": {
+        "options": [
+          "--help",
+          "--root",
+          "--verbose",
+          "--yes",
+          "-h",
+          "-v",
+          "-y"
+        ],
+        "positionals": [
+          "paths"
+        ]
+      },
+      "graph": {
+        "options": [
+          "--file",
+          "--help",
+          "--html",
+          "--max-nodes",
+          "--max-symbols",
+          "--mermaid",
+          "--root",
+          "--symbol",
+          "-f",
+          "-h",
+          "-n",
+          "-s"
+        ],
+        "positionals": [
+          "scope"
+        ]
+      },
+      "grep": {
+        "options": [
+          "--case",
+          "--fixed",
+          "--glob",
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "-F",
+          "-g",
+          "-h",
+          "-n",
+          "-s"
+        ],
+        "positionals": [
+          "pattern"
+        ]
+      },
+      "guard": {
+        "options": [
+          "--help",
+          "--remove-rules",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
+      "history": {
+        "options": [
+          "--days",
+          "--help",
+          "--root",
+          "-d",
+          "-h"
+        ]
+      },
+      "hooks": {
+        "options": [
+          "--help",
+          "--root",
+          "--shared",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
+      "impact": {
+        "options": [
+          "--format",
+          "--help",
+          "--json",
+          "--out",
+          "--root",
+          "--since",
+          "-h"
+        ]
+      },
+      "index": {
+        "options": [
+          "--force",
+          "--help",
+          "--method",
+          "--no-claude-state",
+          "--root",
+          "--verbose",
+          "-h",
+          "-m",
+          "-v"
+        ]
+      },
+      "init": {
+        "options": [
+          "--from",
+          "--help",
+          "--no-children",
+          "--no-hide-footprint",
+          "--root",
+          "--secure",
+          "--tools",
+          "--yes",
+          "-h",
+          "-y"
+        ]
+      },
+      "knowledge": {
+        "options": [
+          "--help",
+          "-h"
+        ],
+        "verbs": {
+          "promote": {
+            "options": [
+              "--archive",
+              "--branch",
+              "--commit",
+              "--dry-run",
+              "--from",
+              "--help",
+              "--json",
+              "--kinds",
+              "--no-notes",
+              "--pr",
+              "--session",
+              "--since",
+              "--to",
+              "-h"
+            ]
+          }
+        }
+      },
+      "logs": {
+        "options": [
+          "--clear",
+          "--errors",
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "--tool",
+          "-e",
+          "-h",
+          "-n",
+          "-t"
+        ]
+      },
+      "lookup": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "name"
+        ]
+      },
+      "memory": {
+        "options": [
+          "--days",
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
+      "memory-index": {
+        "options": [
+          "--help",
+          "--root",
+          "--verbose",
+          "-h",
+          "-v"
+        ]
+      },
+      "outline": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "file"
+        ]
+      },
+      "papercut": {
+        "options": [
+          "--fix",
+          "--help",
+          "--limit",
+          "--project",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "words"
+        ]
+      },
+      "parsers": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "plan-index": {
+        "options": [
+          "--help",
+          "--root",
+          "--verbose",
+          "-h",
+          "-v"
+        ]
+      },
+      "plugins": {
+        "options": [
+          "--help",
+          "--json",
+          "--root",
+          "-h"
+        ]
+      },
+      "reset": {
+        "options": [
+          "--drop-extra-dirs",
+          "--help",
+          "--no-reindex",
+          "--root",
+          "--yes",
+          "-h",
+          "-y"
+        ]
+      },
+      "search": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--offset",
+          "--root",
+          "--text",
+          "-h",
+          "-n",
+          "-o",
+          "-t"
+        ],
+        "positionals": [
+          "query"
+        ]
+      },
+      "serve": {
+        "options": [
+          "--background",
+          "--help",
+          "--reindex",
+          "--root",
+          "--stop",
+          "--watch",
+          "-b",
+          "-h"
+        ]
+      },
+      "setup": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "target"
+        ]
+      },
+      "stats": {
+        "options": [
+          "--help",
+          "--json",
+          "--live",
+          "--root",
+          "-h"
+        ]
+      },
+      "status": {
+        "options": [
+          "--help",
+          "--json",
+          "--refresh",
+          "--root",
+          "--workers",
+          "-h"
+        ]
+      },
+      "stop": {
+        "options": [
+          "--help",
+          "--root",
+          "-h"
+        ]
+      },
+      "tail": {
+        "options": [
+          "--follow",
+          "--help",
+          "--limit",
+          "--root",
+          "-f",
+          "-h",
+          "-n"
+        ]
+      },
+      "watch": {
+        "options": [
+          "--help",
+          "--root",
+          "--verbose",
+          "-h",
+          "-v"
+        ]
+      }
+    }
+  }
+}

@@ -9,8 +9,8 @@
 #              strict allowlist). Model predictions only ever block: a
 #              predicted-confidential file gets `confidential = true`, a
 #              predicted-public file gets `confidential.predicted`, which
-#              the gate ignores, because only a human may clear a file in
-#              secure mode. Uncertain predictions get
+#              the gate ignores, because only a human may clear a file
+#              under a strict egress gate. Uncertain predictions get
 #              `confidential.uncertain` so `cgh classify review` can list
 #              them for a human pass.
 

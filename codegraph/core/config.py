@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 # Use tomllib (3.11+) or tomli fallback
 import tomllib  # type: ignore
@@ -42,6 +43,35 @@ CODEGRAPH_DIR = ".codegraph"
 CONFIG_FILE = "config.toml"
 GLOBAL_DIR = Path.home() / ".codegraph"
 CLAUDE_HOME = Path.home() / ".claude"
+
+# A config that still says mode = "secure" (removed in 0.15.0) loads as
+# assist. The notice goes to stderr once per process; hook commands
+# suppress it entirely because agents parse their output.
+LEGACY_SECURE_MODE_NOTICE = (
+    'mode = "secure" is no longer supported and is ignored since 0.15.0; '
+    "cgh does not block file access any more, use your agent's own "
+    "permission rules for that"
+)
+_legacy_mode_warned = False
+_legacy_mode_suppressed = False
+
+
+def suppress_legacy_mode_warning() -> None:
+    """Silence the stderr notice for this process (hooks, and commands
+    that show the notice in their own output)."""
+    global _legacy_mode_suppressed
+    _legacy_mode_suppressed = True
+
+
+def _warn_legacy_secure_mode() -> None:
+    global _legacy_mode_warned
+    if _legacy_mode_warned or _legacy_mode_suppressed:
+        return
+    _legacy_mode_warned = True
+    try:
+        print(f"cgh: {LEGACY_SECURE_MODE_NOTICE}", file=sys.stderr)
+    except Exception:
+        pass  # a closed stderr must never break config loading
 
 
 def find_codegraph_root(start: str | Path) -> Path | None:
@@ -202,16 +232,15 @@ class CodegraphConfig:
     # live exactly as long as the parent owner.
     federate_auto_up: bool = True
 
-    # Global posture. "assist" optimizes for token savings and flow;
-    # "secure" is assist plus enforcement: egress gates go to allowlist
-    # mode, guards fail closed, nothing is turned off. Consumers (egress
-    # gate, guard) derive their defaults from this; each stays
-    # individually overridable in its own section.
-    mode: str = "assist"  # "assist" | "secure"
+    # Always "assist". The key is still parsed so old configs load; a
+    # legacy "secure" value is ignored and only sets the flag below,
+    # which `cgh status` and `cgh doctor` report.
+    mode: str = "assist"
+    legacy_secure_mode: bool = False
 
-    # Network fetch (fetch_and_index). Always off in secure mode unless
-    # this is set; assist mode allows it. Private/loopback hosts are
-    # refused regardless (SSRF), and every fetch is audited.
+    # Network fetch (fetch_and_index): off unless set to true. Private
+    # and loopback hosts are refused regardless (SSRF), and every fetch
+    # is audited.
     allow_fetch: bool = False
 
     # Plugins (proposal 001). enabled = None means "no allowlist, load
@@ -277,6 +306,9 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
             "yes",
         )
 
+    if config.legacy_secure_mode:
+        _warn_legacy_secure_mode()
+
     return config
 
 
@@ -302,9 +334,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     if "federate_auto_up" in cg:
         config.federate_auto_up = bool(cg["federate_auto_up"])
     if "mode" in cg:
-        value = str(cg["mode"]).strip().lower()
-        if value in ("assist", "secure"):
-            config.mode = value
+        # Only "assist" exists now; a legacy "secure" is flagged, not applied.
+        config.legacy_secure_mode = str(cg["mode"]).strip().lower() == "secure"
     if "allow_fetch" in cg:
         config.allow_fetch = bool(cg["allow_fetch"])
 
@@ -353,12 +384,11 @@ ignore_dirs = [
 ignore_patterns = ["*.min.js", "*.bundle.js", "*.map"]
 # Skip files larger than this (KB)
 max_file_size_kb = 500
-# Guard posture. "assist": scanners flag findings, the guard warns and
-# fails open. "secure": everything assist does, plus the guard fails
-# closed, blocks reads of flagged files in hooked agents, and mirrors
-# barred paths into static deny lists (Claude settings, .bobignore).
-# allow_fetch = false   # let fetch_and_index reach the network in secure mode
-# mode = "assist"
+# Let fetch_and_index (MCP) and `cgh fetch` reach the network. Off by
+# default; private and loopback hosts stay refused and every fetch is
+# logged. cgh does not restrict what your agent reads: use the agent's
+# own permission rules for that.
+# allow_fetch = false
 # Directories to force-index even if .gitignore excludes them (e.g. "docs/",
 # generated schema dumps, vendored source you still want in the graph).
 # Paths are relative to the project root. Use absolute paths for dirs that
@@ -451,7 +481,7 @@ reindex_on_start = true
 # profile = "default"    # or fast (single pass), photo (screen photos)
 # nodes_model = "qwen2.5vl:3b"
 # edges_model = "gemma3:4b"
-# ollama_url = "http://127.0.0.1:11434"  # loopback only in secure mode
+# ollama_url = "http://127.0.0.1:11434"  # a non-loopback URL sends images off-machine
 # openai_base_url = ""   # any OpenAI-compatible vision endpoint instead
 # openai_api_key_env = "OPENAI_API_KEY"  # env var holding the key, if any
 # timeout_s = 300        # per model call; raise for a slow CPU cold start

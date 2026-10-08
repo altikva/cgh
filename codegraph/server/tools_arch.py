@@ -32,25 +32,12 @@ def register(mcp) -> None:
     @_logged_tool
     def architecture_overview(max_files_per_role: int = 10) -> str:
         """
-        Compact map of the codebase grouped by architectural layer + role.
-
-        CALL THIS FIRST when the user asks a broad question like
-        "how does X work", "where should I add Y", "explain the structure".
-        Cheaper than reading files: returns at most ~200 lines of JSON.
-
-        Output shape:
-          {
-            "presentation": {
-              "router":    [{path, module_doc, symbols}, ...],
-              "component": [...],
-              ...
-            },
-            "application": { "handler": [...], ... },
-            "domain":      { "model": [...], "schema": [...] },
-            "infra":       { "provider": [...], ... },
-            "test":        { "test": [...] },
-            "doc":         { "doc": [...] }
-          }
+        How is this codebase organised?
+        Call first on a broad question ("how does X work", "where do I add
+        Y"). Returns files grouped by layer (presentation, application,
+        domain, infra, test, doc) then role, each with path, module_doc and
+        symbols, in about 200 lines of JSON. One feature: domain_map. A
+        concrete task: context_for_task.
         """
 
         def query(conn):
@@ -107,13 +94,11 @@ def register(mcp) -> None:
     @_logged_tool
     def domain_map(keyword: str, limit_per_role: int = 8) -> str:
         """
-        All files related to a domain/feature keyword, grouped by role.
-
-        Use when the user names a concept ("stats", "donor merge", "Cerfa")
-        to find every handler/router/model/etc touching it, faster than
-        grep because it respects the role taxonomy.
-
-        Matches against file path, role, and module_doc (case-insensitive).
+        Which files touch this feature?
+        Give a feature keyword ("stats", "donor merge"); returns the matching
+        files grouped by role (router, handler, model...), matched on path,
+        role and module_doc. Wider than search_symbols (names only), cheaper
+        than pattern_search over the repo.
         """
         if not keyword.strip():
             return json.dumps({"error": "keyword is required"})
@@ -176,16 +161,11 @@ def register(mcp) -> None:
     @_logged_tool
     def endpoints(path_pattern: str = "", method: str = "") -> str:
         """
-        List HTTP endpoints in the codebase.
-
-        Optional filters:
-          path_pattern, glob like "*/donations*" or "/api/stats/*"
-          method, GET / POST / PUT / PATCH / DELETE (case-insensitive)
-
-        Returns: [{method, path, framework, file, line, handler}] grouped by
-        framework. Includes both FastAPI decorators and Nuxt server/api
-        routes, so cross-repo questions ("does the frontend call this Python
-        route?") become navigable.
+        Which HTTP routes exist, and which handler serves each?
+        Lists FastAPI and Nuxt server/api routes as {method, path,
+        framework, file, line, handler}. Filter with path_pattern (a glob
+        such as "/api/stats/*") and method. Use for API questions instead of
+        grepping decorators.
         """
         method_filter = method.strip().upper() or None
 

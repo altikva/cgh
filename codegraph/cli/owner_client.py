@@ -100,6 +100,7 @@ def call_owner_tool(
         timeout = owner_timeout()
 
     from codegraph.state.auth import ensure_auth_key
+    from codegraph.state.call_log import ORIGIN_HEADER, client_origin
 
     try:
         token = ensure_auth_key(root)
@@ -124,6 +125,9 @@ def call_owner_tool(
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
                 "Authorization": f"Bearer {token}",
+                # Tags the call "cli" (or "hook" under a hook entry point)
+                # in the owner's call log, apart from agent calls.
+                ORIGIN_HEADER: client_origin(),
             },
         )
         resp = conn.getresponse()

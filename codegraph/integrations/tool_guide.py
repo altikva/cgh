@@ -24,10 +24,14 @@ About the code:
   - Starting a task, broad question ...... context_for_task(task)
   - Who calls X / what X calls ........... find_callers(name) / find_callees(name)
   - Every place a string or regex occurs . pattern_search(pattern, glob?)
+  - How the repo is organised ............ architecture_overview()
   - Files around a feature keyword ....... domain_map(keyword)
+  - HTTP routes and their handlers ....... endpoints(path_pattern?)
   - What a file holds, before reading it . file_summary(path)
   - Markdown docs ........................ search_docs(query)
-  - What breaks / which tests to run ..... impact_report(files), tests_for(path)
+  - What depends on X, transitively ...... impact_of(name_or_path)
+  - What breaks / which tests to run ..... impact_report(changed_files), tests_for(path)
+  - Index stale after a pull or checkout . scan_status(), then incremental_reindex()
 
 Notes saved by agents and people, NOT code:
   - knowledge_search(query) / knowledge_list(): decisions, gotchas,

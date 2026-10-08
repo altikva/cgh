@@ -8,6 +8,24 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- The call log records who triggered each tool call: `agent` (an MCP
+  client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
+  plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
+  split (new `by_origin` fields; existing fields unchanged), so hook traffic
+  no longer reads as agent choices. Existing logs are migrated in place;
+  their older rows show as `unknown`.
+
+### Changed
+- Every MCP tool description now opens with the question it answers and
+  names the tool to use instead when it is the wrong one, so agents stop
+  picking tools by guesswork (one searched code with `knowledge_search` for
+  a whole task). Descriptions are about a fifth shorter, which lowers the
+  per-session token cost. Tool names and arguments are unchanged. The usage
+  rules, bundled skills, integration guides and `docs/MCP_TOOLS.md` (now
+  listing all 54 tools) match the new wording; rerunning `cgh setup`
+  refreshes installed rules.
+
 ### Fixed
 - **`find_callers` and every tool built on CALLS edges silently missed
   callers in other files.** A call into a file indexed after the caller was

@@ -20,6 +20,32 @@ from pathlib import Path
 _DB_DIR = ".codegraph"
 _LOG_FILE = "call_log.db"
 
+# Who triggered a tool call. "agent": an MCP client through the stdio proxy.
+# "cli": a `cgh` command asking the owner over HTTP. "hook": the same, from a
+# hook entry point (agent lifecycle hooks, git hooks). "internal": a tool
+# function called in-process, outside any HTTP request.
+ORIGINS = ("agent", "hook", "cli", "internal")
+# HTTP header the proxy and the CLI client send so the owner can tell them apart.
+ORIGIN_HEADER = "X-Cgh-Origin"
+# Environment variable a hook entry point sets so the owner calls it makes
+# are tagged "hook" instead of "cli".
+ORIGIN_ENV = "CGH_ORIGIN"
+
+
+def normalize_origin(value: str | None) -> str | None:
+    """A known origin in lower case, or None for anything else."""
+    origin = (value or "").strip().lower()
+    return origin if origin in ORIGINS else None
+
+
+def client_origin() -> str:
+    """Origin a CLI process announces to the owner: "hook" when a hook entry
+    point set CGH_ORIGIN, else "cli"."""
+    import os
+
+    return "hook" if normalize_origin(os.environ.get(ORIGIN_ENV)) == "hook" else "cli"
+
+
 # Keyed by resolved repo root: one process can serve several repos
 # (federation, SDK, tests); a first-caller-wins global handed repo A's
 # knowledge DB to repo B. Same pattern as state/findings.py.
@@ -200,6 +226,15 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_knowledge_origin "
         "ON knowledge(origin_id, source_worktree)"
     )
+    # Who triggered each call (agent, hook, cli, internal) and which repo it
+    # served, so usage data separates agent choices from hook traffic and can
+    # be aggregated per repo. Rows logged before these columns stay NULL,
+    # which reads as "unknown".
+    for _col in ("origin", "repo_root"):
+        try:
+            _conn.execute(f"ALTER TABLE call_log ADD COLUMN {_col} TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already there
     _conn.commit()
     # Self-heal: if the FTS references rowids that no longer exist, rebuild
     # from the content table. Cheap at open time (runs once per connection).
@@ -833,12 +868,15 @@ def log_call(
     success: bool = True,
     error: str | None = None,
     repo_root: str | Path | None = None,
+    origin: str | None = None,
 ) -> None:
-    """Record a tool call."""
+    """Record a tool call. ``origin`` is one of ORIGINS; anything else is
+    stored as NULL (unknown)."""
     conn = _get_conn(repo_root)
     conn.execute(
-        "INSERT INTO call_log (timestamp, tool, args, latency_ms, result_size, success, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO call_log (timestamp, tool, args, latency_ms, result_size, "
+        "success, error, origin, repo_root) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             time.time(),
             tool,
@@ -847,13 +885,20 @@ def log_call(
             result_size,
             1 if success else 0,
             error,
+            normalize_origin(origin),
+            _cache_key(repo_root),
         ),
     )
     conn.commit()
 
 
 @contextmanager
-def track_call(tool: str, args: dict, repo_root: str | Path | None = None):
+def track_call(
+    tool: str,
+    args: dict,
+    repo_root: str | Path | None = None,
+    origin: str | None = "internal",
+):
     """
     Context manager that auto-logs a tool call with timing.
 
@@ -880,6 +925,7 @@ def track_call(tool: str, args: dict, repo_root: str | Path | None = None):
             success=tracker["success"],
             error=tracker["error"],
             repo_root=repo_root,
+            origin=origin,
         )
 
 
@@ -890,7 +936,13 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
 
     total = conn.execute("SELECT COUNT(*) FROM call_log").fetchone()[0]
     if total == 0:
-        return {"total_calls": 0, "tools": {}, "period": None}
+        return {
+            "total_calls": 0,
+            "tools": {},
+            "period": None,
+            "by_origin": {},
+            "repo_root": _cache_key(repo_root),
+        }
 
     # Per-tool stats
     rows = conn.execute("""
@@ -915,7 +967,19 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
             "max_latency_ms": row[4],
             "total_result_bytes": row[5],
             "errors": row[6],
+            "by_origin": {},
         }
+
+    # Split by who triggered the call. NULL origin (rows logged before the
+    # column existed, or an unrecognised value) is reported as "unknown".
+    by_origin: dict[str, int] = {}
+    for tool_name, origin, calls in conn.execute(
+        "SELECT tool, COALESCE(origin, 'unknown'), COUNT(*) FROM call_log "
+        "GROUP BY tool, COALESCE(origin, 'unknown')"
+    ).fetchall():
+        by_origin[origin] = by_origin.get(origin, 0) + calls
+        if tool_name in tools:
+            tools[tool_name]["by_origin"][origin] = calls
 
     # Time range
     first = conn.execute("SELECT MIN(timestamp) FROM call_log").fetchone()[0]
@@ -929,7 +993,7 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
     # Top queries (most recent 10)
     recent = conn.execute("""
         SELECT tool, args, latency_ms, result_size, success,
-               datetime(timestamp, 'unixepoch', 'localtime') as ts
+               datetime(timestamp, 'unixepoch', 'localtime') as ts, origin
         FROM call_log
         ORDER BY timestamp DESC
         LIMIT 10
@@ -943,6 +1007,7 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
             "result_size": r[3],
             "success": bool(r[4]),
             "timestamp": r[5],
+            "origin": r[6],
         }
         for r in recent
     ]
@@ -957,6 +1022,8 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
         },
         "tools": tools,
         "recent_calls": recent_calls,
+        "by_origin": by_origin,
+        "repo_root": _cache_key(repo_root),
     }
 
 
@@ -984,7 +1051,7 @@ def get_logs(
 
     rows = conn.execute(
         f"SELECT tool, args, latency_ms, result_size, success, error, "
-        f"datetime(timestamp, 'unixepoch', 'localtime') as ts "
+        f"datetime(timestamp, 'unixepoch', 'localtime') as ts, origin "
         f"FROM call_log {where} ORDER BY timestamp DESC LIMIT ?",
         params,
     ).fetchall()
@@ -998,6 +1065,7 @@ def get_logs(
             "success": bool(r[4]),
             "error": r[5],
             "timestamp": r[6],
+            "origin": r[7],
         }
         for r in rows
     ]

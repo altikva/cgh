@@ -105,8 +105,10 @@ def _incremental_via_owner(
 
     from codegraph.state.activity import tail as _act_tail
     from codegraph.state.auth import ensure_auth_key
+    from codegraph.state.call_log import ORIGIN_HEADER, client_origin
 
     token = ensure_auth_key(root)
+    origin = client_origin()
     body = _json.dumps(
         {
             "jsonrpc": "2.0",
@@ -130,6 +132,7 @@ def _incremental_via_owner(
                     "Content-Type": "application/json",
                     "Accept": "application/json, text/event-stream",
                     "Authorization": f"Bearer {token}",
+                    ORIGIN_HEADER: origin,
                 },
             )
             resp = c.getresponse()

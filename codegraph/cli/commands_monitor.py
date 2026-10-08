@@ -270,6 +270,7 @@ def _stats_content(root: str) -> Group:
         )
         call_table.add_column("Tool", style="bold")
         call_table.add_column("Calls", justify="right")
+        call_table.add_column("Agent", justify="right")
         call_table.add_column("Avg ms", justify="right")
         call_table.add_column("Max ms", justify="right")
         call_table.add_column("Errors", justify="right")
@@ -282,6 +283,7 @@ def _stats_content(root: str) -> Group:
             call_table.add_row(
                 tool,
                 str(ts["calls"]),
+                str((ts.get("by_origin") or {}).get("agent", 0)),
                 f"{ts['avg_latency_ms']:.1f}",
                 f"{ts['max_latency_ms']:.1f}",
                 err_str,
@@ -290,17 +292,41 @@ def _stats_content(root: str) -> Group:
         call_table.add_row(
             "[bold]Total[/bold]",
             f"[bold]{call_stats['total_calls']}[/bold]",
+            f"[bold]{(call_stats.get('by_origin') or {}).get('agent', 0)}[/bold]",
             "",
             "",
             f"[bold]{call_stats.get('error_count', 0)}[/bold] ({call_stats.get('error_rate', '0%')})",
         )
         renderables.append(call_table)
+        renderables.append(_origin_table(call_stats.get("by_origin") or {}))
     else:
         renderables.append(
             Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
         )
 
     return Group(*renderables)
+
+
+_ORIGIN_LABELS = {
+    "agent": "agent (MCP client)",
+    "hook": "hook",
+    "cli": "cli (cgh commands)",
+    "internal": "internal",
+    "unknown": "unknown (logged before origins)",
+}
+
+
+def _origin_table(by_origin: dict) -> Table:
+    """Calls split by who triggered them, so hook traffic is not read as
+    agent choices."""
+    table = Table(title="Calls by origin", box=box.SIMPLE_HEAD, title_style="bold cyan")
+    table.add_column("Origin", style="bold")
+    table.add_column("Calls", justify="right")
+    for origin, label in _ORIGIN_LABELS.items():
+        count = by_origin.get(origin, 0)
+        if count:
+            table.add_row(label, f"{count:,}")
+    return table
 
 
 def _stats_json(root: str) -> str:
@@ -1247,6 +1273,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
     table.add_column("Time", style="dim", width=19)
     table.add_column("", width=3)
     table.add_column("Tool", style="bold")
+    table.add_column("Origin", style="dim")
     table.add_column("Latency", justify="right")
     table.add_column("Size", justify="right")
     table.add_column("Args", max_width=40, overflow="ellipsis")
@@ -1275,6 +1302,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
             entry["timestamp"],
             status,
             entry["tool"],
+            entry.get("origin") or "[dim]?[/dim]",
             f"[{latency_style}]{entry['latency_ms']:.1f}ms[/{latency_style}]",
             f"{entry['result_size']:,}B",
             f"[dim]{args_str}[/dim]",

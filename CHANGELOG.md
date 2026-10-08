@@ -8,6 +8,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Links to `github.com/altikva/codegraph` were dead.** The footer of the
+  HTML that `cgh graph` writes and the header of a generated `config.toml`
+  pointed there; they now point at `github.com/altikva/cgh`.
+
 ## [0.14.5] - 2026-10-07
 
 ### Added

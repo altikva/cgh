@@ -212,13 +212,15 @@ jobs:
     #
     # TWO variants per target (see packaging/build-binary.sh), named for
     # EGRESS, not a plugin count:
-    #   sealed -> cgh-<target>         : core + the local-only plugins (pii,
-    #             classify). Provably egress-free, so "the core never phones
-    #             home" stays verifiable by absence of the code, not a flag.
-    #   egress -> cgh-egress-<target>  : adds the egress-capable plugins
-    #             (codegen, summarize, bugreport), gated and inert until
-    #             configured. The name is the honest capability, not a state.
-    # The heavy native-dep plugins (docs, vision) stay pip-only in both.
+    #   sealed -> cgh-<target>         : core + the local-only default
+    #             plugin (docs). Provably egress-free, so "the core never
+    #             phones home" stays verifiable by absence of the code, not a
+    #             flag.
+    #   egress -> cgh-egress-<target>  : adds the egress-capable default
+    #             plugins (codegen, bugreport), inert until configured. The
+    #             name is the honest capability, not a state.
+    # pii, vision, summarize and classify are not in the default install and
+    # stay pip-only in both.
     needs: [validate, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -286,8 +288,8 @@ jobs:
           # The binary is only as bundled as its metadata: without --copy-metadata
           # the plugins vanish silently. Assert the expected set is ACTIVE in the
           # built binary itself, not in the source tree.
-          expected="pii classify"
-          [ "$VARIANT" = egress ] && expected="pii classify codegen summarize bugreport"
+          expected="docs"
+          [ "$VARIANT" = egress ] && expected="docs codegen bugreport"
           python3 - "out/$ASSET" $expected <<'PY'
           import json, subprocess, sys
           binp, expected = sys.argv[1], set(sys.argv[2:])

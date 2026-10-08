@@ -7,6 +7,10 @@ markdown plus Mermaid, tables and charts become data, dense text
 becomes a summary. Everything runs against a local Ollama daemon;
 nothing leaves the machine.
 
+It runs on demand (`cgh vision <file>`); reading images during indexing
+is opt-in (see below). `cgh[plugins]` does not install it since cgh
+0.15.0: install it by name.
+
 ```bash
 pip install cgh-vision
 ollama pull qwen2.5vl:3b gemma3:4b   # the benchmark-selected pair
@@ -230,7 +234,26 @@ question, so you do not have to come back here.
    of labels, recorded as `pii.image_identity` findings so the egress
    gates treat them as PII.
 
+## Index-time scanning (opt-in)
+
+Since 0.6.0 cgh-vision does not touch the index unless you ask it to.
+By default it only adds the `cgh vision` command above. To have every
+image read in the background on each index, as earlier versions did:
+
+```toml
+[plugin.vision]
+scan_on_index = true
+# auto_extract = true   # also write a <file>.json sidecar per image/PDF
+```
+
+With it on, image files (`.png`, `.jpg`, `.jpeg`, `.webp`) are indexed
+and a deferred scanner runs the pipeline below on each one, writing the
+findings listed next. It costs local model time on every changed image,
+which is why it is off by default.
+
 ## Findings
+
+Written by the index-time scanner (`scan_on_index = true`).
 
 | Key | Content |
 |---|---|
@@ -246,6 +269,7 @@ question, so you do not have to come back here.
 
 ```toml
 [plugin.vision]
+# scan_on_index = false      # read every indexed image (see above)
 # profile = "default"        # default | fast (single call) | photo
 # nodes_model = "qwen2.5vl:3b"
 # edges_model = "gemma3:4b"  # set to "" to disable the edge pass

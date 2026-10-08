@@ -69,20 +69,29 @@ def scan_text(
     None runs every installed scanner. ``config`` is currently
     reserved; per-plugin configuration comes from the plugins' own
     defaults when embedding. Deferred scanners run synchronously here:
-    the caller owns the scheduling."""
-    from codegraph.plugins import load_plugins
+    the caller owns the scheduling. A plugin that does not scan at
+    index time can still serve this call through a scanner published
+    under the ``scanner.on_demand`` extension namespace."""
+    from codegraph.plugins import extension_entries, load_plugins
     from codegraph.plugins import scanners as _installed
 
     load_plugins(None)
+    pool = list(_installed())
+    indexed = {name for name, _ in pool}
+    pool += [
+        (name, scanner)
+        for name, scanner in extension_entries("scanner.on_demand")
+        if name not in indexed
+    ]
     wanted = set(scanners) if scanners is not None else None
     out: list[ScanFinding] = []
-    for plugin_name, scanner in _installed():
+    for plugin_name, scanner in pool:
         if wanted is not None and plugin_name not in wanted:
             continue
         found = scanner.scan(Path(path or "content.txt"), text, None) or []
         out.extend(found)
     if wanted:
-        missing = wanted - {name for name, _ in _installed()}
+        missing = wanted - {name for name, _ in pool}
         if missing:
             first = sorted(missing)[0]
             raise CapabilityMissing(first, f"cgh-{first}")
@@ -197,8 +206,9 @@ def summarize(
     """Summarize text through the cgh-summarize backends. Defaults are
     the safe ones: cloud_allowed=False restricts the pick to local
     backends (ollama, structural); pass True after your own
-    egress_decision. Returns the summary, or raises CapabilityMissing
-    when cgh-summarize is not installed."""
+    egress_decision. cgh-summarize 0.3 and later ships local backends
+    only and ignores cloud_allowed. Returns the summary, or raises
+    CapabilityMissing when cgh-summarize is not installed."""
     try:
         from cgh_summarize.backends import pick_backend
     except ImportError as exc:

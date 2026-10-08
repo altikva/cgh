@@ -139,11 +139,12 @@ class TestScannerSemantics:
 
 
 class TestGateInterplay:
-    """The safety asymmetry, checked against the real gate from
-    cgh-summarize when it is installed alongside."""
+    """The safety asymmetry, checked against the real egress gate of
+    cgh-codegen (the remaining reader of `confidential` findings) when it
+    is installed alongside."""
 
     def test_predicted_public_does_not_clear_strict_gate(self, repo):
-        gate = pytest.importorskip("cgh_summarize.gate")
+        gate = pytest.importorskip("cgh_codegen.gate")
         strict = {"egress": "strict"}
         _trained_model().save(model_path(repo))
         scanner = ClassifyScanner({}, repo)
@@ -151,7 +152,7 @@ class TestGateInterplay:
         # Model says public: strict gate still refuses.
         pub = scanner.scan(Path("/r/doc.txt"), PUBLIC_DOCS[0], None)
         store.record_findings(repo, "/r/doc.txt", scanner.name, pub)
-        assert not gate.cloud_allowed(repo, "/r/doc.txt", strict)[0]
+        assert not gate.egress_decision(repo, "/r/doc.txt", strict)[0]
 
         # Human says public: strict gate clears.
         f = repo / "doc.txt"
@@ -159,4 +160,33 @@ class TestGateInterplay:
         set_label(repo, f, False)
         human = scanner.scan(f, PUBLIC_DOCS[0], None)
         store.record_findings(repo, str(f), scanner.name, human)
-        assert gate.cloud_allowed(repo, str(f), strict)[0]
+        assert gate.egress_decision(repo, str(f), strict)[0]
+
+
+class TestRegistration:
+    @pytest.fixture(autouse=True)
+    def clean_registries(self):
+        import codegraph.plugins as plugins
+
+        plugins._reset_for_tests()
+        yield
+        plugins._reset_for_tests()
+
+    def _register(self, tmp_path, config):
+        import cgh_classify
+
+        import codegraph.plugins as plugins
+        from codegraph.plugin_api import PluginAPI
+
+        api = PluginAPI("classify", tmp_path, config, plugins._registries)
+        cgh_classify.register(api)
+        return api, plugins._registries
+
+    def test_default_registers_cli_only(self, tmp_path):
+        api, reg = self._register(tmp_path, {})
+        assert api.surfaces == ["cli"]
+        assert reg.scanners == []
+
+    def test_scan_on_index_opt_in(self, tmp_path):
+        _, reg = self._register(tmp_path, {"scan_on_index": True})
+        assert [s.name for _, s in reg.scanners] == ["classify"]

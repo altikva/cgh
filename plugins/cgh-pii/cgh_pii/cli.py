@@ -4,12 +4,12 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: `cgh pii redact <file>`: anonymize a text or markdown file
-#              in place or into a new one, keeping only the PII
-#              categories asked for (--only person, ...). person and
-#              location need the NER extra. Binary documents (pdf, docx)
-#              are not rewritten in place; the command says so and points
-#              at extracting their text first.
+# Description: `cgh pii` verbs. scan [PATH...]: on-demand secret scan
+#              (PII patterns with --pii), exit 1 on a block-severity hit so
+#              it can gate CI. redact <file>: anonymize a text, markdown or
+#              docx file, keeping only the categories asked for (--only
+#              person, ...); person and location need the NER extra.
+#              probe <file>: show what the LLM tier would flag.
 
 from __future__ import annotations
 
@@ -22,12 +22,29 @@ _TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv", ".log", ".json"}
 def make_cli_registrar(config: dict, repo_root=None):
     def register_cli(subparsers) -> None:
         p = subparsers.add_parser(
-            "pii", help="Redact PII in a text file (anonymize names, emails, ...)"
+            "pii",
+            help="Scan for secrets (cgh pii scan), or redact PII in a file",
         )
         p.add_argument(
-            "action", nargs="?", default="redact", choices=["redact", "probe"]
+            "action",
+            nargs="?",
+            default="redact",
+            choices=["scan", "redact", "probe"],
         )
-        p.add_argument("file", nargs="?", help="Text or markdown file to redact")
+        p.add_argument(
+            "paths",
+            nargs="*",
+            metavar="PATH",
+            help="scan: files or directories (default: the current directory); "
+            "redact / probe: the one file to process",
+        )
+        p.add_argument(
+            "--pii",
+            action="store_true",
+            help="scan: also report PII patterns (emails, phones, IBANs, "
+            "cards). Noisy on code; secrets only by default.",
+        )
+        p.add_argument("--json", action="store_true", help="scan: print hits as JSON")
         p.add_argument(
             "--only",
             default="",
@@ -63,10 +80,18 @@ def _dispatch(args, config: dict, repo_root=None) -> None:
 
     err = Console(stderr=True)
     root = repo_root if repo_root is not None else Path.cwd()
+    if args.action == "scan":
+        _scan(err, args, config)
+        return
+    if len(args.paths) > 1:
+        err.print(f"[red]{args.action} takes one file, got {len(args.paths)}[/red]")
+        raise SystemExit(2)
+    args.file = args.paths[0] if args.paths else ""
     if not args.file:
         err.print(
-            "[red]usage: cgh pii redact <file> [--only person] [--llm] "
-            "[--out FILE], or cgh pii probe <file>[/red]"
+            "[red]usage: cgh pii scan [PATH...] [--pii], "
+            "cgh pii redact <file> [--only person] [--llm] [--out FILE], "
+            "or cgh pii probe <file>[/red]"
         )
         raise SystemExit(2)
     src = Path(args.file)
@@ -122,6 +147,40 @@ def _dispatch(args, config: dict, repo_root=None) -> None:
     else:
         print(out)
         err.print(f"[dim]redacted {summary}; --out FILE to save[/dim]")
+
+
+def _scan(err, args, config: dict) -> None:
+    """`cgh pii scan [PATH...]`: print one line per (file, key) and exit 1
+    when any block-severity secret is found, 0 otherwise."""
+    import json
+
+    from . import as_bool
+    from .scan import scan_paths
+
+    paths = args.paths or ["."]
+    missing = [p for p in paths if not Path(p).exists()]
+    if missing:
+        err.print(f"[red]not found:[/red] {', '.join(missing)}")
+        raise SystemExit(2)
+    pii = args.pii or as_bool(config.get("pii", False))
+    hits = scan_paths(paths, pii=pii, disabled_keys=set(config.get("disable_keys", [])))
+    blocking = sum(1 for h in hits if h.severity == "block")
+    if args.json:
+        print(json.dumps([h.__dict__ for h in hits], indent=2))
+    else:
+        for h in hits:
+            print(f"{h.path}:{h.line}\t{h.severity}\t{h.key}\t({h.count})")
+        files = len({h.path for h in hits})
+        what = "secrets and PII" if pii else "secrets"
+        if hits:
+            err.print(
+                f"[bold]{len(hits)}[/bold] hit(s) in {files} file(s), "
+                f"{blocking} blocking ({what})"
+            )
+        else:
+            err.print(f"[green]no {what} found[/green]")
+    if blocking:
+        raise SystemExit(1)
 
 
 def _summary(counts: dict) -> str:

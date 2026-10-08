@@ -15,7 +15,7 @@ macOS, Linux, WSL, Git Bash ([install.sh](./install.sh)):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | bash
 
-# Core + the five first-party plugins in one shot:
+# Core + the default first-party plugins in one shot:
 curl -fsSL https://raw.githubusercontent.com/altikva/cgh/main/install.sh | CGH_PLUGINS=1 bash
 ```
 
@@ -24,7 +24,7 @@ Windows PowerShell ([install.ps1](./install.ps1)):
 ```powershell
 irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 
-# Core + the five first-party plugins in one shot:
+# Core + the default first-party plugins in one shot:
 $env:CGH_PLUGINS = 1; irm https://raw.githubusercontent.com/altikva/cgh/main/install.ps1 | iex
 ```
 
@@ -70,7 +70,7 @@ uv pip install -e .     # or: pip install -e .
 Optional extras (none are required; the core install is lean and works on Python 3.11 through 3.14):
 
 ```bash
-pip install "cgh[plugins]" # the five first-party plugins (docs, pii, summarize, classify, bugreport)
+pip install "cgh[plugins]" # the default first-party plugins (docs, codegen, bugreport)
 pip install "cgh[langs]"   # C# and Ruby parsers (tree-sitter grammars, abi3 wheels)
 pip install "cgh[lsp]"     # precise cross-file Python call resolution (jedi)
 
@@ -79,6 +79,12 @@ pip install "cgh[langs,lsp]"
 
 # Or everything above, in one shot:
 pip install "cgh[full]"
+```
+
+cgh-pii and cgh-vision are not in any extra; install them by name (`pip install cgh-pii`). With a uv tool install, add them with `--with`, and pass `-U` when upgrading so uv re-resolves the plugins it already installed:
+
+```bash
+uv tool install --force -U "cgh[plugins]" --with cgh-pii
 ```
 
 Quote the package spec (`"cgh[...]"`) so zsh and bash do not try to glob the brackets. The same form works with `pipx install`, `uv tool install`, `uv pip install`, and from a source checkout: `pip install -e ".[langs,lsp]"`.
@@ -103,14 +109,17 @@ npm install -g @altikva/cgh     # or install the `cgh` command globally
 ```
 
 The binary comes in two variants. The default is **sealed**: the core graph,
-the MCP tools, memory, plans and knowledge, plus the local-only plugins (PII
-scrubbing and classification). It contains no code that can reach the network.
+the MCP tools, memory, plans and knowledge, plus the local-only document
+parsers (cgh-docs). It contains no code that can reach the network.
 
 ```bash
 npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can
-                                  # call a model (code generation, summarization,
-                                  # bug reports), gated and inert until configured
+                                  # reach the network (code generation, bug
+                                  # reports), inert until configured or invoked
 ```
+
+Neither variant carries cgh-pii, cgh-vision, cgh-summarize or cgh-classify;
+install cgh with Python for those.
 
 Prefer a direct download? Each release ships one asset per platform (with a
 `.sha256` next to it). Pick yours from the

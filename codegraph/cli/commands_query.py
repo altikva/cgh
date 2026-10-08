@@ -472,11 +472,9 @@ def cmd_search(args: argparse.Namespace) -> None:
 def _lookup_conn(conn, name: str) -> list[tuple]:
     """(kind, name, file_path, start_line, end_line) rows for one graph DB."""
     out: list[tuple] = []
-    for label, kind in [
-        ("Function", "function"),
-        ("Class", "class"),
-        ("TFResource", "tf_resource"),
-    ]:
+    from codegraph.analysis.terraform import lookup as tf_lookup
+
+    for label, kind in [("Function", "function"), ("Class", "class")]:
         for row in conn.find_nodes(
             label,
             where={"name": name},
@@ -491,20 +489,15 @@ def _lookup_conn(conn, name: str) -> list[tuple]:
                     row["end_line"],
                 )
             )
-    # TFVar has no end_line column (a variable/output block is anchored by its
-    # start), so it needs its own loop; reuse start_line for the end slot.
-    for row in conn.find_nodes(
-        "TFVar",
-        where={"name": name},
-        return_fields=["name", "file_path", "start_line"],
-    ):
+    # Terraform blocks, by address (var.region, google_x.y) or bare name.
+    for hit in tf_lookup(conn, name):
         out.append(
             (
-                "tf_var",
-                row["name"],
-                row["file_path"],
-                row["start_line"],
-                row["start_line"],
+                hit["kind"],
+                hit["name"],
+                hit["file"],
+                hit["start_line"],
+                hit["end_line"],
             )
         )
     for row in conn.find_nodes(
@@ -557,6 +550,10 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         "function": "[green]fn[/green]",
         "class": "[yellow]cls[/yellow]",
         "tf_resource": "[magenta]tf[/magenta]",
+        "tf_data": "[magenta]data[/magenta]",
+        "tf_module": "[magenta]mod[/magenta]",
+        "tf_local": "[magenta]local[/magenta]",
+        "tf_provider": "[magenta]prov[/magenta]",
         "tf_var": "[magenta]var[/magenta]",
         "md_section": "[cyan]doc[/cyan]",
     }
@@ -723,7 +720,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
 
 
 def _callees_conn(conn, fn_name: str) -> list[tuple]:
-    return [
+    rows = [
         (row["dst_name"], row["dst_file_path"], row["dst_start_line"])
         for row in conn.find_neighbors(
             "CALLS",
@@ -731,6 +728,15 @@ def _callees_conn(conn, fn_name: str) -> list[tuple]:
             return_dst=["name", "file_path", "start_line"],
         )
     ]
+    if "." in fn_name:
+        # A Terraform address: the blocks it references.
+        from codegraph.analysis.terraform import used_by
+
+        rows += [
+            (r["dst_address"], r["dst_file_path"], r["dst_start_line"])
+            for r in used_by(conn, fn_name)
+        ]
+    return rows
 
 
 def cmd_callees(args: argparse.Namespace) -> None:

@@ -29,7 +29,9 @@ _META_FILE = "scan_meta.json"
 #   3: the other by-name references (class bases, markdown mentions and
 #      links, cross-file endpoint handlers) are persisted (name_ref table)
 #      for the same reason.
-GRAPH_FORMAT = 3
+#   4: Terraform is parsed into addressed blocks (data, module, locals,
+#      providers and .tfvars entries too) with reference edges between them.
+GRAPH_FORMAT = 4
 
 
 def _meta_path(repo_root: str | Path) -> Path:

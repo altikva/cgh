@@ -103,8 +103,18 @@ class ResourceDef:
     file_path: str
     start_line: int
     end_line: int = 0
-    kind: str = "resource"    # "resource", "variable", "output", "service"
+    kind: str = "resource"    # "resource", "data", "module", "variable",
+                              # "output", "local", "provider", "tfvars", ...
+    address: str = ""         # Terraform address: google_x.y, data.t.n,
+                              # module.m, var.v, output.o, local.l
+    refs: list[str] = []      # addresses the block's expressions use
+    source: str = ""          # a module block's raw `source`
+    inputs: list[str] = []    # a module block's input argument names
+    docstring: str = ""       # one-line summary for text search
 ```
+
+The Terraform fields are optional: a parser that only fills the first seven
+keeps working as before.
 
 ### `SectionDef`
 
@@ -388,7 +398,7 @@ No config changes, no registry edits. The `@register_parser` decorator and auto-
 | `golang.py` | Go | tree-sitter (`tree-sitter-go`) |
 | `rust.py` | Rust | tree-sitter (`tree-sitter-rust`) |
 | `java.py` | Java | tree-sitter (`tree-sitter-java`) |
-| `terraform.py` | Terraform HCL | regex + brace tracking |
+| `terraform.py` | Terraform HCL (.tf, .tfvars) | tree-sitter (`tree-sitter-hcl`), regex fallback without it |
 | `markdown.py` | Markdown | regex (headings, links, code refs) |
 | `plaintext.py` | Plain text fallback | line-based |
 
@@ -399,11 +409,28 @@ Python, TypeScript and JavaScript, Vue, Java, Go and Rust have one. A
 language without a resolver still reports what it parsed, and `cgh status`
 says so rather than showing an empty import graph.
 
+**Terraform.** Terraform has no import statement: its blocks reference each
+other by address. The parser emits one `ResourceDef` per resource, data,
+module, variable, output and provider block and per `locals` entry, with the
+in-module address and the addresses its expressions use (nested blocks,
+string interpolations and heredocs included; comments, literals, `each`,
+`count`, `self`, `path` and for or dynamic iterators left out). The indexer
+(`codegraph/analysis/terraform.py`) scopes each reference to the file's
+directory, as Terraform does, and stores it as a name reference so the edge
+is found whatever order files are indexed in. `module.m.out` lands on output
+`out` of the directory a local `source` (`./`, `../`) points to, and each
+module argument on that directory's `var.<argument>`; a registry or git
+source links nothing. A `.tfvars` file yields one entry per assignment,
+linked to `var.<key>` in the same directory. The edges are `TF_DEPENDS`,
+`TF_REFS_VAR`, `TF_VAR_DEPENDS` and `TF_VAR_REFS` (variables, outputs and
+tfvars entries are `TFVar` nodes, every other block a `TFResource`), and
+`find_callers`, `find_callees`, `impact_of` and `cgh impact` read them.
+
 ---
 
 ## Dependencies
 
-As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java) is a core dependency in `pyproject.toml`: no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
+As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java, and HCL since 0.16) is a core dependency in `pyproject.toml`: no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
 
 ```toml
 dependencies = [
@@ -413,6 +440,7 @@ dependencies = [
     "tree-sitter-go>=0.23",
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
+    "tree-sitter-hcl>=1.2",
     # ...
 ]
 ```

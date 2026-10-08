@@ -215,12 +215,15 @@ def reverse_import_bfs(
     max_depth: int = 3,
 ) -> tuple[list[str], bool]:
     """Bounded reverse BFS over IMPORTS: every file that transitively imports
-    any of ``start_files`` within ``max_depth`` hops.
+    any of ``start_files`` within ``max_depth`` hops. A Terraform file counts
+    as imported by the files whose blocks reference its blocks.
 
     Returns ``(ordered_file_paths, truncated)``. ``start_files`` themselves are
     not included in the result. Caps both the per-node fan-out and the total
     result size so a hub file cannot blow up the walk.
     """
+    from codegraph.analysis.terraform import dependent_files as tf_dependent_files
+
     seen: set[str] = set(start_files)
     frontier = list(start_files)
     ordered: list[str] = []
@@ -238,8 +241,11 @@ def reverse_import_bfs(
             )
             if len(rows) >= _FANOUT_CAP:
                 truncated = True
-            for r in rows:
-                src = r.get("src_path")
+            # A .tf file is "imported" by the files whose blocks reference
+            # its blocks (Terraform has no import statement).
+            srcs = [r.get("src_path") for r in rows]
+            srcs += tf_dependent_files(conn, key, limit=_FANOUT_CAP)
+            for src in srcs:
                 if not src or src in seen:
                     continue
                 seen.add(src)
@@ -252,11 +258,13 @@ def reverse_import_bfs(
 
 
 def symbols_in_file(conn: Any, file_path: str) -> list[dict[str, str]]:
-    """Functions and classes defined in ``file_path``.
+    """Functions, classes and Terraform blocks defined in ``file_path``.
 
     Returns ``[{name, kind, lines}]`` ordered by start line. Used by the
     impact command to report which symbols actually changed in a diff.
     """
+    from codegraph.analysis.terraform import blocks_in_file, label_of, tool_kind
+
     out: list[dict[str, str]] = []
     for label, kind in (("Function", "function"), ("Class", "class")):
         for s in conn.find_nodes(
@@ -270,6 +278,15 @@ def symbols_in_file(conn: Any, file_path: str) -> list[dict[str, str]]:
                     "name": s.get("name", ""),
                     "kind": kind,
                     "lines": f"{s.get('start_line', '')}-{s.get('end_line', '')}",
+                }
+            )
+    if file_path.endswith((".tf", ".tfvars")):
+        for b in blocks_in_file(conn, file_path):
+            out.append(
+                {
+                    "name": b.get("address") or "",
+                    "kind": tool_kind(label_of(str(b["id"])), b.get("kind")),
+                    "lines": f"{b.get('start_line', '')}-{b.get('end_line', '')}",
                 }
             )
     return out
@@ -299,7 +316,8 @@ def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, str]]:
 
 
 IMPACT_NOTE = (
-    "Blast radius and tests are inferred from IMPORTS / CALLS edges, "
+    "Blast radius and tests are inferred from IMPORTS / CALLS edges "
+    "(Terraform: block references), "
     "not a coverage run. Keep the index fresh with `cgh index` in CI."
 )
 

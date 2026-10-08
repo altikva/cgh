@@ -47,10 +47,12 @@ _NODE_TABLES = [
     )""",
     """CREATE TABLE IF NOT EXISTS tf_resource (
         id TEXT PRIMARY KEY, name TEXT, type TEXT, file_path TEXT,
-        start_line BIGINT, end_line BIGINT
+        start_line BIGINT, end_line BIGINT, kind TEXT, address TEXT,
+        module_dir TEXT, source_dir TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS tf_var (
-        id TEXT PRIMARY KEY, name TEXT, kind TEXT, file_path TEXT, start_line BIGINT
+        id TEXT PRIMARY KEY, name TEXT, kind TEXT, file_path TEXT, start_line BIGINT,
+        end_line BIGINT, address TEXT, module_dir TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS md_section (
         id TEXT PRIMARY KEY, title TEXT, level BIGINT, file_path TEXT,
@@ -62,7 +64,16 @@ _NODE_TABLES = [
 # Columns added after a graph may already exist on disk, mirrored from the
 # DuckDB backend's MIGRATIONS. SQLite has no ADD COLUMN IF NOT EXISTS, so
 # each is applied only when the column is missing.
-_MIGRATIONS = [("md_section", "kind", "TEXT")]
+_MIGRATIONS = [
+    ("md_section", "kind", "TEXT"),
+    ("tf_resource", "kind", "TEXT"),
+    ("tf_resource", "address", "TEXT"),
+    ("tf_resource", "module_dir", "TEXT"),
+    ("tf_resource", "source_dir", "TEXT"),
+    ("tf_var", "end_line", "BIGINT"),
+    ("tf_var", "address", "TEXT"),
+    ("tf_var", "module_dir", "TEXT"),
+]
 
 _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_imports (
@@ -85,6 +96,15 @@ _EDGE_TABLES = [
         from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_tf_depends (
+        from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_refs_var (
+        from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_var_depends (
+        from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_var_refs (
         from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_defines_resource (
@@ -154,6 +174,16 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_class_name ON class(name)",
     "CREATE INDEX IF NOT EXISTS idx_calls_from ON edge_calls(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_inherits_from ON edge_inherits(from_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_resource_address ON tf_resource(address)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_address ON tf_var(address)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_resource_file ON tf_resource(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_file ON tf_var(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_depends_to ON edge_tf_depends(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_refs_var_to ON edge_tf_refs_var(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_depends_to ON edge_tf_var_depends(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_refs_to ON edge_tf_var_refs(to_id)",
 ]
 
 _NAMED_PARAM = re.compile(r"\$(\w+)")
@@ -202,14 +232,18 @@ class SQLiteGraphDB:
         # case-insensitive by default, so force the match.
         self._conn.execute("PRAGMA case_sensitive_like=ON")
         if not read_only:
-            for ddl in _NODE_TABLES + _EDGE_TABLES + _SIDE_TABLES + _INDEXES:
+            for ddl in _NODE_TABLES + _EDGE_TABLES + _SIDE_TABLES:
                 self._conn.execute(ddl)
+            # Migrations before the indexes: an index can name a column an
+            # older table only gets from its migration.
             for table, column, sql_type in _MIGRATIONS:
                 have = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
                 if column not in have:
                     self._conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"
                     )
+            for ddl in _INDEXES:
+                self._conn.execute(ddl)
             self._conn.commit()
 
     def execute(self, query: str, params: dict | None = None) -> QueryResult:

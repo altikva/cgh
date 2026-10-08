@@ -201,6 +201,9 @@ def register(mcp) -> None:
         we resolve it as a function name and walk CALLS backward to find
         every transitive caller.
 
+        Terraform: a .tf path or an address (var.region) walks back the
+        blocks that reference it.
+
         Args:
           symbol_or_file: a function name, or a repo-relative / absolute path.
           max_depth:      how many hops of reverse reach (default 3).
@@ -235,9 +238,19 @@ def register(mcp) -> None:
         direction = "importers" if as_path else "callers"
         edge = "IMPORTS" if as_path else "CALLS"
 
+        from codegraph.analysis.terraform import dependent_files as tf_dependents
+        from codegraph.analysis.terraform import nodes_named as tf_nodes_named
+        from codegraph.analysis.terraform import referrers as tf_referrers
+
+        tf_ids: set[str] = set()
+
         def reverse_bfs(conn, start_keys: list[str]) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
-            start keys within max_depth hops. Returns (keys, truncated)."""
+            start keys within max_depth hops. Returns (keys, truncated).
+
+            Terraform has no imports or calls: a .tf file's dependents are
+            the files whose blocks reference its blocks, and a block's are
+            the blocks referencing it (the TF reference edges)."""
             seen: set[str] = set(start_keys)
             frontier = list(start_keys)
             ordered: list[str] = []
@@ -252,6 +265,10 @@ def register(mcp) -> None:
                             edge, dst_key=key, return_src=["path"], limit=_FANOUT_CAP
                         )
                         srcs = [r["src_path"] for r in rows]
+                        srcs += tf_dependents(conn, key, limit=_FANOUT_CAP)
+                    elif key in tf_ids:
+                        rows = srcs = tf_referrers(conn, key, limit=_FANOUT_CAP)
+                        tf_ids.update(srcs)
                     else:
                         rows = conn.find_neighbors(
                             edge, dst_key=key, return_src=["id"], limit=_FANOUT_CAP
@@ -281,6 +298,11 @@ def register(mcp) -> None:
                         "Function", where={"name": arg}, return_fields=["id"]
                     )
                 ]
+                if "." in arg:
+                    # A Terraform address (var.region, google_x.y).
+                    found = [str(r["id"]) for r in tf_nodes_named(conn, arg)]
+                    tf_ids.update(found)
+                    start_keys += found
             if not start_keys:
                 return []
             keys, trunc = reverse_bfs(conn, start_keys)
@@ -328,7 +350,7 @@ def register(mcp) -> None:
                     out.append(
                         {
                             "node": fid,
-                            "node_kind": "function",
+                            "node_kind": "tf_block" if fid in tf_ids else "function",
                             "file": file_path,
                             "role": role,
                             "layer": layer,

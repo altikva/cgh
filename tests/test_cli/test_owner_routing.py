@@ -842,3 +842,79 @@ def test_read_commands_with_live_owner(read_repo):
             assert json.loads(result.stdout)["graph"] == graph
         else:
             assert result.stdout == via_owner[name], name
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_read_commands_with_half_dead_owner(read_repo):
+    """A stuck owner (SIGSTOP: pid alive, port accepting, nothing answers)
+    makes every read command exit 1 with the stuck hint within
+    CGH_OWNER_TIMEOUT; a dead owner whose pid and port files were left behind
+    is skipped at once for the local open. Nothing may hang."""
+    import signal
+    import time
+
+    from codegraph.state.ipc import (
+        read_owner_pid,
+        read_owner_port,
+        register_keepalive,
+        spawn_owner,
+        unregister_keepalive,
+    )
+
+    root = str(read_repo)
+    env = {k: v for k, v in os.environ.items() if k != "CGH_LOCK_WAIT"}
+    env.update(
+        {"CGH_NO_PROGRESS": "1", "CGH_DEBUG_ROUTE": "1", "CGH_OWNER_TIMEOUT": "1"}
+    )
+    commands = {
+        "lookup": ["lookup", "helper"],
+        "search": ["search", "elp"],
+        "files": ["files"],
+        "stats": ["stats", "--json"],
+        "callers": ["callers", "helper"],
+        "graph": ["graph", "calls", "--symbol", "helper", "--mermaid"],
+    }
+
+    def _cgh(argv):
+        t0 = time.monotonic()
+        result = subprocess.run(
+            [sys.executable, "-m", "codegraph", *argv, "--root", root],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        return result, time.monotonic() - t0
+
+    register_keepalive(read_repo)
+    pid = None
+    try:
+        assert spawn_owner(read_repo, watch=False, reindex=False), "no owner"
+        pid = read_owner_pid(read_repo)
+        assert oc.call_owner_tool(root, "live_graph_stats", timeout=30).ok
+        os.kill(pid, signal.SIGSTOP)
+        for name, argv in commands.items():
+            result, elapsed = _cgh(argv)
+            assert result.returncode == 1, (name, result.stdout + result.stderr)
+            assert "cgh doctor --owner" in result.stdout + result.stderr, name
+            assert elapsed < 15, f"{name} took {elapsed:.1f}s"
+
+        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, signal.SIGCONT)
+        os.waitpid(pid, 0)
+        pid = None
+        assert read_owner_pid(read_repo) and read_owner_port(read_repo)
+        for name, argv in commands.items():
+            result, elapsed = _cgh(argv)
+            assert result.returncode == 0, (name, result.stdout + result.stderr)
+            if name != "graph":
+                assert "served by local read-only open" in result.stderr, name
+            assert elapsed < 15, f"{name} took {elapsed:.1f}s"
+    finally:
+        unregister_keepalive(read_repo)
+        if pid is not None:
+            for sig in (signal.SIGKILL, signal.SIGCONT):
+                try:
+                    os.kill(pid, sig)
+                except OSError:
+                    pass

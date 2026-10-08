@@ -121,7 +121,7 @@ _EDGE_TABLES = [
 
 # Mirrors schema_duckdb.SIDE_TABLES: call sites by callee name (or resolved
 # target id) and the other by-name references, so their edges can be rebuilt
-# from either end.
+# from either end, plus the per-file stamps that reveal an older writer.
 _SIDE_TABLES = [
     """CREATE TABLE IF NOT EXISTS call_site (
         from_id TEXT, file_path TEXT, name TEXT, to_id TEXT NOT NULL DEFAULT ''
@@ -130,6 +130,7 @@ _SIDE_TABLES = [
         kind TEXT, from_id TEXT, file_path TEXT, name TEXT,
         extra TEXT NOT NULL DEFAULT ''
     )""",
+    """CREATE TABLE IF NOT EXISTS file_stamp (path TEXT, mtime REAL)""",
 ]
 
 _INDEXES = [
@@ -145,6 +146,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
     # find_callers/find_callees join full-scans the edge table (measured 27 ms
@@ -361,6 +363,22 @@ class SQLiteGraphDB:
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+
+    # --- Writer stamps --------------------------------------------------
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute(
+            "INSERT INTO file_stamp (path, mtime) VALUES (?, ?)", [file_path, mtime]
+        )
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        from codegraph.core.graph_model import ORPHAN_REFS_SQL, STALE_FILES_SQL
+
+        stale = self._conn.execute(STALE_FILES_SQL).fetchall()
+        orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
+        return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
 
     # --- Name references ------------------------------------------------
 

@@ -62,13 +62,21 @@ def _fetch_mermaid_via_owner(
 def _call_owner_visualize(root: str, args_payload: dict):
     """POST one visualize_graph call to the owner, return its parsed JSON
     result (a dict), the raw text when it is not JSON, or None."""
-    from codegraph.cli.owner_client import call_owner_tool, older_owner_hint
+    from codegraph.cli.owner_client import (
+        call_owner_tool,
+        older_owner_hint,
+        stuck_owner_hint,
+    )
 
     # The tool returns a JSON blob {scope, format, diagram|payload}.
-    reply = call_owner_tool(root, "visualize_graph", args_payload, timeout=15)
+    reply = call_owner_tool(root, "visualize_graph", args_payload)
     if reply.status == "unknown_tool":
         # An owner from an older cgh holds the lock: a local open would fail.
         console.print(f"[yellow]{older_owner_hint(root, 'visualize_graph')}[/yellow]")
+        raise SystemExit(1)
+    if reply.status == "timeout":
+        # A silent owner still holds the lock: a local open would fail too.
+        console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
         raise SystemExit(1)
     if not reply.ok:
         return None

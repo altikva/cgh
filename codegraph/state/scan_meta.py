@@ -29,6 +29,9 @@ _META_FILE = "scan_meta.json"
 #   3: the other by-name references (class bases, markdown mentions and
 #      links, cross-file endpoint handlers) are persisted (name_ref table)
 #      for the same reason.
+# Files written by an indexer that predates the per-file stamps (file_stamp
+# table) are found and parsed again one by one, so adding the stamps needed
+# no bump: an index without them simply has every file unstamped.
 GRAPH_FORMAT = 3
 
 
@@ -185,6 +188,35 @@ def graph_format_outdated(repo_root: str | Path) -> bool:
         return True
 
 
+def recorded_graph_format(meta: dict | None) -> int | None:
+    """The graph format a scan record was written in: None without a record,
+    1 for a record that predates versioning, 0 when unreadable (outdated)."""
+    if meta is None:
+        return None
+    try:
+        return int(meta.get("graph_format", 1))
+    except (TypeError, ValueError):
+        return 0
+
+
+def format_notice(ss: dict) -> str | None:
+    """One line on an index older than this cgh's graph format, from a
+    scan_status() result, or None when the format is current."""
+    if not ss.get("format_outdated"):
+        return None
+    old, cur = ss.get("graph_format"), ss.get("graph_format_current")
+    if ss.get("indexing"):
+        return (
+            f"one-time re-parse running (index format {old}, this cgh writes "
+            f"{cur}): answers may be incomplete until it ends"
+        )
+    return (
+        f"index written in graph format {old}, this cgh needs {cur}: answers "
+        "miss cross-file edges until the one-time re-parse. Run `cgh index` "
+        "or start the owner"
+    )
+
+
 def git_tree_blob_shas(repo_root: str | Path) -> dict[str, str] | None:
     """
     Return {relative_path: blob_sha} for every file in HEAD.
@@ -224,8 +256,13 @@ def scan_status(repo_root: str | Path) -> dict:
       dirty                                      (bool | None, working tree)
       behind_by                                  (int | None, commits)
       changed_files                              (list[str], since indexed_sha)
-      fresh                                      (bool, no drift)
+      fresh                                      (bool, no drift and the
+                                                  graph format is current)
       indexing                                   ({pid, since} | None)
+      graph_format, graph_format_current,
+      format_outdated                            (index older than this cgh)
+      state      fresh | stale | outdated | reindexing | indexing |
+                 indexed | none
 
     ``indexing`` is set while an index of this repo is running. The metadata
     is only written when an index completes, so during a first index
@@ -265,13 +302,32 @@ def scan_status(repo_root: str | Path) -> dict:
     # NOT stale, the watcher keeps the index in sync on each file save.
     # If the watcher is down, a separate check would be needed, but the
     # git-vs-index sha comparison alone is the right coarse signal.
+    # An index written by an older graph format lacks edges only a re-parse
+    # adds, so it is not fresh whatever its git HEAD says.
+    recorded = recorded_graph_format(meta or None)
+    outdated = recorded is not None and recorded < GRAPH_FORMAT
     fresh = (
         indexed_sha is not None
         and current_sha is not None
         and indexed_sha == current_sha
+        and not outdated
     )
+    if outdated:
+        state = "reindexing" if indexing else "outdated"
+    elif indexing:
+        state = "indexing"
+    elif fresh:
+        state = "fresh"
+    elif indexed_sha:
+        state = "stale"
+    else:
+        state = "indexed" if meta.get("indexed_at") else "none"
 
     return {
+        "state": state,
+        "graph_format": recorded,
+        "graph_format_current": GRAPH_FORMAT,
+        "format_outdated": outdated,
         "imports": (meta.get("stats") or {}).get("imports") or {},
         "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
         "indexed_sha": indexed_sha,

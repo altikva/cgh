@@ -1149,7 +1149,69 @@ def _index_file(
     # Plugin scanners: inline tier runs now, deferred tier gets queued
     _run_scanners(root, path, idx, blob_sha, fts_conn)
 
+    # Last, so a run killed halfway leaves the file unstamped and the next
+    # index parses it again (see _reparse_unstamped).
+    conn.stamp_file(str(path), mtime)
     return True
+
+
+def _reparse_unstamped(repo_root: Path, activity_log) -> list[str]:
+    """Parse again the files an older indexer wrote since this one last ran.
+
+    cgh 0.15 (after a rollback) rewrites a file's nodes and edges but keeps
+    no call sites, name references or stamp, and its purge leaves the ones
+    this format recorded. Without this pass the next run trusts the mtime and
+    blob sha 0.15 stored and serves the stale references: edges into the file
+    stay lost and its old call sites relink removed calls. Re-indexing the
+    file rebuilds both directions; references of files 0.15 deleted are
+    dropped. Returns the paths parsed again.
+    """
+    conn = get_connection(repo_root)
+    try:
+        stale, orphans = conn.unstamped_files()
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"stamp check failed: {exc}")
+        return []
+    for path in orphans:
+        conn.purge_file_data(path)
+    fts_conn = _get_fts(repo_root)
+    done: list[str] = []
+    for path in stale:
+        p = Path(path)
+        try:
+            if not p.exists():
+                conn.delete_file_completely(path)
+                if fts_conn is not None:
+                    delete_file_symbols(fts_conn, path)
+                continue
+            if index_file(p, repo_root, force=True):
+                done.append(path)
+                continue
+            # Not indexable by this version: keep what is there, and stamp it
+            # so it is not retried on every run.
+            mtime = conn.query_node_field("File", "path", path, "mtime")
+            if mtime is not None:
+                conn.stamp_file(path, float(mtime))
+        except Exception as exc:
+            activity_log(repo_root, "scan_error", f"re-parse failed for {path}: {exc}")
+    if stale or orphans:
+        activity_log(
+            repo_root,
+            "older_writer_repair",
+            f"reparsed={len(done)} stale={len(stale)} orphans={len(orphans)}",
+        )
+    return done
+
+
+def older_writer_pending(repo_root: str | Path) -> bool:
+    """True when files written by an older indexer are waiting for
+    _reparse_unstamped. Errors count as False: this only decides whether an
+    owner indexes on start."""
+    try:
+        stale, orphans = get_connection(repo_root).unstamped_files()
+    except Exception:
+        return False
+    return bool(stale or orphans)
 
 
 def _git_tracked_files(repo_root: Path) -> list[Path] | None:
@@ -1858,6 +1920,9 @@ def _index_repo(
             print(f"  + {rel}")
 
     extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log, reparse)
+    repaired = _reparse_unstamped(repo_root, _activity_log)
+    if repaired:
+        stats["older_writer_reparsed"] = len(repaired)
     purged = _purge_fts_orphans(repo_root, _activity_log)
     if purged:
         stats["fts_orphans_purged"] = purged
@@ -2111,6 +2176,14 @@ def _incremental_reindex(
         except Exception:
             errors += 1
         _progress(full, ok)
+
+    # Files an older cgh rewrote (a watcher save, a single-file index) keep
+    # the blob sha it stored, so the diff above sees nothing to do for them.
+    for path in _reparse_unstamped(repo_root, _act_log):
+        try:
+            reindexed.append(str(Path(path).relative_to(repo_root)))
+        except ValueError:
+            reindexed.append(path)
 
     purged = _purge_fts_orphans(repo_root, _act_log)
 

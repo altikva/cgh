@@ -22,6 +22,7 @@ from typing import Any
 
 from codegraph.core.protocol import QueryResult
 from codegraph.core.utils import checked_identifier as _ident
+from codegraph.core.utils import chunks as _chunks
 
 # The DDL is dialect-neutral enough that DuckDB and SQLite share it verbatim
 # (SQLite gives DOUBLE/BIGINT the usual affinities; composite PKs, partial
@@ -118,6 +119,14 @@ _EDGE_TABLES = [
     )""",
 ]
 
+# Mirrors schema_duckdb.SIDE_TABLES: call sites by callee name (or resolved
+# target id) so CALLS edges can be rebuilt from either end.
+_SIDE_TABLES = [
+    """CREATE TABLE IF NOT EXISTS call_site (
+        from_id TEXT, file_path TEXT, name TEXT, to_id TEXT NOT NULL DEFAULT ''
+    )""",
+]
+
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_imports_to ON edge_imports(to_path)",
     "CREATE INDEX IF NOT EXISTS idx_calls_to ON edge_calls(to_id)",
@@ -126,6 +135,9 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_class_file ON class(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_md_section_file ON md_section(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_endpoint_file ON endpoint(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_name ON call_site(name)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_file ON call_site(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
     # find_callers/find_callees join full-scans the edge table (measured 27 ms
@@ -183,7 +195,7 @@ class SQLiteGraphDB:
         # case-insensitive by default, so force the match.
         self._conn.execute("PRAGMA case_sensitive_like=ON")
         if not read_only:
-            for ddl in _NODE_TABLES + _EDGE_TABLES + _INDEXES:
+            for ddl in _NODE_TABLES + _EDGE_TABLES + _SIDE_TABLES + _INDEXES:
                 self._conn.execute(ddl)
             for table, column, sql_type in _MIGRATIONS:
                 have = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -274,6 +286,24 @@ class SQLiteGraphDB:
         )
         self._conn.execute(sql, values)
 
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, Any]]) -> None:
+        """Batched ensure_edge for an edge type without properties."""
+        from codegraph.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = EDGES[edge_type]
+        if spec.prop_columns:
+            raise ValueError(f"Edge {edge_type!r} has props, use ensure_edge")
+        unique = list(dict.fromkeys(pairs))
+        for chunk in _chunks(unique, 400):
+            values = ", ".join("(?, ?)" for _ in chunk)
+            self._conn.execute(
+                f"INSERT INTO {spec.table} ({spec.src_column}, {spec.dst_column}) "
+                f"VALUES {values} ON CONFLICT DO NOTHING",
+                [v for pair in chunk for v in pair],
+            )
+
     def purge_file_data(self, file_path: str) -> None:
         from codegraph.core.graph_model import NODES, edges_touching
 
@@ -317,6 +347,51 @@ class SQLiteGraphDB:
             )
 
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+
+    # --- Call sites -----------------------------------------------------
+
+    def replace_call_sites(
+        self, file_path: str, rows: list[tuple[str, str, str]]
+    ) -> None:
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 200):
+            values = ", ".join("(?, ?, ?, ?)" for _ in chunk)
+            params = [v for f, n, t in chunk for v in (f, file_path, n, t)]
+            self._conn.execute(
+                "INSERT INTO call_site (from_id, file_path, name, to_id) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def call_sites_into(
+        self, names: list[str], ids: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str]]:
+        out: list[tuple[str, str, str, str]] = []
+        for column, guard, keys in (
+            ("name", "to_id = '' AND ", names),
+            ("to_id", "", ids),
+        ):
+            for chunk in _chunks(sorted(set(keys))):
+                ph = ", ".join("?" for _ in chunk)
+                rows = self._conn.execute(
+                    "SELECT from_id, file_path, name, to_id FROM call_site "
+                    f"WHERE {guard}{column} IN ({ph}) AND file_path <> ?",
+                    [*chunk, exclude_file],
+                ).fetchall()
+                out.extend(tuple(r) for r in rows)
+        return out
+
+    def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT id, name, file_path FROM function WHERE name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
 
     def find_node_keys(
         self, label: str, where_field: str, where_value: Any

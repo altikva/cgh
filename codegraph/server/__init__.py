@@ -374,16 +374,22 @@ def main() -> None:
 
 
 def _startup_index_needed(root, reindex: bool) -> bool:
-    """Whether the owner indexes on start: on --reindex, and also whenever the
-    store records no completed scan. An index killed halfway (a stopped owner,
-    a killed hook) writes no scan record, and an owner started without the
-    flag would otherwise serve that partial graph indefinitely."""
+    """Whether the owner indexes on start: on --reindex, whenever the store
+    records no completed scan, and when that scan used an older graph format.
+    An index killed halfway (a stopped owner, a killed hook) writes no scan
+    record, and an owner started without the flag would otherwise serve that
+    partial graph indefinitely."""
     if reindex:
         return True
-    from codegraph.state.scan_meta import read_meta
+    from codegraph.state.scan_meta import graph_format_outdated, read_meta
 
     if read_meta(root) is None:
         _log.info("no completed scan recorded for %s, indexing it", root)
+        return True
+    if graph_format_outdated(root):
+        # An upgrade changed what the graph stores; the incremental reindex
+        # this triggers falls back to one full re-parse.
+        _log.info("graph format of %s is outdated, re-indexing it", root)
         return True
     return False
 

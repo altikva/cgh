@@ -89,9 +89,12 @@ def register(mcp) -> None:
         query: str, kind: str = "", limit: int = 10, scope: str = ""
     ) -> str:
         """
-        BM25 search over persisted knowledge. Use when facing a problem
-        you suspect has been solved before, or when looking up a pattern
-        by keyword / tag.
+        Search the NOTES saved by agents and people in earlier sessions
+        (decisions, gotchas, papercuts, conventions), not the code. Use it
+        when facing a problem you suspect was solved before. To find code,
+        use symbol_lookup, search_symbols, fts_search (code described in
+        words), pattern_search or context_for_task instead: an empty
+        result here says nothing about what the code contains.
 
         kind: optional filter, pattern/decision/gotcha/style/glossary/
               note/standing_instruction
@@ -132,12 +135,16 @@ def register(mcp) -> None:
         offset: int = 0,
     ) -> str:
         """
-        Browse knowledge entries, newest first. Useful at session kickoff
-        to see what's already known before re-deriving.
+        Browse the notes saved in earlier sessions (not the code), newest
+        first. Useful at session kickoff to see what's already known
+        before re-deriving. To find code use the code tools (symbol_lookup,
+        fts_search, pattern_search, context_for_task).
 
         Pagination: pass `offset` to page through results. Response includes
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
-        follow up without counting locally.
+        follow up without counting locally. An entry promoted from another
+        worktree (`cgh knowledge promote`) carries a `provenance` object:
+        source branch, PR, worktree, origin id, promoted_at.
         """
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list

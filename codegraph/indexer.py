@@ -300,16 +300,19 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
             docstring=cls.docstring,
         )
     for res in idx.resources:
+        # Terraform blocks are found by address (var.region, module.iam,
+        # google_x.y): the address is the searchable name, the summary
+        # (arguments, nested blocks, a tfvars value) the text.
         kind = f"tf_{res.kind}"
         upsert_symbol(
             fts_conn,
             sym_id=res.id,
             kind=kind,
-            name=res.name,
+            name=res.address or res.name,
             file_path=res.file_path,
             start_line=res.start_line,
             end_line=res.end_line,
-            docstring=res.type,
+            docstring=res.docstring or res.type,
         )
     for sec in idx.sections:
         upsert_symbol(
@@ -425,6 +428,9 @@ def _resolve_inbound_calls(conn: GraphDB, file_path: str, functions: list) -> No
 #   md_link   MdSection id -> resolved target path, extra = link label
 #   handler   Endpoint id -> handler function name, extra = a file the route
 #             file imports (one row per imported file)
+#   tf_ref    Terraform block id -> "<module dir>::<address>" it uses
+#   tf_modout Terraform block id -> "<module dir>::module.<m>", extra = the
+#             output name (see codegraph/analysis/terraform.py)
 NameRef = tuple[str, str, str, str]
 
 
@@ -464,6 +470,10 @@ def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None
     those edges depend on indexing order and vanish when the target's file is
     reindexed. Each kind applies the same rule as its outbound resolution.
     """
+    if idx.resources:
+        from codegraph.analysis.terraform import resolve_inbound
+
+        resolve_inbound(conn, file_path, idx.resources)
     fns: dict[str, list[str]] = {}
     for fn in idx.functions:
         fns.setdefault(fn.name, []).append(fn.id)
@@ -740,36 +750,18 @@ def _handler_candidate_files(idx: FileIndex, repo_root: Path | None) -> list[str
     return sorted(targets)
 
 
-def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
-    """Ingest terraform resources and variables from unified FileIndex."""
-    for res in idx.resources:
-        if res.kind in ("variable", "output"):
-            conn.upsert_node(
-                "TFVar",
-                "id",
-                res.id,
-                {
-                    "name": res.name,
-                    "kind": res.kind,
-                    "file_path": res.file_path,
-                    "start_line": res.start_line,
-                },
-            )
-            conn.ensure_edge("DEFINES_TFVAR", res.file_path, res.id)
-        else:
-            conn.upsert_node(
-                "TFResource",
-                "id",
-                res.id,
-                {
-                    "name": res.name,
-                    "type": res.type,
-                    "file_path": res.file_path,
-                    "start_line": res.start_line,
-                    "end_line": res.end_line,
-                },
-            )
-            conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
+def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
+    """Ingest a file's Terraform blocks and link the addresses they use.
+
+    Returns the name references to record, so a block defined in a file
+    indexed later, or reindexed, links itself back (_resolve_inbound_refs).
+    """
+    from codegraph.analysis import terraform as _tf
+
+    _tf.ingest_blocks(conn, idx.resources)
+    refs = _tf.ref_rows(idx.resources)
+    _tf.resolve_outbound(conn, refs)
+    return refs
 
 
 def _ingest_endpoints(
@@ -1124,7 +1116,7 @@ def _index_file(
     if idx.functions or idx.classes:
         refs += _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
     if idx.resources:
-        _ingest_terraform(conn, idx)
+        refs += _ingest_terraform(conn, idx)
     if idx.sections:
         refs += _ingest_markdown(conn, idx)
 

@@ -29,10 +29,12 @@ _META_FILE = "scan_meta.json"
 #   3: the other by-name references (class bases, markdown mentions and
 #      links, cross-file endpoint handlers) are persisted (name_ref table)
 #      for the same reason.
+#   4: Terraform is parsed into addressed blocks (data, module, locals,
+#      providers and .tfvars entries too) with reference edges between them.
+GRAPH_FORMAT = 4
 # Files written by an indexer that predates the per-file stamps (file_stamp
-# table) are found and parsed again one by one, so adding the stamps needed
-# no bump: an index without them simply has every file unstamped.
-GRAPH_FORMAT = 3
+# table) are found and parsed again one by one; the stamps needed no bump of
+# their own.
 
 
 def _meta_path(repo_root: str | Path) -> Path:

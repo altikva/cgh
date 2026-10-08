@@ -60,20 +60,31 @@ NODE_TABLES = [
         end_line    BIGINT,
         docstring   TEXT
     )""",
+    # Terraform blocks. `address` is the in-module address (google_x.y,
+    # data.t.n, module.m, local.l, var.v, output.o) and `module_dir` the
+    # directory it resolves in; a module block keeps its raw source in
+    # `type` and the local directory it points to in `source_dir`.
     """CREATE TABLE IF NOT EXISTS tf_resource (
         id          TEXT PRIMARY KEY,
         name        TEXT,
         type        TEXT,
         file_path   TEXT,
         start_line  BIGINT,
-        end_line    BIGINT
+        end_line    BIGINT,
+        kind        TEXT,
+        address     TEXT,
+        module_dir  TEXT,
+        source_dir  TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS tf_var (
         id          TEXT PRIMARY KEY,
         name        TEXT,
         kind        TEXT,
         file_path   TEXT,
-        start_line  BIGINT
+        start_line  BIGINT,
+        end_line    BIGINT,
+        address     TEXT,
+        module_dir  TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS md_section (
         id              TEXT PRIMARY KEY,
@@ -128,6 +139,21 @@ EDGE_TABLES = [
         PRIMARY KEY (from_id, to_id)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_tf_depends (
+        from_id    TEXT,
+        to_id      TEXT,
+        PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_refs_var (
+        from_id    TEXT,
+        to_id      TEXT,
+        PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_var_depends (
+        from_id    TEXT,
+        to_id      TEXT,
+        PRIMARY KEY (from_id, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_tf_var_refs (
         from_id    TEXT,
         to_id      TEXT,
         PRIMARY KEY (from_id, to_id)
@@ -242,6 +268,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
+    "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
 ]
 
 
@@ -249,12 +277,23 @@ INDEXES = [
 # EXISTS keeps an older index readable instead of failing on the first write.
 MIGRATIONS = [
     "ALTER TABLE md_section ADD COLUMN IF NOT EXISTS kind TEXT",
+    "ALTER TABLE tf_resource ADD COLUMN IF NOT EXISTS kind TEXT",
+    "ALTER TABLE tf_resource ADD COLUMN IF NOT EXISTS address TEXT",
+    "ALTER TABLE tf_resource ADD COLUMN IF NOT EXISTS module_dir TEXT",
+    "ALTER TABLE tf_resource ADD COLUMN IF NOT EXISTS source_dir TEXT",
+    "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS end_line BIGINT",
+    "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS address TEXT",
+    "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS module_dir TEXT",
 ]
 
 
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Create the DuckDB tables and indexes. Idempotent via IF NOT EXISTS."""
-    for ddl in NODE_TABLES + EDGE_TABLES + SIDE_TABLES + INDEXES:
+    # Migrations run before the indexes: an index can name a column an
+    # older table only gets from its migration.
+    for ddl in NODE_TABLES + EDGE_TABLES + SIDE_TABLES:
         conn.execute(ddl)
     for migration in MIGRATIONS:
         conn.execute(migration)
+    for ddl in INDEXES:
+        conn.execute(ddl)

@@ -202,11 +202,13 @@ def _symbols_view(conn, root, files, functions, max_symbols) -> dict:
 def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> dict:
     """Terraform resources hanging off the file that declares them.
 
-    TF_DEPENDS is carried too, but most indexes have none: the file-to-resource
-    edge is what gives an infrastructure repo a readable shape.
+    TF_DEPENDS (one block referencing another) is carried too; the
+    file-to-resource edge is what gives an infrastructure repo its shape.
     """
     defines = conn.find_neighbors(
-        "DEFINES_RESOURCE", return_src=["path"], return_dst=["id", "name", "type"]
+        "DEFINES_RESOURCE",
+        return_src=["path"],
+        return_dst=["id", "name", "type", "address"],
     )
     if not defines:
         return _view(
@@ -243,7 +245,8 @@ def _infra_view(conn, root, files, fn_per_file, cls_per_file, max_resources) -> 
             nodes.append(
                 {
                     "k": "resource",
-                    "n": f"{e.get('dst_type') or ''}.{e.get('dst_name') or ''}".strip(
+                    "n": e.get("dst_address")
+                    or f"{e.get('dst_type') or ''}.{e.get('dst_name') or ''}".strip(
                         "."
                     ),
                     "p": rel,

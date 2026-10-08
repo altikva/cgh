@@ -14,6 +14,7 @@ import argparse
 import json
 
 from rich import box
+from rich.markup import escape
 from rich.table import Table
 
 from codegraph.cli import console
@@ -74,6 +75,7 @@ def cmd_plugins(args: argparse.Namespace) -> None:
             r.version or "[dim]?[/dim]",
             str(r.api_version) if r.api_version is not None else "[dim]-[/dim]",
             ", ".join(r.surfaces) if r.surfaces else "[dim]-[/dim]",
-            r.reason or "",
+            # Reasons carry literal brackets ("cgh[plugins]"), not markup.
+            escape(r.reason or ""),
         )
     console.print(table)

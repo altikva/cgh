@@ -171,7 +171,10 @@ def _print_help():
                     "Index files bypassing .gitignore (requires confirmation)",
                 ),
                 ("plugins", "List installed cgh plugins and their status"),
-                ("guard", "Deprecated: removes deny entries older cgh wrote"),
+                (
+                    "guard",
+                    "Deprecated: cleans up what older cgh wrote (--remove-rules)",
+                ),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("knowledge", "Promote a worktree's learnings to its main checkout"),
@@ -677,9 +680,19 @@ def _register_state_and_hooks(sub) -> None:
     p.add_argument("--json", action="store_true")
 
     # --- guard ---
-    p = sub.add_parser("guard", help="Deprecated: removes deny entries older cgh wrote")
+    p = sub.add_parser(
+        "guard",
+        help="Deprecated: cleans up what older cgh wrote (--remove-rules)",
+    )
     # The old actions stay accepted so scripts keep working; both clean up.
     p.add_argument("action", nargs="?", default="status", choices=["status", "sync"])
+    p.add_argument(
+        "--remove-rules",
+        action="store_true",
+        help="Also remove the Read() deny rules and the .bobignore block an "
+        "older cgh wrote (recorded in .codegraph/guard_denies.json). Without "
+        "it they are kept, since they still keep files from your agent.",
+    )
     _add_root(p)
 
     # --- _hook_guard (internal: invoked by agent pre-tool-use hooks) ---

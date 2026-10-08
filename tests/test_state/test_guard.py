@@ -7,10 +7,11 @@
 # Description: What is left of the guard since 0.15.0. The hook entry
 #              points always allow and print nothing, even on a file an
 #              older version would have blocked and even with a legacy
-#              mode = "secure" config. The cleanup removes exactly what
-#              cgh wrote (sidecar-recorded Claude deny rules, the managed
-#              .bobignore block, the guard hook entries) and leaves every
-#              user entry in place.
+#              mode = "secure" config. The default cleanup removes only
+#              the guard hook entries cgh wrote and counts the deny rules
+#              it keeps; with remove_rules it also removes exactly the
+#              rules cgh wrote (sidecar-recorded Claude deny rules, the
+#              managed .bobignore block). Every user entry stays.
 
 from __future__ import annotations
 
@@ -157,6 +158,21 @@ class TestCleanupClaudeRules:
         path.write_text(json.dumps(rules), encoding="utf-8")
         return path
 
+    def test_rules_are_kept_and_counted_by_default(self, tmp_path):
+        root = _repo(tmp_path)
+        ours = ["Read(.codegraph/**)", f"Read({root}/payroll.xlsx)"]
+        deny = ["Read(./.env)", *ours]
+        settings = self._settings(root, deny)
+        sidecar = self._sidecar(root, ours)
+        before = settings.read_text(encoding="utf-8")
+
+        report = cleanup_guard_leftovers(root)
+
+        assert not report.changed
+        assert report.kept_rules == 2
+        assert settings.read_text(encoding="utf-8") == before
+        assert sidecar.exists()  # kept so the removal stays possible
+
     def test_removes_only_sidecar_rules(self, tmp_path):
         root = _repo(tmp_path)
         ours = ["Read(.codegraph/**)", f"Read({root}/payroll.xlsx)"]
@@ -164,10 +180,11 @@ class TestCleanupClaudeRules:
         settings = self._settings(root, user[:1] + ours + user[1:], model="opus")
         sidecar = self._sidecar(root, ours)
 
-        report = cleanup_guard_leftovers(root)
+        report = cleanup_guard_leftovers(root, remove_rules=True)
 
         assert sorted(report.claude_rules) == sorted(ours)
         assert report.sidecar_removed and not sidecar.exists()
+        assert report.kept_rules == 0
         data = json.loads(settings.read_text(encoding="utf-8"))
         assert data["permissions"]["deny"] == user
         assert data["model"] == "opus"
@@ -176,7 +193,8 @@ class TestCleanupClaudeRules:
         """Without the sidecar cgh cannot prove it wrote a rule: hands off."""
         root = _repo(tmp_path)
         settings = self._settings(root, ["Read(.codegraph/**)"])
-        report = cleanup_guard_leftovers(root)
+        assert cleanup_guard_leftovers(root).kept_rules == 0
+        report = cleanup_guard_leftovers(root, remove_rules=True)
         assert report.claude_rules == []
         data = json.loads(settings.read_text(encoding="utf-8"))
         assert data["permissions"]["deny"] == ["Read(.codegraph/**)"]
@@ -185,7 +203,7 @@ class TestCleanupClaudeRules:
         root = _repo(tmp_path)
         settings = self._settings(root, ["Read(.codegraph/**)"])
         self._sidecar(root, ["Read(.codegraph/**)"])
-        cleanup_guard_leftovers(root)
+        cleanup_guard_leftovers(root, remove_rules=True)
         assert "permissions" not in json.loads(settings.read_text(encoding="utf-8"))
 
     def test_unparseable_settings_are_left_alone(self, tmp_path):
@@ -194,41 +212,51 @@ class TestCleanupClaudeRules:
         path.parent.mkdir(parents=True)
         path.write_text("{ not json", encoding="utf-8")
         sidecar = self._sidecar(root, ["Read(.codegraph/**)"])
-        report = cleanup_guard_leftovers(root)
+        report = cleanup_guard_leftovers(root, remove_rules=True)
         assert path.read_text(encoding="utf-8") == "{ not json"
         assert sidecar.exists()  # kept so a later run can finish
         assert not report.sidecar_removed
 
-    def test_plugin_api_shim_cleans_and_never_adds(self, tmp_path):
+    def test_plugin_api_shim_writes_and_removes_nothing(self, tmp_path):
         root = _repo(tmp_path)
         _bar(root, "payroll.xlsx")
-        self._settings(root, ["Read(.codegraph/**)", "Read(./.env)"])
-        self._sidecar(root, ["Read(.codegraph/**)"])
-        assert sync_static_rules(root) == (0, 1)
+        settings = self._settings(root, ["Read(.codegraph/**)", "Read(./.env)"])
+        sidecar = self._sidecar(root, ["Read(.codegraph/**)"])
+        before = settings.read_text(encoding="utf-8")
         assert sync_static_rules(root) == (0, 0)
+        assert settings.read_text(encoding="utf-8") == before
+        assert sidecar.exists()
 
 
 class TestCleanupBobignore:
+    def test_block_is_kept_and_counted_by_default(self, tmp_path):
+        root = _repo(tmp_path)
+        path = root / ".bobignore"
+        path.write_text("node_modules/\n" + _BLOCK, encoding="utf-8")
+        report = cleanup_guard_leftovers(root)
+        assert not report.changed and report.kept_rules == 2
+        assert path.read_text(encoding="utf-8") == "node_modules/\n" + _BLOCK
+
     def test_removes_block_keeps_user_lines(self, tmp_path):
         root = _repo(tmp_path)
         path = root / ".bobignore"
         path.write_text("node_modules/\n" + _BLOCK + "dist/\n", encoding="utf-8")
-        report = cleanup_guard_leftovers(root)
+        report = cleanup_guard_leftovers(root, remove_rules=True)
         assert report.bobignore_lines == [".codegraph/", "key.pem"]
         assert path.read_text(encoding="utf-8") == "node_modules/\ndist/\n"
 
     def test_file_holding_only_the_block_is_deleted(self, tmp_path):
         root = _repo(tmp_path)
         (root / ".bobignore").write_text(_BLOCK, encoding="utf-8")
-        cleanup_guard_leftovers(root)
+        cleanup_guard_leftovers(root, remove_rules=True)
         assert not (root / ".bobignore").exists()
 
     def test_user_file_without_block_is_untouched(self, tmp_path):
         root = _repo(tmp_path)
         path = root / ".bobignore"
         path.write_text(".codegraph/\nsecrets/\n", encoding="utf-8")
-        report = cleanup_guard_leftovers(root)
-        assert not report.changed
+        report = cleanup_guard_leftovers(root, remove_rules=True)
+        assert not report.changed and report.kept_rules == 0
         assert path.read_text(encoding="utf-8") == ".codegraph/\nsecrets/\n"
 
 
@@ -307,7 +335,7 @@ class TestCleanupHooks:
 
 
 class TestGuardCommand:
-    def test_prints_deprecation_and_cleans(self, tmp_path, capsys):
+    def test_prints_deprecation_and_keeps_rules(self, tmp_path, capsys):
         from codegraph.cli.commands_guard import cmd_guard
 
         root = _repo(tmp_path)
@@ -315,17 +343,66 @@ class TestGuardCommand:
         cmd_guard(Namespace(root=str(root), action="sync"))
         out = capsys.readouterr().out
         assert "deprecated" in out
-        assert ".bobignore" in out
+        assert "kept 2 deny rule(s)" in out
+        assert "cgh guard --remove-rules" in out
+        assert (root / ".bobignore").read_text(encoding="utf-8") == _BLOCK
+
+    def test_remove_rules_removes_only_cgh_rules(self, tmp_path, capsys):
+        from codegraph.cli.commands_guard import cmd_guard
+
+        root = _repo(tmp_path)
+        (root / ".bobignore").write_text("dist/\n" + _BLOCK, encoding="utf-8")
+        settings = root / ".claude" / "settings.local.json"
+        settings.parent.mkdir()
+        settings.write_text(
+            json.dumps({"permissions": {"deny": ["Read(./.env)", "Read(key.pem)"]}}),
+            encoding="utf-8",
+        )
+        sidecar = root / ".codegraph" / "guard_denies.json"
+        sidecar.write_text(json.dumps(["Read(key.pem)"]), encoding="utf-8")
+
+        cmd_guard(Namespace(root=str(root), action="status", remove_rules=True))
+
+        out = capsys.readouterr().out
+        assert "removed 1 deny rule(s)" in out and ".bobignore" in out
+        assert "kept" not in out
+        assert (root / ".bobignore").read_text(encoding="utf-8") == "dist/\n"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        assert data["permissions"]["deny"] == ["Read(./.env)"]
+        assert not sidecar.exists()
+
+    def test_remove_rules_flag_from_the_cli(self, tmp_path):
+        root = _repo(tmp_path)
+        (root / ".bobignore").write_text(_BLOCK, encoding="utf-8")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "codegraph",
+                "guard",
+                "--remove-rules",
+                "--root",
+                str(root),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
         assert not (root / ".bobignore").exists()
 
-    def test_setup_runs_the_cleanup(self, tmp_path, monkeypatch):
+    def test_setup_keeps_rules_and_says_how_to_remove(
+        self, tmp_path, monkeypatch, capsys
+    ):
         from codegraph.cli.commands_init import cmd_setup
 
         root = _repo(tmp_path)
         (root / ".bobignore").write_text("dist/\n" + _BLOCK, encoding="utf-8")
         monkeypatch.chdir(root)
         cmd_setup(Namespace(root=str(root), target="cursor"))
-        assert (root / ".bobignore").read_text(encoding="utf-8") == "dist/\n"
+        assert (root / ".bobignore").read_text(encoding="utf-8") == "dist/\n" + _BLOCK
+        out = capsys.readouterr().out
+        assert out.count("cgh guard --remove-rules") == 1
 
 
 def test_cleanup_keeps_a_user_hook_sharing_the_guard_group(tmp_path: Path) -> None:

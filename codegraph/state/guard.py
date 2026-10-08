@@ -7,13 +7,14 @@
 # Description: What is left of the confidentiality guard. Since 0.15.0
 #              cgh no longer vetoes agent file access: the hook commands
 #              always allow, and blocking file reads is the job of the
-#              agent's own permission rules. This module removes what
-#              older versions wrote into a repo: the Read() deny rules in
-#              .claude/settings.local.json (recorded in the
-#              guard_denies.json sidecar), the managed .bobignore block,
-#              and the guard hook entries cgh added to Claude Code,
-#              Gemini CLI and Codex configs. Only entries cgh wrote are
-#              touched, identified by the sidecar or by cgh's markers.
+#              agent's own permission rules. This module removes the guard
+#              hook entries older versions added to Claude Code, Gemini CLI
+#              and Codex configs (no-ops now). The Read() deny rules they
+#              wrote to .claude/settings.local.json (recorded in the
+#              guard_denies.json sidecar) and the managed .bobignore block
+#              still protect files, so they stay unless the user asks for
+#              their removal (`cgh guard --remove-rules`). Only entries cgh
+#              wrote are touched, identified by the sidecar or by markers.
 
 from __future__ import annotations
 
@@ -35,12 +36,15 @@ _CODEX_GUARD_MARKER = "_hook_guard_codex"
 
 @dataclass
 class CleanupReport:
-    """What cleanup_guard_leftovers removed. Empty means nothing to do."""
+    """What cleanup_guard_leftovers removed, and what it kept."""
 
     claude_rules: list[str] = field(default_factory=list)
     bobignore_lines: list[str] = field(default_factory=list)
     hooks: list[str] = field(default_factory=list)  # config files edited
     sidecar_removed: bool = False
+    # cgh-written rules still in place (deny entries plus .bobignore block
+    # lines) because removal was not asked for.
+    kept_rules: int = 0
 
     @property
     def changed(self) -> bool:
@@ -73,18 +77,34 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _sidecar_rules(root: Path) -> set[str]:
+    """The deny rules the sidecar says cgh wrote; empty when absent."""
+    sidecar = _sidecar_path(root)
+    if not sidecar.exists():
+        return set()
+    try:
+        return {str(r) for r in json.loads(sidecar.read_text(encoding="utf-8"))}
+    except (ValueError, OSError, TypeError):
+        return set()
+
+
+def _claude_deny(root: Path) -> list | None:
+    """The deny list of .claude/settings.local.json ([] when absent), None
+    when the file cannot be parsed."""
+    settings = _load_json(root / ".claude" / "settings.local.json")
+    if settings is None:
+        return None
+    permissions = settings.get("permissions")
+    deny = permissions.get("deny") if isinstance(permissions, dict) else None
+    return deny if isinstance(deny, list) else []
+
+
 def _remove_claude_rules(root: Path) -> list[str] | None:
     """Drop the Read() deny rules listed in the sidecar from
     .claude/settings.local.json. Returns the removed rules, or None when
     the settings file could not be parsed (the sidecar is then kept so a
     later run can finish the job)."""
-    sidecar = _sidecar_path(root)
-    if not sidecar.exists():
-        return []
-    try:
-        ours = {str(r) for r in json.loads(sidecar.read_text(encoding="utf-8"))}
-    except (ValueError, OSError, TypeError):
-        ours = set()
+    ours = _sidecar_rules(root)
     if not ours:
         return []
 
@@ -112,32 +132,68 @@ def _remove_claude_rules(root: Path) -> list[str] | None:
     return removed
 
 
+_BOBIGNORE_BLOCK_RE = re.compile(
+    re.escape(_BOBIGNORE_START) + r"\n(.*?)" + re.escape(_BOBIGNORE_END) + r"\n?",
+    re.DOTALL,
+)
+
+
+def _read_bobignore(root: Path) -> str | None:
+    ignore_path = root / ".bobignore"
+    if not ignore_path.exists():
+        return None
+    try:
+        # Lenient decode: a non-UTF-8 ignore file must not crash cleanup.
+        return ignore_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _bobignore_block_lines(root: Path) -> list[str] | None:
+    """The rule lines inside cgh's managed .bobignore block, None when
+    there is no block."""
+    existing = _read_bobignore(root)
+    match = _BOBIGNORE_BLOCK_RE.search(existing) if existing is not None else None
+    if not match:
+        return None
+    return [line for line in match.group(1).splitlines() if line.strip()]
+
+
 def _remove_bobignore_block(root: Path) -> list[str]:
     """Remove cgh's managed block from .bobignore, keeping every line
     outside it. Deletes the file when nothing else was in it."""
-    ignore_path = root / ".bobignore"
-    if not ignore_path.exists():
+    existing = _read_bobignore(root)
+    if existing is None:
         return []
-    try:
-        # Lenient decode: a non-UTF-8 ignore file must not crash cleanup.
-        existing = ignore_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    block_re = re.compile(
-        re.escape(_BOBIGNORE_START) + r"\n(.*?)" + re.escape(_BOBIGNORE_END) + r"\n?",
-        re.DOTALL,
-    )
-    match = block_re.search(existing)
+    match = _BOBIGNORE_BLOCK_RE.search(existing)
     if not match:
         return []
     lines = [line for line in match.group(1).splitlines() if line.strip()]
-    rest = block_re.sub("", existing, count=1)
+    rest = _BOBIGNORE_BLOCK_RE.sub("", existing, count=1)
+    ignore_path = root / ".bobignore"
     if rest.strip():
         ignore_path.write_text(rest, encoding="utf-8")
     else:
         ignore_path.unlink()
     # An empty managed block still counts as a removal of the markers.
     return lines or [_BOBIGNORE_START]
+
+
+def count_kept_rules(repo_root: str | Path) -> int:
+    """How many rules cgh wrote are still in place: the sidecar's deny
+    entries present in .claude/settings.local.json plus the lines of the
+    managed .bobignore block. An empty managed block counts as one, so its
+    markers are not forgotten."""
+    root = Path(repo_root)
+    count = 0
+    ours = _sidecar_rules(root)
+    deny = _claude_deny(root) if ours else []
+    if deny:
+        count += sum(1 for r in deny if r in ours)
+    block = _bobignore_block_lines(root)
+    if block is not None:
+        count += len(block) or 1
+    return count
 
 
 def _is_guard_command(entry: object, marker: str) -> bool:
@@ -228,11 +284,20 @@ def _remove_guard_hooks(root: Path) -> list[str]:
     return edited
 
 
-def cleanup_guard_leftovers(repo_root: str | Path) -> CleanupReport:
-    """Remove every guard artifact older cgh versions wrote into this
-    repo, and nothing else. Idempotent; safe to run on every init."""
+def cleanup_guard_leftovers(
+    repo_root: str | Path, *, remove_rules: bool = False
+) -> CleanupReport:
+    """Remove the guard hook entries older cgh versions wrote into this
+    repo, and nothing else. The deny rules they wrote keep protecting files,
+    so they and the sidecar recording them stay unless ``remove_rules`` is
+    set; ``kept_rules`` then says how many remain. Idempotent; safe to run
+    on every init."""
     root = Path(repo_root)
     report = CleanupReport()
+    report.hooks = _remove_guard_hooks(root)
+    if not remove_rules:
+        report.kept_rules = count_kept_rules(root)
+        return report
 
     removed = _remove_claude_rules(root)
     if removed is not None:
@@ -246,20 +311,13 @@ def cleanup_guard_leftovers(repo_root: str | Path) -> CleanupReport:
                 pass
 
     report.bobignore_lines = _remove_bobignore_block(root)
-    report.hooks = _remove_guard_hooks(root)
+    report.kept_rules = count_kept_rules(root)
     return report
 
 
 def sync_static_rules(repo_root: str | Path) -> tuple[int, int]:
     """Deprecated since 0.15.0, kept for the plugin API. cgh no longer
-    writes deny rules; this removes the ones it wrote before. Returns
-    (added, removed), added is always 0."""
-    root = Path(repo_root)
-    removed = _remove_claude_rules(root)
-    if removed is None:
-        return (0, 0)
-    try:
-        _sidecar_path(root).unlink(missing_ok=True)
-    except OSError:
-        pass
-    return (0, len(removed))
+    writes deny rules, and the ones it wrote before stay until the user runs
+    `cgh guard --remove-rules`, so this writes nothing and removes nothing.
+    Always returns (0, 0) as (added, removed)."""
+    return (0, 0)

@@ -181,7 +181,12 @@ def cmd_impact(args: argparse.Namespace) -> None:
     # A live owner holds the graph DB for writing, which blocks our own
     # read-only open, so ask it first. No owner (CI) -> open read-only here.
     # Never start an owner from this command.
-    from codegraph.cli.owner_client import call_owner_tool, note_route, stuck_owner_hint
+    from codegraph.cli.owner_client import (
+        call_owner_tool,
+        note_route,
+        older_owner_hint,
+        stuck_owner_hint,
+    )
 
     reply = call_owner_tool(root, "impact_report", {"changed_files": changed})
     if reply.ok and isinstance(reply.data, dict) and "error" not in reply.data:
@@ -190,6 +195,10 @@ def cmd_impact(args: argparse.Namespace) -> None:
     elif reply.status == "timeout":
         # The owner is alive and holds the lock: a local open cannot succeed.
         _fail(want_json, stuck_owner_hint(root, reply))
+        return
+    elif reply.status == "unknown_tool":
+        # An owner from an older cgh: alive, holding the lock, no such tool.
+        _fail(want_json, older_owner_hint(root, "impact_report"))
         return
     else:
         report = _report_via_local_open(root, changed, reply, want_json)

@@ -37,14 +37,17 @@ cgh codegen gen --spec "pytest tests for UserService: create, update, delete" \
 Two checks run before anything reaches a model:
 
 - **Secret check, always.** The reference, the file being extended and the
-  spec are scanned with a built-in pattern set: private key blocks, AWS
-  access key ids, GCP service-account key files, GitHub, Slack and Stripe
-  live tokens, bearer tokens, and `password` / `secret` / `api_key` /
-  `token` assignments to a real-looking literal (empty values, `changeme`,
-  `xxx`, `${...}` templates and env lookups are ignored). A hit refuses the
-  run with the file and line, never the value, for every backend, local
-  included, and whatever the egress setting. An auto-picked reference that
-  fails falls back to the next candidate. It needs no other plugin.
+  spec are scanned with built-in regex patterns for known secret formats:
+  private key blocks, AWS access key ids, GCP service-account key files,
+  GitHub, Slack and Stripe live tokens, bearer tokens, and `password` /
+  `secret` / `api_key` / `token` assignments to a real-looking literal
+  (empty values, `changeme`, `xxx`, `${...}` templates and env lookups are
+  ignored). A hit refuses the run with the file and line, never the value,
+  for every backend, local included, and whatever the egress setting. An
+  auto-picked reference that fails falls back to the next candidate. It
+  needs no other plugin. The check is best effort, not a guarantee: a
+  secret in a format it has no pattern for (another provider's token, a
+  key split across lines, an encoded value) goes through.
 - **Egress gate, cloud backends only.** A reference carrying a
   `confidential`, block-severity or PII finding is refused (findings come
   from cgh-pii or cgh-classify when they scan at index). `egress = "strict"`

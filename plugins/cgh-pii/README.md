@@ -18,7 +18,11 @@ name, or add it to a tool install with
 
 Secret patterns are precise. A PEM private key header or an AWS access
 key id has a fixed shape, so a match is almost always real. That is what
-`cgh pii scan` looks for by default.
+`cgh pii scan` looks for by default. It only knows the shapes in the
+table below, though: tokens of other providers (GitHub, Slack, Stripe,
+GCP service-account files, ...), a key split across lines or an encoded
+value are not matched. A clean run is best effort, not proof that the
+tree holds no secret.
 
 PII patterns are not reliable. An email regex flags every author line
 and test fixture, a phone regex flags version strings and coordinate

@@ -75,6 +75,11 @@ pip install "cgh[full]"         # plugins, extra language parsers, precise Pytho
 cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
 understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
 
+Upgrading from 0.14 or older? Read
+[docs/UPGRADING-0.15.md](docs/UPGRADING-0.15.md) first: cgh no longer blocks
+agent file access, the default plugin set is smaller, and the upgrade
+command needs `-U`.
+
 No Python? Run the standalone binary through npm, or download it from the
 [latest release](https://github.com/altikva/cgh/releases/latest):
 
@@ -160,6 +165,7 @@ searchable and reachable from the graph.
 | Guide | What it covers |
 |---|---|
 | [Install](docs/INSTALL.md) | one-line installers, extras, corporate mirrors, PATH |
+| [Upgrading to 0.15](docs/UPGRADING-0.15.md) | what changed for your agent, the upgrade command, old findings, rollback |
 | [CLI reference](docs/CLI_REFERENCE.md) | every verb and flag |
 | [Configuration](docs/CONFIGURATION.md) | `config.toml`, environment variables, `.cghignore` |
 | [MCP tools](docs/MCP_TOOLS.md) | the tools your agent calls, by category |

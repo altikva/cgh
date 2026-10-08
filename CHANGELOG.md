@@ -13,13 +13,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   detector that misses too much to promise anything. `mode = "secure"` in
   `config.toml` is now ignored, with a one-line notice on stderr and in
   `cgh status` and `cgh doctor`; delete the line. `cgh init --secure` still
-  parses and only prints a deprecation note.
+  parses and only prints a deprecation note. Who is affected, the upgrade
+  command, old findings and rollback:
+  [docs/UPGRADING-0.15.md](docs/UPGRADING-0.15.md).
 - **Breaking: cgh no longer blocks agent file access.** The guard hooks
   (`cgh _hook_guard`, `cgh _hook_guard_codex`) now always allow, and cgh no
   longer writes `Read()` deny rules or a `.bobignore` block. Use your agent's
   own permission rules to keep files out of reach. `cgh init`, `cgh setup`
-  and `cgh guard` remove the deny rules, `.bobignore` block and guard hooks
-  an older cgh wrote, and nothing else.
+  and `cgh guard` remove the guard hooks an older cgh wrote. The deny rules
+  and `.bobignore` block it wrote still protect files, so they stay, with a
+  count and the command that removes them: `cgh guard --remove-rules`
+  removes exactly those. The plugin API's `sync_static_rules` writes and
+  removes nothing.
 - **New findings are no longer pseudonymized at rest.** Pseudonyms already
   stored stay as they are; there is no migration.
 - **Breaking: `cgh[plugins]` installs cgh-docs, cgh-codegen and cgh-bugreport
@@ -57,17 +62,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   secret detection is precise, regex PII detection is not.
 - A plugin whose `register()` fails after registering a CLI verb, scanner or
   MCP tool no longer leaves them behind; `cgh plugins` reports it broken.
+- **cgh refuses first-party plugins too old for it**: cgh-pii before 0.4.0,
+  cgh-summarize before 0.3.0, cgh-classify before 0.2.0 and cgh-vision
+  before 0.6.0 are not loaded, since they relied on secure mode or scanned
+  on every index. `cgh plugins` reports them broken and `cgh doctor` lists
+  them, with the upgrade command. Third-party plugins are not affected.
 
 ### Added
-- **cgh-codegen refuses to send secrets to any model** (0.1.2). The
-  reference, a file being extended and the spec are checked with built-in
-  patterns (private keys, AWS and GCP keys, GitHub, Slack, Stripe and
-  bearer tokens, hardcoded credentials) for every backend, with no
-  dependency on cgh-pii or on index-time findings. The refusal names file
-  and line, never the value.
+- **cgh-codegen refuses to send known secret formats to any model**
+  (0.1.2). The reference, a file being extended and the spec are checked
+  with built-in regex patterns (private keys, AWS and GCP keys, GitHub,
+  Slack, Stripe and bearer tokens, hardcoded credentials) for every
+  backend, with no dependency on cgh-pii or on index-time findings. The
+  refusal names file and line, never the value. It is best effort, not a
+  guarantee: a secret in a format it has no pattern for is sent.
 - **`cgh pii scan [PATH...]`** (cgh-pii 0.4.0) reports secrets on demand in
   files git does not ignore, `--pii` adds the PII patterns, `--json` for
-  tools. It exits 1 on a private key or cloud key, so it can gate CI.
+  tools. It exits 1 on a private key or cloud key, so it can gate CI. It
+  knows three regex shapes (AWS access key ids, PEM private keys, hardcoded
+  credentials), so a clean run is best effort, not proof of no secret.
 - **`cgh search --text "<prose>"` searches the full-text index with a
   sentence.** Looking up a ticket's prose meant importing the internal search
   function by hand, and a sentence passed as is matched nothing because every
@@ -117,6 +130,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `cgh impact`) and open the graph themselves only when no owner answers.
   Output is unchanged. A silent owner times out after 30s
   (`CGH_OWNER_TIMEOUT`) with a pointer to `cgh doctor --owner` and `cgh stop`.
+  An owner started by an older cgh, which lacks the tool, makes them exit at
+  once with a pointer to `cgh stop` instead of waiting on the graph lock.
 
 ## [0.14.5] - 2026-10-07
 

@@ -53,9 +53,15 @@ _NODE_TABLES = [
     )""",
     """CREATE TABLE IF NOT EXISTS md_section (
         id TEXT PRIMARY KEY, title TEXT, level BIGINT, file_path TEXT,
-        start_line BIGINT, end_line BIGINT, body_preview TEXT, anchor TEXT
+        start_line BIGINT, end_line BIGINT, body_preview TEXT, anchor TEXT,
+        kind TEXT
     )""",
 ]
+
+# Columns added after a graph may already exist on disk, mirrored from the
+# DuckDB backend's MIGRATIONS. SQLite has no ADD COLUMN IF NOT EXISTS, so
+# each is applied only when the column is missing.
+_MIGRATIONS = [("md_section", "kind", "TEXT")]
 
 _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_imports (
@@ -179,6 +185,12 @@ class SQLiteGraphDB:
         if not read_only:
             for ddl in _NODE_TABLES + _EDGE_TABLES + _INDEXES:
                 self._conn.execute(ddl)
+            for table, column, sql_type in _MIGRATIONS:
+                have = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in have:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"
+                    )
             self._conn.commit()
 
     def execute(self, query: str, params: dict | None = None) -> QueryResult:

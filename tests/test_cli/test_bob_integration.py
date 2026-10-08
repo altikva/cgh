@@ -128,5 +128,10 @@ def test_bob_always_allow_matches_registered_tools():
     import codegraph.server as srv
     from codegraph.cli.commands_init import _BOB_CONFIRM_TOOLS, _bob_always_allow
 
-    registered = {t.name for t in asyncio.run(srv.mcp.list_tools())}
+    # fastmcp 2.x names it get_tools (a dict keyed by name); 3.0 and later
+    # expose list_tools. The supported range spans both.
+    if hasattr(srv.mcp, "list_tools"):
+        registered = {t.name for t in asyncio.run(srv.mcp.list_tools())}
+    else:
+        registered = set(asyncio.run(srv.mcp.get_tools()))
     assert set(_bob_always_allow()) == registered - _BOB_CONFIRM_TOOLS

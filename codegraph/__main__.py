@@ -122,7 +122,7 @@ def _print_help():
         (
             "Query",
             [
-                ("search", "Fuzzy search symbols by name"),
+                ("search", "Fuzzy search symbols by name; --text for free-text prose"),
                 ("lookup", "Find exact symbol definition"),
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
@@ -480,11 +480,25 @@ def _register_inspect(sub) -> None:
     p.add_argument("--json", action="store_true")
     _add_root(p)
 
-    p = sub.add_parser("search", help="Search symbols by name (fuzzy)")
-    p.add_argument("query", help="Search query")
+    p = sub.add_parser(
+        "search", help="Search symbols by name (fuzzy), or free text with --text"
+    )
+    p.add_argument("query", nargs="?", help="Symbol name query")
+    p.add_argument(
+        "--text",
+        "-t",
+        metavar="PROSE",
+        help="Free-text search over names, docstrings and Markdown sections: "
+        "stopwords (English + French) dropped, any remaining term matches, "
+        "ranked by bm25",
+    )
     _add_root(p)
     p.add_argument(
-        "--limit", "-n", type=int, default=100, help="Page size (default: 100)"
+        "--limit",
+        "-n",
+        type=int,
+        default=None,
+        help="Page size (default: 100, or 20 with --text)",
     )
     p.add_argument(
         "--offset",

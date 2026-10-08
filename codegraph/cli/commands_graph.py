@@ -62,54 +62,13 @@ def _fetch_mermaid_via_owner(
 def _call_owner_visualize(root: str, args_payload: dict):
     """POST one visualize_graph call to the owner, return its parsed JSON
     result (a dict), the raw text when it is not JSON, or None."""
-    import http.client
-    import json as _json
+    from codegraph.cli.owner_client import call_owner_tool
 
-    from codegraph.state.auth import ensure_auth_key
-    from codegraph.state.ipc import is_owner_alive, read_owner_port
-
-    if not is_owner_alive(root):
+    # The tool returns a JSON blob {scope, format, diagram|payload}.
+    reply = call_owner_tool(root, "visualize_graph", args_payload, timeout=15)
+    if not reply.ok:
         return None
-    port = read_owner_port(root)
-    if not port:
-        return None
-    token = ensure_auth_key(root)
-    body = _json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "visualize_graph", "arguments": args_payload},
-        }
-    )
-    try:
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
-        c.request(
-            "POST",
-            "/mcp",
-            body=body.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        resp = c.getresponse()
-        if resp.status != 200:
-            return None
-        payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
-        result = payload.get("result") or {}
-        content = result.get("content") or []
-        for block in content:
-            if block.get("type") == "text" and block.get("text"):
-                # The tool returns a JSON blob {scope, format, diagram|payload}
-                try:
-                    return _json.loads(block["text"])
-                except Exception:
-                    return block["text"]
-    except Exception:
-        return None
-    return None
+    return reply.data if reply.data is not None else reply.text
 
 
 def _fetch_payload_via_owner(root: str, max_symbols: int) -> dict | None:

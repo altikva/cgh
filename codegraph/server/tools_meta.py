@@ -20,8 +20,13 @@ def register(mcp) -> None:
     @_logged_tool
     def fts_search(query: str, limit: int = 15, kind: str = "") -> str:
         """
-        Full-text search over symbol names AND docstrings using BM25 ranking.
-        Federated across subrepos. Each result tagged with `scope`. The
+        Find CODE about a concept described in words: full-text search over
+        symbol names and docstrings, BM25-ranked. A whole sentence works,
+        in French or English ("relance des webhooks en echec", "how the
+        owner resumes a session"): stopwords are dropped and any remaining
+        term matches. Use it when you know what the code does but not what
+        it is called; use symbol_lookup when you know the name and
+        pattern_search for a literal string. Federated across subrepos. Each result tagged with `scope`. The
         `limit` is applied per scope; scores are NOT renormalized across
         repos (BM25 is corpus-relative).
         """

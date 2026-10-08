@@ -24,6 +24,7 @@ import shutil
 from pathlib import Path
 
 from codegraph.core.utils import ensure_dir as _ensure_dir
+from codegraph.integrations.tool_guide import SEARCH_GUIDE
 
 _BLOCK_START = "<!-- codegraph-skills:start -->"
 _BLOCK_END = "<!-- codegraph-skills:end -->"
@@ -33,11 +34,19 @@ _USAGE_BLOCK_END = "<!-- codegraph-usage:end -->"
 
 # Canonical "when to use codegraph" guidance, injected into the agent's
 # root rules file (CLAUDE.md / AGENTS.md / GEMINI.md) when the user opts in.
-_USAGE_BODY = """## codegraph, use MCP tools before Read/Grep
+_USAGE_BODY = (
+    """## codegraph, use MCP tools before Read/Grep
 
 This project is indexed by **codegraph**, a local code graph +
 Claude Code memory + plans + persistent knowledge, all exposed via
 MCP. Always prefer codegraph tools over reading files directly.
+
+**Pick the tool by the question**
+
+```
+"""
+    + SEARCH_GUIDE
+    + """```
 
 **Token cost mental model**: MCP tool execution is server-side and
 costs ZERO model tokens. The only tokens you spend are on the JSON
@@ -55,7 +64,8 @@ than reading.
   3. `mcp__codegraph__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
-  2. `search_symbols` for fuzzy, `fts_search` for docstrings
+  2. `search_symbols` for a half-known name, `fts_search` for code described
+     in words (a sentence is fine, French or English)
 - **Text/regex pattern search** (*"find every occurrence of X"*):
   1. `pattern_search(pattern, glob?, max_results?)`, INSTEAD of Grep.
      Returns structured {file, line, text}. Then Read only those lines.
@@ -68,7 +78,8 @@ than reading.
 - **User hints at a past plan** (*"the refactor we planned"*):
   1. `plan_search(query)`
 - **Problem that might have been solved before**:
-  1. `knowledge_search(query)`, persisted learnings across sessions
+  1. `knowledge_search(query)`, notes saved in earlier sessions (not the
+     code: for code use the tools above)
   2. `knowledge_terms()` for the glossary of captured topics
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
@@ -177,6 +188,7 @@ Never `git grep` / `grep -r` / `rg` / `sed -n` to find what to edit:
 Never re-derive a fact that could be looked up via `memory_search` or
 `knowledge_search`.
 """
+)
 
 
 # ---------------------------------------------------------------------------

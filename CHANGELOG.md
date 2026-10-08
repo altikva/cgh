@@ -56,6 +56,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   other entries are unchanged.
 
 ### Fixed
+- **Agents searched the code with `knowledge_search`.** An IBM Bob
+  session used it for a whole task, because its description spoke of
+  looking up "a pattern by keyword". The knowledge tools now say they hold
+  notes, not code, and point to the code tools; `fts_search` says it takes
+  a sentence in French or English; and a short "which tool answers which
+  question" guide leads the MCP server instructions and the usage rules
+  `cgh setup` installs for every agent. Rerun `cgh setup <agent>` to
+  refresh installed rules.
 - **Opening a knowledge store held its write lock until the next write.** Any
   other process writing the same store, such as a CLI command or a hook next to
   a running owner, waited five seconds and failed with "database is locked".

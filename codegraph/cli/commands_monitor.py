@@ -69,43 +69,68 @@ def cmd_stats(args: argparse.Namespace) -> None:
     console.print(_stats_content(root))
 
 
-def _stats_content(root: str) -> Group:
-    """Produce the stats renderables for a repo as a Rich Group."""
-    conn = _get_conn(root, readonly=True)
+def _graph_counts(root: str, on_stuck) -> tuple[dict, dict, bool]:
+    """Node and edge counts for `cgh stats`: ``(nodes, edges, locked)``.
+
+    A live owner holds the graph DB for writing, so it is asked first
+    (live_graph_stats) and the graph is only opened here when no owner
+    answers. ``locked`` is True when neither could count. A timed-out owner
+    exits 1 after ``on_stuck`` got the remedy. An owner from an older cgh
+    reports no edges; its node counts still beat waiting on its lock.
+    """
+    from codegraph.cli.owner_client import route_owner_read
+    from codegraph.core.graph_model import STATS_EDGE_TYPES, STATS_NODE_LABELS
+
+    route, served = route_owner_read(root, "stats", "live_graph_stats", {}, on_stuck)
+    if route == "owner":
+        nodes = {
+            label: int(count)
+            for label, count in (served.get("nodes") or {}).items()
+            if label in STATS_NODE_LABELS
+        }
+        edges = {
+            edge: int(count)
+            for edge, count in (served.get("edges") or {}).items()
+            if count > 0
+        }
+        return nodes, edges, False
 
     graph: dict = {}
-    edges: dict = {}
-    graph_locked = conn is None
+    edges = {}
+    conn = _get_conn(root, readonly=True) if route == "local" else None
+    if conn is None:
+        return graph, edges, True
+    for label in STATS_NODE_LABELS:
+        try:
+            graph[label] = conn.count_nodes(label)
+        except Exception:
+            pass
+    for edge_type in STATS_EDGE_TYPES:
+        try:
+            c = conn.count_edges(edge_type)
+            if c > 0:
+                edges[edge_type] = c
+        except Exception:
+            pass
+    return graph, edges, False
 
-    if conn is not None:
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            try:
-                graph[label] = conn.count_nodes(label)
-            except Exception:
-                pass
 
-        for edge_type in (
-            "IMPORTS",
-            "DEFINES_FN",
-            "DEFINES_CLASS",
-            "CALLS",
-            "INHERITS",
-            "HAS_METHOD",
-            "DEFINES_SECTION",
-            "MD_REFS_SYMBOL",
-            "MD_REFS_CLASS",
-            "CONTAINS_SECTION",
-        ):
-            try:
-                c = conn.count_edges(edge_type)
-                if c > 0:
-                    edges[edge_type] = c
-            except Exception:
-                pass
+def _stats_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
 
+
+def _stats_stuck_json(msg: str) -> None:
+    print(json.dumps({"error": msg}, indent=2))
+
+
+def _stats_content(root: str) -> Group:
+    """Produce the stats renderables for a repo as a Rich Group."""
     from codegraph.state.call_log import get_stats
 
+    # Read the call log before asking the owner: the owner logs that call,
+    # and the counts must match what a local open shows.
     call_stats = get_stats(root)
+    graph, edges, graph_locked = _graph_counts(root, _stats_stuck)
 
     fts_count = 0
     try:
@@ -280,37 +305,10 @@ def _stats_content(root: str) -> Group:
 
 def _stats_json(root: str) -> str:
     """Produce the stats as a JSON string (for --json mode)."""
-    conn = _get_conn(root, readonly=True)
-    graph: dict = {}
-    edges: dict = {}
-    if conn is not None:
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            try:
-                graph[label] = conn.count_nodes(label)
-            except Exception:
-                pass
-        for edge_type in (
-            "IMPORTS",
-            "DEFINES_FN",
-            "DEFINES_CLASS",
-            "CALLS",
-            "INHERITS",
-            "HAS_METHOD",
-            "DEFINES_SECTION",
-            "MD_REFS_SYMBOL",
-            "MD_REFS_CLASS",
-            "CONTAINS_SECTION",
-        ):
-            try:
-                c = conn.count_edges(edge_type)
-                if c > 0:
-                    edges[edge_type] = c
-            except Exception:
-                pass
-
     from codegraph.state.call_log import get_stats
 
     call_stats = get_stats(root)
+    graph, edges, _locked = _graph_counts(root, _stats_stuck_json)
 
     fts_count = 0
     try:

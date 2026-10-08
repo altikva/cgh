@@ -169,3 +169,28 @@ def edges_touching(label: str) -> list[EdgeSpec]:
     deleting a node row. Order is irrelevant for correctness.
     """
     return [e for e in EDGES.values() if e.src_label == label or e.dst_label == label]
+
+
+# The node labels and edge types `cgh stats` reports, in display order. The
+# CLI counts them on a local open and the live_graph_stats tool counts them
+# inside a running owner, so both paths share this one list.
+STATS_NODE_LABELS: tuple[str, ...] = (
+    "File",
+    "Function",
+    "Class",
+    "TFResource",
+    "TFVar",
+    "MdSection",
+)
+STATS_EDGE_TYPES: tuple[str, ...] = (
+    "IMPORTS",
+    "DEFINES_FN",
+    "DEFINES_CLASS",
+    "CALLS",
+    "INHERITS",
+    "HAS_METHOD",
+    "DEFINES_SECTION",
+    "MD_REFS_SYMBOL",
+    "MD_REFS_CLASS",
+    "CONTAINS_SECTION",
+)

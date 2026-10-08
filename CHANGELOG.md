@@ -8,6 +8,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Config keys nothing reads any more load with one notice.** Besides
+  `mode = "secure"`, the cgh-summarize keys its 0.3.0 release dropped
+  (`allow_pii`, `egress`, `claude_model`, `gemini_model` under
+  `[plugin.summarize]`) are named in a single stderr line per process
+  (never in hook output) and in `cgh status` and `cgh doctor`. They are
+  never rejected; delete the lines. The `cgh init` template no longer
+  lists the summarize and classify tables.
+
+### Removed
+- **cgh-summarize and cgh-classify left the repo.** Their final releases,
+  0.3.0 and 0.2.0, stay on PyPI and cgh still loads them
+  (`--with cgh-summarize`); older releases are still refused. The
+  `summarize-local` example went with them.
+
 ### Fixed
 - **`find_callers` and every tool built on CALLS edges silently missed
   callers in other files.** A call into a file indexed after the caller was

@@ -66,6 +66,51 @@ class TestConfig:
         assert cfg.mode == "assist" and cfg.legacy_secure_mode is True
 
 
+class TestDeadKeys:
+    BODY = '[plugin.summarize]\nbackend = "auto"\nallow_pii = true\negress = "strict"\n'
+
+    def test_dead_keys_load_with_one_warning(self, tmp_path, capsys, fresh_notice):
+        root = _repo(tmp_path, self.BODY)
+        first = load_config(root)
+        load_config(root)
+        assert first.dead_keys == [
+            "[plugin.summarize] allow_pii",
+            "[plugin.summarize] egress",
+        ]
+        # Passed through untouched: the plugin table is not rewritten.
+        assert first.plugin_tables["summarize"]["allow_pii"] is True
+        err = capsys.readouterr().err
+        assert err.count("cgh: ") == 1
+        assert "[plugin.summarize] allow_pii, [plugin.summarize] egress" in err
+
+    def test_secure_and_dead_keys_share_one_line(self, tmp_path, capsys, fresh_notice):
+        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n\n' + self.BODY)
+        load_config(root)
+        err = capsys.readouterr().err
+        assert err.count("\n") == 1
+        assert LEGACY_SECURE_MODE_NOTICE in err and "allow_pii" in err
+
+    def test_suppressed_in_hooks(self, tmp_path, capsys, fresh_notice):
+        config_mod.suppress_legacy_mode_warning()
+        load_config(_repo(tmp_path, self.BODY))
+        assert capsys.readouterr().err == ""
+
+    def test_live_keys_are_silent(self, tmp_path, capsys, fresh_notice):
+        cfg = load_config(_repo(tmp_path, '[plugin.summarize]\nbackend = "auto"\n'))
+        assert cfg.dead_keys == []
+        assert capsys.readouterr().err == ""
+
+    def test_status_json_lists_them(self, tmp_path, capsys, fresh_notice):
+        from codegraph.cli.commands_monitor import cmd_status
+
+        root = _repo(tmp_path, self.BODY)
+        cmd_status(Namespace(root=str(root), json=True, refresh=False, workers=False))
+        captured = capsys.readouterr()
+        notices = json.loads(captured.out)["notices"]
+        assert len(notices) == 1 and "allow_pii" in notices[0]
+        assert captured.err == ""
+
+
 class TestStatusAndDoctor:
     def test_status_json_carries_the_notice(self, tmp_path, capsys, fresh_notice):
         from codegraph.cli.commands_monitor import cmd_status

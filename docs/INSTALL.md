@@ -118,8 +118,8 @@ npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can
                                   # reports), inert until configured or invoked
 ```
 
-Neither variant carries cgh-pii, cgh-vision, cgh-summarize or cgh-classify;
-install cgh with Python for those.
+Neither variant carries cgh-pii or cgh-vision; install cgh with Python for
+those.
 
 Prefer a direct download? Each release ships one asset per platform (with a
 `.sha256` next to it). Pick yours from the

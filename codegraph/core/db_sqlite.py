@@ -120,10 +120,15 @@ _EDGE_TABLES = [
 ]
 
 # Mirrors schema_duckdb.SIDE_TABLES: call sites by callee name (or resolved
-# target id) so CALLS edges can be rebuilt from either end.
+# target id) and the other by-name references, so their edges can be rebuilt
+# from either end.
 _SIDE_TABLES = [
     """CREATE TABLE IF NOT EXISTS call_site (
         from_id TEXT, file_path TEXT, name TEXT, to_id TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS name_ref (
+        kind TEXT, from_id TEXT, file_path TEXT, name TEXT,
+        extra TEXT NOT NULL DEFAULT ''
     )""",
 ]
 
@@ -138,6 +143,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_name ON call_site(name)",
     "CREATE INDEX IF NOT EXISTS idx_call_site_file ON call_site(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
     # find_callers/find_callees join full-scans the edge table (measured 27 ms
@@ -286,22 +293,27 @@ class SQLiteGraphDB:
         )
         self._conn.execute(sql, values)
 
-    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, Any]]) -> None:
-        """Batched ensure_edge for an edge type without properties."""
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, ...]]) -> None:
+        """Batched ensure_edge: (src, dst, *props) rows, props in the edge's
+        prop_columns order."""
         from codegraph.core.graph_model import EDGES
 
         if edge_type not in EDGES:
             raise ValueError(f"Unknown edge type: {edge_type!r}")
         spec = EDGES[edge_type]
-        if spec.prop_columns:
-            raise ValueError(f"Edge {edge_type!r} has props, use ensure_edge")
-        unique = list(dict.fromkeys(pairs))
-        for chunk in _chunks(unique, 400):
-            values = ", ".join("(?, ?)" for _ in chunk)
+        cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
+        width = len(cols)
+        rows = [(*row[:2], *("" if v is None else v for v in row[2:])) for row in pairs]
+        if any(len(row) != width for row in rows):
+            raise ValueError(f"Edge {edge_type!r} rows need {width} values")
+        unique = list(dict.fromkeys(rows))
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        for chunk in _chunks(unique, 400 // width * 2):
+            values = ", ".join(row_ph for _ in chunk)
             self._conn.execute(
-                f"INSERT INTO {spec.table} ({spec.src_column}, {spec.dst_column}) "
+                f"INSERT INTO {spec.table} ({', '.join(cols)}) "
                 f"VALUES {values} ON CONFLICT DO NOTHING",
-                [v for pair in chunk for v in pair],
+                [v for row in chunk for v in row],
             )
 
     def purge_file_data(self, file_path: str) -> None:
@@ -348,6 +360,56 @@ class SQLiteGraphDB:
 
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+
+    # --- Name references ------------------------------------------------
+
+    def replace_name_refs(
+        self, file_path: str, rows: list[tuple[str, str, str, str]]
+    ) -> None:
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 150):
+            values = ", ".join("(?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for k, f, n, e in chunk for v in (k, f, file_path, n, e)]
+            self._conn.execute(
+                "INSERT INTO name_ref (kind, from_id, file_path, name, extra) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def name_refs_into(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        out: list[tuple[str, str, str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT kind, from_id, file_path, name, extra FROM name_ref "
+                f"WHERE name IN ({ph}) AND file_path <> ?",
+                [*chunk, exclude_file],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def node_keys_matching(
+        self, label: str, field: str, values: list[Any]
+    ) -> list[tuple[Any, Any]]:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        col = _ident(field)
+        out: list[tuple[Any, Any]] = []
+        for chunk in _chunks(sorted(set(values))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT {spec.key_field}, {col} FROM {spec.table} "
+                f"WHERE {col} IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
 
     # --- Call sites -----------------------------------------------------
 
@@ -434,6 +496,11 @@ class SQLiteGraphDB:
     def delete_file_completely(self, file_path: str) -> None:
         self.purge_file_data(file_path)
         self._conn.execute("DELETE FROM edge_imports WHERE to_path = ?", [file_path])
+        # Markdown links that pointed at this file: purge only drops a doc's own
+        # outbound links. The stored link references relink them if it returns.
+        self._conn.execute(
+            "DELETE FROM edge_md_links_to WHERE to_path = ?", [file_path]
+        )
         self._conn.execute("DELETE FROM file WHERE path = ?", [file_path])
 
     def find_nodes(

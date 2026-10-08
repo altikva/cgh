@@ -417,12 +417,100 @@ def _resolve_inbound_calls(conn: GraphDB, file_path: str, functions: list) -> No
     conn.ensure_edges("CALLS", edges)
 
 
-def _resolve_inherits(conn: GraphDB, classes: list) -> None:
-    """Create INHERITS edges between Class nodes using base class names."""
-    for cls in classes:
-        for base_name in cls.bases:
-            for parent_id in conn.find_node_keys("Class", "name", base_name):
-                conn.ensure_edge("INHERITS", cls.id, parent_id)
+# A name reference is (kind, from_id, name, extra), kept in the name_ref table
+# by file so its edge can also be built from the target's side (see
+# _resolve_inbound_refs). Kinds and what name / extra hold:
+#   inherits  Class id -> base class name
+#   md_ref    MdSection id -> code symbol name, extra = mention context
+#   md_link   MdSection id -> resolved target path, extra = link label
+#   handler   Endpoint id -> handler function name, extra = a file the route
+#             file imports (one row per imported file)
+NameRef = tuple[str, str, str, str]
+
+
+def _keys_by_value(conn: GraphDB, label: str, field: str, values) -> dict:
+    """{field value: [node keys]} for the ``label`` nodes matching ``values``."""
+    out: dict[str, list[str]] = {}
+    if not values:
+        return out
+    for key, value in conn.node_keys_matching(label, field, sorted(set(values))):
+        out.setdefault(value, []).append(str(key))
+    return out
+
+
+def _resolve_inherits(conn: GraphDB, classes: list) -> list[NameRef]:
+    """Create INHERITS edges between Class nodes using base class names.
+
+    Links every class of the base's name already in the graph; bases defined
+    in a file indexed later are linked by that file's _resolve_inbound_refs.
+    Returns the references to record.
+    """
+    refs = sorted(
+        {("inherits", cls.id, base, "") for cls in classes for base in cls.bases}
+    )
+    parents = _keys_by_value(conn, "Class", "name", [r[2] for r in refs])
+    conn.ensure_edges(
+        "INHERITS",
+        [(cls_id, pid) for _, cls_id, base, _ in refs for pid in parents.get(base, ())],
+    )
+    return refs
+
+
+def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None:
+    """Link the name references of OTHER files to what ``file_path`` defines.
+
+    purge_file_data drops every edge into a file's symbols, and a reference
+    ingested before its target existed found nothing, so without this pass
+    those edges depend on indexing order and vanish when the target's file is
+    reindexed. Each kind applies the same rule as its outbound resolution.
+    """
+    fns: dict[str, list[str]] = {}
+    for fn in idx.functions:
+        fns.setdefault(fn.name, []).append(fn.id)
+    classes: dict[str, list[str]] = {}
+    for cls in idx.classes:
+        classes.setdefault(cls.name, []).append(cls.id)
+    refs = conn.name_refs_into(sorted({*fns, *classes, file_path}), file_path)
+    if not refs:
+        return
+    edges: dict[str, list[tuple]] = {}
+    for kind, from_id, _ref_file, name, extra in refs:
+        if kind == "inherits":
+            edges.setdefault("INHERITS", []).extend(
+                (from_id, c) for c in classes.get(name, ())
+            )
+        elif kind == "md_ref":
+            edges.setdefault("MD_REFS_SYMBOL", []).extend(
+                (from_id, f, extra) for f in fns.get(name, ())
+            )
+            edges.setdefault("MD_REFS_CLASS", []).extend(
+                (from_id, c, extra) for c in classes.get(name, ())
+            )
+        elif kind == "md_link" and name == file_path:
+            edges.setdefault("MD_LINKS_TO", []).append((from_id, file_path, extra))
+        elif kind == "handler" and extra == file_path:
+            edges.setdefault("IMPLEMENTED_BY", []).extend(
+                (from_id, f) for f in fns.get(name, ())
+            )
+    for edge_type, rows in edges.items():
+        if rows:
+            conn.ensure_edges(edge_type, rows)
+
+
+def _resolve_inbound_links(conn: GraphDB, paths: list[str], exclude_file: str) -> None:
+    """Land the markdown links of other files on File nodes just created."""
+    if not paths:
+        return
+    wanted = set(paths)
+    rows = [
+        (from_id, name, extra)
+        for kind, from_id, _f, name, extra in conn.name_refs_into(
+            sorted(wanted), exclude_file
+        )
+        if kind == "md_link" and name in wanted
+    ]
+    if rows:
+        conn.ensure_edges("MD_LINKS_TO", rows)
 
 
 def _precise_calls_enabled(cfg, lang: str) -> bool:
@@ -476,8 +564,10 @@ def _resolve_calls_precise(
 
 def _ingest_code(
     conn: GraphDB, idx: FileIndex, cfg=None, repo_root: Path | None = None
-) -> None:
-    """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
+) -> list[NameRef]:
+    """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.).
+
+    Returns the file's class-base name references to record."""
     for fn in idx.functions:
         conn.upsert_node(
             "Function",
@@ -528,7 +618,7 @@ def _ingest_code(
     else:
         conn.replace_call_sites(str(idx.path), sorted({(c, "", t) for c, t in precise}))
     _resolve_inbound_calls(conn, str(idx.path), idx.functions)
-    _resolve_inherits(conn, idx.classes)
+    return _resolve_inherits(conn, idx.classes)
 
 
 # Import resolution coverage for the current scan, keyed by language. Without
@@ -586,6 +676,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
     from codegraph.imports.resolver import resolve_import
 
     seen_targets: set[str] = set()
+    stubbed: set[str] = set()
     for imp in idx.imports:
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
         _count_import(idx.lang, target is not None)
@@ -601,6 +692,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
         # creates a stub node carrying just the path. Once the target's
         # own index_file runs, the same key gets upserted with full metadata.
         conn.upsert_node("File", "path", target_str, {})
+        stubbed.add(target_str)
 
         # Symbol annotation on the edge. If the import named multiple
         # symbols, write one edge per symbol so MCP tools can answer
@@ -617,6 +709,35 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
                 continue
             seen_targets.add(edge_key)
             conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
+    # A stub can be the only File node a path ever gets (a target cgh does not
+    # parse), so markdown links waiting for it must land now, as they would
+    # had the doc been ingested after this file.
+    _resolve_inbound_links(conn, sorted(stubbed), str(idx.path))
+
+
+def _handler_candidate_files(idx: FileIndex, repo_root: Path | None) -> list[str]:
+    """Files a route file imports, where a handler it names may live.
+
+    Every resolvable import target, plus for Python each imported name tried
+    as a submodule (``from pkg import views`` resolves to pkg/__init__.py,
+    while ``views.user_detail`` lives in pkg/views.py).
+    """
+    if not idx.imports or repo_root is None:
+        return []
+    from codegraph.imports.resolver import resolve_import
+
+    targets: set[str] = set()
+    for imp in idx.imports:
+        modules = [imp.source_module]
+        if idx.lang == "python":
+            sep = "" if imp.source_module.endswith(".") else "."
+            modules += [f"{imp.source_module}{sep}{sym}" for sym in imp.symbols]
+        for module in modules:
+            target = resolve_import(idx.lang, module, idx.path, repo_root)
+            if target is not None:
+                targets.add(str(target))
+    targets.discard(str(idx.path))
+    return sorted(targets)
 
 
 def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
@@ -651,8 +772,23 @@ def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
             conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
 
 
-def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
-    """Extract and persist HTTP endpoints from a file. Returns count."""
+def _ingest_endpoints(
+    conn: GraphDB,
+    path: Path,
+    idx: FileIndex | None = None,
+    repo_root: Path | None = None,
+    refs: list[NameRef] | None = None,
+) -> int:
+    """Extract and persist HTTP endpoints from a file. Returns count.
+
+    A handler is linked in the route's own file first. Only when that file
+    defines no function of the handler's name (a Django urls.py naming
+    views.user_detail), it is looked up in the files the route file imports
+    (``idx`` given), never across the whole repo: a bare name like ``detail``
+    or ``index`` is defined in many unrelated modules. Those lookups are
+    appended to ``refs`` so a handler file indexed later, or reindexed, links
+    itself back.
+    """
     from codegraph.analysis.endpoints import extract as _extract_endpoints
 
     try:
@@ -667,6 +803,7 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
     # purge_file_data already cleaned old endpoints for this path during
     # the upstream _purge_file call, so no separate purge needed here.
 
+    local: set[str] = set()
     for ep in eps:
         conn.upsert_node(
             "Endpoint",
@@ -695,10 +832,39 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
                 fn_id = str(fn_id)
                 if fn_id.startswith(f"{path}::") or f"::{path}::" in fn_id:
                     conn.ensure_edge("IMPLEMENTED_BY", ep.id, fn_id)
+                    local.add(ep.id)
+    if idx is not None and refs is not None:
+        remote = [ep for ep in eps if ep.handler_name and ep.id not in local]
+        _link_remote_handlers(
+            conn, remote, _handler_candidate_files(idx, repo_root), refs
+        )
     return len(eps)
 
 
-def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
+def _link_remote_handlers(
+    conn: GraphDB, eps: list, candidates: list[str], refs: list[NameRef]
+) -> None:
+    """Link endpoints to handlers defined in ``candidates`` (the files the
+    route file imports) and record one reference per endpoint and file."""
+    if not eps or not candidates:
+        return
+    wanted = set(candidates)
+    defs: dict[str, list[str]] = {}
+    for fn_id, name, file_path in conn.function_defs_named(
+        sorted({ep.handler_name for ep in eps})
+    ):
+        if file_path in wanted:
+            defs.setdefault(name, []).append(str(fn_id))
+    edges: list[tuple[str, str]] = []
+    for ep in eps:
+        edges.extend((ep.id, fn_id) for fn_id in defs.get(ep.handler_name, ()))
+        refs.extend(("handler", ep.id, ep.handler_name, f) for f in candidates)
+    conn.ensure_edges("IMPLEMENTED_BY", edges)
+
+
+def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
+    """Ingest a doc's sections and its links / code mentions. Returns the
+    name references to record."""
     # Sections
     for sec in idx.sections:
         conn.upsert_node(
@@ -733,7 +899,10 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
     # resolve each target against this file's directory before matching the
     # (absolute) File node path. This makes ./foo.md and ../api.md resolve,
     # where the old raw exact-match on "./foo.md" never did.
+    # A link to a file indexed later lands from that file's side, through
+    # the md_link reference recorded here (_resolve_inbound_refs).
     md_dir = os.path.dirname(idx.path)
+    refs: set[NameRef] = set()
     for link in idx.links:
         target = link.target
         if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -745,22 +914,43 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
         section = _find_section_for_line(idx.sections, link.line)
         if not section:
             continue
-        for file_key in conn.find_node_keys("File", "path", resolved_target):
-            conn.ensure_edge("MD_LINKS_TO", section.id, file_key, {"label": link.label})
+        refs.add(("md_link", section.id, resolved_target, link.label or ""))
 
-    # Code references: link sections to code symbols they mention
+    # Code references: link sections to the functions and classes they
+    # mention, by name; a symbol defined in a file indexed later links back
+    # through the md_ref reference.
     for ref in idx.code_refs:
         section = _find_section_for_line(idx.sections, ref.line)
         if not section:
             continue
-        for fn_id in conn.find_node_keys("Function", "name", ref.symbol):
-            conn.ensure_edge(
-                "MD_REFS_SYMBOL", section.id, fn_id, {"context": ref.context}
-            )
-        for cls_id in conn.find_node_keys("Class", "name", ref.symbol):
-            conn.ensure_edge(
-                "MD_REFS_CLASS", section.id, cls_id, {"context": ref.context}
-            )
+        refs.add(("md_ref", section.id, ref.symbol, ref.context or ""))
+
+    links = [r for r in refs if r[0] == "md_link"]
+    files = _keys_by_value(conn, "File", "path", [r[2] for r in links])
+    conn.ensure_edges(
+        "MD_LINKS_TO",
+        [
+            (sec, key, label)
+            for _, sec, target, label in links
+            for key in files.get(target, ())
+        ],
+    )
+    mentions = [r for r in refs if r[0] == "md_ref"]
+    names = [r[2] for r in mentions]
+    for edge_type, label in (
+        ("MD_REFS_SYMBOL", "Function"),
+        ("MD_REFS_CLASS", "Class"),
+    ):
+        found = _keys_by_value(conn, label, "name", names)
+        conn.ensure_edges(
+            edge_type,
+            [
+                (sec, key, ctx)
+                for _, sec, name, ctx in mentions
+                for key in found.get(name, ())
+            ],
+        )
+    return sorted(refs)
 
 
 def _find_section_for_line(sections: list, line: int):
@@ -930,12 +1120,13 @@ def _index_file(
         eff_cfg = _load_config_for_ingest(root)
 
     # Ingest into graph
+    refs: list[NameRef] = []
     if idx.functions or idx.classes:
-        _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
+        refs += _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
     if idx.resources:
         _ingest_terraform(conn, idx)
     if idx.sections:
-        _ingest_markdown(conn, idx)
+        refs += _ingest_markdown(conn, idx)
 
     # IMPORTS edges, wire them up after the File node exists, regardless
     # of whether the file defines functions/classes (pure __init__.py
@@ -944,7 +1135,13 @@ def _index_file(
         _ingest_imports(conn, idx, root)
 
     # HTTP endpoints (after functions are in place so IMPLEMENTED_BY can link)
-    _ingest_endpoints(conn, path)
+    _ingest_endpoints(conn, path, idx=idx, repo_root=root, refs=refs)
+
+    # Keep this file's by-name references, then link the references other
+    # files hold to what this one defines (purge_file_data cleared both).
+    if refs:
+        conn.replace_name_refs(str(path), refs)
+    _resolve_inbound_refs(conn, str(path), idx)
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)

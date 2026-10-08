@@ -26,7 +26,10 @@ _META_FILE = "scan_meta.json"
 # versioning and counts as 1.
 #   2: call sites are persisted (call_site table) to resolve CALLS edges
 #      independently of file order and across reindexes of the callee file.
-GRAPH_FORMAT = 2
+#   3: the other by-name references (class bases, markdown mentions and
+#      links, cross-file endpoint handlers) are persisted (name_ref table)
+#      for the same reason.
+GRAPH_FORMAT = 3
 
 
 def _meta_path(repo_root: str | Path) -> Path:

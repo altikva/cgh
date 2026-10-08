@@ -1,9 +1,8 @@
 # Summarize with the local-first defaults
 
-`sdk.summarize` picks the first available backend that honors the
-egress constraint. The default is the safe one: `cloud_allowed=False`
-restricts the pick to local backends, so nothing leaves the machine
-unless your own egress decision opens the door.
+`sdk.summarize` picks the first available local backend. Since
+cgh-summarize 0.3.0 (frozen) there are no cloud backends at all, so
+nothing leaves the machine whatever `cloud_allowed` says.
 
 ## Step 1: install
 
@@ -22,16 +21,13 @@ ollama pull qwen2.5:1.5b     # the default summarize model, ~1 GB
 
 cgh-summarize does not install Ollama; see the
 [vision-pipeline README](../vision-pipeline/README.md) for the daemon
-setup, custom `ollama_url`, and the loopback rule: since 0.9.0 an
-Ollama on a non-loopback URL is classified as a **cloud** backend, so
-`cloud_allowed=False` excludes your LAN GPU box by design.
+setup, custom `ollama_url`, and the loopback rule: an Ollama on a
+non-loopback URL is classified as a **cloud** backend and never used,
+so your LAN GPU box is excluded by design.
 
-## Step 3 (optional): cloud backends, behind your gate
-
-Agent CLIs already on your PATH (claude, gemini, codex, bob) and any
-OpenAI-compatible endpoint are picked up automatically, but only when
-you pass `cloud_allowed=True`, ideally derived from
-`sdk.egress_decision` over your scan findings, as the script shows.
+The script still derives `cloud_allowed` from `sdk.egress_decision`, the
+pattern to keep for any model call you make yourself; cgh-summarize
+0.3.0 ignores the flag.
 
 ## Run
 

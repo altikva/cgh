@@ -22,6 +22,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   an older cgh wrote, and nothing else.
 - **New findings are no longer pseudonymized at rest.** Pseudonyms already
   stored stay as they are; there is no migration.
+- **Breaking: `cgh[plugins]` installs cgh-docs, cgh-codegen and cgh-bugreport
+  only** (`cgh[full]` likewise, plus the langs and lsp extras). The pii,
+  vision, summarize and classify scanners ran on every index for findings
+  agents rarely read. Upgrade with
+  `uv tool install --force -U "cgh[plugins]"`; without `-U`, uv keeps the
+  plugins it already resolved. cgh-pii and cgh-vision still install by name:
+  `uv tool install --force -U "cgh[plugins]" --with cgh-pii`.
+- **Breaking: the standalone binaries carry the same default set.** The
+  sealed build (`cgh`) bundles cgh-docs, the egress build (`cgh-egress`)
+  adds cgh-codegen and cgh-bugreport. cgh-pii, cgh-classify and
+  cgh-summarize are no longer bundled; install cgh with Python for them.
+- **cgh-summarize 0.3.0 and cgh-classify 0.2.0 are final releases, frozen.**
+  cgh-summarize keeps local backends only (Ollama, a loopback
+  OpenAI-compatible server); the `claude -p` and other agent CLI backends
+  and its egress gate are gone. Agent-written summaries (`cgh artifact note`,
+  `knowledge_record`) cover the use case.
 
 ### Changed
 - **Breaking: `fetch_and_index` and `cgh fetch` need `allow_fetch = true`**
@@ -30,11 +46,28 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **Breaking (SDK): `egress_decision` defaults to the assist behavior.**
   Passing `mode` is deprecated and emits a `DeprecationWarning`;
   `mode="secure"` still applies the allowlist for now.
-- cgh-summarize and cgh-codegen gates default to `open`; set the plugin's
-  `egress = "strict"` for the allowlist. cgh-bugreport always shows the
+- The cgh-codegen gate defaults to `open`; set its
+  `egress = "strict"` for the allowlist. Any other value now fails closed
+  to `strict`. cgh-bugreport always shows the
   payload before sending unless `--yes`.
+- **Breaking: plugins no longer scan at index by default.** cgh-pii 0.4.0,
+  cgh-vision 0.6.0 and cgh-classify 0.2.0 register their index-time scanner
+  only with `scan_on_index = true` under `[plugin.<name>]`; cgh-summarize
+  0.3.0 has none. cgh-pii checks secrets only unless `pii = true`: regex
+  secret detection is precise, regex PII detection is not.
+- A plugin whose `register()` fails after registering a CLI verb, scanner or
+  MCP tool no longer leaves them behind; `cgh plugins` reports it broken.
 
 ### Added
+- **cgh-codegen refuses to send secrets to any model** (0.1.2). The
+  reference, a file being extended and the spec are checked with built-in
+  patterns (private keys, AWS and GCP keys, GitHub, Slack, Stripe and
+  bearer tokens, hardcoded credentials) for every backend, with no
+  dependency on cgh-pii or on index-time findings. The refusal names file
+  and line, never the value.
+- **`cgh pii scan [PATH...]`** (cgh-pii 0.4.0) reports secrets on demand in
+  files git does not ignore, `--pii` adds the PII patterns, `--json` for
+  tools. It exits 1 on a private key or cloud key, so it can gate CI.
 - **`cgh search --text "<prose>"` searches the full-text index with a
   sentence.** Looking up a ticket's prose meant importing the internal search
   function by hand, and a sentence passed as is matched nothing because every

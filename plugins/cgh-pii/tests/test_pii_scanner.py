@@ -6,8 +6,9 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex PII scanner tests: every pattern, Luhn and mod-97
 #              validation rejecting random digit runs, counts instead of
-#              raw values, key disabling, and the end-to-end path through
-#              index_repo into the finding store.
+#              raw values, key disabling, the secrets-only mode, the
+#              opt-in index-time registration, `cgh pii scan`, and the
+#              end-to-end path through index_repo into the finding store.
 
 from __future__ import annotations
 
@@ -94,7 +95,9 @@ class TestEndToEnd:
 
         from codegraph.plugin_api import PluginAPI
 
-        api = PluginAPI("pii", tmp_path, {}, plugins._registries)
+        api = PluginAPI(
+            "pii", tmp_path, {"scan_on_index": True, "pii": True}, plugins._registries
+        )
         cgh_pii.register(api)
 
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -125,9 +128,142 @@ class TestEndToEnd:
 
         from codegraph.plugin_api import PluginAPI
 
-        api = PluginAPI("pii", tmp_path, {"ner": True}, plugins._registries)
+        api = PluginAPI(
+            "pii", tmp_path, {"scan_on_index": True, "ner": True}, plugins._registries
+        )
         cgh_pii.register(api)
         # Regex tier registered; NER either registered (extra installed)
         # or skipped with a stderr note, never an exception.
         names = [s.name for _, s in plugins._registries.scanners]
         assert "pii-regex" in names
+
+
+class TestSecretsOnly:
+    def test_pii_false_keeps_only_secrets(self):
+        text = "joy@altikva.com\nKEY = 'AKIAIOSFODNN7EXAMPLE'\n"
+        keys = {f.key for f in RegexPiiScanner(pii=False).scan(Path("x"), text, None)}
+        assert keys == {"secret.aws_key"}
+
+
+class TestRegistration:
+    @pytest.fixture(autouse=True)
+    def clean_registries(self):
+        plugins._reset_for_tests()
+        yield
+        plugins._reset_for_tests()
+
+    def _register(self, tmp_path, config):
+        import cgh_pii
+
+        from codegraph.plugin_api import PluginAPI
+
+        api = PluginAPI("pii", tmp_path, config, plugins._registries)
+        cgh_pii.register(api)
+        return api
+
+    def test_default_registers_no_index_scanner(self, tmp_path):
+        api = self._register(tmp_path, {})
+        assert set(api.surfaces) == {"cli", "extensions"}
+        assert plugins._registries.scanners == []
+
+    def test_sdk_scan_text_keeps_pii_patterns(self, tmp_path, monkeypatch):
+        """sdk.scan_text(scanners=["pii"]) is served by the on-demand
+        scanner and still reports PII, as before 0.4.0."""
+        from types import SimpleNamespace
+
+        import cgh_pii
+
+        from codegraph import sdk
+
+        monkeypatch.setattr(
+            plugins,
+            "_iter_entry_points",
+            lambda: [SimpleNamespace(name="pii", load=lambda: cgh_pii)],
+        )
+        found = sdk.scan_text("mail joy@altikva.com", scanners=["pii"])
+        assert [f.key for f in found] == ["pii.email"]
+
+    def test_scan_on_index_is_secrets_only_by_default(self, tmp_path):
+        self._register(tmp_path, {"scan_on_index": True})
+        (_, scanner), *_ = plugins._registries.scanners
+        found = {f.key for f in scanner.scan(Path("x"), "joy@altikva.com\n", None)}
+        assert found == set()
+
+    def test_scan_on_index_with_pii(self, tmp_path):
+        self._register(tmp_path, {"scan_on_index": True, "pii": True})
+        (_, scanner), *_ = plugins._registries.scanners
+        found = {f.key for f in scanner.scan(Path("x"), "joy@altikva.com\n", None)}
+        assert found == {"pii.email"}
+
+
+class TestScanCommand:
+    def _run(self, argv, config=None):
+        import argparse
+
+        from cgh_pii.cli import make_cli_registrar
+
+        ap = argparse.ArgumentParser()
+        sub = ap.add_subparsers(dest="cmd")
+        make_cli_registrar(config or {})(sub)
+        args = ap.parse_args(["pii", *argv])
+        try:
+            args.func(args)
+        except SystemExit as exc:
+            return exc.code
+        return 0
+
+    def _tree(self, tmp_path):
+        (tmp_path / "ok.py").write_text("def f():\n    return 1\n")
+        (tmp_path / "contact.md").write_text("mail joy@altikva.com\n")
+        return tmp_path
+
+    def test_clean_tree_exits_zero(self, tmp_path, capsys):
+        root = self._tree(tmp_path)
+        assert self._run(["scan", str(root)]) == 0
+        assert capsys.readouterr().out == ""
+
+    def test_pii_flag_reports_but_does_not_fail(self, tmp_path, capsys):
+        root = self._tree(tmp_path)
+        assert self._run(["scan", str(root), "--pii"]) == 0
+        out = capsys.readouterr().out
+        assert "contact.md:1" in out and "pii.email" in out
+        assert "altikva" not in out.split("contact.md")[1]
+
+    def test_block_secret_exits_one(self, tmp_path, capsys):
+        root = self._tree(tmp_path)
+        (root / "deploy.pem").write_text("-----BEGIN RSA PRIVATE KEY-----\nx\n")
+        assert self._run(["scan", str(root)]) == 1
+        assert "secret.private_key" in capsys.readouterr().out
+
+    def test_git_ignored_files_are_skipped(self, tmp_path):
+        root = self._tree(tmp_path)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / ".gitignore").write_text("*.pem\n")
+        (root / "deploy.pem").write_text("-----BEGIN RSA PRIVATE KEY-----\nx\n")
+        assert self._run(["scan", str(root)]) == 0
+
+    def test_json_output(self, tmp_path, capsys):
+        import json
+
+        f = tmp_path / "k.env"
+        f.write_text("AWS=AKIAIOSFODNN7EXAMPLE\n")
+        assert self._run(["scan", str(f), "--json"]) == 1
+        hits = json.loads(capsys.readouterr().out)
+        assert hits == [
+            {
+                "path": str(f),
+                "line": 1,
+                "key": "secret.aws_key",
+                "severity": "block",
+                "count": 1,
+            }
+        ]
+
+    def test_missing_path_exits_two(self, tmp_path):
+        assert self._run(["scan", str(tmp_path / "nope")]) == 2
+
+    def test_redact_still_takes_one_file(self, tmp_path, capsys):
+        f = tmp_path / "n.txt"
+        f.write_text("mail joy@altikva.com\n")
+        assert self._run(["redact", str(f), "--only", "email"]) == 0
+        assert "joy@altikva.com" not in capsys.readouterr().out

@@ -119,14 +119,6 @@ cgh = "codegraph.__main__:main"
 # from the GUI subsystem so it never does. No effect on POSIX.
 cghw = "codegraph.__main__:main"
 
-# Temporary path sources so `uv lock` resolves the plugins at their new
-# versions before they are on PyPI. Removed post-release (runbook step 4);
-# the published core wheel depends on the extras floors, not these dev-only
-# sources.
-[tool.uv.sources]
-cgh-bugreport = { path = "plugins/cgh-bugreport" }
-cgh-codegen = { path = "plugins/cgh-codegen" }
-
 [tool.setuptools.packages.find]
 where = ["."]
 # `cgh` is a thin entry shim so `python -m cgh` works; the real code lives in

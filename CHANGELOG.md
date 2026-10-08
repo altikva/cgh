@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-08
+
 ### Removed
 - **Breaking: secure mode is gone.** Its guarantees rested on a regex PII
   detector that misses too much to promise anything. `mode = "secure"` in
@@ -1953,7 +1955,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.5...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0
 [0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3

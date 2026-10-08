@@ -339,7 +339,7 @@ def generate_default_config() -> str:
     ones commented out with an explanation, so the file doubles as the
     reference a user edits instead of hunting through the docs."""
     return """# codegraph configuration
-# Docs: https://github.com/altikva/codegraph
+# Docs: https://github.com/altikva/cgh/blob/main/docs/CONFIGURATION.md
 # Every option cgh reads is listed here. Active lines are the real
 # defaults; commented lines are optional features, uncomment to enable.
 

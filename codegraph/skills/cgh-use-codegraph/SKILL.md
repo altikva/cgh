@@ -24,18 +24,13 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 | "What does `fn` call?" | `mcp__codegraph__find_callees(fn_name="fn")` |
 | "Trace the flow from `fn`" (multi-hop) | `mcp__codegraph__find_callees(fn_name="fn", max_depth=N)`: one call returns the ordered chain, don't chain single hops |
 | "What breaks if I change `X`?" | `mcp__codegraph__impact_of(symbol_or_file="X", max_depth=N)` |
-| "Which tests should I run?" | `mcp__codegraph__tests_for(symbol_or_file="X")`, or `impact_report(changed_files=[...])` for a change set |
 | Fuzzy / partial name | `mcp__codegraph__search_symbols(query="...")` |
-| Code described in words (a sentence is fine) | `mcp__codegraph__fts_search(query="...")` |
-| "What is in `file.py`?" before reading it | `mcp__codegraph__file_summary(file_path="...")` |
+| Full-text (docstrings, names) | `mcp__codegraph__fts_search(query="...")` |
 | **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)`: INSTEAD of Grep |
 | "How does [feature] work?": starting a non-trivial task | `mcp__codegraph__context_for_task(task="...")` |
-| "Which doc covers this?" / "What docs mention `X`?" | `mcp__codegraph__search_docs` / `doc_refs` |
-| "What does `file.py` import, who imports it?" | `mcp__codegraph__subgraph(file_path="...")` |
-| "Is `fn` dead / unused?" | `mcp__codegraph__find_dead_code` (per-scope candidates, not a verdict) |
-
-`knowledge_search` searches notes saved in earlier sessions, not the code:
-an empty result there says nothing about what the code contains.
+| "What docs mention `X`?" | `mcp__codegraph__search_docs` / `doc_refs` |
+| "Blast radius of `file.py`" | `mcp__codegraph__subgraph(file_path="...")` |
+| "Is `fn` dead / unused?" | `mcp__codegraph__find_dead_code` |
 
 ## Workflow
 
@@ -51,8 +46,8 @@ an empty result there says nothing about what the code contains.
 - Don't route the same search through Bash: `git grep`, `grep -r`, `rg`,
   `find -name`, or `sed -n` / `cat` on a source file are Grep and Read by
   another path. Shell search is for logs and files cgh does not index.
-- Don't read an entire file just to list its functions: use `file_summary`
-  (or `doc_outline` for markdown).
+- Don't read an entire file just to list its functions: use `doc_outline`
+  for markdown or walk symbols via `search_symbols`.
 - Don't run manual `cgh` CLI commands during a session; use MCP tools so
   results are logged and cached.
 
@@ -61,5 +56,4 @@ an empty result there says nothing about what the code contains.
 The graph reflects the last scan, not the live working tree. If the user
 mentions recent `git pull`, `checkout`, `rebase`, or major edits, call
 `mcp__codegraph__scan_status` first. If `fresh=false`, call
-`mcp__codegraph__incremental_reindex` before trusting symbol results
-(`scan_repo` is the slow full rebuild, a last resort).
+`mcp__codegraph__scan_repo` before trusting symbol results.

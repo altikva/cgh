@@ -28,18 +28,9 @@ When navigating code or answering questions about this codebase:
 5. Call find_callers/find_callees to understand call relationships
 6. Only read the specific lines returned by codegraph, not entire files
 
-Pick the codegraph tool by the question:
-- context_for_task(task): first call on a coding task: ranked code, notes and plans
-- symbol_lookup(name): where is X defined (instead of grep/find)
-- search_symbols(query): a name you only half know
-- fts_search(query): code described in words; a sentence is fine
-- pattern_search(pattern, glob?): every place a string or regex occurs (instead of grep)
-- find_callers(fn_name) / find_callees(fn_name, max_depth?): who calls X / what X calls
-- file_summary(file_path): what a file holds, before reading it
-- impact_of(symbol_or_file) / tests_for(symbol_or_file): what depends on X / which tests cover it
-- search_docs(query) / doc_outline(file_path): Markdown docs
-- knowledge_search(query): notes saved in earlier sessions, not the code
-- scan_status(), then incremental_reindex(): after a pull or branch switch, if stale
+Available codegraph tools: symbol_lookup, search_symbols, search_docs, find_callers,
+find_callees, context_for_task, doc_outline, doc_refs, fts_search, visualize_graph,
+scan_repo, index_changed_files, graph_stats
 ```
 
 ## Environment variable

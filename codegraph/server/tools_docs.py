@@ -27,11 +27,10 @@ def register(mcp) -> None:
     @_logged_tool
     def search_docs(query: str, limit: int = 10) -> str:
         """
-        Which Markdown doc covers this topic?
-        Searches doc headings and bodies; returns sections with file, line
-        range and a preview. Use before diving into code when docs may
-        explain it. Federated. Outline of one file: doc_outline. Docs naming
-        a symbol: doc_refs.
+        Search documentation (Markdown files) by heading title or body content.
+        Returns matching sections with file path, line range, and body preview.
+        Use this to find relevant documentation before diving into code.
+        Federated across subrepos.
         """
 
         q_str = query  # capture before shadowing
@@ -97,9 +96,8 @@ def register(mcp) -> None:
     @_logged_tool
     def doc_outline(file_path: str) -> str:
         """
-        What sections does this Markdown file have?
-        Returns the heading tree of `file_path` with line numbers, so you
-        Read only the section you need. Finding the right doc: search_docs.
+        Return the heading outline (table of contents) of a Markdown file.
+        Shows the hierarchical structure of sections with line numbers.
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
@@ -137,10 +135,8 @@ def register(mcp) -> None:
     @_logged_tool
     def doc_refs(symbol_name: str) -> str:
         """
-        Which docs mention this symbol?
-        Returns the Markdown sections that reference `symbol_name`. Use it
-        to find the prose about a function or class before reading its
-        code. Code that calls it: find_callers.
+        Find all Markdown documentation that references a code symbol.
+        Use this to find docs about a function or class before reading its code.
         """
 
         def query(conn):

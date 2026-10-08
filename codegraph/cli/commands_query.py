@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 from rich import box
+from rich.markup import escape
 from rich.table import Table
 from rich.tree import Tree
 
@@ -185,10 +186,98 @@ def _child_fts_fallback(
     return [(scope, _fts_rows(hits)) for scope, hits in buckets], failures
 
 
+def _text_search(root: str, text: str, limit: int) -> tuple[list[tuple], list[str]]:
+    """Free-text search over the FTS store of the repo and each subrepo.
+
+    Every scope is opened read-only through SQLite, which takes concurrent
+    readers alongside a running owner (only the graph DB is write-locked).
+    Returns ``(rows, warnings)``; rows are ``(scope, FTSResult)`` sorted by
+    score, best first. Scores are bm25 per scope, not renormalized across
+    scopes.
+    """
+    from codegraph.analysis.federation import for_each_fts
+    from codegraph.core.fts import fts_search
+
+    rows: list[tuple] = []
+    warnings: list[str] = []
+    for scoped in for_each_fts(
+        root, lambda conn, _r: fts_search(conn, text, limit=limit, prose=True)
+    ):
+        if scoped.error:
+            warnings.append(f"{scoped.scope}: {scoped.error}")
+            continue
+        rows.extend((scoped.scope, hit) for hit in scoped.payload or [])
+    rows.sort(key=lambda r: -r[1].score)
+    return rows[:limit], warnings
+
+
+def _cmd_search_text(args: argparse.Namespace, root: str) -> None:
+    from codegraph.core.fts import prose_terms
+
+    text = args.text
+    limit = args.limit if args.limit is not None else 20
+    terms = prose_terms(text)
+    rows, warnings = _text_search(root, text, limit) if terms else ([], [])
+
+    if args.json:
+        out: dict = {
+            "text": text,
+            "terms": terms,
+            "returned": len(rows),
+            "results": [
+                {
+                    "scope": scope,
+                    "file": hit.file_path,
+                    "line": hit.start_line,
+                    "symbol": hit.name,
+                    "kind": hit.kind,
+                    "snippet": hit.docstring,
+                    "score": round(hit.score, 4),
+                }
+                for scope, hit in rows
+            ],
+        }
+        if warnings:
+            out["warnings"] = warnings
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+
+    _print_scope_warnings(warnings)
+    if not terms:
+        console.print("[dim]Nothing left to search once stopwords are removed.[/dim]")
+        return
+    console.print(f"[dim]terms: {' '.join(terms)}[/dim]")
+    if not rows:
+        console.print("[dim]No indexed text matches.[/dim]")
+        return
+
+    federated = has_subrepos(root)
+    for scope, hit in rows:
+        where = f"{_short_path(hit.file_path, root)}:{hit.start_line}"
+        tag = f"  [dim]({scope})[/dim]" if federated else ""
+        console.print(
+            f"  [dim]{hit.score:6.2f}[/dim]  [cyan]{where}[/cyan]  "
+            f"[bold]{escape(hit.name)}[/bold] [dim]{hit.kind}[/dim]{tag}"
+        )
+        snippet = " ".join(hit.docstring.split())
+        if snippet:
+            console.print(f"          [dim]{escape(snippet[:160])}[/dim]")
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    text = getattr(args, "text", None)
+    if text is not None:
+        if args.query:
+            console.print("[red]Pass either a query or --text, not both.[/red]")
+            raise SystemExit(2)
+        _cmd_search_text(args, root)
+        return
     query = args.query
-    limit = args.limit
+    if not query:
+        console.print("[red]A query (or --text) is required.[/red]")
+        raise SystemExit(2)
+    limit = args.limit if args.limit is not None else 100
     offset = getattr(args, "offset", 0) or 0
     # Fetch offset+limit+1 so we can detect whether more results exist.
     fetch = offset + limit + 1

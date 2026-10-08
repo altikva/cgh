@@ -7,8 +7,9 @@
 # Description: Plugin loader tests. Synthetic entry
 #              points exercise the five registration surfaces, the
 #              [plugins] enabled/disabled config, the API version check,
-#              failure isolation (import error, register() raising, no
-#              register), duplicate names, and load idempotence.
+#              failure isolation (import error, register() raising and
+#              the rollback of what it registered, no register),
+#              duplicate names, and load idempotence.
 
 from __future__ import annotations
 
@@ -156,6 +157,42 @@ class TestFailureIsolation:
         assert records[0].status == "broken"
         assert "register() raised" in records[0].reason
 
+    def test_half_registered_plugin_is_rolled_back(self, monkeypatch):
+        """An old plugin that registers its CLI, then imports a name core
+        removed, must not leave the verb or a scanner behind."""
+
+        def register(api):
+            api.register_cli(lambda sub: sub.add_parser("zzz-half"))
+            api.register_scanner(SimpleNamespace(name="half", deferred=False))
+            api.register_extension("zzz.ns", object())
+            from codegraph.guard import sync_static_rules  # noqa: F401
+
+        def good(api):
+            api.register_cli(lambda sub: sub.add_parser("zzz-good"))
+
+        _install(
+            monkeypatch,
+            _entry_point("half", lambda: _module("half", register=register)),
+            _entry_point("good", lambda: _module("good", register=good)),
+        )
+        records = plugins.load_plugins()
+
+        assert [r.status for r in records] == ["broken", "active"]
+        assert "ModuleNotFoundError" in records[0].reason
+        assert [n for n, _ in plugins.cli_registrars()] == ["good"]
+        assert plugins.scanners() == []
+        assert plugins.get_extensions("zzz.ns") == []
+
+    def test_import_of_removed_core_name_marks_broken(self, monkeypatch):
+        def load():
+            from codegraph.plugin_api import a_name_core_removed  # noqa: F401
+
+        _install(monkeypatch, _entry_point("old", load))
+        records = plugins.load_plugins()
+
+        assert records[0].status == "broken"
+        assert "import failed" in records[0].reason
+
     def test_missing_register_marks_broken(self, monkeypatch):
         _install(monkeypatch, _entry_point("bad", lambda: _module("bad")))
         records = plugins.load_plugins()
@@ -279,3 +316,163 @@ class TestIdempotence:
         assert count == [1]
         assert [r.name for r in first] == [r.name for r in second]
         assert plugins.loaded_plugins()[0].status == "active"
+
+
+# ---------------------------------------------------------------------------
+# First-party plugins too old for this core
+# ---------------------------------------------------------------------------
+
+
+def _fake_distribution(site, dist: str, version: str, ep_name: str, module: str):
+    """A real installed-looking distribution: a dist-info directory with
+    METADATA and entry_points.txt, plus a module that records its import."""
+    info = site / f"{dist.replace('-', '_')}-{version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {dist}\nVersion: {version}\n",
+        encoding="utf-8",
+    )
+    (info / "entry_points.txt").write_text(
+        f"[cgh]\n{ep_name} = {module}\n", encoding="utf-8"
+    )
+    (site / f"{module}.py").write_text(
+        "import os\n"
+        "CGH_PLUGIN_API = 1\n"
+        f"os.environ['{module.upper()}_IMPORTED'] = '1'\n"
+        "def register(api):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def fake_site(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    monkeypatch.syspath_prepend(str(site))
+    # Load from a repo with no [plugins] config, so no repo or checkout
+    # setting disables the fake plugins.
+    (tmp_path / "repo").mkdir()
+    monkeypatch.chdir(tmp_path / "repo")
+    return site
+
+
+def _discovered_only(monkeypatch, *names):
+    """Keep the real importlib.metadata discovery, minus whatever plugins the
+    test environment has installed for real (the fake modules all start
+    with zzz_, real plugins may share an entry point name)."""
+    real = plugins._iter_entry_points
+    monkeypatch.setattr(
+        plugins,
+        "_iter_entry_points",
+        lambda: [
+            ep for ep in real() if ep.name in names and ep.value.startswith("zzz_")
+        ],
+    )
+
+
+class TestFirstPartyMinimums:
+    @pytest.mark.parametrize(
+        ("dist", "version", "needed"),
+        [
+            ("cgh-pii", "0.3.1", "0.4.0"),
+            ("cgh-summarize", "0.2.4", "0.3.0"),
+            ("cgh-classify", "0.1.3", "0.2.0"),
+            ("cgh-vision", "0.5.0", "0.6.0"),
+        ],
+    )
+    def test_below_minimum_is_refused(self, dist, version, needed):
+        reason = plugins.too_old_reason(dist, version)
+        assert f"{dist} {version} is too old for cgh 0.15" in reason
+        assert f"needs >= {needed}" in reason
+        assert 'uv tool install --force -U "cgh[plugins]"' in reason
+        assert f"--with {dist}" in reason
+
+    @pytest.mark.parametrize(
+        ("dist", "version"),
+        [
+            ("cgh-pii", "0.4.0"),
+            ("cgh-summarize", "0.3"),
+            ("cgh-classify", "0.2.1"),
+            ("cgh-vision", "1.0.0"),
+            ("cgh-docs", "0.0.1"),  # first-party without a minimum
+            ("acme-summarize", "0.0.1"),  # third-party
+            ("cgh-pii", "not-a-version"),  # unknown: never guess
+        ],
+    )
+    def test_recent_unlisted_or_unknown_is_accepted(self, dist, version):
+        assert plugins.too_old_reason(dist, version) == ""
+
+    def test_stale_distribution_is_broken_and_never_imported(
+        self, fake_site, monkeypatch
+    ):
+        monkeypatch.delenv("ZZZ_STALE_SUMMARIZE_IMPORTED", raising=False)
+        _fake_distribution(
+            fake_site, "cgh-summarize", "0.2.4", "summarize", "zzz_stale_summarize"
+        )
+        _discovered_only(monkeypatch, "summarize")
+
+        records = plugins.load_plugins(fake_site.parent / "repo")
+
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.status == "broken" and rec.too_old
+        assert rec.version == "0.2.4"
+        assert "cgh-summarize 0.2.4 is too old for cgh 0.15" in rec.reason
+        assert "ZZZ_STALE_SUMMARIZE_IMPORTED" not in __import__("os").environ
+        assert plugins.cli_registrars() == [] and plugins.scanners() == []
+
+    def test_current_and_third_party_distributions_load(self, fake_site, monkeypatch):
+        _fake_distribution(fake_site, "cgh-pii", "0.4.0", "pii", "zzz_current_pii")
+        # Third-party, even with an old version and a first-party-like
+        # entry point name: matched by distribution name, so untouched.
+        _fake_distribution(
+            fake_site, "acme-classify", "0.0.1", "classify", "zzz_acme_classify"
+        )
+        _discovered_only(monkeypatch, "pii", "classify")
+
+        records = {r.name: r for r in plugins.load_plugins(fake_site.parent / "repo")}
+
+        assert records["pii"].status == "active" and not records["pii"].too_old
+        assert records["classify"].status == "active"
+
+    def test_cgh_plugins_reports_the_stale_plugin(self, fake_site, monkeypatch, capsys):
+        import json
+
+        from codegraph.cli.commands_plugins import cmd_plugins
+
+        _fake_distribution(fake_site, "cgh-pii", "0.3.1", "pii", "zzz_stale_pii")
+        _discovered_only(monkeypatch, "pii")
+
+        cmd_plugins(argparse.Namespace(root=str(fake_site.parent / "repo"), json=True))
+
+        (row,) = json.loads(capsys.readouterr().out)
+        assert row["status"] == "broken" and row["version"] == "0.3.1"
+        assert "needs >= 0.4.0" in row["reason"]
+
+    def test_doctor_lists_the_stale_plugin(self, fake_site, monkeypatch, tmp_path):
+        from codegraph.cli.commands_monitor import _too_old_plugin_reasons
+
+        _fake_distribution(
+            fake_site, "cgh-vision", "0.5.0", "vision", "zzz_stale_vision"
+        )
+        _discovered_only(monkeypatch, "vision")
+
+        (reason,) = _too_old_plugin_reasons(fake_site.parent / "repo")
+        assert "cgh-vision 0.5.0 is too old" in reason
+
+    def test_table_keeps_the_literal_extra_brackets(self, fake_site, monkeypatch):
+        import io
+
+        from rich.console import Console
+
+        import codegraph.cli.commands_plugins as cp
+
+        buf = io.StringIO()
+        monkeypatch.setattr(cp, "console", Console(file=buf, width=400))
+        _fake_distribution(fake_site, "cgh-pii", "0.3.1", "pii", "zzz_table_pii")
+        _discovered_only(monkeypatch, "pii")
+
+        cp.cmd_plugins(argparse.Namespace(root=str(fake_site.parent / "repo")))
+
+        assert '"cgh[plugins]"' in buf.getvalue()

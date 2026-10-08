@@ -8,6 +8,133 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-08
+
+### Removed
+- **Breaking: secure mode is gone.** Its guarantees rested on a regex PII
+  detector that misses too much to promise anything. `mode = "secure"` in
+  `config.toml` is now ignored, with a one-line notice on stderr and in
+  `cgh status` and `cgh doctor`; delete the line. `cgh init --secure` still
+  parses and only prints a deprecation note. Who is affected, the upgrade
+  command, old findings and rollback:
+  [docs/UPGRADING-0.15.md](docs/UPGRADING-0.15.md).
+- **Breaking: cgh no longer blocks agent file access.** The guard hooks
+  (`cgh _hook_guard`, `cgh _hook_guard_codex`) now always allow, and cgh no
+  longer writes `Read()` deny rules or a `.bobignore` block. Use your agent's
+  own permission rules to keep files out of reach. `cgh init`, `cgh setup`
+  and `cgh guard` remove the guard hooks an older cgh wrote. The deny rules
+  and `.bobignore` block it wrote still protect files, so they stay, with a
+  count and the command that removes them: `cgh guard --remove-rules`
+  removes exactly those. The plugin API's `sync_static_rules` writes and
+  removes nothing.
+- **New findings are no longer pseudonymized at rest.** Pseudonyms already
+  stored stay as they are; there is no migration.
+- **Breaking: `cgh[plugins]` installs cgh-docs, cgh-codegen and cgh-bugreport
+  only** (`cgh[full]` likewise, plus the langs and lsp extras). The pii,
+  vision, summarize and classify scanners ran on every index for findings
+  agents rarely read. Upgrade with
+  `uv tool install --force -U "cgh[plugins]"`; without `-U`, uv keeps the
+  plugins it already resolved. cgh-pii and cgh-vision still install by name:
+  `uv tool install --force -U "cgh[plugins]" --with cgh-pii`.
+- **Breaking: the standalone binaries carry the same default set.** The
+  sealed build (`cgh`) bundles cgh-docs, the egress build (`cgh-egress`)
+  adds cgh-codegen and cgh-bugreport. cgh-pii, cgh-classify and
+  cgh-summarize are no longer bundled; install cgh with Python for them.
+- **cgh-summarize 0.3.0 and cgh-classify 0.2.0 are final releases, frozen.**
+  cgh-summarize keeps local backends only (Ollama, a loopback
+  OpenAI-compatible server); the `claude -p` and other agent CLI backends
+  and its egress gate are gone. Agent-written summaries (`cgh artifact note`,
+  `knowledge_record`) cover the use case.
+
+### Changed
+- **Breaking: `fetch_and_index` and `cgh fetch` need `allow_fetch = true`**
+  under `[codegraph]` for everyone. Assist mode used to allow them by
+  default.
+- **Breaking (SDK): `egress_decision` defaults to the assist behavior.**
+  Passing `mode` is deprecated and emits a `DeprecationWarning`;
+  `mode="secure"` still applies the allowlist for now.
+- The cgh-codegen gate defaults to `open`; set its
+  `egress = "strict"` for the allowlist. Any other value now fails closed
+  to `strict`. cgh-bugreport always shows the
+  payload before sending unless `--yes`.
+- **Breaking: plugins no longer scan at index by default.** cgh-pii 0.4.0,
+  cgh-vision 0.6.0 and cgh-classify 0.2.0 register their index-time scanner
+  only with `scan_on_index = true` under `[plugin.<name>]`; cgh-summarize
+  0.3.0 has none. cgh-pii checks secrets only unless `pii = true`: regex
+  secret detection is precise, regex PII detection is not.
+- A plugin whose `register()` fails after registering a CLI verb, scanner or
+  MCP tool no longer leaves them behind; `cgh plugins` reports it broken.
+- **cgh refuses first-party plugins too old for it**: cgh-pii before 0.4.0,
+  cgh-summarize before 0.3.0, cgh-classify before 0.2.0 and cgh-vision
+  before 0.6.0 are not loaded, since they relied on secure mode or scanned
+  on every index. `cgh plugins` reports them broken and `cgh doctor` lists
+  them, with the upgrade command. Third-party plugins are not affected.
+
+### Added
+- **cgh-codegen refuses to send known secret formats to any model**
+  (0.1.2). The reference, a file being extended and the spec are checked
+  with built-in regex patterns (private keys, AWS and GCP keys, GitHub,
+  Slack, Stripe and bearer tokens, hardcoded credentials) for every
+  backend, with no dependency on cgh-pii or on index-time findings. The
+  refusal names file and line, never the value. It is best effort, not a
+  guarantee: a secret in a format it has no pattern for is sent.
+- **`cgh pii scan [PATH...]`** (cgh-pii 0.4.0) reports secrets on demand in
+  files git does not ignore, `--pii` adds the PII patterns, `--json` for
+  tools. It exits 1 on a private key or cloud key, so it can gate CI. It
+  knows three regex shapes (AWS access key ids, PEM private keys, hardcoded
+  credentials), so a clean run is best effort, not proof of no secret.
+- **`cgh search --text "<prose>"` searches the full-text index with a
+  sentence.** Looking up a ticket's prose meant importing the internal search
+  function by hand, and a sentence passed as is matched nothing because every
+  word was required. `--text` drops English and French stopwords, splits
+  elided articles (`l'utilisateur`), matches any remaining term ranked by
+  bm25, and takes `--limit` and `--json`. It reads the index read-only, so it
+  works while the owner runs. The `fts_search` MCP tool now retries a query
+  that matches nothing as written the same way; its response is unchanged.
+- **`cgh knowledge promote` recognises what it already carried and follows
+  revisions.** Each promoted entry now records its source worktree and its id
+  there, so an entry revised on the branch (`supersedes`) replaces its earlier
+  copy in the main checkout instead of sitting next to it, and a re-run never
+  brings back an entry the main checkout has since replaced. `--from` defaults
+  to the current directory; new `--dry-run`, `--json`, and `--archive DIR`
+  (every row of the source store as JSON lines, written before promoting).
+  `--kinds` is now the exact list, without plain notes added on top.
+  `knowledge_list`, `knowledge_search` and the resume bundle give a promoted
+  entry a `provenance` object (branch, PR, worktree, origin id, promoted_at);
+  other entries are unchanged.
+
+### Fixed
+- **The standalone binary crashed when indexing any markdown, docx, pdf or
+  xlsx file** (`table md_section has no column named kind`). The section
+  kind column was added to the DuckDB schema only; the SQLite schema the
+  binary uses now has it too, and an existing SQLite graph gains it on open.
+- **Agents searched the code with `knowledge_search`.** An IBM Bob
+  session used it for a whole task, because its description spoke of
+  looking up "a pattern by keyword". The knowledge tools now say they hold
+  notes, not code, and point to the code tools; `fts_search` says it takes
+  a sentence in French or English; and a short "which tool answers which
+  question" guide leads the MCP server instructions and the usage rules
+  `cgh setup` installs for every agent. Rerun `cgh setup <agent>` to
+  refresh installed rules.
+- **Opening a knowledge store held its write lock until the next write.** Any
+  other process writing the same store, such as a CLI command or a hook next to
+  a running owner, waited five seconds and failed with "database is locked".
+- **cgh could fail to start with pydantic 2.14** when an older fastmcp was
+  installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed,
+  and with fastmcp before 2.13 the owner could not start at all. The fastmcp
+  floor is now 2.13.
+- **Links to `github.com/altikva/codegraph` were dead.** The footer of the
+  HTML that `cgh graph` writes and the header of a generated `config.toml`
+  pointed there; they now point at `github.com/altikva/cgh`.
+- **`cgh impact`, `callers`, `callees` and `outline` failed while an owner
+  ran**, so during every agent session. The owner holds the graph lock, so
+  they now ask it over HTTP (a new `impact_report` MCP tool serves
+  `cgh impact`) and open the graph themselves only when no owner answers.
+  Output is unchanged. A silent owner times out after 30s
+  (`CGH_OWNER_TIMEOUT`) with a pointer to `cgh doctor --owner` and `cgh stop`.
+  An owner started by an older cgh, which lacks the tool, makes them exit at
+  once with a pointer to `cgh stop` instead of waiting on the graph lock.
+
 ## [0.14.5] - 2026-10-07
 
 ### Added
@@ -1828,7 +1955,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.14.5...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0
 [0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/altikva/cgh/compare/v0.14.2...v0.14.3

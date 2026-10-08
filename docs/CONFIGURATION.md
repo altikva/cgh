@@ -40,9 +40,8 @@ ignore_patterns = ["*.min.js", "*.bundle.js", "*.map", "*.pyc", "*.pyo", "*.so",
 # Skip files larger than this (in KB). Prevents indexing generated files.
 max_file_size_kb = 500
 
-# Global posture: "assist" (warn, fail open) or "secure" (assist plus
-# enforcement: egress allowlist, guards fail closed, static deny sync).
-# mode = "assist"
+# Let fetch_and_index / `cgh fetch` reach the network (off by default).
+# allow_fetch = false
 
 # Additional directories to include in the graph (relative to project root).
 # Useful for multi-repo setups. Add with: cgh add-dir add ../frontend
@@ -94,17 +93,24 @@ checkpoint_gate = 0
 
 [plugins]
 # Narrow or bar installed plugins without uninstalling them.
-# enabled = ["pii", "summarize"]
-# disabled = ["classify"]
+# enabled = ["docs", "codegen"]
+# disabled = ["bugreport"]
 
 # Per-plugin settings live in [plugin.<name>] tables (singular). See each
 # plugin's README for its keys; the template written by `cgh init` lists
 # the first-party ones commented out.
-# [plugin.summarize]
-# backend = "auto"
+# [plugin.pii]
+# scan_on_index = false
 ```
 
 ### Section Details
+
+#### `[plugin.<name>]` index-time scanning
+
+| Key | Plugin | Default | Description |
+|-----|--------|---------|-------------|
+| `scan_on_index` | pii, vision, classify | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`, `cgh classify`). |
+| `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `codegraph.sdk.scan_text` keeps them on unless this is set to `false`. |
 
 #### `[codegraph]`
 
@@ -117,7 +123,8 @@ checkpoint_gate = 0
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 | `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
-| `mode` | `str` | `"assist"` | Global posture. `assist` optimizes for token savings; `secure` is assist plus enforcement: egress gates switch to allowlist, guards fail closed, static deny rules sync. Nothing turns off in secure. |
+| `allow_fetch` | `bool` | `false` | Let the `fetch_and_index` MCP tool and `cgh fetch` reach the network. Private and loopback hosts stay refused, every fetch is logged. |
+| `mode` | `str` | `"assist"` | Deprecated. `"secure"` was removed in 0.15.0: it is ignored, with a notice on stderr and in `cgh status` / `cgh doctor`. Delete the line. |
 | `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is idle. Those children live exactly as long as the parent owner. |
 
 **Default `ignore_dirs`:**

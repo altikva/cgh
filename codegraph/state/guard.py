@@ -4,307 +4,320 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The guard: decides whether an agent's native tool call
-#              (Read, Grep, Glob, Bash) may touch a file, from the
-#              finding store. Blocking facts: a confidential = true
-#              finding or any block-severity finding. Bash matching and
-#              the fail posture follow the global mode: assist checks
-#              read commands and fails open, secure checks any argument
-#              hitting a flagged path and fails closed. Also syncs the
-#              static Read() deny rules for Claude Code in secure mode,
-#              tracked in a sidecar so user-authored rules are never
-#              touched.
+# Description: What is left of the confidentiality guard. Since 0.15.0
+#              cgh no longer vetoes agent file access: the hook commands
+#              always allow, and blocking file reads is the job of the
+#              agent's own permission rules. This module removes the guard
+#              hook entries older versions added to Claude Code, Gemini CLI
+#              and Codex configs (no-ops now). The Read() deny rules they
+#              wrote to .claude/settings.local.json (recorded in the
+#              guard_denies.json sidecar) and the managed .bobignore block
+#              still protect files, so they stay unless the user asks for
+#              their removal (`cgh guard --remove-rules`). Only entries cgh
+#              wrote are touched, identified by the sidecar or by markers.
 
 from __future__ import annotations
 
 import json
 import re
-import shlex
+from dataclasses import dataclass, field
 from pathlib import Path
-
-# Commands whose purpose is reading file content. The assist posture
-# only guards these; secure guards any command whose arguments hit a
-# flagged path.
-READ_COMMANDS = {
-    "cat", "head", "tail", "less", "more", "sed", "awk", "grep", "rg",
-    "cut", "sort", "uniq", "strings", "xxd", "hexdump", "base64", "od",
-    "python", "python3", "jq", "open",
-}  # fmt: skip
 
 _SIDECAR = "guard_denies.json"
 
+_BOBIGNORE_START = "# >>> cgh guard (managed, do not edit) >>>"
+_BOBIGNORE_END = "# <<< cgh guard <<<"
 
-def guard_mode(repo_root: str | Path) -> str:
-    from codegraph.core.config import load_config
-
-    return load_config(repo_root).mode
-
-
-def blocking_paths(repo_root: str | Path) -> set[str]:
-    """Absolute paths currently barred: confidential = true, or carrying
-    any block-severity finding. Read straight from SQLite, fast enough
-    for a per-tool-call hook."""
-    from codegraph.state.findings import query_findings
-
-    barred: set[str] = set()
-    for row in query_findings(repo_root, severity="block", limit=10000):
-        barred.add(row["file"])
-    for row in query_findings(repo_root, key_prefix="confidential", limit=10000):
-        if row["key"] == "confidential" and str(row["value"]).lower() in (
-            "true",
-            "yes",
-            "1",
-        ):
-            barred.add(row["file"])
-    return barred
+# Hook markers older versions wrote for the guard, per agent config.
+_CLAUDE_GUARD_MARKER = "cgh-guard"
+_GEMINI_GUARD_MARKER = "cgh-guard"
+_CODEX_GUARD_MARKER = "_hook_guard_codex"
 
 
-def _normalize(root: Path, candidate: str) -> str:
-    p = Path(candidate)
-    if not p.is_absolute():
-        p = root / p
-    try:
-        return str(p.resolve())
-    except OSError:
-        return str(p)
+@dataclass
+class CleanupReport:
+    """What cleanup_guard_leftovers removed, and what it kept."""
 
+    claude_rules: list[str] = field(default_factory=list)
+    bobignore_lines: list[str] = field(default_factory=list)
+    hooks: list[str] = field(default_factory=list)  # config files edited
+    sidecar_removed: bool = False
+    # cgh-written rules still in place (deny entries plus .bobignore block
+    # lines) because removal was not asked for.
+    kept_rules: int = 0
 
-_INDEX_DENY = (
-    "blocked by cgh guard: the cgh index (.codegraph/) is only served "
-    "through the MCP tools; in secure mode its files hold pseudonymized "
-    "data and direct reads are denied"
-)
-
-
-def _inside_codegraph(root: Path, target: str) -> bool:
-    normalized = _normalize(root, target)
-    try:
-        return normalized == str(
-            (root / ".codegraph").resolve()
-        ) or normalized.startswith(str((root / ".codegraph").resolve()) + "/")
-    except OSError:
-        return False
-
-
-def check_path(repo_root: str | Path, target: str) -> str | None:
-    """Deny reason if `target` is barred, else None."""
-    root = Path(repo_root)
-    if _normalize(root, target) in blocking_paths(repo_root):
-        return f"blocked by cgh guard: {target} is flagged confidential"
-    return None
-
-
-def check_bash(repo_root: str | Path, command: str, mode: str) -> str | None:
-    """Deny reason if the shell command would touch a barred path.
-
-    assist: only commands whose pipeline segments start with a known
-    read command are guarded (flow over completeness). secure: any
-    argument resolving to a barred path denies, whatever the verb
-    (a false positive beats a leak).
-    """
-    root = Path(repo_root)
-    # In secure mode the index itself is off-limits to the shell: any
-    # command touching .codegraph (sqlite3, cat, cp, ...) is denied. A
-    # substring match over-blocks a rare legit command; a false positive
-    # beats a leak, the reason points the agent at the MCP tools.
-    if mode == "secure" and ".codegraph" in command:
-        return _INDEX_DENY
-
-    barred = blocking_paths(repo_root)
-    if not barred:
-        return None
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
-
-    hit = next((t for t in tokens if _normalize(root, t) in barred), None)
-    if hit is None:
-        return None
-    if mode == "secure":
-        return f"blocked by cgh guard: {hit} is flagged confidential"
-
-    segment_heads = {
-        seg.strip().split()[0].rsplit("/", 1)[-1]
-        for seg in re.split(r"[|;&]+", command)
-        if seg.strip()
-    }
-    if segment_heads & READ_COMMANDS:
-        return f"blocked by cgh guard: {hit} is flagged confidential"
-    return None
-
-
-# Shell-tool names across agents: Claude's Bash, Gemini's
-# run_shell_command, Codex's shell variants.
-_SHELL_TOOLS = {"Bash", "run_shell_command", "shell", "local_shell", "bash"}
-# Search/glob tools where a directory target is fine (barred files inside
-# are caught when actually read).
-_DIR_OK_TOOLS = {"Grep", "Glob", "search_file_content", "glob"}
-
-
-def check_tool_call(
-    repo_root: str | Path, tool_name: str, tool_input: dict, mode: str
-) -> str | None:
-    """Deny reason for one agent tool call, else None. Tool and argument
-    names cover Claude Code and Gemini CLI, whose hook payloads share
-    the tool_name / tool_input shape."""
-    if tool_name in _SHELL_TOOLS:
-        command = tool_input.get("command", "")
-        if isinstance(command, list):
-            command = " ".join(str(c) for c in command)
-        return check_bash(repo_root, str(command), mode)
-
-    root = Path(repo_root)
-
-    # Multi-file reads (Gemini's read_many_files): check every path.
-    many = tool_input.get("paths")
-    if isinstance(many, list):
-        for candidate in many:
-            if mode == "secure" and _inside_codegraph(root, str(candidate)):
-                return _INDEX_DENY
-            reason = check_path(repo_root, str(candidate))
-            if reason:
-                return reason
-        return None
-
-    target = (
-        tool_input.get("file_path")
-        or tool_input.get("absolute_path")
-        or tool_input.get("path")
-        or ""
-    )
-    if not target:
-        return None
-    # The index is denied before the directory shortcut: grepping inside
-    # .codegraph is a content read whatever the tool.
-    if mode == "secure" and _inside_codegraph(root, str(target)):
-        return _INDEX_DENY
-    if tool_name in _DIR_OK_TOOLS:
-        p = Path(str(target))
-        if not p.suffix and not p.is_file():
-            return None
-    return check_path(repo_root, str(target))
-
-
-# ---------------------------------------------------------------------------
-# Static deny rules for Claude Code (secure mode second layer)
-# ---------------------------------------------------------------------------
+    @property
+    def changed(self) -> bool:
+        return bool(
+            self.claude_rules
+            or self.bobignore_lines
+            or self.hooks
+            or self.sidecar_removed
+        )
 
 
 def _sidecar_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _SIDECAR
 
 
-def sync_static_rules(repo_root: str | Path) -> tuple[int, int]:
-    """Mirror the barred paths into explicit Read() deny rules in
-    .claude/settings.local.json. Only rules recorded in the sidecar are
-    ever removed, so user-authored deny rules stay untouched. No-op
-    outside secure mode. Returns (added, removed)."""
-    root = Path(repo_root)
-    if guard_mode(root) != "secure":
-        return (0, 0)
+def _load_json(path: Path) -> dict | None:
+    """Parsed JSON object, {} when absent, None when unreadable (the
+    caller then leaves the file alone: never clobber what we cannot
+    parse)."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _sidecar_rules(root: Path) -> set[str]:
+    """The deny rules the sidecar says cgh wrote; empty when absent."""
+    sidecar = _sidecar_path(root)
+    if not sidecar.exists():
+        return set()
+    try:
+        return {str(r) for r in json.loads(sidecar.read_text(encoding="utf-8"))}
+    except (ValueError, OSError, TypeError):
+        return set()
+
+
+def _claude_deny(root: Path) -> list | None:
+    """The deny list of .claude/settings.local.json ([] when absent), None
+    when the file cannot be parsed."""
+    settings = _load_json(root / ".claude" / "settings.local.json")
+    if settings is None:
+        return None
+    permissions = settings.get("permissions")
+    deny = permissions.get("deny") if isinstance(permissions, dict) else None
+    return deny if isinstance(deny, list) else []
+
+
+def _remove_claude_rules(root: Path) -> list[str] | None:
+    """Drop the Read() deny rules listed in the sidecar from
+    .claude/settings.local.json. Returns the removed rules, or None when
+    the settings file could not be parsed (the sidecar is then kept so a
+    later run can finish the job)."""
+    ours = _sidecar_rules(root)
+    if not ours:
+        return []
 
     settings_path = root / ".claude" / "settings.local.json"
-    settings: dict = {}
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
-            return (0, 0)  # never clobber a file we cannot parse
-
-    ours_before: set[str] = set()
-    sidecar = _sidecar_path(root)
-    if sidecar.exists():
-        try:
-            ours_before = set(json.loads(sidecar.read_text(encoding="utf-8")))
-        except (ValueError, OSError):
-            ours_before = set()
-
-    wanted = {f"Read({p})" for p in blocking_paths(root)}
-    # The index itself: pseudonymized at rest, served through MCP only.
-    wanted.add("Read(.codegraph/**)")
-    permissions = settings.setdefault("permissions", {})
-    deny = list(permissions.get("deny", []))
-
-    removed = [r for r in deny if r in ours_before and r not in wanted]
-    deny = [r for r in deny if r not in removed]
-    added = [r for r in sorted(wanted) if r not in deny]
-    deny.extend(added)
-
-    if added or removed:
-        permissions["deny"] = deny
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(
-            json.dumps(settings, indent=2) + "\n", encoding="utf-8"
-        )
-    sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text(json.dumps(sorted(wanted)), encoding="utf-8")
-    return (len(added), len(removed))
-
-
-_BOBIGNORE_START = "# >>> cgh guard (managed, do not edit) >>>"
-_BOBIGNORE_END = "# <<< cgh guard <<<"
-
-
-def sync_bobignore(repo_root: str | Path) -> tuple[int, int]:
-    """Mirror the barred paths into a managed block in .bobignore, the
-    file IBM Bob reads to decide what it may access. Only lines inside
-    the marker block are ever touched, so user-authored ignores stay as
-    they are. No-op outside secure mode (an existing managed block is
-    still cleared). Returns (added, removed)."""
-    root = Path(repo_root)
-    ignore_path = root / ".bobignore"
-    existing = ""
-    if ignore_path.exists():
-        try:
-            # Lenient decode: a non-UTF-8 ignore file must not crash the guard.
-            existing = ignore_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return (0, 0)
-
-    before: set[str] = set()
-    block_re = re.compile(
-        re.escape(_BOBIGNORE_START) + r"\n(.*?)" + re.escape(_BOBIGNORE_END) + r"\n?",
-        re.DOTALL,
-    )
-    match = block_re.search(existing)
-    if match:
-        before = {line for line in match.group(1).splitlines() if line.strip()}
-
-    wanted: set[str] = set()
-    if guard_mode(root) == "secure":
-        wanted.add(".codegraph/")
-        for p in blocking_paths(root):
-            try:
-                wanted.add(Path(p).resolve().relative_to(root.resolve()).as_posix())
-            except ValueError:
-                continue  # outside the repo, .bobignore cannot express it
-
-    if wanted == before:
-        return (0, 0)
-
-    body = (
-        _BOBIGNORE_START
-        + "\n"
-        + "".join(f"{p}\n" for p in sorted(wanted))
-        + _BOBIGNORE_END
-        + "\n"
-    )
-    if match:
-        new = block_re.sub(lambda _m: body, existing, count=1)
-    elif wanted:
-        sep = "" if (not existing or existing.endswith("\n")) else "\n"
-        new = existing + sep + body
+    settings = _load_json(settings_path)
+    if settings is None:
+        return None
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return []
+    deny = permissions.get("deny")
+    if not isinstance(deny, list):
+        return []
+    removed = [r for r in deny if r in ours]
+    if not removed:
+        return []
+    kept = [r for r in deny if r not in ours]
+    if kept:
+        permissions["deny"] = kept
     else:
-        return (0, 0)
-    ignore_path.write_text(new, encoding="utf-8")
-    return (len(wanted - before), len(before - wanted))
+        permissions.pop("deny", None)
+        if not permissions:
+            settings.pop("permissions", None)
+    _write_json(settings_path, settings)
+    return removed
 
 
-def audit(repo_root: str | Path, message: str) -> None:
+_BOBIGNORE_BLOCK_RE = re.compile(
+    re.escape(_BOBIGNORE_START) + r"\n(.*?)" + re.escape(_BOBIGNORE_END) + r"\n?",
+    re.DOTALL,
+)
+
+
+def _read_bobignore(root: Path) -> str | None:
+    ignore_path = root / ".bobignore"
+    if not ignore_path.exists():
+        return None
     try:
-        from codegraph.state.activity import log as activity_log
+        # Lenient decode: a non-UTF-8 ignore file must not crash cleanup.
+        return ignore_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
-        activity_log(repo_root, "guard", message)
-    except Exception:
-        pass
+
+def _bobignore_block_lines(root: Path) -> list[str] | None:
+    """The rule lines inside cgh's managed .bobignore block, None when
+    there is no block."""
+    existing = _read_bobignore(root)
+    match = _BOBIGNORE_BLOCK_RE.search(existing) if existing is not None else None
+    if not match:
+        return None
+    return [line for line in match.group(1).splitlines() if line.strip()]
+
+
+def _remove_bobignore_block(root: Path) -> list[str]:
+    """Remove cgh's managed block from .bobignore, keeping every line
+    outside it. Deletes the file when nothing else was in it."""
+    existing = _read_bobignore(root)
+    if existing is None:
+        return []
+    match = _BOBIGNORE_BLOCK_RE.search(existing)
+    if not match:
+        return []
+    lines = [line for line in match.group(1).splitlines() if line.strip()]
+    rest = _BOBIGNORE_BLOCK_RE.sub("", existing, count=1)
+    ignore_path = root / ".bobignore"
+    if rest.strip():
+        ignore_path.write_text(rest, encoding="utf-8")
+    else:
+        ignore_path.unlink()
+    # An empty managed block still counts as a removal of the markers.
+    return lines or [_BOBIGNORE_START]
+
+
+def count_kept_rules(repo_root: str | Path) -> int:
+    """How many rules cgh wrote are still in place: the sidecar's deny
+    entries present in .claude/settings.local.json plus the lines of the
+    managed .bobignore block. An empty managed block counts as one, so its
+    markers are not forgotten."""
+    root = Path(repo_root)
+    count = 0
+    ours = _sidecar_rules(root)
+    deny = _claude_deny(root) if ours else []
+    if deny:
+        count += sum(1 for r in deny if r in ours)
+    block = _bobignore_block_lines(root)
+    if block is not None:
+        count += len(block) or 1
+    return count
+
+
+def _is_guard_command(entry: object, marker: str) -> bool:
+    return isinstance(entry, dict) and (
+        marker in str(entry.get("command", ""))
+        and "_hook_guard" in str(entry.get("command", ""))
+    )
+
+
+def _drop_marked(bucket: list, marker: str) -> list:
+    """Drop cgh's guard hook from a hook bucket and nothing else. A group
+    ({matcher, hooks: [...]}) loses only the guard command; the group goes
+    only when that leaves it empty, so a user hook sharing it survives. A
+    flat entry is dropped when it is the guard command itself."""
+    kept: list = []
+    for entry in bucket:
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        if isinstance(inner, list):
+            rest = [h for h in inner if not _is_guard_command(h, marker)]
+            if len(rest) == len(inner):
+                kept.append(entry)
+            elif rest:
+                kept.append({**entry, "hooks": rest})
+            continue
+        if not _is_guard_command(entry, marker):
+            kept.append(entry)
+    return kept
+
+
+def _remove_guard_hooks(root: Path) -> list[str]:
+    """Remove the guard hook entries cgh installed, by marker. Returns
+    the config files edited."""
+    edited: list[str] = []
+
+    # Claude Code: the cgh-guard PreToolUse entry, in either settings file.
+    for name in ("settings.local.json", "settings.json"):
+        path = root / ".claude" / name
+        data = _load_json(path)
+        if not data:
+            continue
+        hooks = data.get("hooks")
+        if not isinstance(hooks, dict):
+            continue
+        bucket = hooks.get("PreToolUse")
+        if not isinstance(bucket, list):
+            continue
+        kept = _drop_marked(bucket, _CLAUDE_GUARD_MARKER)
+        if kept != bucket:
+            if kept:
+                hooks["PreToolUse"] = kept
+            else:
+                hooks.pop("PreToolUse")
+            _write_json(path, data)
+            edited.append(f".claude/{name}")
+
+    # Gemini CLI: the BeforeTool entry tagged cgh-guard.
+    path = root / ".gemini" / "settings.json"
+    data = _load_json(path)
+    if data:
+        hooks = data.get("hooks")
+        bucket = hooks.get("BeforeTool") if isinstance(hooks, dict) else None
+        if isinstance(bucket, list):
+            kept = _drop_marked(bucket, _GEMINI_GUARD_MARKER)
+            if kept != bucket:
+                if kept:
+                    hooks["BeforeTool"] = kept
+                else:
+                    hooks.pop("BeforeTool")
+                _write_json(path, data)
+                edited.append(".gemini/settings.json")
+
+    # Codex: the PreToolUse entry running _hook_guard_codex. The
+    # codex_hooks feature flag stays: other hooks may rely on it.
+    path = root / ".codex" / "hooks.json"
+    data = _load_json(path)
+    if data:
+        hooks = data.get("hooks")
+        bucket = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+        if isinstance(bucket, list):
+            kept = _drop_marked(bucket, _CODEX_GUARD_MARKER)
+            if kept != bucket:
+                if kept:
+                    hooks["PreToolUse"] = kept
+                else:
+                    hooks.pop("PreToolUse")
+                _write_json(path, data)
+                edited.append(".codex/hooks.json")
+    return edited
+
+
+def cleanup_guard_leftovers(
+    repo_root: str | Path, *, remove_rules: bool = False
+) -> CleanupReport:
+    """Remove the guard hook entries older cgh versions wrote into this
+    repo, and nothing else. The deny rules they wrote keep protecting files,
+    so they and the sidecar recording them stay unless ``remove_rules`` is
+    set; ``kept_rules`` then says how many remain. Idempotent; safe to run
+    on every init."""
+    root = Path(repo_root)
+    report = CleanupReport()
+    report.hooks = _remove_guard_hooks(root)
+    if not remove_rules:
+        report.kept_rules = count_kept_rules(root)
+        return report
+
+    removed = _remove_claude_rules(root)
+    if removed is not None:
+        report.claude_rules = removed
+        sidecar = _sidecar_path(root)
+        if sidecar.exists():
+            try:
+                sidecar.unlink()
+                report.sidecar_removed = True
+            except OSError:
+                pass
+
+    report.bobignore_lines = _remove_bobignore_block(root)
+    report.kept_rules = count_kept_rules(root)
+    return report
+
+
+def sync_static_rules(repo_root: str | Path) -> tuple[int, int]:
+    """Deprecated since 0.15.0, kept for the plugin API. cgh no longer
+    writes deny rules, and the ones it wrote before stay until the user runs
+    `cgh guard --remove-rules`, so this writes nothing and removes nothing.
+    Always returns (0, 0) as (added, removed)."""
+    return (0, 0)

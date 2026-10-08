@@ -43,28 +43,31 @@ class TestScanText:
 class TestEgressDecision:
     def test_block_severity_denies(self):
         v = sdk.egress_decision(
-            [ScanFinding(key="secret.aws_key", value="x", severity="block")],
-            mode="assist",
+            [ScanFinding(key="secret.aws_key", value="x", severity="block")]
         )
         assert not v and "block" in v.reason
 
     def test_confidential_true_denies(self):
-        v = sdk.egress_decision(
-            [ScanFinding(key="confidential", value="true")], mode="assist"
-        )
-        assert not v
+        assert not sdk.egress_decision([ScanFinding(key="confidential", value="true")])
 
     def test_pii_denies_unless_allowed(self):
         pii = [ScanFinding(key="pii.email", value="a@b.c", severity="warn")]
-        assert not sdk.egress_decision(pii, mode="assist")
-        assert sdk.egress_decision(pii, mode="assist", allow_pii=True)
+        assert not sdk.egress_decision(pii)
+        assert sdk.egress_decision(pii, allow_pii=True)
 
-    def test_secure_is_an_allowlist(self):
-        assert not sdk.egress_decision([], mode="secure")
-        assert sdk.egress_decision([], mode="secure", labeled_non_confidential=True)
+    def test_default_is_assist_and_silent(self, recwarn):
+        assert sdk.egress_decision([])  # clean content clears by default
+        assert not [w for w in recwarn if w.category is DeprecationWarning]
 
-    def test_clean_assist_allows(self):
-        assert sdk.egress_decision([], mode="assist")
+    def test_explicit_mode_is_deprecated(self):
+        with pytest.deprecated_call():
+            assert sdk.egress_decision([], mode="assist")
+
+    def test_explicit_secure_keeps_allowlist_semantics(self):
+        with pytest.deprecated_call():
+            assert not sdk.egress_decision([], mode="secure")
+        with pytest.deprecated_call():
+            assert sdk.egress_decision([], mode="secure", labeled_non_confidential=True)
 
 
 class TestPseudonymize:

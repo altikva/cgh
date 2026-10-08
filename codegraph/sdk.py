@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,20 +69,29 @@ def scan_text(
     None runs every installed scanner. ``config`` is currently
     reserved; per-plugin configuration comes from the plugins' own
     defaults when embedding. Deferred scanners run synchronously here:
-    the caller owns the scheduling."""
-    from codegraph.plugins import load_plugins
+    the caller owns the scheduling. A plugin that does not scan at
+    index time can still serve this call through a scanner published
+    under the ``scanner.on_demand`` extension namespace."""
+    from codegraph.plugins import extension_entries, load_plugins
     from codegraph.plugins import scanners as _installed
 
     load_plugins(None)
+    pool = list(_installed())
+    indexed = {name for name, _ in pool}
+    pool += [
+        (name, scanner)
+        for name, scanner in extension_entries("scanner.on_demand")
+        if name not in indexed
+    ]
     wanted = set(scanners) if scanners is not None else None
     out: list[ScanFinding] = []
-    for plugin_name, scanner in _installed():
+    for plugin_name, scanner in pool:
         if wanted is not None and plugin_name not in wanted:
             continue
         found = scanner.scan(Path(path or "content.txt"), text, None) or []
         out.extend(found)
     if wanted:
-        missing = wanted - {name for name, _ in _installed()}
+        missing = wanted - {name for name, _ in pool}
         if missing:
             first = sorted(missing)[0]
             raise CapabilityMissing(first, f"cgh-{first}")
@@ -102,16 +112,28 @@ class Verdict:
 
 def egress_decision(
     findings: Iterable[ScanFinding],
-    mode: str = "secure",
+    mode: str | None = None,
     allow_pii: bool = False,
     labeled_non_confidential: bool = False,
 ) -> Verdict:
     """May content carrying these findings be sent to a cloud model?
 
-    assist: deny on any block-severity finding, a confidential = true
-    finding, or pii.* findings unless allow_pii. secure: all of the
-    above, and the gate is an allowlist: content must be explicitly
-    labeled non-confidential by the caller or it stays local."""
+    Denies on any block-severity finding, a confidential = true finding,
+    or pii.* findings unless allow_pii. That is the "assist" behavior,
+    the default since 0.15.0.
+
+    ``mode`` is deprecated: passing it emits a DeprecationWarning.
+    mode="secure" still turns the gate into an allowlist (content must
+    be labeled non-confidential by the caller or it stays local); for
+    that, check ``labeled_non_confidential`` in your own code instead."""
+    if mode is not None:
+        warnings.warn(
+            "egress_decision(mode=...) is deprecated since cgh 0.15.0; the "
+            'default is "assist". Drop the argument, and enforce any '
+            "allowlist in your own code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     findings = list(findings)
     for f in findings:
         if getattr(f, "severity", "info") == "block":
@@ -127,7 +149,7 @@ def egress_decision(
     if mode == "secure" and not labeled_non_confidential:
         return Verdict(
             False,
-            "secure mode is an allowlist: pass labeled_non_confidential=True "
+            'mode="secure" is an allowlist: pass labeled_non_confidential=True '
             "for content a human cleared",
         )
     return Verdict(True)
@@ -184,8 +206,9 @@ def summarize(
     """Summarize text through the cgh-summarize backends. Defaults are
     the safe ones: cloud_allowed=False restricts the pick to local
     backends (ollama, structural); pass True after your own
-    egress_decision. Returns the summary, or raises CapabilityMissing
-    when cgh-summarize is not installed."""
+    egress_decision. cgh-summarize 0.3 and later ships local backends
+    only and ignores cloud_allowed. Returns the summary, or raises
+    CapabilityMissing when cgh-summarize is not installed."""
     try:
         from cgh_summarize.backends import pick_backend
     except ImportError as exc:

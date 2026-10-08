@@ -10,11 +10,14 @@
 #              applies the [plugins] enabled/disabled config, calls each
 #              plugin's register(api), and records per-plugin status
 #              (active / disabled / incompatible / broken) for
-#              `cgh plugins`. A broken plugin is a warning, never a
-#              crash. Loading is once per process.
+#              `cgh plugins`. First-party plugins older than the minimum
+#              this core needs are reported broken and never imported.
+#              A broken plugin is a warning, never a crash. Loading is
+#              once per process.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +25,24 @@ from pathlib import Path
 from codegraph.plugin_api import API_VERSION, PluginAPI, _Registries
 
 _ENTRY_POINT_GROUP = "cgh"
+
+# The core series the minimums below were set for, used in the message.
+_CORE_SERIES = "0.15"
+
+# First-party plugins this core refuses below a version: older releases
+# rely on behavior 0.15 removed. cgh-summarize < 0.3.0 gated `claude -p`
+# egress on secure mode, which is now ignored, so it would send code with
+# no gate; cgh-pii < 0.4.0 and cgh-vision < 0.6.0 scan on every index;
+# cgh-classify < 0.2.0 fed the removed egress gate. Keyed by normalized
+# distribution name, so a third-party plugin is never matched.
+_FIRST_PARTY_MINIMUMS: dict[str, tuple[int, ...]] = {
+    "cgh-pii": (0, 4, 0),
+    "cgh-summarize": (0, 3, 0),
+    "cgh-classify": (0, 2, 0),
+    "cgh-vision": (0, 6, 0),
+}
+
+_UPGRADE_HINT = 'uv tool install --force -U "cgh[plugins]"'
 
 
 @dataclass
@@ -34,6 +55,7 @@ class LoadedPlugin:
     api_version: int | None = None
     surfaces: list[str] = field(default_factory=list)
     reason: str = ""  # populated for non-active statuses
+    too_old: bool = False  # broken because below this core's first-party minimum
 
 
 _loaded: dict[str, LoadedPlugin] | None = None
@@ -53,6 +75,45 @@ def _dist_version(entry_point) -> str:
         return dist.version if dist is not None else ""
     except Exception:
         return ""
+
+
+def _dist_name(entry_point) -> str:
+    """Normalized distribution name (PEP 503), "" when unknown."""
+    try:
+        dist = getattr(entry_point, "dist", None)
+        name = dist.metadata["Name"] if dist is not None else ""
+    except Exception:
+        return ""
+    return re.sub(r"[-_.]+", "-", str(name or "")).lower()
+
+
+def _release_tuple(version: str) -> tuple[int, ...] | None:
+    """Leading numeric release segment ("0.3.0rc1" gives (0, 3, 0)), None
+    when the version does not start with one."""
+    match = re.match(r"\s*v?(\d+(?:\.\d+)*)", version or "")
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def too_old_reason(dist_name: str, version: str) -> str:
+    """Why this core refuses a first-party plugin version, or "" when it
+    does not (third-party plugin, recent enough, or unknown version)."""
+    minimum = _FIRST_PARTY_MINIMUMS.get(dist_name)
+    if minimum is None:
+        return ""
+    have = _release_tuple(version)
+    if have is None:
+        return ""
+    width = max(len(have), len(minimum))
+    if have + (0,) * (width - len(have)) >= minimum + (0,) * (width - len(minimum)):
+        return ""
+    needed = ".".join(str(part) for part in minimum)
+    return (
+        f"{dist_name} {version} is too old for cgh {_CORE_SERIES} "
+        f"(needs >= {needed}); upgrade: {_UPGRADE_HINT} "
+        f"(add --with {dist_name} to keep it)"
+    )
 
 
 def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
@@ -97,9 +158,21 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
             record.reason = "not in [plugins] enabled allowlist"
             continue
 
+        # Checked before import: a stale first-party plugin must not run
+        # any of its code, not even module-level code.
+        stale = too_old_reason(_dist_name(ep), record.version)
+        if stale:
+            record.status = "broken"
+            record.too_old = True
+            record.reason = stale
+            _warn(f"plugin {name}: {stale}")
+            continue
+
         try:
             module = ep.load()
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # A plugin built against an older cgh may import a name core
+            # has since removed; that is a broken plugin, never a dead CLI.
             record.status = "broken"
             record.reason = f"import failed: {type(exc).__name__}: {exc}"
             _warn(f"plugin {name}: {record.reason}")
@@ -130,7 +203,12 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
         )
         try:
             register(api)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # Drop whatever the plugin registered before it failed, so a
+            # half-registered plugin cannot leave a CLI verb or a scanner
+            # behind while `cgh plugins` reports it broken. Parsers go
+            # through the global parser table and are not rolled back.
+            _drop_registrations(name)
             record.status = "broken"
             record.reason = f"register() raised: {type(exc).__name__}: {exc}"
             _warn(f"plugin {name}: {record.reason}")
@@ -139,6 +217,19 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
         record.surfaces = api.surfaces
 
     return list(_loaded.values())
+
+
+def _drop_registrations(plugin_name: str) -> None:
+    reg = _registries
+    reg.scanners[:] = [e for e in reg.scanners if e[0] != plugin_name]
+    reg.mcp_registrars[:] = [e for e in reg.mcp_registrars if e[0] != plugin_name]
+    reg.cli_registrars[:] = [e for e in reg.cli_registrars if e[0] != plugin_name]
+    for namespace, entries in list(reg.extensions.items()):
+        kept = [e for e in entries if e[0] != plugin_name]
+        if kept:
+            reg.extensions[namespace] = kept
+        else:
+            del reg.extensions[namespace]
 
 
 def loaded_plugins() -> list[LoadedPlugin]:
@@ -161,6 +252,11 @@ def scanners() -> list[tuple[str, object]]:
 def get_extensions(namespace: str) -> list[object]:
     """Objects published under ``namespace``, in registration order."""
     return [obj for _, obj in _registries.extensions.get(namespace, [])]
+
+
+def extension_entries(namespace: str) -> list[tuple[str, object]]:
+    """``(plugin_name, obj)`` pairs published under ``namespace``."""
+    return list(_registries.extensions.get(namespace, []))
 
 
 def _warn(message: str) -> None:

@@ -19,8 +19,10 @@ def register(mcp) -> None:
     @_logged_tool
     def memory_search(query: str, kind: str = "", limit: int = 10) -> str:
         """
-        BM25 search over Claude Code memory entries (the same auto-memory
-        system at ~/.claude/projects/<slug>/memory/).
+        Search the user's agent memory files (Claude Code auto-memory at
+        ~/.claude/projects/<slug>/memory/): preferences, feedback, past
+        decisions. Not the code, and not cgh's knowledge store
+        (knowledge_search).
 
         Use this BEFORE asking the user about preferences / past decisions.
         Results include the file path so you can read the full entry if

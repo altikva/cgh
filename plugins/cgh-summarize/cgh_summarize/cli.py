@@ -7,7 +7,7 @@
 # Description: CLI verbs: `cgh summarize status|run` and `cgh insights`.
 #              run walks the tracked, parser-supported files and invokes
 #              the scanner synchronously with a progress line; status
-#              shows backends, posture and coverage.
+#              shows the local backends and coverage.
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ from pathlib import Path
 def make_cli_registrar(config: dict, extras_fn):
     def add_cli(sub) -> None:
         p = sub.add_parser(
-            "summarize", help="Summarize indexed files behind the egress gate"
+            "summarize",
+            help="Summarize tracked files with a local model (frozen plugin)",
         )
         p.add_argument("action", nargs="?", default="status", choices=["status", "run"])
         p.add_argument("--root", default=os.getcwd())
@@ -27,7 +28,7 @@ def make_cli_registrar(config: dict, extras_fn):
         p.set_defaults(func=lambda args: _cmd_summarize(args, config, extras_fn))
 
         p = sub.add_parser(
-            "insights", help="Cross-file patterns from the gate-cleared summaries"
+            "insights", help="Cross-file patterns from the stored summaries"
         )
         p.add_argument("--root", default=os.getcwd())
         p.add_argument(
@@ -64,7 +65,6 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
     from rich.console import Console
 
     from .backends import egress_of, resolve_backends
-    from .gate import egress_posture
     from .scanner import SummarizeScanner
 
     console = Console()
@@ -73,18 +73,17 @@ def _cmd_summarize(args, config: dict, extras_fn) -> None:
     if args.action == "status":
         from codegraph.plugin_api import query_findings
 
-        posture = egress_posture(root, config)
-        console.print(f"[bold]egress posture:[/bold] {posture}")
+        console.print("[bold]backends[/bold] (local only, cloud ones are never picked)")
         for backend in resolve_backends(config, list(extras_fn())):
-            try:
-                ok = backend.available(config)
-            except Exception:
-                ok = False
-            state = "[green]available[/green]" if ok else "[dim]unavailable[/dim]"
-            console.print(
-                f"  {backend.name:<14} {state}  "
-                f"[dim]egress: {egress_of(backend, config)}[/dim]"
-            )
+            if egress_of(backend, config) == "cloud":
+                state = "[yellow]skipped: not local[/yellow]"
+            else:
+                try:
+                    ok = backend.available(config)
+                except Exception:
+                    ok = False
+                state = "[green]available[/green]" if ok else "[dim]unavailable[/dim]"
+            console.print(f"  {backend.name:<14} {state}")
         done = {
             r["file"]
             for r in query_findings(root, key_prefix="summary", limit=10000)
@@ -139,8 +138,5 @@ def _cmd_insights(args, config: dict, extras_fn) -> None:
         )
     )
     if result["excluded"]:
-        console.print(
-            f"[dim]{result['excluded']} summarized file(s) withheld by the "
-            "egress gate.[/dim]"
-        )
+        console.print(f"[dim]{result['excluded']} summarized file(s) withheld.[/dim]")
     console.print("[dim]Saved to the knowledge store (tags: insights).[/dim]")

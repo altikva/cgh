@@ -22,8 +22,8 @@ def make_mcp_registrar(config: dict, extras_fn):
         @mcp.tool()
         def summaries(file_path: str = "", limit: int = 50) -> str:
             """
-            Stored prose summaries of indexed files (written by the
-            summarize scanner). One summary per file, cheap to read:
+            Stored prose summaries of indexed files (written by
+            `cgh summarize run`). One summary per file, cheap to read:
             prefer this over reading a large file when you only need
             its gist. Federated: children's summaries come back with a
             scope tag.
@@ -67,7 +67,7 @@ def make_mcp_registrar(config: dict, extras_fn):
         @mcp.tool()
         def corpus_insights(question: str = "") -> str:
             """
-            Batch the gate-cleared file summaries into one model call
+            Batch the stored file summaries into one local model call
             and surface cross-file patterns: duplicated concepts,
             architectural drift, surprising couplings. The result is
             persisted to the knowledge store (tags: insights) so later

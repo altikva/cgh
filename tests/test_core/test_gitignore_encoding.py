@@ -33,17 +33,19 @@ def test_ensure_gitignore_auth_key_tolerates_non_utf8(tmp_path):
     assert "auth.key" in content
 
 
-def test_set_config_mode_tolerates_non_utf8_config(tmp_path):
-    """Secure-mode init edits config.toml in place; a CP1252 byte in it
-    must not crash the read, and the write-back repairs it to valid UTF-8."""
-    from codegraph.cli.commands_init import _set_config_mode
+def test_guard_cleanup_tolerates_non_utf8_bobignore(tmp_path):
+    """cgh init counts, and `cgh guard --remove-rules` removes, the managed
+    .bobignore block older versions wrote; a CP1252 byte in the user's part
+    must not crash either read."""
+    from codegraph.state.guard import cleanup_guard_leftovers
 
-    cg = tmp_path / ".codegraph"
-    cg.mkdir()
-    body = b"[codegraph]\n# comment with \x97 em dash\n" + b"key = 1\n" * 300
-    (cg / "config.toml").write_bytes(body)
-
-    assert _set_config_mode(tmp_path, "secure") is True
-    # Must now be readable as valid UTF-8 with the mode set.
-    txt = (cg / "config.toml").read_text(encoding="utf-8")
-    assert 'mode = "secure"' in txt
+    (tmp_path / ".bobignore").write_bytes(
+        b"# mine \x97 keep\nbuild/\n"
+        b"# >>> cgh guard (managed, do not edit) >>>\n.codegraph/\n"
+        b"# <<< cgh guard <<<\n"
+    )
+    assert cleanup_guard_leftovers(tmp_path).kept_rules == 1  # must not raise
+    report = cleanup_guard_leftovers(tmp_path, remove_rules=True)
+    assert report.bobignore_lines == [".codegraph/"]
+    txt = (tmp_path / ".bobignore").read_text(encoding="utf-8", errors="replace")
+    assert "build/" in txt and "cgh guard" not in txt

@@ -10,7 +10,7 @@
 #              approved internal gateway. The only change from the
 #              Ollama default is the config: set openai_base_url. Egress
 #              is judged from that URL, so a loopback server stays local
-#              and secure mode is satisfied; a remote gateway is cloud.
+#              and a remote gateway is cloud (audited).
 #              Requires: pip install cgh cgh-vision, and a running
 #              OpenAI-compatible vision endpoint (see the README).
 

@@ -20,13 +20,13 @@ The regex tier of cgh-pii needs nothing beyond the standard library.
 python scan_and_gate.py
 ```
 
-The script scans an invoice-like text (email, IP), then shows the two
-postures of `sdk.egress_decision`:
+The script scans an invoice-like text (email, IP), then asks
+`sdk.egress_decision` whether it may go to a cloud model. The gate
+refuses on block-severity findings, on a `confidential = true` label,
+and on PII unless the caller passes `allow_pii=True`.
 
-- **assist**: block on what the findings say; PII blocks cloud unless
-  `allow_pii=True`.
-- **secure**: allowlist semantics; even a clean scan is not enough, a
-  human must have labeled the content non-confidential.
+The scanners are regex based and miss things. Treat the verdict as a
+useful filter, not as a guarantee that nothing sensitive leaves.
 
 The verdict is truthy, so the call site reads
 `if verdict: call_cloud(...)`.
@@ -40,12 +40,11 @@ backends, and the human label comes from classify:
 ```bash
 cgh findings                       # the pii.* findings per file
 cgh classify label secret.md       # mark confidential (blocks egress)
-cgh classify label --not spec.md   # cleared for strict mode
+cgh classify label --not spec.md   # cleared for a strict egress gate
 ```
 
 **MCP through your agent**: the agent reads the same store through the
-`findings` tool; in secure mode every `pii.*` value it sees is a
-pseudonym, and the guard denies direct reads of `.codegraph/`.
+`findings` tool.
 
 ## Tests
 

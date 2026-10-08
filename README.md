@@ -10,9 +10,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%26%20CC%20BY--NC--SA-3DA639" alt="License: MIT and CC BY-NC-SA"></a>
 </p>
 
-**Local code graph, shared memory and guardrails for AI coding assistants.**
+**Local code graph and shared memory for AI coding assistants.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and a confidentiality layer (findings, egress gate, per-agent guard hooks) that decides what an agent may read and what may reach a cloud model.
+Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and scanner findings (PII, secrets, confidentiality labels) that plugins check before sending a file to a cloud model.
 
 **Result:** 40-60% fewer context tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
 
@@ -70,6 +70,15 @@ That question is one command:
 pip install cgh                 # or: pipx install cgh / uv tool install cgh
 pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
 ```
+
+`cgh[plugins]` and `cgh[full]` bring cgh-docs, cgh-codegen and cgh-bugreport.
+cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
+understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
+
+Upgrading from 0.14 or older? Read
+[docs/UPGRADING-0.15.md](docs/UPGRADING-0.15.md) first: cgh no longer blocks
+agent file access, the default plugin set is smaller, and the upgrade
+command needs `-U`.
 
 No Python? Run the standalone binary through npm, or download it from the
 [latest release](https://github.com/altikva/cgh/releases/latest):
@@ -156,13 +165,14 @@ searchable and reachable from the graph.
 | Guide | What it covers |
 |---|---|
 | [Install](docs/INSTALL.md) | one-line installers, extras, corporate mirrors, PATH |
+| [Upgrading to 0.15](docs/UPGRADING-0.15.md) | what changed for your agent, the upgrade command, old findings, rollback |
 | [CLI reference](docs/CLI_REFERENCE.md) | every verb and flag |
 | [Configuration](docs/CONFIGURATION.md) | `config.toml`, environment variables, `.cghignore` |
 | [MCP tools](docs/MCP_TOOLS.md) | the tools your agent calls, by category |
 | [Integrations](docs/INTEGRATIONS.md) | Claude Code, Cursor, Codex, Gemini, IBM Bob |
 | [Federation](docs/FEDERATION.md) | one parent repo querying its sub-repos read-only |
 | [Session memory](docs/MEMORY.md) | knowledge and plans that survive a context clear |
-| [Security](docs/SECURITY.md) | findings, secure mode, the guard, the MCP auth key |
+| [Security](docs/SECURITY.md) | what can leave the machine, findings, the egress gate, the MCP auth key |
 | [Plugins](docs/PLUGINS.md) | installing them, disabling them, writing one |
 | [Parsers](docs/PARSERS.md) | the parser interface and how to add a language |
 | [Graph schema](docs/SCHEMA.md) | the nodes and edges the index holds |

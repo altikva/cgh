@@ -24,14 +24,16 @@ from pathlib import Path
 
 
 def egress_posture(repo_root: str | Path, config: dict) -> str:
-    """ "open" or "strict". An explicit config egress key wins; otherwise the
-    global cgh mode decides (secure = strict)."""
-    explicit = str(config.get("egress", "")).strip().lower()
-    if explicit in ("open", "strict"):
-        return explicit
-    from codegraph.plugin_api import load_config
-
-    return "strict" if load_config(repo_root).mode == "secure" else "open"
+    """ "open" or "strict", from the plugin's own egress key (cgh's global
+    secure mode was removed in 0.15.0). Absent or empty means "open"; only
+    exactly "open" or "strict" are honored, and anything else (a typo such
+    as "stict", another case, a non-string) fails closed to "strict"."""
+    raw = config.get("egress")
+    if raw is None or raw == "":
+        return "open"
+    if raw in ("open", "strict"):
+        return raw
+    return "strict"
 
 
 def egress_decision(
@@ -68,6 +70,12 @@ def egress_decision(
     if egress_posture(repo_root, config) == "strict":
         if confidential is False:
             return True, "labeled non-confidential"
-        return False, "strict posture: file not labeled non-confidential"
+        raw = config.get("egress")
+        posture = (
+            "strict posture"
+            if raw == "strict"
+            else f"egress = {raw!r} is not open or strict, treated as strict"
+        )
+        return False, f"{posture}: file not labeled non-confidential"
 
     return True, "gate clear"

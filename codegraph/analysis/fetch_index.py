@@ -11,7 +11,7 @@
 #              index it into the FTS db for later `search_fetched`. A
 #              fetch is network egress, so it is gated: http/https only,
 #              private/loopback/link-local hosts refused (SSRF), refused
-#              outright in secure mode unless allow_fetch is set, and
+#              outright unless [codegraph] allow_fetch = true, and
 #              every fetch and every refusal is written to the activity
 #              log. Results cache by URL with a TTL so a re-fetch inside
 #              the window costs nothing.
@@ -148,23 +148,16 @@ class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _guard_secure(url: str, config: dict, repo_root) -> None:
-    """A fetch reaches the network; in secure mode that needs an explicit
-    opt-in (allow_fetch), consistent with 'nothing leaves without a
-    gate'. The probe fails closed: unknown mode is treated as secure."""
+def _guard_opt_in(url: str, config: dict, repo_root) -> None:
+    """A fetch reaches the network, so it needs the explicit opt-in
+    ([codegraph] allow_fetch = true). Nothing else turns it on."""
     from codegraph.state.activity import log as _log
 
-    try:
-        from codegraph.core.config import load_config
-
-        mode = load_config(repo_root).mode
-    except Exception:
-        mode = "secure"
-    if mode == "secure" and not config.get("allow_fetch", False):
-        _log(repo_root, "fetch_refused", f"secure mode, allow_fetch off: {url}")
+    if not config.get("allow_fetch", False):
+        _log(repo_root, "fetch_refused", f"allow_fetch off: {url}")
         raise FetchError(
-            "secure mode refuses network fetches; set [codegraph] allow_fetch = true "
-            "to permit them (each fetch is still audited)"
+            "network fetches are off; set [codegraph] allow_fetch = true in "
+            ".codegraph/config.toml to permit them (each fetch is audited)"
         )
 
 
@@ -241,8 +234,9 @@ def fetch_and_index(
     from codegraph.state.activity import log as _log
 
     cfg = config or {}
+    # The opt-in comes first: with fetches off, not even a DNS lookup runs.
+    _guard_opt_in(url, cfg, repo_root)
     _guard_url(url, repo_root)
-    _guard_secure(url, cfg, repo_root)
 
     conn = get_fts_conn(repo_root)
     _fetched_table(conn)

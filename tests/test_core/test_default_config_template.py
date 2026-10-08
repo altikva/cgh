@@ -27,7 +27,7 @@ def test_template_is_valid_toml():
 def test_template_mentions_every_optional_surface():
     text = generate_default_config()
     for needle in (
-        "# mode =",
+        "# allow_fetch =",
         "# precise_calls =",
         "# subrepos =",
         "# federate_auto_up =",
@@ -56,7 +56,8 @@ def test_uncommenting_every_option_still_parses():
     data = tomllib.loads("\n".join(lines))
 
     cg = data["codegraph"]
-    assert cg["mode"] == "assist"
+    assert "mode" not in cg  # secure mode is gone, nothing to choose
+    assert cg["allow_fetch"] is False
     assert cg["federate_auto_up"] is True
     assert cg["log_max_mb"] == 5
     summarize = data["plugin"]["summarize"]

@@ -17,7 +17,7 @@ is 0.x.
 
 ```bash
 pip install cgh cgh-pii            # core + the scanners you need
-pip install cgh-summarize          # optional: text summaries
+pip install cgh-summarize          # optional: text summaries (frozen, local only)
 ```
 
 ## Scan text and decide egress inside an agent loop
@@ -27,12 +27,7 @@ from codegraph import sdk
 
 findings = sdk.scan_text(document_text, path="upload.txt", scanners=["pii"])
 
-verdict = sdk.egress_decision(
-    findings,
-    mode="secure",                  # allowlist semantics, the default
-    allow_pii=False,
-    labeled_non_confidential=user_cleared,
-)
+verdict = sdk.egress_decision(findings, allow_pii=False)
 if verdict:
     response = call_cloud_model(document_text)
 else:

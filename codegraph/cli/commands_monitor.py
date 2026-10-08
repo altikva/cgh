@@ -532,6 +532,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     from codegraph.state.scan_meta import scan_status as _scan_status
 
     root = os.path.abspath(args.root)
+    # The legacy mode = "secure" notice is part of this command's own
+    # output (human and --json), so keep it off stderr here.
+    legacy_secure = _legacy_secure_mode(root)
 
     # Owner
     owner_pid = None
@@ -672,6 +675,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "extra_dirs": extra_dirs,
         "subrepos": subrepos,
+        "notices": [_legacy_secure_notice()] if legacy_secure else [],
     }
 
     if getattr(args, "json", False):
@@ -726,10 +730,30 @@ def cmd_status(args: argparse.Namespace) -> None:
     )
     table.add_row("Subrepos", _format_subrepos_cell(subrepos))
     console.print(table)
+    if legacy_secure:
+        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
 
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
+
+
+def _legacy_secure_mode(root: str | Path) -> bool:
+    """Does this repo's config still say mode = "secure"? Silences the
+    stderr notice first: the caller shows it in its own output."""
+    from codegraph.core.config import load_config, suppress_legacy_mode_warning
+
+    suppress_legacy_mode_warning()
+    try:
+        return load_config(root).legacy_secure_mode
+    except Exception:
+        return False
+
+
+def _legacy_secure_notice() -> str:
+    from codegraph.core.config import LEGACY_SECURE_MODE_NOTICE
+
+    return f"config.toml: {LEGACY_SECURE_MODE_NOTICE}"
 
 
 def _backend_info(root: str) -> dict:
@@ -875,69 +899,12 @@ def _call_owner_tool(root: str, port: int, tool: str, timeout: float) -> dict | 
     auth, HTTP error, malformed body). Used by cgh status when the owner
     is alive and the local CLI can't open the graph DB read-only.
     """
-    import http.client
-    import json as _json
+    from codegraph.cli.owner_client import call_owner_tool
 
-    from codegraph.state.auth import ensure_auth_key
-
-    try:
-        token = ensure_auth_key(root)
-    except Exception:
+    reply = call_owner_tool(root, tool, port=port, timeout=timeout)
+    if not reply.ok or not isinstance(reply.data, dict):
         return None
-    body = _json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": tool, "arguments": {}},
-        }
-    )
-    try:
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-        c.request(
-            "POST",
-            "/mcp",
-            body=body.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        resp = c.getresponse()
-        if resp.status != 200:
-            return None
-        raw = resp.read().decode("utf-8", errors="replace")
-        c.close()
-    except Exception:
-        return None
-
-    # MCP returns either a JSON object or an SSE stream depending on
-    # the Accept header negotiation. Find the JSON-RPC envelope either way.
-    payload = None
-    if raw.startswith("{"):
-        try:
-            payload = _json.loads(raw)
-        except Exception:
-            return None
-    else:
-        # SSE: lines start with `data: `, last `data:` line carries the result
-        for line in raw.splitlines():
-            if line.startswith("data: "):
-                try:
-                    payload = _json.loads(line[6:])
-                except Exception:
-                    pass
-    if not payload:
-        return None
-    content = (payload.get("result") or {}).get("content") or []
-    text = next((c["text"] for c in content if c.get("type") == "text"), None)
-    if not text:
-        return None
-    try:
-        return _json.loads(text)
-    except Exception:
-        return None
+    return reply.data
 
 
 def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:
@@ -1600,6 +1567,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print(detail)
         raise SystemExit(0 if healthy else 1)
     codegraph_dir = root / ".codegraph"
+    legacy_secure = _legacy_secure_mode(root)
 
     console.print(LOGO)
     console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
@@ -1757,6 +1725,14 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             pass_count += 1
 
     console.print(table)
+    if legacy_secure:
+        # Informational, not a failed check: the config still loads.
+        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    # Informational, not a check: a stale plugin is skipped, cgh still works.
+    for reason in _too_old_plugin_reasons(root):
+        from rich.markup import escape
+
+        console.print(f"[yellow]!![/yellow] plugin skipped: {escape(reason)}")
 
     # Overall
     total = len(checks)
@@ -1810,6 +1786,17 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 f"{', '.join(blocking)}[/red]"
             )
             raise SystemExit(1)
+
+
+def _too_old_plugin_reasons(root: Path) -> list[str]:
+    """Why each installed first-party plugin too old for this core was
+    skipped. Empty when none is, or when plugins cannot be loaded."""
+    try:
+        from codegraph.plugins import load_plugins
+
+        return [r.reason for r in load_plugins(root) if r.too_old]
+    except Exception:
+        return []
 
 
 def _print_claude_audit(audit: dict) -> None:

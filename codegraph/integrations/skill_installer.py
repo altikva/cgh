@@ -58,8 +58,8 @@ than reading.
 **Workflow matrix, when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
-  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
-, merges graph + memory + plans + knowledge in one call
+  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`, merges
+     graph + memory + plans + knowledge in one call
   2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
   3. `mcp__codegraph__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
@@ -152,8 +152,10 @@ shrinks and reload it after.
   1. Proactively call `knowledge_record(title, body, kind, tags)` for
      every non-trivial insight, decision, or pattern learned this session
      that is NOT already captured. Better to over-record than to lose.
-  2. Call `compact_session(session_id, title, digest, tags)` to persist
-     a structured summary of the full session into knowledge.
+  2. Call `checkpoint(session_id, digest)` for the state of the task
+     (`resume()` reloads it next session), and `compact_session(session_id,
+     title, digest, tags)` when a summary of the whole session is worth
+     keeping as a searchable note.
   3. These survive compaction, raw conversation context does not.
 
 - **When you cannot see your context usage** (IBM Bob compacts a task
@@ -170,7 +172,8 @@ shrinks and reload it after.
   lifecycle hooks only record what changed, not why.
 
 - **Immediately after context compaction / session resume**:
-  1. `knowledge_list(limit=20)`, reload recent learnings
+  1. `resume(session_id, task)`, ONE call: standing instructions, session
+     digests, task-relevant notes, open plans
   2. `knowledge_search(query)`, targeted reload for the current task
   3. `memory_search(query)`, reload user preferences and feedback
   4. `plan_search(query)`, reload any active plan
@@ -178,8 +181,9 @@ shrinks and reload it after.
      you resume with full cross-session continuity.
 
 - **Session start** (new conversation on this project):
-  1. Same reload sequence: `knowledge_list` + `memory_search("feedback")`
-  2. `knowledge_terms()` to see the glossary of what's been captured
+  1. `resume()` once, then `memory_search("feedback")`
+  2. `knowledge_list(limit=20)` or `knowledge_terms()` to see what notes
+     have been captured
 
 Only use `Read` on the exact line ranges returned by a codegraph tool.
 Never `ls`/`find`/`tree` for structure, `architecture_overview` has it.

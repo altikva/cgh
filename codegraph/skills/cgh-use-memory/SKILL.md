@@ -15,7 +15,8 @@ or before ignoring context you already have access to.
 |---|---|
 | User is about to do something that may have a stored preference (commit, PR, code style, naming) | `mcp__codegraph__memory_search(query="<topic>", kind="feedback")` |
 | User mentions a past plan | `mcp__codegraph__plan_search(query="<keywords>")` |
-| Facing a problem that might be solved before (gotchas, patterns) | `mcp__codegraph__knowledge_search(query="<keywords>")` |
+| Session start, or right after a clear | `mcp__codegraph__resume(session_id, task)`: one call, standing instructions first |
+| Facing a problem that might be solved before (gotchas, patterns) | `mcp__codegraph__knowledge_search(query="<keywords>")`: saved notes, not the code |
 | Unsure what topics are already captured | `mcp__codegraph__knowledge_terms()` (glossary) |
 | User asks *"what do you know about this project"* | `mcp__codegraph__memory_list(kind="project")` + `knowledge_list()` |
 | Any non-trivial task | `mcp__codegraph__context_for_task`: merges memory + plan + knowledge |
@@ -58,7 +59,7 @@ pass `session_id=<stable-string>` (any id stable for the current user
 session). Codegraph hides already-shown nodes on subsequent calls so
 you don't re-read the same symbols/memories/plans.
 
-Reset when starting a fresh sub-task:
+Reset only when starting an unrelated task in the same session:
 `mcp__codegraph__session_reset(session_id=<id>)`.
 
 ## Don't
@@ -75,5 +76,6 @@ Reset when starting a fresh sub-task:
 ## Staleness
 
 Memory/plan indexes auto-refresh via the watcher (~1s after a file
-save). If in doubt, call `mcp__codegraph__memory_rescan` or
+save), so you rarely need a rescan. Only if a search misses a file you
+just edited, call `mcp__codegraph__memory_rescan` or
 `mcp__codegraph__plan_rescan`: both cheap, mtime-idempotent.

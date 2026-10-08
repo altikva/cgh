@@ -49,3 +49,28 @@ def test_knowledge_tools_say_they_do_not_search_code() -> None:
 def test_fts_search_says_it_takes_a_sentence() -> None:
     text = " ".join(_tools()["fts_search"].split()).lower()
     assert "sentence" in text and "code" in text
+
+
+def test_every_description_opens_with_the_question_it_answers() -> None:
+    for name, text in _tools().items():
+        first = text.strip().splitlines()[0]
+        assert first.endswith("?"), f"{name}: {first!r}"
+
+
+def test_descriptions_stay_short() -> None:
+    # Every session loads every description: keep the total in check.
+    tools = _tools()
+    assert sum(len(t) for t in tools.values()) < 15000
+    long = {n: len(t) for n, t in tools.items() if len(t) > 450}
+    assert not long, long
+
+
+def test_rewrites_keep_the_safety_caveats() -> None:
+    tools = {n: " ".join(t.split()) for n, t in _tools().items()}
+    assert "per scope" in tools["find_dead_code"]
+    assert "confirmed=False" in tools["force_index"]
+    assert "confirmed=True" in tools["force_index"]
+    assert "allow_fetch" in tools["fetch_and_index"]
+    for name in ("scan_repo", "index_changed_files", "memory_rescan", "plan_rescan"):
+        text = tools[name].lower()
+        assert "rarely" in text or "last resort" in text, name

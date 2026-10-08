@@ -20,15 +20,12 @@ def register(mcp) -> None:
     @_logged_tool
     def fts_search(query: str, limit: int = 15, kind: str = "") -> str:
         """
-        Find CODE about a concept described in words: full-text search over
-        symbol names and docstrings, BM25-ranked. A whole sentence works,
-        in French or English ("relance des webhooks en echec", "how the
-        owner resumes a session"): stopwords are dropped and any remaining
-        term matches. Use it when you know what the code does but not what
-        it is called; use symbol_lookup when you know the name and
-        pattern_search for a literal string. Federated across subrepos. Each result tagged with `scope`. The
-        `limit` is applied per scope; scores are NOT renormalized across
-        repos (BM25 is corpus-relative).
+        Where is the code that does this, described in words?
+        BM25 search over symbol names and docstrings. A whole sentence works,
+        French or English ("relance des webhooks en echec"). Use it when you
+        know what the code does, not its name. Known name: symbol_lookup.
+        Literal string: pattern_search. Federated: `limit` is per scope and
+        scores do not compare across scopes.
         """
         from codegraph.analysis.federation import for_each_child_fts
         from codegraph.core.fts import fts_search as _fts
@@ -94,14 +91,12 @@ def register(mcp) -> None:
         include_private: bool = False,
     ) -> str:
         """
-        Find potentially unused functions, classes, and Terraform resources.
-        A symbol is flagged when no CALLS / INHERITS / TF_DEPENDS edge points
-        to it and it is not a known entry-point name.
-
-        FEDERATION CAVEAT: results are computed per scope (parent + each
-        subrepo). A symbol "dead" in subrepo X may actually be called from
-        the parent or another subrepo, we don't infer cross-repo edges.
-        Treat the results as a per-scope candidate list, not a hard verdict.
+        What code looks unused?
+        Lists functions, classes and Terraform resources with no CALLS,
+        INHERITS or TF_DEPENDS edge that are not known entry points.
+        Candidates only: computed per scope, so a symbol dead in one subrepo
+        may be called from the parent or another. Never delete on this
+        alone.
         """
         from codegraph.analysis.dead_code import find_dead_code as _find_dead
         from codegraph.analysis.federation import for_each_child_graphdb
@@ -174,13 +169,11 @@ def register(mcp) -> None:
         include_shown: bool = False,
     ) -> str:
         """
-        THE FIRST TOOL TO CALL for any coding task.
-        Given a natural-language task description, builds a compact, ranked context
-        block containing the most relevant symbols, their docstrings, and their
-        graph relationships, plus Claude Code memory entries and related plan
-        files, WITHOUT reading any files.
-
-        Use this before any file reads. It will cut exploration tokens by 60-90%.
+        What code, notes and plans matter for this task?
+        Call first on a coding task, before reading files. From a plain
+        `task` sentence it returns ranked symbols with docstrings and graph
+        neighbours, plus related memory entries and plans. With session_id,
+        entities already shown this session are skipped (see session_reset).
 
         Args:
             task: description of what you need to do
@@ -290,10 +283,10 @@ def register(mcp) -> None:
     @_logged_tool
     def session_reset(session_id: str) -> str:
         """
-        Clear the dedup cache for a session, subsequent `context_for_task`
-        calls with this session_id will be allowed to re-surface previously
-        shown entities. Useful at the start of a new task within the same
-        client session.
+        How do I let context_for_task show already-seen results again?
+        Clears the dedup cache of `session_id`, so later context_for_task
+        calls may repeat entities. Call it when starting an unrelated task
+        in the same session; otherwise never.
         """
         from codegraph.state.call_log import clear_session
 
@@ -304,8 +297,11 @@ def register(mcp) -> None:
     @_logged_tool
     def call_stats() -> str:
         """
-        Show codegraph usage statistics: total calls, per-tool breakdown,
-        latency percentiles, error rate, and recent calls.
+        How has cgh been used in this repo?
+        Diagnostics, not for code questions. Returns total calls, per-tool
+        counts, latency, error rate, recent calls and `by_origin`: who made
+        the calls (agent, hook, cli, internal; unknown = logged before
+        origins were recorded).
         """
         from codegraph.state.call_log import get_stats
 

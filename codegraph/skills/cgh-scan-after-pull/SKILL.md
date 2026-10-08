@@ -25,8 +25,7 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
 ## How to refresh
 
 1. Call `mcp__codegraph__scan_status` to see how stale the graph is.
-   - If `fresh=true`, do nothing (the cgh git hooks, when installed, have
-     already reindexed).
+   - If `fresh=true`, do nothing.
    - If `fresh=false`, proceed.
 
 2. **Preferred**: call `mcp__codegraph__incremental_reindex`. It compares
@@ -47,12 +46,12 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
 
 - Don't reindex on every unrelated message; only when a git operation that
   changes many files has just occurred.
-- Don't ask the user to restart the MCP server: `incremental_reindex`
-  handles it live through the existing connection.
+- Don't ask the user to restart the MCP server: `scan_repo` handles it
+  live through the existing connection.
 - Don't re-scan if `fresh=true`; it wastes time and load.
 
 ## Token-saving rule of thumb
 
-Calling `scan_status` costs ~1 JSON blob. Running `incremental_reindex`
-only when it says stale saves you from relying on stale `symbol_lookup`
-results and then having to manually verify with file reads.
+Calling `scan_status` costs ~1 JSON blob. Running `scan_repo` only when
+needed saves you from relying on stale `symbol_lookup` results and then
+having to manually verify with file reads.

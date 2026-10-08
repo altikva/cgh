@@ -22,14 +22,11 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def fetch_and_index(url: str, ttl_hours: float = 24.0, force: bool = False) -> str:
-        """
-        How do I make a web page searchable offline?
-        Fetches an http/https `url`, turns it into text and indexes it for
-        search_fetched. Refused unless `[codegraph] allow_fetch = true` is
-        set; private, loopback and link-local hosts are refused; every
-        fetch is audited. A re-fetch within ttl_hours returns the cached
-        count unless force=True.
-        """
+        """Fetch a URL, reduce it to text, chunk and index it for
+        search_fetched. http/https only; private, loopback and
+        link-local hosts are refused (SSRF); refused unless
+        [codegraph] allow_fetch = true is set; every fetch is audited.
+        A re-fetch inside ttl_hours returns the cached count."""
         from codegraph.analysis.fetch_index import FetchError
         from codegraph.analysis.fetch_index import fetch_and_index as _fi
         from codegraph.core.config import load_config
@@ -44,11 +41,8 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def search_fetched(query: str, limit: int = 10) -> str:
-        """
-        What did the pages I fetched say about this?
-        Searches pages indexed by fetch_and_index; no network. Returns url,
-        title, snippet. Repo docs: search_docs.
-        """
+        """Search content previously pulled in by fetch_and_index. No
+        network: reads the local index. Returns url, title, snippet."""
         from codegraph.analysis.fetch_index import search_fetched as _sf
 
         return json.dumps({"results": _sf(_srv._root, query, limit=limit)})

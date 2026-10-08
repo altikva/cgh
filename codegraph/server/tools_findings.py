@@ -25,10 +25,9 @@ def register(mcp) -> None:
         file_path: str = "", key_prefix: str = "", severity: str = "", limit: int = 100
     ) -> str:
         """
-        What do cgh's scanners know about these files?
-        Returns scanner findings beyond code structure, keyed by scanner
-        (pii.email, secret.aws_key, confidential, summary...). Filter by
-        file_path, key_prefix, severity.
+        Query scanner findings: what cgh knows about files beyond their
+        code structure. Keys are namespaced by the scanner that wrote
+        them (pii.email, secret.aws_key, confidential, summary, ...).
 
         Args:
           file_path:  restrict to one file (absolute, or relative to the

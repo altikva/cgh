@@ -66,11 +66,13 @@ def register(mcp) -> None:
         case_sensitive: bool = False,
     ) -> str:
         """
-        Where does this exact string or regex occur?
-        Use INSTEAD of Grep, git grep, rg or grep -r. Returns {file, line,
-        text} hits, then Read only those lines. Respects .gitignore, also
-        covers extra_dirs, capped at max_results. For a definition use
-        symbol_lookup; for a concept in words, fts_search.
+        Regex / substring pattern search across the indexed repo. Use this
+        INSTEAD of the Grep tool for any "find all occurrences of X"
+        question, returns structured {file, line, text} hits so you can
+        then Read the exact line ranges that matter (never whole files).
+
+        Respects .gitignore (via ripgrep / git-grep). Automatically scans
+        extra_dirs configured on this project. Caps output at max_results.
 
         Args:
           pattern:        regex by default, literal when regex=False
@@ -147,11 +149,16 @@ def register(mcp) -> None:
     @_logged_tool
     def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
         """
-        Where is X defined?
-        Use when you know the name of a function, class, TF resource or doc
-        section. Returns file, line range, type and docstring head per
-        definition; role / layer narrow it. Half-known name: search_symbols.
-        Code described in words: fts_search. Literal text: pattern_search.
+        Find where a symbol (function, class, TF resource) is defined.
+        Returns file path, line range, type, and docstring snippet, plus
+        a `scope` tag (parent / <subrepo-name>) when federation is on.
+        Use this instead of grepping files.
+
+        Optional `role` / `layer` filters keep only definitions whose File
+        node carries that exact role / layer (empty = no filter).
+
+        Each definition carries its `name` (the section title for a
+        markdown section, which matches on a title substring).
         """
 
         def query(conn):
@@ -299,12 +306,12 @@ def register(mcp) -> None:
     @_logged_tool
     def find_callers(fn_name: str) -> str:
         """
-        Who calls X?
-        Returns each function that calls `fn_name`. Calls match by name:
-        when several definitions share it, each caller lists the matched
-        files in `targets`. Transitive callers: impact_of. What X calls:
-        find_callees. Federated, scope-tagged; cross-repo calls are not
-        inferred.
+        Find all functions that call `fn_name`. Federated across subrepos,
+        each result tagged with `scope`. Note: cross-repo CALLS edges are
+        not inferred (each subrepo's graph is canonical for its own code).
+        Calls are matched by name: when several functions share `fn_name`
+        (a method and its test double), each caller lists the matched
+        definitions' files in `targets`.
         """
 
         from codegraph.analysis.callers import callers_of
@@ -320,12 +327,18 @@ def register(mcp) -> None:
     @_logged_tool
     def find_callees(fn_name: str, max_depth: int = 1) -> str:
         """
-        What does X call?
-        Returns the functions `fn_name` calls; max_depth > 1 follows the
-        chain forward in one call (each callee has `depth`, 1 = direct).
-        Name-matched, so a callee may be a same-named function elsewhere;
-        `truncated` means a cap was hit. Who calls X: find_callers.
-        Federated; cross-repo calls are not inferred.
+        Find the functions `fn_name` calls. With `max_depth=1` (default)
+        that is the direct callees. With `max_depth>1` it walks the CALLS
+        edges forward transitively, so one call returns the ordered call
+        chain (each callee carries its `depth`, 1 = direct) instead of
+        forcing a separate lookup per hop. Use it to trace a flow in a
+        single call.
+
+        Federated across subrepos; cross-repo CALLS edges are not inferred
+        (each subrepo's graph is canonical for its own code). Like every
+        name-matched CALLS reach it can over-count: a listed callee may
+        belong to a same-named function elsewhere. `truncated` is set when
+        the fan-out or total cap was hit.
         """
         depth_cap = max(1, min(int(max_depth), _CALLEE_DEPTH_CAP))
         state = {"truncated": False}
@@ -379,10 +392,9 @@ def register(mcp) -> None:
     @_logged_tool
     def imports_of(file_path: str) -> str:
         """
-        What does this file import?
-        Returns the modules `file_path` imports (relative to the repo root or
-        absolute; the file may live in any subrepo). Who imports it:
-        file_summary, or impact_of for the transitive importers.
+        Return all modules imported by `file_path`. Federated: the file may
+        live in the parent or in any subrepo, we query all and aggregate.
+        Pass a path relative to the parent's repo root or absolute.
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
@@ -409,11 +421,14 @@ def register(mcp) -> None:
     @_logged_tool
     def indexed_files(pattern: str = "", limit: int = 200, path: str = "") -> str:
         """
-        Is this file indexed, or which files are?
-        Without `path`: indexed paths containing `pattern`, sorted, as
-        `files` (first `limit`) plus `total`. With `path`: `indexed` says
-        whether that exact file is in the index. Parent scope only; sees
-        files that define no symbol, unlike fts_search.
+        List the files in this repo's graph index, or check one file.
+
+        Without `path`: every indexed File path containing `pattern` (all
+        when empty), sorted, as `files` (the first `limit`) plus `total`.
+        With `path` (relative to the repo root, or absolute): `indexed` is
+        true when that exact file is in the index. Parent scope only, like
+        `cgh files`; a subrepo answers from its own index. Unlike the FTS
+        index, this also sees files that define no symbol.
         """
         conn = _get_conn()
         if path:
@@ -456,11 +471,20 @@ def register(mcp) -> None:
         name_only: bool = False,
     ) -> str:
         """
-        Which symbols have a name like X?
-        Substring match on symbol names, for a half-known name. Filters:
-        role, layer, kinds (function, class, tf_resource, tf_var,
-        md_section), name_only. Federated: `limit` is per scope. Exact name:
-        symbol_lookup. Code described in words: fts_search.
+        Find symbols (functions, classes, TF resources) whose NAME contains
+        the query (substring match). Use it for a half-known name; for code
+        described in words use fts_search. Federated, `limit` is per scope, results are
+        concatenated; sort/trim downstream if needed.
+
+        Optional `role` / `layer` filters keep only symbols whose File node
+        carries that exact role / layer (empty = no filter). Useful to scope
+        a search to e.g. role="router" or layer="domain".
+
+        Optional `kinds` (comma list of function, class, tf_resource,
+        tf_var, md_section; empty = all) limits the graph match to those
+        kinds. `name_only=True` matches the name or section title only,
+        not a TF type / kind or a section's body preview. Both are echoed
+        back when set.
         """
         wanted = {k.strip() for k in kinds.split(",") if k.strip()}
 
@@ -608,11 +632,10 @@ def register(mcp) -> None:
     @_logged_tool
     def subgraph(file_path: str, depth: int = 1) -> str:
         """
-        Which files does this file import, and which import it?
-        depth=1 returns `depends_on` and `depended_by`; depth > 1 returns
-        every file reachable through its imports. Federated: each scope is
-        walked on its own, results concatenated. Everything that depends on
-        it, transitively: impact_of.
+        Return files related to `file_path` within `depth` import hops.
+        Federated. Inter-repo edges are not modeled, each subrepo's IMPORTS
+        graph is canonical for its own files. Useful for blast radius
+        within a single scope; results are concatenated across scopes.
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)

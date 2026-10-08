@@ -72,11 +72,11 @@ def register(mcp) -> None:
     @_logged_tool
     def file_summary(file_path: str) -> str:
         """
-        One-shot orientation for a single file. Returns its role / layer /
-        lang / module_doc, the functions and classes it defines (name, line
-        range, docstring head), the modules it imports, and the files that
-        import it. Use this BEFORE reading a file to decide which line
-        ranges actually matter.
+        What is in this file, before I read it?
+        Returns role, layer, language, module_doc, the functions and classes
+        it defines (name, line range, docstring head), its imports and the
+        files importing it. Use before Read to pick the line ranges that
+        matter.
 
         Args:
           file_path: repo-relative or absolute path to the File node.
@@ -195,11 +195,11 @@ def register(mcp) -> None:
     @_logged_tool
     def impact_of(symbol_or_file: str, max_depth: int = 3, focus: str = "") -> str:
         """
-        Reverse blast radius: what depends on a symbol or file. If the
-        argument looks like a path (or matches a File node) we walk IMPORTS
-        backward to find every file that transitively imports it. Otherwise
-        we resolve it as a function name and walk CALLS backward to find
-        every transitive caller.
+        What depends on this symbol or file?
+        Reverse blast radius up to max_depth: a path walks IMPORTS back to
+        every file that transitively imports it, a name walks CALLS back to
+        every transitive caller. A whole change set with tests to run:
+        impact_report. Direct callers only: find_callers.
 
         Args:
           symbol_or_file: a function name, or a repo-relative / absolute path.
@@ -434,10 +434,11 @@ def register(mcp) -> None:
     @_logged_tool
     def path_between(src: str, dst: str, edge: str = "CALLS") -> str:
         """
-        Shortest path between two symbols or files over an edge type. With
-        edge="CALLS" (default) src / dst are function names; with
-        edge="IMPORTS" they are file paths. Runs a forward BFS from src and
-        reconstructs the first path that reaches dst.
+        How does A reach B?
+        Shortest path from `src` to `dst`: with edge="CALLS" (default) they
+        are function names, with edge="IMPORTS" file paths. Use it to
+        explain a dependency; for everything that depends on X use
+        impact_of.
 
         Args:
           src:  start function name (CALLS) or file path (IMPORTS).
@@ -565,10 +566,10 @@ def register(mcp) -> None:
     @_logged_tool
     def import_cycles(limit: int = 50) -> str:
         """
-        Detect import cycles in the File->File IMPORTS graph. Builds the
-        adjacency from every IMPORTS edge and reports each strongly-connected
-        component of size > 1 (a cycle). Runs per scope: cycles never cross
-        repo boundaries, so each component lives in one scope.
+        Are there import cycles?
+        Reports each cycle (a strongly connected component of size > 1) in
+        the file IMPORTS graph. Computed per scope: a cycle never crosses
+        repo boundaries.
 
         Args:
           limit: cap on the number of cycles returned (default 50).

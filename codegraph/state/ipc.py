@@ -574,6 +574,8 @@ def proxy_stdio_to_http(
         else os.environ.get("CODEGRAPH_AUTH_KEY", "")
     )
 
+    from codegraph.state.call_log import ORIGIN_HEADER
+
     url_path = "/mcp"
 
     def _open() -> http.client.HTTPConnection:
@@ -610,6 +612,10 @@ def proxy_stdio_to_http(
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "Authorization": f"Bearer {auth_token}",
+            # Everything on this stdio bridge comes from an MCP client: the
+            # owner logs these calls as agent choices, apart from CLI and
+            # hook calls.
+            ORIGIN_HEADER: "agent",
         }
         if session_id:
             headers["Mcp-Session-Id"] = session_id

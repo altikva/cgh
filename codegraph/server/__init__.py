@@ -89,6 +89,28 @@ def _start_graph_rebuild(exc: BaseException) -> bool:
     return True
 
 
+def _call_origin() -> str | None:
+    """Who triggered the current tool call, read from the HTTP request.
+
+    The stdio proxy and the CLI client both reach the owner over HTTP and
+    announce themselves in the X-Cgh-Origin header; a request without it is
+    an MCP client talking to the owner directly, so it counts as "agent". A
+    call outside any HTTP request is an in-process call ("internal").
+    """
+    from codegraph.state.call_log import ORIGIN_HEADER, normalize_origin
+
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+    except Exception:
+        return "internal"
+    raw = request.headers.get(ORIGIN_HEADER)
+    if raw is None or not raw.strip():
+        return "agent"
+    return normalize_origin(raw)
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
@@ -97,6 +119,10 @@ def _logged_tool(fn):
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
+        try:
+            origin = _call_origin()
+        except Exception:
+            origin = None
         t0 = _time.perf_counter()
         success = True
         error = None
@@ -126,6 +152,7 @@ def _logged_tool(fn):
                     success=success,
                     error=error,
                     repo_root=_root,
+                    origin=origin,
                 )
             except Exception:
                 pass  # never let logging break the tool
@@ -191,7 +218,8 @@ mcp = FastMCP(
         "       1. knowledge_record(title, body, kind, tags)\n"
         "  • Context ~80% full (long session, many results):\n"
         "       1. knowledge_record(...) for EVERY non-trivial insight\n"
-        "       2. checkpoint(session_id, digest), survives clears\n"
+        "       2. checkpoint(session_id, digest), task state that resume()\n"
+        "          reloads; compact_session(...) for a whole-session note\n"
         "       These survive compaction, raw conversation does NOT.\n"
         "  • Session start (especially when a cgh header announces a\n"
         "    resume bundle): resume(session_id?, task?), ONE call returns\n"
@@ -200,7 +228,8 @@ mcp = FastMCP(
         "       1. knowledge_record(kind='standing_instruction', ...)\n"
         "          It leads every future resume bundle.\n"
         "  • After compaction / session resume / new session:\n"
-        "       1. knowledge_list(limit=20), reload recent learnings\n"
+        "       1. resume(session_id?, task?) if not called yet, then\n"
+        "          knowledge_list(limit=20) for recent notes\n"
         "       2. knowledge_search(query), targeted reload\n"
         "       3. memory_search(query), user preferences + feedback\n"
         "       4. plan_search(query), active plans\n"
@@ -214,7 +243,8 @@ mcp = FastMCP(
         "          Returns {file, line, text}. Then Read only those lines.\n"
         "          Also instead of git grep / grep -r / rg / sed -n in Bash.\n"
         "  • After git pull / checkout / rebase:\n"
-        "       1. scan_status, then incremental_reindex if stale\n"
+        "       1. scan_status, then incremental_reindex if stale (cgh git\n"
+        "          hooks run it when installed; scan_repo is the last resort)\n"
         "  • Adding an external dir: add_directory(path)\n"
         "\n"
         "FEDERATION (parent + subrepos):\n"

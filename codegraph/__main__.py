@@ -738,6 +738,14 @@ def main() -> None:
     if len(sys.argv) > 2 and sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES):
         del sys.argv[2:]
     if len(sys.argv) > 1 and (
+        sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES) or sys.argv[1] == "_reindex_hook"
+    ):
+        # Owner calls made from a hook are logged as "hook", not "cli", so
+        # usage data separates hook traffic from what agents and people ask.
+        from codegraph.state.call_log import ORIGIN_ENV
+
+        os.environ[ORIGIN_ENV] = "hook"
+    if len(sys.argv) > 1 and (
         sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES)
         or sys.argv[1] in ("status", "doctor")
     ):

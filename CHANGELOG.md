@@ -24,6 +24,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   lists the summarize and classify tables.
 
 ### Added
+- **Terraform is a real graph now.** `.tf` files are parsed with
+  tree-sitter-hcl (new dependency, abi3 wheels) into resource, data,
+  module, variable, output, provider and per-entry locals blocks, each
+  found by its Terraform address (`cgh lookup var.region`,
+  `symbol_lookup("module.iam")`). Every `var.x`, `local.x`, `data.t.n`,
+  `t.n` and `module.m.out` an expression uses, nested blocks, strings and
+  heredocs included, becomes an edge to the block that defines it in the
+  same module directory, and a local `module` source links the block to
+  that directory's variables and outputs. `find_callers`, `find_callees`,
+  `impact_of` and `cgh impact` answer from these edges. `.tfvars`
+  assignments are searchable and point at their variable, and YAML under a
+  `contracts/` directory is indexed one entry per key, three levels deep.
+  Existing indexes re-parse once on the next index.
 - The call log records who triggered each tool call: `agent` (an MCP
   client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
   plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the

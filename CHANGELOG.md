@@ -8,6 +8,32 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Removed
+- **Breaking: secure mode is gone.** Its guarantees rested on a regex PII
+  detector that misses too much to promise anything. `mode = "secure"` in
+  `config.toml` is now ignored, with a one-line notice on stderr and in
+  `cgh status` and `cgh doctor`; delete the line. `cgh init --secure` still
+  parses and only prints a deprecation note.
+- **Breaking: cgh no longer blocks agent file access.** The guard hooks
+  (`cgh _hook_guard`, `cgh _hook_guard_codex`) now always allow, and cgh no
+  longer writes `Read()` deny rules or a `.bobignore` block. Use your agent's
+  own permission rules to keep files out of reach. `cgh init`, `cgh setup`
+  and `cgh guard` remove the deny rules, `.bobignore` block and guard hooks
+  an older cgh wrote, and nothing else.
+- **New findings are no longer pseudonymized at rest.** Pseudonyms already
+  stored stay as they are; there is no migration.
+
+### Changed
+- **Breaking: `fetch_and_index` and `cgh fetch` need `allow_fetch = true`**
+  under `[codegraph]` for everyone. Assist mode used to allow them by
+  default.
+- **Breaking (SDK): `egress_decision` defaults to the assist behavior.**
+  Passing `mode` is deprecated and emits a `DeprecationWarning`;
+  `mode="secure"` still applies the allowlist for now.
+- cgh-summarize and cgh-codegen gates default to `open`; set the plugin's
+  `egress = "strict"` for the allowlist. cgh-bugreport always shows the
+  payload before sending unless `--yes`.
+
 ### Fixed
 - **Links to `github.com/altikva/codegraph` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`

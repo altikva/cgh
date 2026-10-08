@@ -30,15 +30,13 @@ def main() -> None:
     for f in findings:
         print(f"  {f.key:20s} line {f.line}  severity={f.severity}")
 
-    # assist posture: pii blocks cloud unless explicitly allowed
-    verdict = sdk.egress_decision(findings, mode="assist")
-    print(f"\nassist, allow_pii=False -> allowed={verdict.allowed} ({verdict.reason})")
+    # pii blocks cloud unless explicitly allowed
+    verdict = sdk.egress_decision(findings)
+    print(f"\nallow_pii=False -> allowed={verdict.allowed} ({verdict.reason})")
 
-    # secure posture: allowlist semantics, a human label is required
-    verdict = sdk.egress_decision(
-        findings, mode="secure", allow_pii=True, labeled_non_confidential=True
-    )
-    print(f"secure, cleared by human -> allowed={verdict.allowed}")
+    # the caller decided this PII may leave (e.g. a human reviewed it)
+    verdict = sdk.egress_decision(findings, allow_pii=True)
+    print(f"allow_pii=True  -> allowed={verdict.allowed}")
 
     if verdict:
         print(call_cloud_model(DOCUMENT))

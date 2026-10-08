@@ -27,12 +27,7 @@ from codegraph import sdk
 
 findings = sdk.scan_text(document_text, path="upload.txt", scanners=["pii"])
 
-verdict = sdk.egress_decision(
-    findings,
-    mode="secure",                  # allowlist semantics, the default
-    allow_pii=False,
-    labeled_non_confidential=user_cleared,
-)
+verdict = sdk.egress_decision(findings, allow_pii=False)
 if verdict:
     response = call_cloud_model(document_text)
 else:

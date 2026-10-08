@@ -3,7 +3,7 @@
 Human-trainable confidentiality classification for
 [cgh](https://github.com/altikva/cgh). You label a few files, a
 lightweight local model (TF-IDF + naive Bayes, standard library only)
-generalizes to the rest, and the egress gate and guard enforce the
+generalizes to the rest, and the egress gate enforces the
 result. Nothing ever leaves the machine.
 
 ```bash
@@ -26,7 +26,8 @@ cgh findings --key confidential
 
 The asymmetry is deliberate: a model may block on its own say-so
 (worst case, a false positive costs a summary), but only a human label
-can clear a file in `mode = "secure"`, where the gate is an allowlist.
+can clear a file under a strict egress gate (`egress = "strict"`),
+where the gate is an allowlist.
 
 ## Configuration
 

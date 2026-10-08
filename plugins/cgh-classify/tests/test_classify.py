@@ -144,16 +144,14 @@ class TestGateInterplay:
 
     def test_predicted_public_does_not_clear_strict_gate(self, repo):
         gate = pytest.importorskip("cgh_summarize.gate")
-        (repo / ".codegraph" / "config.toml").write_text(
-            '[codegraph]\nmode = "secure"\n', encoding="utf-8"
-        )
+        strict = {"egress": "strict"}
         _trained_model().save(model_path(repo))
         scanner = ClassifyScanner({}, repo)
 
         # Model says public: strict gate still refuses.
         pub = scanner.scan(Path("/r/doc.txt"), PUBLIC_DOCS[0], None)
         store.record_findings(repo, "/r/doc.txt", scanner.name, pub)
-        assert not gate.cloud_allowed(repo, "/r/doc.txt", {})[0]
+        assert not gate.cloud_allowed(repo, "/r/doc.txt", strict)[0]
 
         # Human says public: strict gate clears.
         f = repo / "doc.txt"
@@ -161,4 +159,4 @@ class TestGateInterplay:
         set_label(repo, f, False)
         human = scanner.scan(f, PUBLIC_DOCS[0], None)
         store.record_findings(repo, str(f), scanner.name, human)
-        assert gate.cloud_allowed(repo, str(f), {})[0]
+        assert gate.cloud_allowed(repo, str(f), strict)[0]

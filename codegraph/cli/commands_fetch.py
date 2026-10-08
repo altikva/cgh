@@ -8,7 +8,7 @@
 #              store; `cgh fetch --search Q` reads it back; `--purge`
 #              clears it. A fetch is gated network egress (see
 #              analysis/fetch_index): http/https, no private hosts, off
-#              in secure mode unless allow_fetch, always audited.
+#              unless [codegraph] allow_fetch = true, always audited.
 
 from __future__ import annotations
 

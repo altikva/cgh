@@ -10,8 +10,8 @@
 #              image, diagram.mermaid / diagram.entities for diagrams,
 #              table.markdown, chart.markdown, text.summary as routed.
 #              Identities separated from labels become image.identity
-#              findings (pii-prefixed key so the secure-at-rest layer
-#              pseudonymizes them). With [plugin.vision] auto_extract on,
+#              findings (pii-prefixed key, so the egress gates treat
+#              them as PII). With [plugin.vision] auto_extract on,
 #              the same background pass also writes a <file>.json sidecar
 #              holding the full structured extraction (images and PDFs),
 #              so a whole repo of diagrams gets extracted with no manual
@@ -65,7 +65,6 @@ class VisionScanner:
     def _gate(self, p: Path) -> bool:
         """Shared pre-flight for images and PDFs. Returns True to proceed,
         False to skip (out of the size bounds). Raises VisionError when the
-        egress posture forbids the call (secure mode, non-loopback) or the
         backend is unreachable, so the deferred worker logs it and the file
         is retried on its next change."""
         try:
@@ -78,20 +77,8 @@ class VisionScanner:
             return False
         if not is_local(self.config):
             # A non-loopback daemon means the file bytes leave this
-            # machine. Secure mode refuses outright; assist mode
-            # proceeds but the departure lands in the audit trail.
-            # The mode probe fails CLOSED: unknown mode is secure.
-            try:
-                from codegraph.plugin_api import load_config
-
-                mode = load_config(self.repo_root).mode
-            except Exception:
-                mode = "secure"
-            if mode == "secure":
-                raise VisionError(
-                    "secure mode: refusing to send image bytes to the "
-                    f"non-loopback endpoint {endpoint_url(self.config)}"
-                )
+            # machine: the endpoint is the user's choice, the departure
+            # lands in the audit trail.
             self._audit(
                 f"image bytes sent to non-loopback endpoint "
                 f"{endpoint_url(self.config)}: {p}"

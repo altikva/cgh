@@ -198,7 +198,7 @@ if [ -z "$INSTALLER" ]; then
   fi
   PREFIX="cgh"; [ "$VARIANT" = "egress" ] && PREFIX="cgh-egress"
   if [ -n "${CGH_PLUGINS:-}" ] && [ "$VARIANT" = "sealed" ]; then
-    warn "The sealed binary bundles the local-only plugins (pii, classify). For the model-calling ones set CGH_VARIANT=egress."
+    warn "The sealed binary bundles the local-only plugin (docs). For codegen and bugreport set CGH_VARIANT=egress."
   fi
   ASSET="${PREFIX}-${TARGET}"
   BASE="${CGH_DOWNLOAD_BASE:-https://github.com/altikva/cgh/releases/latest/download}"

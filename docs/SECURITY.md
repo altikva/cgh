@@ -25,15 +25,17 @@ Installed plugins can, as described for each one below.
   fetched (private, loopback and link-local addresses are refused,
   redirects included) and every fetch or refusal is written to
   `.codegraph/activity.log`.
-- **Summaries and code generation** (the `cgh-summarize` and
-  `cgh-codegen` plugins): the backend is your choice in
-  `[plugin.summarize]` / `[plugin.codegen]`. cgh-summarize also runs in
-  the background as files are indexed, and with `backend = "auto"` it
-  picks the first backend available, which can be a cloud CLI such as
-  `claude -p`; set `backend = "ollama"` or `"structural"` to stay
-  local. Before a cloud
-  backend sees a file, an egress gate checks its findings (below), and
-  every cloud call is logged.
+- **Code generation** (`cgh-codegen`): the backend is your choice in
+  `[plugin.codegen]`. Every file it would send (the reference, a file
+  being extended) and the spec first go through a built-in secret check:
+  a private key, cloud or provider token, or hardcoded credential refuses
+  the run, for any backend and any egress setting, and the refusal names
+  the file and line, not the value. Before a cloud backend sees a
+  reference, an egress gate also checks its findings (below), and every
+  cloud call is logged.
+- **Summaries** (`cgh-summarize`, frozen): since 0.3.0 it uses local
+  backends only (a loopback Ollama or OpenAI-compatible server) and
+  runs only when you call `cgh summarize run`.
 - **Vision** (`cgh-vision`): images go to the endpoint you configure.
   A loopback URL stays on the machine; any other URL receives the image
   bytes, and each such call is logged.
@@ -48,7 +50,7 @@ Scanner plugins attach **findings** to files (`pii.email`,
 to the index and queryable with `cgh findings` or the federated
 `findings` MCP tool.
 
-The egress gate in the model-backed plugins reads them: a file flagged
+The egress gate in cgh-codegen reads them: a file flagged
 `confidential = true` or carrying a block-severity finding (private
 keys, cloud credentials) is not sent to a cloud backend, and neither is
 a file with PII findings unless `allow_pii = true`. A plugin's own
@@ -56,7 +58,13 @@ a file with PII findings unless `allow_pii = true`. A plugin's own
 files a human labeled non-confidential (`cgh classify label --not`) go
 out.
 
-The PII and secret scanners are regex based. They catch common shapes
+Findings only exist for what a scanner recorded: cgh-pii and
+cgh-classify write them at index time only with `scan_on_index = true`.
+Without them the gate has no PII or confidentiality labels to act on;
+secrets are still caught by cgh-codegen's own check, which reads the
+file itself. An `egress` value other than `"open"` or `"strict"` is
+treated as `"strict"`. Run `cgh pii scan` to check a tree for secrets on
+demand. The PII and secret patterns are regex based. They catch common shapes
 and miss what they have no pattern for, so treat the gate as a useful
 filter, not a guarantee. Findings are stored as the scanner reported
 them. Repos indexed before 0.15.0 with `mode = "secure"` may still

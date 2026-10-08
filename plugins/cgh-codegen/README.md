@@ -34,10 +34,26 @@ cgh codegen gen --spec "pytest tests for UserService: create, update, delete" \
                   --target tests/test_user_service.py
 ```
 
-The reference (picked, or forced with `--reference`) is run through the
-egress gate before it reaches a cloud model: a confidential or PII-labeled
-reference is refused. A local backend skips the gate. An existing target is
-never overwritten without `--force`; `--stdout` prints instead of writing.
+Two checks run before anything reaches a model:
+
+- **Secret check, always.** The reference, the file being extended and the
+  spec are scanned with a built-in pattern set: private key blocks, AWS
+  access key ids, GCP service-account key files, GitHub, Slack and Stripe
+  live tokens, bearer tokens, and `password` / `secret` / `api_key` /
+  `token` assignments to a real-looking literal (empty values, `changeme`,
+  `xxx`, `${...}` templates and env lookups are ignored). A hit refuses the
+  run with the file and line, never the value, for every backend, local
+  included, and whatever the egress setting. An auto-picked reference that
+  fails falls back to the next candidate. It needs no other plugin.
+- **Egress gate, cloud backends only.** A reference carrying a
+  `confidential`, block-severity or PII finding is refused (findings come
+  from cgh-pii or cgh-classify when they scan at index). `egress = "strict"`
+  under `[plugin.codegen]` only sends files labeled non-confidential.
+  Absent or `"open"` is the default; any other value is treated as
+  `"strict"`, so a typo fails closed.
+
+An existing target is never overwritten without `--force`; `--stdout`
+prints instead of writing.
 
 `--extend` grows a file that already exists instead of writing a new one:
 

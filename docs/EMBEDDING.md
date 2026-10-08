@@ -17,7 +17,7 @@ is 0.x.
 
 ```bash
 pip install cgh cgh-pii            # core + the scanners you need
-pip install cgh-summarize          # optional: text summaries
+pip install cgh-summarize          # optional: text summaries (frozen, local only)
 ```
 
 ## Scan text and decide egress inside an agent loop

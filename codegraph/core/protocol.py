@@ -95,6 +95,21 @@ class GraphDB(Protocol):
         references. Used by the indexer before re-indexing a changed file.
         """
 
+    # --- Writer stamps ------------------------------------------------------
+    # An indexer that predates the call_site / name_ref tables (cgh 0.15
+    # after a rollback) rewrites a file's nodes but not its references. The
+    # stamp records the File mtime each file had when this format indexed it,
+    # so a later run can tell which files an older writer touched since.
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        """Record that ``file_path`` was fully indexed at ``mtime``.
+        purge_file_data drops the stamp too."""
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        """(stale, orphans): indexed files whose stamp is missing or taken at
+        another mtime, and paths holding references or a stamp but no
+        indexed File node any more."""
+
     # --- Name references ----------------------------------------------------
     # INHERITS, MD_REFS_*, MD_LINKS_TO and cross-file IMPLEMENTED_BY edges
     # are resolved by name. Keeping the references lets the indexer link them

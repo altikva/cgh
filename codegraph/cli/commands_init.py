@@ -1139,6 +1139,24 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
         )
         raise SystemExit(1)
 
+    from codegraph.state.scan_meta import (
+        GRAPH_FORMAT,
+        read_meta,
+        recorded_graph_format,
+    )
+
+    source_format = recorded_graph_format(read_meta(from_root))
+    if source_format is not None and source_format < GRAPH_FORMAT:
+        # The copy keeps the source's knowledge and call log, but its graph
+        # gets the one-time full re-parse right after, which takes longer than
+        # a fresh index. Reindexing the source once makes every later seed cheap.
+        console.print(
+            f"  [yellow]![/yellow] --from: the source index is in graph format "
+            f"{source_format}, this cgh needs {GRAPH_FORMAT}, so the seed is "
+            "followed by a full re-parse. Run [cyan]cgh index --root "
+            f"{from_root}[/cyan] first to make seeds from it cheap again."
+        )
+
     with phase_status("[bold cyan]Seeding the index from the source checkout..."):
         try:
             result = relocate_store(from_root, root)

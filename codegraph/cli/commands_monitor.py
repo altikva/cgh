@@ -154,10 +154,15 @@ def _stats_content(root: str) -> Group:
 
     # Scan freshness banner
     try:
+        from codegraph.state.scan_meta import format_notice
         from codegraph.state.scan_meta import scan_status as _scan_status
 
         ss = _scan_status(root)
-        if ss.get("indexed_sha"):
+        outdated = format_notice(ss)
+        if outdated:
+            word = "reindexing" if ss.get("indexing") else "outdated"
+            renderables.append(Text.from_markup(f"[yellow]{word}[/yellow], {outdated}"))
+        elif ss.get("indexed_sha"):
             sha_short = (ss["indexed_sha"] or "")[:7]
             branch = ss.get("indexed_branch") or "?"
             dirty = ss.get("dirty")
@@ -485,6 +490,18 @@ def _scan_line(scan: dict, ss: dict) -> str:
     """
     when = _format_indexed_at(scan.get("indexed_at"))
     when_suffix = f"  [dim]· {when}[/dim]" if when else ""
+    from codegraph.state.scan_meta import format_notice
+
+    notice = format_notice(ss)
+    if notice:
+        word = "reindexing" if ss.get("indexing") else "outdated"
+        return f"[yellow]{word}[/yellow]  {notice}{when_suffix}"
+    running = ss.get("indexing")
+    if running:
+        return (
+            f"[yellow]indexing[/yellow]  pid {running['pid']} since "
+            f"{running['since']}, answers may be incomplete until it ends"
+        )
     if ss.get("fresh"):
         return (
             f"[green]fresh[/green]  indexed [bold]{scan['indexed_sha']}[/bold] "
@@ -686,6 +703,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "scan": {
             "fresh": ss.get("fresh"),
+            "state": ss.get("state"),
+            "indexing": ss.get("indexing"),
+            "graph_format": ss.get("graph_format"),
+            "graph_format_current": ss.get("graph_format_current"),
+            "format_outdated": ss.get("format_outdated"),
             "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
             "indexed_branch": ss.get("indexed_branch"),
             "indexed_at": ss.get("indexed_at"),
@@ -1754,6 +1776,16 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # Informational, not a failed check: the config still loads.
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")
+    # Informational too: an index from an older graph format still answers,
+    # with fewer edges, until its one-time re-parse; never blocks --strict.
+    try:
+        from codegraph.state.scan_meta import format_notice, scan_status
+
+        outdated = format_notice(scan_status(root))
+    except Exception:
+        outdated = None
+    if outdated:
+        console.print(f"[yellow]!![/yellow] {outdated}")
     # Informational, not a check: a stale plugin is skipped, cgh still works.
     for reason in _too_old_plugin_reasons(root):
         from rich.markup import escape

@@ -166,6 +166,7 @@ searchable and reachable from the graph.
 |---|---|
 | [Install](docs/INSTALL.md) | one-line installers, extras, corporate mirrors, PATH |
 | [Upgrading to 0.15](docs/UPGRADING-0.15.md) | what changed for your agent, the upgrade command, old findings, rollback |
+| [Upgrading to 0.16](docs/UPGRADING-0.16.md) | the one-time re-parse, local call-origin logging, rollback |
 | [CLI reference](docs/CLI_REFERENCE.md) | every verb and flag |
 | [Configuration](docs/CONFIGURATION.md) | `config.toml`, environment variables, `.cghignore` |
 | [MCP tools](docs/MCP_TOOLS.md) | the tools your agent calls, by category |

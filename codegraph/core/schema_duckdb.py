@@ -235,6 +235,16 @@ SIDE_TABLES = [
         name       TEXT,
         extra      TEXT NOT NULL DEFAULT ''
     )""",
+    # The File mtime each file had when this format last indexed it. A
+    # writer that predates the table (cgh 0.15 after a rollback) updates the
+    # File node but not this row, and leaves the file's call sites and name
+    # references as they were: a missing or different stamp is how the next
+    # index finds the files to parse again. No PK: rows are replaced by a
+    # delete then insert, like the tables above.
+    """CREATE TABLE IF NOT EXISTS file_stamp (
+        path       TEXT,
+        mtime      DOUBLE
+    )""",
 ]
 
 
@@ -257,6 +267,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
     "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
 ]

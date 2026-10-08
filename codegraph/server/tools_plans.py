@@ -19,10 +19,11 @@ def register(mcp) -> None:
     @_logged_tool
     def plan_search(query: str, limit: int = 10) -> str:
         """
-        Is there a plan for this already?
-        Searches the agent's plan files. Use when the user hints at a past
-        plan ("the refactor we planned"). All plans, newest first:
-        plan_list.
+        BM25 search over Claude Code plan files (~/.claude/plans/*.md).
+
+        Use when the user hints at a past plan ("the refactor we planned",
+        "my last codegraph plan", "that stats feature plan") to surface
+        the relevant plan file without reading the whole directory.
 
         Args:
             query: keywords or natural-language description
@@ -56,9 +57,7 @@ def register(mcp) -> None:
     @_logged_tool
     def plan_list(agent_only: bool = False, limit: int = 50) -> str:
         """
-        Which plan files exist?
-        Lists plan files newest first; agent_only keeps sub-agent plans. On
-        a topic: plan_search.
+        List known plan files, newest first.
 
         Args:
             agent_only: if true, return only sub-agent plans (those with
@@ -93,9 +92,8 @@ def register(mcp) -> None:
     @_logged_tool
     def plan_rescan() -> str:
         """
-        How do I make a plan I just wrote searchable?
-        Re-scans the plans directory into the search index. Rarely needed:
-        the watcher does it; call only if plan_search misses a fresh plan.
+        Re-scan the plans directory and refresh the FTS index. Call this
+        after creating / editing a plan if the watcher hasn't caught it.
         """
         from codegraph.claude_state.plans import scan_plan_dir
 

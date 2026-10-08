@@ -51,11 +51,10 @@ def register(mcp) -> None:
     @_logged_tool
     def tests_for(symbol_or_file: str) -> str:
         """
-        Which tests cover this symbol or file?
-        Returns the test files that import the defining file and, for a
-        symbol, the tests whose functions reach it through CALLS. Use it to
-        pick the tests to run after an edit. Several changed files at once:
-        impact_report.
+        Find the test files that exercise a target symbol or file. Resolves
+        the argument to a defining File node, then reports test files (role
+        `test`) that IMPORTS-> that file, plus, when the target is a symbol,
+        test files whose functions CALLS-reach it.
 
         Args:
           symbol_or_file: a function / class name, or a repo-relative /
@@ -111,11 +110,11 @@ def register(mcp) -> None:
     @_logged_tool
     def impact_report(changed_files: list[str]) -> str:
         """
-        What does this change set break, and which tests should I run?
-        For `changed_files`: the symbols they define, the files that
-        transitively import them (by role and layer), endpoints touched and
-        tests to run. Same payload as `cgh impact --json`. One symbol or
-        file: impact_of or tests_for.
+        Impact of a change set: the symbols defined in `changed_files`, the
+        files that transitively import them (by role / layer), endpoints
+        touched and tests to run. Same payload as `cgh impact --json`, which
+        calls this tool while an owner holds the graph. For one symbol or
+        file prefer `impact_of` / `tests_for`.
 
         Args:
           changed_files: repo-relative paths, e.g. from `git diff --name-only`.
@@ -134,10 +133,9 @@ def register(mcp) -> None:
     @_logged_tool
     def untested(role: str = "", layer: str = "") -> str:
         """
-        Which source files have no test?
-        Lists non-test source files that no test file imports; filter by
-        role ("service", "router") or layer ("domain"). Test and doc files
-        are never reported. Tests for one file: tests_for.
+        List non-test source files that NO test file imports. Optionally
+        filter by File.role (e.g. "service", "router") or File.layer (e.g.
+        "application", "domain"). Test and doc files are never reported.
 
         Args:
           role:  optional File.role filter (exact match).

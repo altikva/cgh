@@ -57,9 +57,16 @@ def test_every_description_opens_with_the_question_it_answers() -> None:
         assert first.endswith("?"), f"{name}: {first!r}"
 
 
+def _summary(text: str) -> str:
+    # fastmcp 3+ moves an `Args:` / `Returns:` block into the input schema;
+    # fastmcp 2.x (the declared floor) keeps it in the description. Measure
+    # the summary we write, the part every fastmcp version shows the same.
+    return re.split(r"\n\s*(?:Args|Returns):", text, maxsplit=1)[0].strip()
+
+
 def test_descriptions_stay_short() -> None:
     # Every session loads every description: keep the total in check.
-    tools = _tools()
+    tools = {n: _summary(t) for n, t in _tools().items()}
     assert sum(len(t) for t in tools.values()) < 15000
     long = {n: len(t) for n, t in tools.items() if len(t) > 450}
     assert not long, long

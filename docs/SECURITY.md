@@ -37,9 +37,9 @@ Installed plugins can, as described for each one below.
   format it has no pattern for is sent. Before a cloud backend sees a
   reference, an egress gate also checks its findings (below), and every
   cloud call is logged.
-- **Summaries** (`cgh-summarize`, frozen): since 0.3.0 it uses local
-  backends only (a loopback Ollama or OpenAI-compatible server) and
-  runs only when you call `cgh summarize run`.
+- **Summaries** (`cgh-summarize`, frozen, on PyPI only): since 0.3.0 it
+  uses local backends only (a loopback Ollama or OpenAI-compatible
+  server) and runs only when you call `cgh summarize run`.
 - **Vision** (`cgh-vision`): images go to the endpoint you configure.
   A loopback URL stays on the machine; any other URL receives the image
   bytes, and each such call is logged.
@@ -59,8 +59,8 @@ The egress gate in cgh-codegen reads them: a file flagged
 keys, cloud credentials) is not sent to a cloud backend, and neither is
 a file with PII findings unless `allow_pii = true`. A plugin's own
 `egress = "strict"` setting turns the gate into an allowlist: only
-files a human labeled non-confidential (`cgh classify label --not`) go
-out.
+files a human labeled non-confidential (`cgh classify label --not`, from
+the frozen cgh-classify, on PyPI only) go out.
 
 Findings only exist for what a scanner recorded: cgh-pii and
 cgh-classify write them at index time only with `scan_on_index = true`.

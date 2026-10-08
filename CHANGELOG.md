@@ -8,13 +8,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
-### Added
-- The call log records who triggered each tool call: `agent` (an MCP
-  client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
-  plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
-  split (new `by_origin` fields; existing fields unchanged), so hook traffic
-  no longer reads as agent choices. Existing logs are migrated in place;
-  their older rows show as `unknown`.
+### Removed
+- **cgh-summarize and cgh-classify left the repo.** Their final releases,
+  0.3.0 and 0.2.0, stay on PyPI and cgh still loads them
+  (`--with cgh-summarize`); older releases are still refused. The
+  `summarize-local` example went with them.
 
 ### Changed
 - Every MCP tool description now opens with the question it answers and
@@ -25,6 +23,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   rules, bundled skills, integration guides and `docs/MCP_TOOLS.md` (now
   listing all 54 tools) match the new wording; rerunning `cgh setup`
   refreshes installed rules.
+- **Config keys nothing reads any more load with one notice.** Besides
+  `mode = "secure"`, the cgh-summarize keys its 0.3.0 release dropped
+  (`allow_pii`, `egress`, `claude_model`, `gemini_model` under
+  `[plugin.summarize]`) are named in a single stderr line per process
+  (never in hook output) and in `cgh status` and `cgh doctor`. They are
+  never rejected; delete the lines. The `cgh init` template no longer
+  lists the summarize and classify tables.
+
+### Added
+- The call log records who triggered each tool call: `agent` (an MCP
+  client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
+  plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
+  split (new `by_origin` fields; existing fields unchanged), so hook traffic
+  no longer reads as agent choices. Existing logs are migrated in place;
+  their older rows show as `unknown`.
+
 
 ### Fixed
 - **`find_callers` and every tool built on CALLS edges silently missed

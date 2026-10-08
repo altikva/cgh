@@ -427,22 +427,27 @@ reindex_on_start = true
 [plugins]
 # Installed plugins (pip install "cgh[plugins]") register themselves;
 # these lists narrow or bar them without uninstalling anything.
-# enabled = ["pii", "summarize"]
-# disabled = ["classify"]
+# enabled = ["docs", "codegen"]
+# disabled = ["bugreport"]
 
 # Per-plugin settings live in [plugin.<name>] tables (note: singular).
 # A project-level table replaces the same plugin's global table whole.
 
 # [plugin.pii]
-# Regex PII + secret detection runs inline by default (emails, phones,
-# IBANs, cards, keys). See the cgh-pii README. All lines below are OFF by
+# cgh-pii (installed by name, not by cgh[plugins]) scans on demand:
+# `cgh pii scan` reports secrets. Nothing runs at index time unless
+# scan_on_index is on. See the cgh-pii README. All lines below are OFF by
 # default; uncomment to change behavior.
+# scan_on_index = false  # run the regex scanner on every indexed file
+# pii = false            # add the PII patterns (emails, phones, IBANs,
+#                        # cards) to the secret ones, here and in cgh pii scan
 # disable_keys = ["pii.phone", "pii.card"]  # silence noisy finding keys
 #                        # (regex phones/cards false-positive on number-heavy
 #                        # extracted text like diagram PDFs)
-# ner = false            # add person-name / location detection via presidio
+# ner = false            # with scan_on_index: person-name / location
+#                        # detection via presidio
 #                        # (needs: pip install "cgh-pii[ner]")
-# llm = false            # add an LLM tier that catches what regex + NER miss
+# llm = false            # with scan_on_index: an LLM tier that catches what regex + NER miss
 #                        # (names in odd formats, quasi-identifiers, addresses)
 #                        # and, with context, avoids much of the regex noise.
 #                        # Runs deferred; emits count-only pii.llm.* findings.
@@ -457,27 +462,29 @@ reindex_on_start = true
 #                                 # probe, allowed or denied, is audited
 
 # [plugin.classify]
+# Frozen plugin, see its README.
+# scan_on_index = false  # classify every indexed file
 # threshold = 0.7        # predict confidential above this probability
 # uncertain_low = 0.35   # review window lower bound
 # uncertain_high = 0.65  # review window upper bound
 
 # [plugin.summarize]
-# backend = "auto"       # or cli:claude, cli:gemini, cli:codex, cli:bob,
-#                        # ollama, openai, structural
+# Frozen plugin, see its README. Local backends only, run with
+# `cgh summarize run`; nothing runs at index time.
+# backend = "auto"       # or ollama, openai, structural
 # min_kb = 4             # skip files smaller than this
-# allow_pii = false      # let files with PII findings reach cloud backends
 # language = "en"        # summary language
-# claude_model = "haiku"
-# gemini_model = "gemini-2.5-flash"
 # ollama_model = "qwen2.5:1.5b"   # if this one is not pulled, an installed
 #                                 # generative model is auto-picked; if none
 #                                 # is installed the tier degrades (no summary)
 # ollama_url = "http://127.0.0.1:11434"
-# openai_base_url = ""   # any OpenAI-compatible endpoint, e.g. vLLM
+# openai_base_url = ""   # a loopback OpenAI-compatible server, e.g. llama-server
 # openai_model = ""
 # openai_api_key_env = "OPENAI_API_KEY"
 
 # [plugin.vision]
+# `cgh vision <file>` runs on demand. Index-time image reading is opt-in.
+# scan_on_index = false  # index images and read each one in the background
 # profile = "default"    # or fast (single pass), photo (screen photos)
 # nodes_model = "qwen2.5vl:3b"
 # edges_model = "gemma3:4b"
@@ -494,7 +501,7 @@ reindex_on_start = true
 # cache_ttl_hours = 24   # reuse a cached result for the same file+params;
 #                        # 0 disables the cache. `cgh vision --force` bypasses it
 # cache_dir = ""         # where cached results live (default: a temp dir)
-# auto_extract = false   # when a local backend is reachable, the background
+# auto_extract = false   # with scan_on_index: when a local backend is reachable, the background
 #                        # scanner also writes a structured <file>.json for
 #                        # every indexed image and PDF (no manual cgh vision)
 # auto_extract_out = ".codegraph/vision"  # where the sidecars land; "beside"

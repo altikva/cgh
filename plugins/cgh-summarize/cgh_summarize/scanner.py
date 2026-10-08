@@ -4,14 +4,13 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The deferred summarize scanner. Skips small files, asks
-#              the gate whether cloud backends may see the content, picks
-#              the first available backend within that constraint, builds
-#              a structural scaffold plus a capped excerpt as the prompt,
+# Description: The summarize scanner behind `cgh summarize run` (no longer
+#              registered for index time since 0.3.0). Skips small files,
+#              picks the first available local backend, builds a
+#              structural scaffold plus a capped excerpt as the prompt,
 #              and records the result as a `summary` finding (FTS-fed).
 #              Changed content keeps its old summary while drift stays
 #              under 30% of lines and fewer than 5 changes accumulated.
-#              Every cloud call and every gate denial is audit-logged.
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ from pathlib import Path
 from codegraph.plugin_api import ScanFinding
 
 from .backends import pick_backend
-from .gate import cloud_allowed
 
 _EXCERPT_CHARS = 2000
 _SUMMARY_CHARS = 2000
@@ -71,7 +69,7 @@ def build_prompt(path: Path, text: str, language: str) -> str:
 
 
 class SummarizeScanner:
-    """Deferred scanner writing `summary` findings."""
+    """Scanner writing `summary` findings, driven by `cgh summarize run`."""
 
     name = "summarize"
     deferred = True
@@ -85,9 +83,8 @@ class SummarizeScanner:
 
     def scan(self, path: Path, text: str, index) -> list[ScanFinding]:
         if not self.repo_root:
-            # Rootless load (SDK scan_text, repo-less CLI): the egress
-            # gate and the finding store need a repo. sdk.summarize is
-            # the rootless entry point instead.
+            # Rootless call: the finding store needs a repo.
+            # sdk.summarize is the rootless entry point instead.
             return []
         min_kb = float(self.config.get("min_kb", 4))
         if len(text) < min_kb * 1024:
@@ -97,14 +94,9 @@ class SummarizeScanner:
         if carried is not None:
             return carried
 
-        allowed, reason = cloud_allowed(self.repo_root, str(path), self.config)
-        backend = pick_backend(
-            self.config, extras=list(self._extras_fn()), cloud_allowed=allowed
-        )
+        backend = pick_backend(self.config, extras=list(self._extras_fn()))
         if backend is None:
             return []
-        if not allowed:
-            self._audit(f"egress denied ({reason}), using {backend.name}: {path}")
 
         prompt = build_prompt(path, text, str(self.config.get("language", "en")))
         try:
@@ -117,8 +109,6 @@ class SummarizeScanner:
             raise RuntimeError(f"summarize backend {backend.name}: {exc}") from exc
         if not summary:
             return []
-        if getattr(backend, "egress", "cloud") == "cloud":
-            self._audit(f"egress: sent to {backend.name}: {path}")
 
         return self._findings(
             summary[:_SUMMARY_CHARS], text, scans=0, backend=backend.name
@@ -171,11 +161,3 @@ class SummarizeScanner:
             ScanFinding(key="summary", value=old_summary, line=0, severity="info"),
             ScanFinding(key="summary.meta", value=meta_out, line=0, severity="info"),
         ]
-
-    def _audit(self, message: str) -> None:
-        try:
-            from codegraph.plugin_api import activity_log
-
-            activity_log(self.repo_root, "summarize", message)
-        except Exception:
-            pass

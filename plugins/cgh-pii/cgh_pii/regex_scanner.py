@@ -4,8 +4,11 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Inline regex scanner for PII and secrets. Deterministic and
-#              fast enough for the indexing hot path. Card candidates must
+# Description: Regex scanner for secrets and, optionally, PII. Deterministic
+#              and fast; used by `cgh pii scan` and, with scan_on_index,
+#              on the indexing hot path. pii=False keeps only the secret
+#              patterns, which are precise; the PII ones are noisy on real
+#              repos and are opt-in through the callers. Card candidates must
 #              pass Luhn and IBAN candidates must pass mod 97, so random
 #              digit runs do not flag files. Finding values carry only the
 #              match count, never the matched data: findings feed the FTS
@@ -51,13 +54,17 @@ def _iban_ok(candidate: str) -> bool:
 
 
 class RegexPiiScanner:
-    """Inline scanner producing pii.* and secret.* findings."""
+    """Inline scanner producing secret.* findings, plus pii.* ones when
+    ``pii`` is true (the default here, so direct callers such as the
+    bugreport tripwire keep the full pattern set; the plugin's config and
+    CLI default it to false)."""
 
     name = "pii-regex"
     deferred = False
 
-    def __init__(self, disabled_keys: set[str] | None = None) -> None:
+    def __init__(self, disabled_keys: set[str] | None = None, pii: bool = True) -> None:
         self._disabled = disabled_keys or set()
+        self._pii = pii
 
     def scan(self, path: Path, text: str, index) -> list[ScanFinding]:
         found: list[ScanFinding] = []
@@ -73,26 +80,27 @@ class RegexPiiScanner:
                     )
                 )
 
-        _emit("pii.email", "warn", _match_lines(_EMAIL, text))
-        _emit(
-            "pii.phone",
-            "warn",
-            _match_lines(_PHONE, text, validate=lambda m: _phone_ok(m.group(0))),
-        )
-        _emit(
-            "pii.iban",
-            "warn",
-            _match_lines(_IBAN, text, validate=lambda m: _iban_ok(m.group(0))),
-        )
-        _emit(
-            "pii.card",
-            "warn",
-            _match_lines(
-                _CARD,
-                text,
-                validate=lambda m: _card_ok(re.sub(r"[ -]", "", m.group(0))),
-            ),
-        )
+        if self._pii:
+            _emit("pii.email", "warn", _match_lines(_EMAIL, text))
+            _emit(
+                "pii.phone",
+                "warn",
+                _match_lines(_PHONE, text, validate=lambda m: _phone_ok(m.group(0))),
+            )
+            _emit(
+                "pii.iban",
+                "warn",
+                _match_lines(_IBAN, text, validate=lambda m: _iban_ok(m.group(0))),
+            )
+            _emit(
+                "pii.card",
+                "warn",
+                _match_lines(
+                    _CARD,
+                    text,
+                    validate=lambda m: _card_ok(re.sub(r"[ -]", "", m.group(0))),
+                ),
+            )
         _emit("secret.aws_key", "block", _match_lines(_AWS_KEY, text))
         _emit("secret.private_key", "block", _match_lines(_PRIVATE_KEY, text))
         _emit("secret.assignment", "warn", _match_lines(_ASSIGNMENT, text))

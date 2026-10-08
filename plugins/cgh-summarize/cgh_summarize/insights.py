@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Corpus insights: batch the gate-cleared summaries into one
+# Description: Corpus insights: batch the stored summaries into one local
 #              model call and ask for what no single-file view shows,
 #              hidden patterns, duplicated concepts, architectural drift.
 #              Results are persisted to the knowledge store so agents
@@ -15,15 +15,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .backends import pick_backend
-from .gate import cloud_allowed
 
 _MAX_PROMPT_CHARS = 24_000
 
 
 def collect_summaries(repo_root: str | Path, config: dict) -> tuple[list[dict], int]:
-    """Gate-cleared summary findings. Returns (rows, excluded_count):
-    summaries of files the gate would not send stay out of cloud-bound
-    batches, and the caller reports how many were withheld."""
+    """Stored summary findings. Returns (rows, excluded_count); nothing is
+    excluded since 0.3.0 (every backend is local), the count stays for
+    callers that read it."""
     from codegraph.plugin_api import query_findings
 
     rows = [
@@ -31,15 +30,7 @@ def collect_summaries(repo_root: str | Path, config: dict) -> tuple[list[dict], 
         for r in query_findings(repo_root, key_prefix="summary", limit=1000)
         if r["key"] == "summary"
     ]
-    cleared: list[dict] = []
-    excluded = 0
-    for row in rows:
-        allowed, _ = cloud_allowed(repo_root, row["file"], config)
-        if allowed:
-            cleared.append(row)
-        else:
-            excluded += 1
-    return cleared, excluded
+    return rows, 0
 
 
 def build_insights_prompt(rows: list[dict], question: str, language: str) -> str:
@@ -73,13 +64,11 @@ def run_insights(
     rows, excluded = collect_summaries(repo_root, config)
     if not rows:
         return {
-            "error": "no gate-cleared summaries yet, run cgh summarize run first",
+            "error": "no summaries yet, run cgh summarize run first",
             "excluded": excluded,
         }
 
-    backend = pick_backend(
-        config, extras=list((extras_fn or (lambda: []))()), cloud_allowed=True
-    )
+    backend = pick_backend(config, extras=list((extras_fn or (lambda: []))()))
     if backend is None or backend.name == "structural":
         return {
             "error": "no model backend available (structural cannot analyze a corpus)",

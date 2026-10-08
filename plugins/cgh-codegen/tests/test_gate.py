@@ -6,8 +6,9 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The egress_decision verdict: clean file clears, confidential and
 #              block-severity and PII findings are refused, allow_pii opens the
-#              PII path, and strict posture demands an explicit
-#              non-confidential label.
+#              PII path, strict posture demands an explicit
+#              non-confidential label, and an unknown egress value fails
+#              closed to strict.
 
 from __future__ import annotations
 
@@ -73,6 +74,25 @@ def test_posture_defaults_to_open_even_with_legacy_secure_mode(tmp_path):
     )
     assert egress_posture(tmp_path, {}) == "open"
     assert egress_posture(tmp_path, {"egress": "strict"}) == "strict"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_absent_or_empty_egress_is_open(tmp_path, value):
+    from cgh_codegen.gate import egress_posture
+
+    config = {} if value is None else {"egress": value}
+    assert egress_posture(tmp_path, config) == "open"
+    assert egress_decision(tmp_path, "a.py", config)[0]
+
+
+@pytest.mark.parametrize("value", ["stict", "Open", " open", "OPEN", "none", True, 1])
+def test_unknown_egress_value_fails_closed(tmp_path, value):
+    from cgh_codegen.gate import egress_posture
+
+    assert egress_posture(tmp_path, {"egress": value}) == "strict"
+    allowed, reason = egress_decision(tmp_path, "a.py", {"egress": value})
+    assert not allowed
+    assert "treated as strict" in reason
 
 
 if __name__ == "__main__":  # pragma: no cover

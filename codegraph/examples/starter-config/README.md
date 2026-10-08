@@ -15,8 +15,9 @@ cgh examples install starter-config --dest .
 
 - Raising `max_file_size_kb` so large PDFs / spreadsheets are indexed
   (the key is in KB: 512000 = 500 MB).
-- Turning on the optional PII tiers (`ner`, `llm`) and the summarize
-  model, with the auto-pick of an installed Ollama model.
+- Turning on cgh-pii's index-time scan (`scan_on_index`) and its
+  optional tiers (`ner`, `llm`), with the auto-pick of an installed
+  Ollama model.
 - Narrowing or widening what gets indexed with `ignore_patterns`.
 
 Use `cgh files --check <path>` to see whether a file is indexed and, if

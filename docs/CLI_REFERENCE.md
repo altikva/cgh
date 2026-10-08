@@ -245,11 +245,18 @@ cgh stop [--root DIR]
 
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
-`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline` and `cgh graph` first
-ask the repo's running owner over its local HTTP port, and open the graph
-read-only themselves only when no owner answers (in CI, say). They never start
-an owner, and the output and `--json` shape are the same either way.
-`cgh search` and `cgh lookup` fall back to the full-text index instead.
+`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh graph`,
+`cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+running owner over its local HTTP port, and open the graph read-only
+themselves only when no owner answers (in CI, say). They never start an owner,
+and the output and `--json` shape are the same either way.
+
+An owner started by an older cgh may lack the tool a command needs. It still
+holds the graph, so `cgh lookup`, `cgh search` and `cgh files` then answer at
+once from the full-text index (which misses files that define no symbol),
+`cgh stats` shows its full-text and call-log counts only, and the other
+commands exit 1 with the fix: `cgh stop`, and the next agent call starts a
+current owner.
 
 A call to the owner gives up after 30 seconds (`CGH_OWNER_TIMEOUT` changes
 that) and prints how to recover: `cgh doctor --owner` to probe it, `cgh stop`

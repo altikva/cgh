@@ -150,17 +150,27 @@ def register(mcp) -> None:
 
         Differs from graph_stats: also includes scan_status and FTS count
         so you don't need multiple tool calls to assess the index health.
+        `edges` holds the count per edge type, non-empty types only.
         """
         from codegraph.core.fts import get_fts_conn
+        from codegraph.core.graph_model import STATS_EDGE_TYPES, STATS_NODE_LABELS
         from codegraph.state.scan_meta import scan_status as _scan_status
 
         conn = _get_conn()
         nodes: dict[str, int] = {}
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
+        for label in STATS_NODE_LABELS:
             try:
                 nodes[label] = conn.count_nodes(label)
             except Exception:
                 nodes[label] = 0
+        edges: dict[str, int] = {}
+        for edge_type in STATS_EDGE_TYPES:
+            try:
+                count = conn.count_edges(edge_type)
+            except Exception:
+                continue
+            if count > 0:
+                edges[edge_type] = count
 
         fts_count = 0
         try:
@@ -188,6 +198,7 @@ def register(mcp) -> None:
             {
                 "nodes": nodes,
                 "nodes_total": sum(nodes.values()),
+                "edges": edges,
                 "fts_symbols": fts_count,
                 "scan": ss,
                 "sampled_at": _t.time(),

@@ -28,6 +28,9 @@ def register(mcp) -> None:
         child_fts_symbol_search,
         federate_flat,
     )
+    from codegraph.analysis.terraform import lookup as tf_lookup
+    from codegraph.analysis.terraform import search as tf_search
+    from codegraph.analysis.terraform import used_by as tf_used_by
     from codegraph.server import _get_conn, _logged_tool
 
     def _federate(query_fn):
@@ -159,6 +162,9 @@ def register(mcp) -> None:
 
         Each definition carries its `name` (the section title for a
         markdown section, which matches on a title substring).
+
+        Terraform blocks are found by address too (var.region,
+        google_x.y, module.m, local.l, data.t.n, output.o).
         """
 
         def query(conn):
@@ -203,34 +209,16 @@ def register(mcp) -> None:
                         "doc": (row["docstring"] or "")[:120],
                     }
                 )
-            for row in conn.find_nodes(
-                "TFResource",
-                where={"name": name},
-                return_fields=["name", "file_path", "type", "start_line", "end_line"],
-            ):
+            # Terraform blocks, by address (var.region, google_x.y) or by
+            # bare block name.
+            for hit in tf_lookup(conn, name):
                 out.append(
                     {
-                        "kind": "tf_resource",
-                        "name": row["name"],
-                        "type": row["type"],
-                        "file": row["file_path"],
-                        "lines": f"{row['start_line']}-{row['end_line']}",
-                    }
-                )
-            # TFVar (terraform variable/output) has no end_line column, so it
-            # gets its own block anchored on start_line.
-            for row in conn.find_nodes(
-                "TFVar",
-                where={"name": name},
-                return_fields=["name", "file_path", "kind", "start_line"],
-            ):
-                out.append(
-                    {
-                        "kind": "tf_var",
-                        "name": row["name"],
-                        "type": row["kind"],
-                        "file": row["file_path"],
-                        "lines": str(row["start_line"]),
+                        "kind": hit["kind"],
+                        "name": hit["name"],
+                        "type": hit["type"],
+                        "file": hit["file"],
+                        "lines": f"{hit['start_line']}-{hit['end_line']}",
                     }
                 )
             for row in conn.find_nodes(
@@ -312,6 +300,9 @@ def register(mcp) -> None:
         Calls are matched by name: when several functions share `fn_name`
         (a method and its test double), each caller lists the matched
         definitions' files in `targets`.
+
+        For a Terraform address (var.region, google_x.y, module.m) it
+        returns each block that uses it.
         """
 
         from codegraph.analysis.callers import callers_of
@@ -339,6 +330,8 @@ def register(mcp) -> None:
         name-matched CALLS reach it can over-count: a listed callee may
         belong to a same-named function elsewhere. `truncated` is set when
         the fan-out or total cap was hit.
+
+        For a Terraform address it returns the blocks that block references.
         """
         depth_cap = max(1, min(int(max_depth), _CALLEE_DEPTH_CAP))
         state = {"truncated": False}
@@ -358,6 +351,12 @@ def register(mcp) -> None:
                         return_dst=["name", "file_path", "start_line"],
                         limit=_CALLEE_FANOUT_CAP,
                     )
+                    if "." in name:
+                        # A Terraform address: the blocks it references.
+                        rows = rows + [
+                            {**r, "dst_name": r["dst_address"]}
+                            for r in tf_used_by(conn, name, limit=_CALLEE_FANOUT_CAP)
+                        ]
                     if len(rows) >= _CALLEE_FANOUT_CAP:
                         state["truncated"] = True
                     for row in rows:
@@ -485,6 +484,9 @@ def register(mcp) -> None:
         kinds. `name_only=True` matches the name or section title only,
         not a TF type / kind or a section's body preview. Both are echoed
         back when set.
+
+        Terraform kinds for `kinds`: tf_resource, tf_data, tf_module,
+        tf_local, tf_provider, tf_var.
         """
         wanted = {k.strip() for k in kinds.split(",") if k.strip()}
 
@@ -510,40 +512,16 @@ def register(mcp) -> None:
                             "line": row["start_line"],
                         }
                     )
-            if _want("tf_resource"):
-                match = {"name": query} if name_only else {"name": query, "type": query}
-                for row in conn.find_nodes(
-                    "TFResource",
-                    contains=match,
-                    return_fields=["name", "type", "file_path", "start_line"],
-                    limit=limit,
-                ):
-                    out.append(
-                        {
-                            "kind": "tf_resource",
-                            "name": row["name"],
-                            "type": row["type"],
-                            "file": row["file_path"],
-                            "line": row["start_line"],
-                        }
-                    )
-            if _want("tf_var"):
-                match = {"name": query} if name_only else {"name": query, "kind": query}
-                for row in conn.find_nodes(
-                    "TFVar",
-                    contains=match,
-                    return_fields=["name", "kind", "file_path", "start_line"],
-                    limit=limit,
-                ):
-                    out.append(
-                        {
-                            "kind": "tf_var",
-                            "name": row["name"],
-                            "type": row["kind"],
-                            "file": row["file_path"],
-                            "line": row["start_line"],
-                        }
-                    )
+            for hit in tf_search(conn, query, limit, name_only, wanted):
+                out.append(
+                    {
+                        "kind": hit["kind"],
+                        "name": hit["name"],
+                        "type": hit["type"],
+                        "file": hit["file"],
+                        "line": hit["start_line"],
+                    }
+                )
             if _want("md_section"):
                 match = (
                     {"title": query}

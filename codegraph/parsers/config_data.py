@@ -50,8 +50,9 @@ def _add_section(
     level: int,
     line: int,
     body: str,
+    cap: int = _MAX_SECTIONS,
 ) -> None:
-    if len(idx.sections) >= _MAX_SECTIONS:
+    if len(idx.sections) >= cap:
         return
     sec_id = f"{path_str}::{title}"
     if any(s.id == sec_id for s in idx.sections):
@@ -102,6 +103,94 @@ def _sections_from_mapping(
                     _line_of_key(lines, sub),
                     _preview(value[sub]),
                 )
+
+
+# A contracts/ directory holds hand-written registries (env vars, secrets,
+# scheduled jobs) that agents search by entry name and by value: one section
+# per entry two levels down, its scalar fields as the searchable body.
+_CONTRACT_MAX_SECTIONS = 2000
+_CONTRACT_BODY_CAP = 400
+
+
+def _is_contract(path_str: str) -> bool:
+    return "contracts" in Path(path_str).parts[:-1]
+
+
+def _fields_preview(value: Any) -> str:
+    """`key: value; ...` over a mapping's scalar and list fields."""
+    if not isinstance(value, dict):
+        return _preview(value)
+    # Stop as soon as the preview is full: YAML aliases can make a small file
+    # load as huge shared structures, so never walk or join more than needed.
+    parts: list[str] = []
+    size = 0
+    for k, v in value.items():
+        if size > _CONTRACT_BODY_CAP:
+            break
+        if isinstance(v, dict):
+            part = f"{k}: {_preview(v)}"
+        elif isinstance(v, list):
+            items = []
+            for i in v:
+                if not isinstance(i, dict | list):
+                    items.append(str(i)[:_CONTRACT_BODY_CAP])
+                if sum(len(x) for x in items) > _CONTRACT_BODY_CAP:
+                    break
+            part = f"{k}: [{', '.join(items)}]"
+        else:
+            part = f"{k}: {str(v)[:_CONTRACT_BODY_CAP]}"
+        parts.append(part)
+        size += len(part)
+    return re.sub(r"\s+", " ", "; ".join(parts))[:_CONTRACT_BODY_CAP]
+
+
+def _line_after(lines: list[str], key: str, start: int) -> int:
+    """Source line of ``key`` at or after line ``start`` (1-based)."""
+    pat = re.compile(rf"""^\s*['"]?{re.escape(str(key))}['"]?\s*:""")
+    for i in range(max(start, 1), len(lines) + 1):
+        if pat.match(lines[i - 1]):
+            return i
+    return start
+
+
+def _contract_sections(
+    idx: FileIndex, path_str: str, data: dict, lines: list[str]
+) -> None:
+    """Three levels of sections for a contracts/ YAML file."""
+    cap = _CONTRACT_MAX_SECTIONS
+
+    def full() -> bool:
+        return len(idx.sections) >= cap
+
+    def add(title: str, level: int, line: int, value: Any) -> None:
+        _add_section(idx, path_str, title, level, line, _fields_preview(value), cap)
+
+    # Every loop stops at the section cap: aliases can repeat one large
+    # mapping under many keys, and the walk must not grow with the expansion.
+    for key, value in data.items():
+        if full():
+            return
+        line = _line_after(lines, key, 1)
+        add(str(key), 1, line, value)
+        if not isinstance(value, dict):
+            continue
+        for sub, sub_value in value.items():
+            if full():
+                return
+            sub_line = _line_after(lines, sub, line)
+            add(f"{key}.{sub}", 2, sub_line, sub_value)
+            if not isinstance(sub_value, dict):
+                continue
+            for leaf, leaf_value in sub_value.items():
+                if full():
+                    return
+                if isinstance(leaf_value, dict):
+                    add(
+                        f"{key}.{sub}.{leaf}",
+                        3,
+                        _line_after(lines, leaf, sub_line),
+                        leaf_value,
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +285,10 @@ def _yaml_top_keys_scan(idx: FileIndex, path_str: str, lines: list[str]) -> None
 @register_parser(".yaml", ".yml")
 class YamlParser(BaseParser):
     """YAML config files. Parses with PyYAML when available (top-level keys plus
-    one nested level: GitHub Actions jobs, compose services, k8s spec keys),
-    falling back to an indentation scan of column-0 keys when it is not."""
+    one nested level: GitHub Actions jobs, compose services, k8s spec keys;
+    a file under a contracts/ directory gets a third level, each entry with
+    its fields as searchable text), falling back to an indentation scan of
+    column-0 keys when it is not."""
 
     lang = "yaml"
     extensions = [".yaml", ".yml"]
@@ -244,7 +335,10 @@ class YamlParser(BaseParser):
                     _line_of_key(lines, "kind"),
                     _preview(data),
                 )
-            _sections_from_mapping(idx, path_str, data, lines)
+            if _is_contract(path_str):
+                _contract_sections(idx, path_str, data, lines)
+            else:
+                _sections_from_mapping(idx, path_str, data, lines)
 
         if not seen_any:
             _yaml_top_keys_scan(idx, path_str, lines)

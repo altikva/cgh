@@ -83,6 +83,7 @@ uv run --with pyinstaller "${UV_WITH[@]}" pyinstaller --noconfirm --onefile $STR
   --collect-all codegraph --collect-all tree_sitter \
   --collect-all tree_sitter_python --collect-all tree_sitter_typescript \
   --collect-all tree_sitter_go --collect-all tree_sitter_rust --collect-all tree_sitter_java \
+  --collect-all tree_sitter_hcl \
   --collect-all fastmcp --collect-all pydantic \
   --collect-all starlette --collect-all uvicorn --collect-all anyio \
   --collect-all sniffio --collect-all h11 --collect-all httpx --collect-all httpcore \

@@ -86,8 +86,25 @@ EDGES: dict[str, EdgeSpec] = {
     "HAS_METHOD": EdgeSpec(
         "HAS_METHOD", "edge_has_method", "Class", "Function", "from_id", "to_id"
     ),
+    # Terraform references, from the block whose expressions use an address
+    # to the block that defines it. Variables and outputs live in TFVar,
+    # every other block in TFResource, so one edge per label pair.
     "TF_DEPENDS": EdgeSpec(
         "TF_DEPENDS", "edge_tf_depends", "TFResource", "TFResource", "from_id", "to_id"
+    ),
+    "TF_REFS_VAR": EdgeSpec(
+        "TF_REFS_VAR", "edge_tf_refs_var", "TFResource", "TFVar", "from_id", "to_id"
+    ),
+    "TF_VAR_DEPENDS": EdgeSpec(
+        "TF_VAR_DEPENDS",
+        "edge_tf_var_depends",
+        "TFVar",
+        "TFResource",
+        "from_id",
+        "to_id",
+    ),
+    "TF_VAR_REFS": EdgeSpec(
+        "TF_VAR_REFS", "edge_tf_var_refs", "TFVar", "TFVar", "from_id", "to_id"
     ),
     "DEFINES_RESOURCE": EdgeSpec(
         "DEFINES_RESOURCE",
@@ -162,6 +179,15 @@ EDGES: dict[str, EdgeSpec] = {
 }
 
 
+# The Terraform reference edge for each (source label, target label) pair.
+TF_REF_EDGES: dict[tuple[str, str], str] = {
+    ("TFResource", "TFResource"): "TF_DEPENDS",
+    ("TFResource", "TFVar"): "TF_REFS_VAR",
+    ("TFVar", "TFResource"): "TF_VAR_DEPENDS",
+    ("TFVar", "TFVar"): "TF_VAR_REFS",
+}
+
+
 def edges_touching(label: str) -> list[EdgeSpec]:
     """Return every edge whose source or destination is ``label``.
 
@@ -193,6 +219,10 @@ STATS_EDGE_TYPES: tuple[str, ...] = (
     "MD_REFS_SYMBOL",
     "MD_REFS_CLASS",
     "CONTAINS_SECTION",
+    "TF_DEPENDS",
+    "TF_REFS_VAR",
+    "TF_VAR_DEPENDS",
+    "TF_VAR_REFS",
 )
 
 

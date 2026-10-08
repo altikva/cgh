@@ -9,7 +9,8 @@
 #              type and no schema change. tests_for(symbol_or_file) surfaces
 #              the test files that exercise a target; untested(role, layer)
 #              lists source files no test imports. Both federate across
-#              parent + subrepos and return JSON strings.
+#              parent + subrepos and return JSON strings. impact_report
+#              (parent only) serves `cgh impact` while an owner runs.
 
 from __future__ import annotations
 
@@ -104,6 +105,29 @@ def register(mcp) -> None:
             payload["partial"] = True
             payload["warnings"] = warnings
         return json.dumps(payload, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def impact_report(changed_files: list[str]) -> str:
+        """
+        Impact of a change set: the symbols defined in `changed_files`, the
+        files that transitively import them (by role / layer), endpoints
+        touched and tests to run. Same payload as `cgh impact --json`, which
+        calls this tool while an owner holds the graph. For one symbol or
+        file prefer `impact_of` / `tests_for`.
+
+        Args:
+          changed_files: repo-relative paths, e.g. from `git diff --name-only`.
+
+        Parent scope only, like the CLI. Inferred from IMPORTS / CALLS
+        edges, not coverage (see `note`).
+        """
+        if _srv._root is None:
+            return json.dumps({"error": "owner root not initialised"})
+        report = _impact.build_impact_report(
+            _get_conn(), str(_srv._root), list(changed_files)
+        )
+        return json.dumps(report, indent=2)
 
     @mcp.tool()
     @_logged_tool

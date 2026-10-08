@@ -51,6 +51,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **Links to `github.com/altikva/codegraph` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`
   pointed there; they now point at `github.com/altikva/cgh`.
+- **`cgh impact`, `callers`, `callees` and `outline` failed while an owner
+  ran**, so during every agent session. The owner holds the graph lock, so
+  they now ask it over HTTP (a new `impact_report` MCP tool serves
+  `cgh impact`) and open the graph themselves only when no owner answers.
+  Output is unchanged. A silent owner times out after 30s
+  (`CGH_OWNER_TIMEOUT`) with a pointer to `cgh doctor --owner` and `cgh stop`.
 
 ## [0.14.5] - 2026-10-07
 

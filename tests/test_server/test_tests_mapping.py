@@ -119,3 +119,17 @@ def test_untested_lists_unimported_source(mapping_root):
     # Test files are never reported as untested.
     assert not any(f.endswith("test_mymod.py") for f in files)
     assert "note" in out
+
+
+def test_impact_report_matches_cli_payload(mapping_root):
+    root = mapping_root
+    _build_repo(root)
+
+    tools = _register()
+    out = json.loads(tools["impact_report"](["mymod.py"]))
+
+    assert out["since_changed"] == ["mymod.py"]
+    assert {s["name"] for s in out["changed_symbols"]} == {"widget"}
+    assert [r["file"] for r in out["impacted"]] == ["test_mymod.py"]
+    assert [t["file"] for t in out["tests_to_run"]] == ["test_mymod.py"]
+    assert out["impacted_count"] == 1 and out["truncated"] is False

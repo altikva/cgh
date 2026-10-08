@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 53 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -31,6 +31,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 52 tools, plus wh
 | `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS` |
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
+| `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
 | `untested(role?, layer?)` | Source files that no test file imports |
 | `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
 | `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |

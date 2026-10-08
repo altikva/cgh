@@ -48,7 +48,9 @@ dependencies = [
     # imports lazily (4.0 moved fastmcp.server.tasks to
     # fastmcp.utilities.tasks). Keep the next major from arriving on an
     # unrelated reinstall; raise the ceiling deliberately after testing.
-    "fastmcp>=2.0,<5",
+    # Floor: fastmcp before 2.12 imports a private pydantic helper that
+    # pydantic 2.14 removed, so an older fastmcp breaks cgh at import time.
+    "fastmcp>=2.12,<5",
     "rank-bm25>=0.2",
     "rich>=13.0",
     "questionary>=2.0",

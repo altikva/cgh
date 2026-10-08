@@ -89,6 +89,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   other entries are unchanged.
 
 ### Fixed
+- **The standalone binary crashed when indexing any markdown, docx, pdf or
+  xlsx file** (`table md_section has no column named kind`). The section
+  kind column was added to the DuckDB schema only; the SQLite schema the
+  binary uses now has it too, and an existing SQLite graph gains it on open.
 - **Agents searched the code with `knowledge_search`.** An IBM Bob
   session used it for a whole task, because its description spoke of
   looking up "a pattern by keyword". The knowledge tools now say they hold

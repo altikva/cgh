@@ -61,8 +61,7 @@ See `integrations/gemini.md` for `GEMINI.md` instructions.
 `cgh setup bob` registers the MCP server in `.bob/mcp.json`, installs
 the bundled skills under `.bob/skills/` (Bob speaks the same Agent
 Skills standard as Claude Code), and drops the usage guidelines in
-`.bob/rules/`. The `cli:bob` summarize backend uses BobShell headless
-(`bob -p`).
+`.bob/rules/`.
 
 Bob compacts a task around 190k tokens and caps it at 270k, without telling
 the model, and its hooks cannot make the model write anything at the end of

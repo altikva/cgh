@@ -65,7 +65,8 @@ dependencies = [
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 # cgh-pii and cgh-vision stay installable by name (pip install cgh-pii);
 # they no longer scan at index unless [plugin.<name>] scan_on_index = true.
-# cgh-summarize and cgh-classify are frozen and left out of every extra.
+# cgh-summarize and cgh-classify are frozen: their final releases stay on
+# PyPI, they left this repo and are in no extra.
 plugins = [
     "cgh-docs>=0.2",
     "cgh-bugreport>=0.1.2",
@@ -196,7 +197,6 @@ ignore = [
 # user-controlled URLs.
 "codegraph/**" = ["S310"]
 "plugins/cgh-vision/**" = ["S310"]
-"plugins/cgh-summarize/**" = ["S310"]
 "plugins/cgh-codegen/**" = ["S310"]
 
 [tool.pytest.ini_options]

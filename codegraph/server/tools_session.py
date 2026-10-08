@@ -213,12 +213,11 @@ def register(mcp) -> None:
     @_logged_tool
     def checkpoint(session_id: str, digest: str, title: str = "") -> str:
         """
-        Persist a session snapshot BEFORE a context clear or compaction:
-        the digest survives outside the context window and future
-        sessions reload it through resume(). Idempotent per session_id
-        (a later checkpoint for the same session supersedes the earlier
-        one). Write anything the next session must not re-derive:
-        decisions made, state of the work, open threads.
+        How do I save where this task stands before a clear or compaction?
+        Stores `digest` (decisions, state of the work, open threads, next
+        step) outside the context window; resume() reloads it next session.
+        Idempotent per session_id: a later checkpoint replaces the earlier
+        one. A durable learning: knowledge_record.
         """
         from codegraph.state.call_log import knowledge_list, knowledge_record
 
@@ -245,13 +244,12 @@ def register(mcp) -> None:
         scope: str = "",
     ) -> str:
         """
-        ONE call to rehydrate after a context clear: standing
-        instructions first (never truncated), then recent session
-        digests, task-relevant knowledge, open plans, and recent file
-        summaries, ranked and capped at budget_kb. Pass the task for
-        relevance ranking; pass scope="all" to also pull knowledge from
-        federated subrepos (read-only, scope-tagged). Call this at
-        session start when the header announces a bundle.
+        Where did the last session leave off?
+        Call once at session start, or when a cgh header announces a
+        bundle. ONE call returns standing instructions first, then session
+        digests, task-relevant notes, open plans and recent file summaries,
+        capped at budget_kb. Pass `task` to rank; scope="all" adds federated
+        subrepos' notes.
         """
         bundle = build_resume_bundle(
             _srv._root,

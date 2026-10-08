@@ -530,9 +530,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     from codegraph.state.scan_meta import scan_status as _scan_status
 
     root = os.path.abspath(args.root)
-    # The legacy mode = "secure" notice is part of this command's own
-    # output (human and --json), so keep it off stderr here.
-    legacy_secure = _legacy_secure_mode(root)
+    # Config deprecation notices (legacy mode = "secure", dead keys) are
+    # part of this command's own output (human and --json), so keep them
+    # off stderr here.
+    notices = _config_notices(root)
 
     # Owner
     owner_pid = None
@@ -673,7 +674,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "extra_dirs": extra_dirs,
         "subrepos": subrepos,
-        "notices": [_legacy_secure_notice()] if legacy_secure else [],
+        "notices": notices,
     }
 
     if getattr(args, "json", False):
@@ -728,30 +729,29 @@ def cmd_status(args: argparse.Namespace) -> None:
     )
     table.add_row("Subrepos", _format_subrepos_cell(subrepos))
     console.print(table)
-    if legacy_secure:
-        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    for notice in notices:
+        console.print(f"[yellow]!![/yellow] {notice}")
 
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
 
 
-def _legacy_secure_mode(root: str | Path) -> bool:
-    """Does this repo's config still say mode = "secure"? Silences the
-    stderr notice first: the caller shows it in its own output."""
-    from codegraph.core.config import load_config, suppress_legacy_mode_warning
+def _config_notices(root: str | Path) -> list[str]:
+    """This repo's config deprecation notices (legacy mode = "secure",
+    keys nothing reads), each prefixed with config.toml. Silences the
+    stderr notice first: the caller shows them in its own output."""
+    from codegraph.core.config import (
+        config_notices,
+        load_config,
+        suppress_legacy_mode_warning,
+    )
 
     suppress_legacy_mode_warning()
     try:
-        return load_config(root).legacy_secure_mode
+        return [f"config.toml: {n}" for n in config_notices(load_config(root))]
     except Exception:
-        return False
-
-
-def _legacy_secure_notice() -> str:
-    from codegraph.core.config import LEGACY_SECURE_MODE_NOTICE
-
-    return f"config.toml: {LEGACY_SECURE_MODE_NOTICE}"
+        return []
 
 
 def _backend_info(root: str) -> dict:
@@ -1565,7 +1565,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print(detail)
         raise SystemExit(0 if healthy else 1)
     codegraph_dir = root / ".codegraph"
-    legacy_secure = _legacy_secure_mode(root)
+    notices = _config_notices(root)
 
     console.print(LOGO)
     console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
@@ -1723,9 +1723,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             pass_count += 1
 
     console.print(table)
-    if legacy_secure:
-        # Informational, not a failed check: the config still loads.
-        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    # Informational, not a failed check: the config still loads.
+    for notice in notices:
+        console.print(f"[yellow]!![/yellow] {notice}")
     # Informational, not a check: a stale plugin is skipped, cgh still works.
     for reason in _too_old_plugin_reasons(root):
         from rich.markup import escape

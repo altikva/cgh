@@ -10,18 +10,16 @@ that case without any daemon or network.
 Every capability shown here has **three access paths**, and each
 case's README covers all three: the **SDK** (these scripts, for your
 own code), the **cgh CLI** (the same feature as a verb inside an
-indexed repo, `cgh vision`, `cgh summarize run`, `cgh findings`, no
-code at all), and **MCP through your agent** (Claude Code, Cursor or
-Codex connected to `cgh serve` reads the same results with tools like
-`findings`, `summaries` or `corpus_insights`, so the models ran at
-indexing time, not at question time).
+indexed repo, `cgh vision`, `cgh pii scan`, `cgh findings`, no code at
+all), and **MCP through your agent** (Claude Code, Cursor or Codex
+connected to `cgh serve` reads the same results with tools like
+`findings`, so the models ran before question time).
 
 | Case | Shows | Needs |
 |---|---|---|
 | [scan-and-gate](scan-and-gate/) | scan text for PII, decide egress before calling a cloud model | cgh-pii |
 | [pseudonymize-logs](pseudonymize-logs/) | log findings without ever writing the sensitive value | cgh-pii |
 | [redact-document](redact-document/) | produce an anonymized copy of text or docx, keeping only chosen PII | cgh-pii (ner/docx extras) |
-| [summarize-local](summarize-local/) | summarize with a local model (cgh-summarize is frozen, local only) | cgh-summarize |
 | [vision-pipeline](vision-pipeline/) | inventory an image, extract diagram/table/chart as routed | cgh-vision + Ollama |
 | [document-diagrams](document-diagrams/) | pull embedded images out of pdf/docx/pptx, extract the schemas | cgh-vision + Ollama |
 | [vision-no-ollama](vision-no-ollama/) | run vision on llama.cpp or any OpenAI-compatible server, no Ollama | cgh-vision |
@@ -29,7 +27,7 @@ indexing time, not at question time).
 Quick start, all cases:
 
 ```bash
-pip install cgh cgh-pii cgh-summarize cgh-vision
+pip install cgh cgh-pii cgh-vision
 python examples/scan-and-gate/scan_and_gate.py
 ```
 

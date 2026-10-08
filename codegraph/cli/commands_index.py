@@ -45,15 +45,15 @@ def _structural_only() -> None:
     A foreground index (cgh index, init, force-index) would otherwise wait on
     one backend call per changed file, which turned a 3 s `init --from` into
     twenty minutes of `claude -p` once the seed source lagged behind. The
-    owner keeps them for files it indexes; `cgh summarize` backfills."""
+    owner keeps them for files it indexes."""
     from codegraph.plugins import scanners
     from codegraph.state.deferred_scan import suspend
 
     suspend()
     if any(getattr(s, "deferred", False) for _, s in scanners()):
         console.print(
-            "[dim]LLM scanners skipped for this index; run [/dim]"
-            "[cyan]cgh summarize[/cyan][dim] to backfill summaries.[/dim]"
+            "[dim]LLM scanners skipped for this index; a running owner "
+            "still runs them on the files it indexes.[/dim]"
         )
 
 
@@ -521,7 +521,7 @@ def cmd_reindex_hook(args: argparse.Namespace) -> None:
 
         # Structural only: no LLM-backed deferred scanner from a git hook.
         # It fires on every checkout of every worktree, and would spawn one
-        # backend call per file. `cgh summarize` and friends backfill.
+        # backend call per file.
         suspend()
         index_repo(root, method="incremental")
     except Exception:

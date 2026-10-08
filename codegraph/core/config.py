@@ -52,6 +52,19 @@ LEGACY_SECURE_MODE_NOTICE = (
     "cgh does not block file access any more, use your agent's own "
     "permission rules for that"
 )
+
+# Keys an older config.toml may still carry that nothing reads since
+# 0.15.0: the cgh-summarize settings for the cloud backends and the
+# egress gate it dropped in 0.3.0 (this core refuses older releases).
+# They load without error and are named in the same one-per-process
+# notice, never rejected.
+DEAD_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
+    ("plugin", "summarize", "allow_pii"),
+    ("plugin", "summarize", "egress"),
+    ("plugin", "summarize", "claude_model"),
+    ("plugin", "summarize", "gemini_model"),
+)
+
 _legacy_mode_warned = False
 _legacy_mode_suppressed = False
 
@@ -63,13 +76,32 @@ def suppress_legacy_mode_warning() -> None:
     _legacy_mode_suppressed = True
 
 
-def _warn_legacy_secure_mode() -> None:
+def dead_keys_notice(keys: list[str]) -> str:
+    """The notice naming config keys nothing reads, "" when there are none."""
+    if not keys:
+        return ""
+    return f"ignored since 0.15.0, delete them: {', '.join(keys)}"
+
+
+def config_notices(config: CodegraphConfig) -> list[str]:
+    """Deprecation notices for a loaded config, one string each."""
+    notices = []
+    if config.legacy_secure_mode:
+        notices.append(LEGACY_SECURE_MODE_NOTICE)
+    if config.dead_keys:
+        notices.append(dead_keys_notice(config.dead_keys))
+    return notices
+
+
+def _warn_deprecated_config(config: CodegraphConfig) -> None:
+    """One stderr line per process, whatever the config carries."""
     global _legacy_mode_warned
-    if _legacy_mode_warned or _legacy_mode_suppressed:
+    notices = config_notices(config)
+    if not notices or _legacy_mode_warned or _legacy_mode_suppressed:
         return
     _legacy_mode_warned = True
     try:
-        print(f"cgh: {LEGACY_SECURE_MODE_NOTICE}", file=sys.stderr)
+        print(f"cgh: {'; '.join(notices)}", file=sys.stderr)
     except Exception:
         pass  # a closed stderr must never break config loading
 
@@ -237,6 +269,9 @@ class CodegraphConfig:
     # which `cgh status` and `cgh doctor` report.
     mode: str = "assist"
     legacy_secure_mode: bool = False
+    # Keys found in the TOML that nothing reads (see DEAD_CONFIG_KEYS),
+    # as "[section] key" labels for the deprecation notice.
+    dead_keys: list[str] = field(default_factory=list)
 
     # Network fetch (fetch_and_index): off unless set to true. Private
     # and loopback hosts are refused regardless (SSRF), and every fetch
@@ -306,14 +341,14 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
             "yes",
         )
 
-    if config.legacy_secure_mode:
-        _warn_legacy_secure_mode()
+    _warn_deprecated_config(config)
 
     return config
 
 
 def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     """Apply TOML data to config object."""
+    _collect_dead_keys(config, data)
     cg = data.get("codegraph", {})
     if "ignore_dirs" in cg:
         config.ignore_dirs = cg["ignore_dirs"]
@@ -362,6 +397,17 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     for name, table in (data.get("plugin") or {}).items():
         if isinstance(table, dict):
             config.plugin_tables[name] = table
+
+
+def _collect_dead_keys(config: CodegraphConfig, data: dict) -> None:
+    for path in DEAD_CONFIG_KEYS:
+        node: object = data
+        for part in path[:-1]:
+            node = node.get(part) if isinstance(node, dict) else None
+        if isinstance(node, dict) and path[-1] in node:
+            label = f"[{'.'.join(path[:-1])}] {path[-1]}"
+            if label not in config.dead_keys:
+                config.dead_keys.append(label)
 
 
 def generate_default_config() -> str:
@@ -460,27 +506,6 @@ reindex_on_start = true
 # pii_llm_allow_remote = false    # a NON-loopback LLM endpoint sees file
 #                                 # content (egress): opt-in required, and every
 #                                 # probe, allowed or denied, is audited
-
-# [plugin.classify]
-# Frozen plugin, see its README.
-# scan_on_index = false  # classify every indexed file
-# threshold = 0.7        # predict confidential above this probability
-# uncertain_low = 0.35   # review window lower bound
-# uncertain_high = 0.65  # review window upper bound
-
-# [plugin.summarize]
-# Frozen plugin, see its README. Local backends only, run with
-# `cgh summarize run`; nothing runs at index time.
-# backend = "auto"       # or ollama, openai, structural
-# min_kb = 4             # skip files smaller than this
-# language = "en"        # summary language
-# ollama_model = "qwen2.5:1.5b"   # if this one is not pulled, an installed
-#                                 # generative model is auto-picked; if none
-#                                 # is installed the tier degrades (no summary)
-# ollama_url = "http://127.0.0.1:11434"
-# openai_base_url = ""   # a loopback OpenAI-compatible server, e.g. llama-server
-# openai_model = ""
-# openai_api_key_env = "OPENAI_API_KEY"
 
 # [plugin.vision]
 # `cgh vision <file>` runs on demand. Index-time image reading is opt-in.

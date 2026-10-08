@@ -109,8 +109,19 @@ checkpoint_gate = 0
 
 | Key | Plugin | Default | Description |
 |-----|--------|---------|-------------|
-| `scan_on_index` | pii, vision, classify | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`, `cgh classify`). |
+| `scan_on_index` | pii, vision | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`). |
 | `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `codegraph.sdk.scan_text` keeps them on unless this is set to `false`. |
+
+#### Ignored keys
+
+These keys still load without error but nothing reads them. A config
+that carries one gets a single notice per process on stderr (never in
+hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
+
+| Key | Since | Why |
+|-----|-------|-----|
+| `[codegraph] mode = "secure"` | 0.15.0 | Secure mode was removed. `mode = "assist"` stays silent. |
+| `[plugin.summarize] allow_pii`, `egress`, `claude_model`, `gemini_model` | 0.15.0 | cgh-summarize 0.3.0 dropped its cloud backends and egress gate, and cgh refuses older releases. |
 
 #### `[codegraph]`
 

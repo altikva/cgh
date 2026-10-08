@@ -197,6 +197,18 @@ SIDE_TABLES = [
         name       TEXT,
         to_id      TEXT NOT NULL DEFAULT ''
     )""",
+    # Every other reference resolved by name, kept so its edge can be rebuilt
+    # from either end: a class base (kind "inherits"), a markdown code mention
+    # ("md_ref", extra = context), a markdown link ("md_link", name = target
+    # path, extra = label) and an endpoint handler defined in another file
+    # ("handler", extra = the candidate file). No PK: rows are deduped first.
+    """CREATE TABLE IF NOT EXISTS name_ref (
+        kind       TEXT,
+        from_id    TEXT,
+        file_path  TEXT,
+        name       TEXT,
+        extra      TEXT NOT NULL DEFAULT ''
+    )""",
 ]
 
 
@@ -217,6 +229,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_name ON call_site(name)",
     "CREATE INDEX IF NOT EXISTS idx_call_site_file ON call_site(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
 ]
 
 

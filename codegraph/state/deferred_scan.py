@@ -25,7 +25,7 @@ _WORKER_STARTED = threading.Event()
 _LOCK = threading.Lock()
 
 # Deferred scan errors are collapsed by message, not logged per file: a
-# misconfigured backend (say a summarize model that 404s) would otherwise
+# misconfigured backend (say a model name that 404s) would otherwise
 # print the same line once per file. Each distinct message is counted with
 # one sample path and flushed as a single summary line when the queue
 # drains, so identical errors read as one line and different errors each

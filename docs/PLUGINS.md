@@ -29,14 +29,16 @@ First-party plugins live in [plugins/](../plugins) and install separately, so th
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo | `cgh[plugins]` |
 | `cgh-pii` | `cgh pii scan` for secrets on demand (exit 1 on a private or cloud key, for CI), `cgh pii redact` for documents | by name |
 | `cgh-vision` | `cgh vision <file>`: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models | by name |
-| `cgh-summarize` | frozen: local-model file summaries, `cgh summarize run` | by name |
-| `cgh-classify` | frozen: human-trainable confidentiality labels | by name |
+cgh-pii and cgh-vision do not scan while cgh indexes unless you set
+`scan_on_index = true` in their `[plugin.<name>]` table (see
+[CONFIGURATION.md](CONFIGURATION.md)). The plugin interface for
+index-time scanners is unchanged, for any plugin that wants one.
 
-cgh-pii, cgh-vision and cgh-classify do not scan while cgh indexes unless
-you set `scan_on_index = true` in their `[plugin.<name>]` table (see
-[CONFIGURATION.md](CONFIGURATION.md)); cgh-summarize never does. The
-plugin interface for index-time scanners is unchanged, for any plugin
-that wants one.
+cgh-summarize (local-model file summaries) and cgh-classify
+(human-trainable confidentiality labels) are frozen: 0.3.0 and 0.2.0 are
+their final releases. They left this repo but stay installable from PyPI
+by name (`--with cgh-summarize`), and cgh still loads them; older
+releases are refused, see [UPGRADING-0.15.md](UPGRADING-0.15.md).
 
 On a locked-down machine where the Ollama registry is blocked,
 `cgh-vision` runs from Hugging Face GGUF weights instead: download the

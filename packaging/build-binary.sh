@@ -27,8 +27,8 @@
 #           name is the capability (can egress), never a state
 #           ("connected"/"online" would overclaim).
 #
-# cgh-pii, cgh-vision, cgh-summarize and cgh-classify are in neither: they
-# are not in the default install either. cgh-docs pulls lxml (via
+# cgh-pii and cgh-vision are in neither: they are not in the default
+# install either. cgh-docs pulls lxml (via
 # python-docx), a native wheel that exists for every target in the release
 # matrix; its dependencies are collected whole, see the third field below.
 set -euo pipefail

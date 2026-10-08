@@ -258,7 +258,7 @@ from codegraph.server.tools_viz import register as _register_viz
 _register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
 _register_query(mcp)
 _register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
-_register_tests(mcp)  # tests_for, untested
+_register_tests(mcp)  # tests_for, impact_report, untested
 _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)

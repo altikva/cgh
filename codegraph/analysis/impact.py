@@ -10,9 +10,12 @@
 #              edges plus File.role, with no new edge type, plus a bounded
 #              reverse-BFS over IMPORTS for blast radius. Backend-neutral:
 #              every call goes through the GraphDB protocol, no raw SQL.
+#              build_impact_report assembles the full `cgh impact` payload
+#              for both the CLI and the impact_report MCP tool.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # Hard caps so a pathological graph never produces an unbounded result.
@@ -293,3 +296,77 @@ def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, str]]:
             seen.add(key)
             out.append({"file": fp, "method": method, "path": path})
     return out
+
+
+IMPACT_NOTE = (
+    "Blast radius and tests are inferred from IMPORTS / CALLS edges, "
+    "not a coverage run. Keep the index fresh with `cgh index` in CI."
+)
+
+
+def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
+    """The `cgh impact` report for a set of repo-relative changed files.
+
+    Shared by the CLI (local read-only open) and the ``impact_report`` MCP
+    tool (the owner's connection), so both paths return the same payload.
+    All paths in the result are repo-relative.
+    """
+    root_path = Path(root).resolve()
+
+    def _rel(p: str) -> str:
+        try:
+            return str(Path(p).resolve().relative_to(root_path))
+        except (ValueError, OSError):
+            return p
+
+    # Changed files resolve to absolute File-node keys for graph lookups.
+    abs_changed = [str(root_path / f) for f in changed_files]
+
+    changed_symbols: list[dict] = []
+    for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
+        for sym in symbols_in_file(conn, abs_f):
+            changed_symbols.append({"file": rel_f, **sym})
+
+    # Blast radius: files that transitively import any changed file.
+    radius, radius_trunc = reverse_import_bfs(conn, abs_changed, max_depth=3)
+
+    impacted: list[dict] = []
+    by_role: dict[str, int] = {}
+    by_layer: dict[str, int] = {}
+    for abs_p in radius:
+        role, layer = file_role(conn, abs_p)
+        impacted.append({"file": _rel(abs_p), "role": role, "layer": layer})
+        if role:
+            by_role[role] = by_role.get(role, 0) + 1
+        if layer:
+            by_layer[layer] = by_layer.get(layer, 0) + 1
+
+    # Endpoints declared in the changed files OR any impacted file.
+    endpoints = [
+        {"file": _rel(e["file"]), "method": e["method"], "path": e["path"]}
+        for e in endpoints_in_files(conn, abs_changed + radius)
+    ]
+
+    # Tests to run: for each changed file, the test files that exercise it.
+    test_seen: set[str] = set()
+    tests: list[dict] = []
+    for abs_f in abs_changed:
+        for t in tests_for_file(conn, abs_f):
+            rel_t = _rel(t["file"])
+            if rel_t in test_seen:
+                continue
+            test_seen.add(rel_t)
+            tests.append({"file": rel_t, "role": t["role"]})
+
+    return {
+        "since_changed": list(changed_files),
+        "changed_symbols": changed_symbols,
+        "impacted": impacted,
+        "impacted_count": len(impacted),
+        "impacted_by_role": by_role,
+        "impacted_by_layer": by_layer,
+        "endpoints": endpoints,
+        "tests_to_run": tests,
+        "truncated": radius_trunc,
+        "note": IMPACT_NOTE,
+    }

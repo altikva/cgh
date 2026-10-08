@@ -9,8 +9,9 @@
 #              to report changed symbols, the IMPORTS blast radius grouped by
 #              role / layer, endpoints touched, and tests to run. Emits JSON
 #              (machine-parseable on stdout) or a markdown PR-comment summary.
-#              Runs without an MCP owner: opens the graph DB read-only and
-#              degrades gracefully when the index is missing or stale.
+#              Asks the repo's live owner when one holds the graph (the
+#              impact_report MCP tool), else opens the graph DB read-only,
+#              so it works both in CI and during an agent session.
 
 from __future__ import annotations
 
@@ -73,76 +74,14 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
 
 
 def _build_report(conn, root: str, changed_files: list[str]) -> dict:
-    """Assemble the impact report from the graph for the changed files.
+    """Assemble the impact report from a local read-only connection.
 
-    Uses the shared analysis helpers so the CLI and the MCP tools stay in
-    lockstep. All paths returned to the caller are repo-relative.
+    Thin alias over the shared analysis helper so the CLI and the
+    impact_report MCP tool stay in lockstep.
     """
-    from codegraph.analysis import impact as _impact
+    from codegraph.analysis.impact import build_impact_report
 
-    root_path = Path(root).resolve()
-
-    def _rel(p: str) -> str:
-        try:
-            return str(Path(p).resolve().relative_to(root_path))
-        except (ValueError, OSError):
-            return p
-
-    # Changed files resolve to absolute File-node keys for graph lookups.
-    abs_changed = [str(root_path / f) for f in changed_files]
-
-    changed_symbols: list[dict] = []
-    for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
-        for sym in _impact.symbols_in_file(conn, abs_f):
-            changed_symbols.append({"file": rel_f, **sym})
-
-    # Blast radius: files that transitively import any changed file.
-    radius, radius_trunc = _impact.reverse_import_bfs(conn, abs_changed, max_depth=3)
-
-    impacted: list[dict] = []
-    by_role: dict[str, int] = {}
-    by_layer: dict[str, int] = {}
-    for abs_p in radius:
-        role, layer = _impact.file_role(conn, abs_p)
-        impacted.append({"file": _rel(abs_p), "role": role, "layer": layer})
-        if role:
-            by_role[role] = by_role.get(role, 0) + 1
-        if layer:
-            by_layer[layer] = by_layer.get(layer, 0) + 1
-
-    # Endpoints declared in the changed files OR any impacted file.
-    endpoint_scope = abs_changed + radius
-    endpoints = [
-        {"file": _rel(e["file"]), "method": e["method"], "path": e["path"]}
-        for e in _impact.endpoints_in_files(conn, endpoint_scope)
-    ]
-
-    # Tests to run: for each changed file, the test files that exercise it.
-    test_seen: set[str] = set()
-    tests: list[dict] = []
-    for abs_f in abs_changed:
-        for t in _impact.tests_for_file(conn, abs_f):
-            rel_t = _rel(t["file"])
-            if rel_t in test_seen:
-                continue
-            test_seen.add(rel_t)
-            tests.append({"file": rel_t, "role": t["role"]})
-
-    return {
-        "since_changed": changed_files,
-        "changed_symbols": changed_symbols,
-        "impacted": impacted,
-        "impacted_count": len(impacted),
-        "impacted_by_role": by_role,
-        "impacted_by_layer": by_layer,
-        "endpoints": endpoints,
-        "tests_to_run": tests,
-        "truncated": radius_trunc,
-        "note": (
-            "Blast radius and tests are inferred from IMPORTS / CALLS edges, "
-            "not a coverage run. Keep the index fresh with `cgh index` in CI."
-        ),
-    }
+    return build_impact_report(conn, root, changed_files)
 
 
 def _render_markdown(report: dict, since: str) -> str:
@@ -207,8 +146,8 @@ def _render_markdown(report: dict, since: str) -> str:
 
 
 def cmd_impact(args: argparse.Namespace) -> None:
-    """Handler for `cgh impact`. Non-MCP, CI-oriented: diffs against a ref,
-    reads the graph read-only, and emits JSON or markdown."""
+    """Handler for `cgh impact`. CI-oriented: diffs against a ref, reads the
+    graph (through a live owner, else read-only), and emits JSON or markdown."""
     root = os.path.abspath(args.root)
     since = getattr(args, "since", "HEAD~1") or "HEAD~1"
 
@@ -222,7 +161,7 @@ def cmd_impact(args: argparse.Namespace) -> None:
     _err.print(LOGO)
     _err.print(
         "[dim]impact: diffing against "
-        f"[/dim][cyan]{since}[/cyan][dim], reading graph read-only. "
+        f"[/dim][cyan]{since}[/cyan][dim], reading the graph. "
         "Keep the index fresh with [/dim][cyan]cgh index[/cyan][dim] in CI.[/dim]\n"
     )
 
@@ -239,28 +178,24 @@ def cmd_impact(args: argparse.Namespace) -> None:
         _fail(want_json, err)
         return
 
-    # Open the graph read-only directly, no MCP owner required. When an owner
-    # holds the write lock, get_readonly_connection returns None; tell the
-    # caller clearly rather than emitting a misleading empty report.
-    from codegraph.core.db import get_readonly_connection
+    # A live owner holds the graph DB for writing, which blocks our own
+    # read-only open, so ask it first. No owner (CI) -> open read-only here.
+    # Never start an owner from this command.
+    from codegraph.cli.owner_client import call_owner_tool, note_route, stuck_owner_hint
 
-    conn = None
-    try:
-        conn = get_readonly_connection(root)
-    except Exception as exc:
-        _fail(want_json, f"could not open graph read-only: {exc}")
+    reply = call_owner_tool(root, "impact_report", {"changed_files": changed})
+    if reply.ok and isinstance(reply.data, dict) and "error" not in reply.data:
+        report = reply.data
+        note_route("impact", "owner")
+    elif reply.status == "timeout":
+        # The owner is alive and holds the lock: a local open cannot succeed.
+        _fail(want_json, stuck_owner_hint(root, reply))
         return
-
-    if conn is None:
-        _fail(
-            want_json,
-            "graph DB is locked (an MCP owner is running) or missing. "
-            "Stop the owner with `cgh serve --stop`, or run this in CI where "
-            "no owner is alive.",
-        )
-        return
-
-    report = _build_report(conn, root, changed)
+    else:
+        report = _report_via_local_open(root, changed, reply, want_json)
+        if report is None:
+            return
+        note_route("impact", "local read-only open")
     report["since"] = since
 
     from codegraph.cli.output import emit_result
@@ -271,6 +206,33 @@ def cmd_impact(args: argparse.Namespace) -> None:
         emit_result(json.dumps(report, indent=2), out=out, hint="impact.json")
     else:
         emit_result(_render_markdown(report, since), out=out, hint="impact.md")
+
+
+def _report_via_local_open(
+    root: str, changed: list[str], reply, want_json: bool
+) -> dict | None:
+    """Build the report from a local read-only open. ``reply`` is the owner
+    attempt that preceded it; when an owner answered with an error, that
+    error is folded into the failure message. Returns None after _fail."""
+    from codegraph.cli.owner_client import stuck_owner_hint
+    from codegraph.core.db import get_readonly_connection
+
+    try:
+        conn = get_readonly_connection(root)
+    except Exception as exc:
+        _fail(want_json, f"could not open graph read-only: {exc}")
+        return None
+    if conn is None:
+        if reply.status == "error":
+            _fail(want_json, stuck_owner_hint(root, reply))
+        else:
+            _fail(
+                want_json,
+                "graph DB is missing or locked by another cgh process. "
+                "Run `cgh index` if the repo was never indexed.",
+            )
+        return None
+    return _build_report(conn, root, changed)
 
 
 def _fail(want_json: bool, message: str) -> None:

@@ -76,14 +76,43 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   bm25, and takes `--limit` and `--json`. It reads the index read-only, so it
   works while the owner runs. The `fts_search` MCP tool now retries a query
   that matches nothing as written the same way; its response is unchanged.
+- **`cgh knowledge promote` recognises what it already carried and follows
+  revisions.** Each promoted entry now records its source worktree and its id
+  there, so an entry revised on the branch (`supersedes`) replaces its earlier
+  copy in the main checkout instead of sitting next to it, and a re-run never
+  brings back an entry the main checkout has since replaced. `--from` defaults
+  to the current directory; new `--dry-run`, `--json`, and `--archive DIR`
+  (every row of the source store as JSON lines, written before promoting).
+  `--kinds` is now the exact list, without plain notes added on top.
+  `knowledge_list`, `knowledge_search` and the resume bundle give a promoted
+  entry a `provenance` object (branch, PR, worktree, origin id, promoted_at);
+  other entries are unchanged.
 
 ### Fixed
+- **Agents searched the code with `knowledge_search`.** An IBM Bob
+  session used it for a whole task, because its description spoke of
+  looking up "a pattern by keyword". The knowledge tools now say they hold
+  notes, not code, and point to the code tools; `fts_search` says it takes
+  a sentence in French or English; and a short "which tool answers which
+  question" guide leads the MCP server instructions and the usage rules
+  `cgh setup` installs for every agent. Rerun `cgh setup <agent>` to
+  refresh installed rules.
+- **Opening a knowledge store held its write lock until the next write.** Any
+  other process writing the same store, such as a CLI command or a hook next to
+  a running owner, waited five seconds and failed with "database is locked".
 - **cgh could fail to start with pydantic 2.14** when an older fastmcp was
-  installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed.
-  The fastmcp floor is now 2.12.
+  installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed,
+  and with fastmcp before 2.13 the owner could not start at all. The fastmcp
+  floor is now 2.13.
 - **Links to `github.com/altikva/codegraph` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`
   pointed there; they now point at `github.com/altikva/cgh`.
+- **`cgh impact`, `callers`, `callees` and `outline` failed while an owner
+  ran**, so during every agent session. The owner holds the graph lock, so
+  they now ask it over HTTP (a new `impact_report` MCP tool serves
+  `cgh impact`) and open the graph themselves only when no owner answers.
+  Output is unchanged. A silent owner times out after 30s
+  (`CGH_OWNER_TIMEOUT`) with a pointer to `cgh doctor --owner` and `cgh stop`.
 
 ## [0.14.5] - 2026-10-07
 

@@ -899,69 +899,12 @@ def _call_owner_tool(root: str, port: int, tool: str, timeout: float) -> dict | 
     auth, HTTP error, malformed body). Used by cgh status when the owner
     is alive and the local CLI can't open the graph DB read-only.
     """
-    import http.client
-    import json as _json
+    from codegraph.cli.owner_client import call_owner_tool
 
-    from codegraph.state.auth import ensure_auth_key
-
-    try:
-        token = ensure_auth_key(root)
-    except Exception:
+    reply = call_owner_tool(root, tool, port=port, timeout=timeout)
+    if not reply.ok or not isinstance(reply.data, dict):
         return None
-    body = _json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": tool, "arguments": {}},
-        }
-    )
-    try:
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-        c.request(
-            "POST",
-            "/mcp",
-            body=body.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        resp = c.getresponse()
-        if resp.status != 200:
-            return None
-        raw = resp.read().decode("utf-8", errors="replace")
-        c.close()
-    except Exception:
-        return None
-
-    # MCP returns either a JSON object or an SSE stream depending on
-    # the Accept header negotiation. Find the JSON-RPC envelope either way.
-    payload = None
-    if raw.startswith("{"):
-        try:
-            payload = _json.loads(raw)
-        except Exception:
-            return None
-    else:
-        # SSE: lines start with `data: `, last `data:` line carries the result
-        for line in raw.splitlines():
-            if line.startswith("data: "):
-                try:
-                    payload = _json.loads(line[6:])
-                except Exception:
-                    pass
-    if not payload:
-        return None
-    content = (payload.get("result") or {}).get("content") or []
-    text = next((c["text"] for c in content if c.get("type") == "text"), None)
-    if not text:
-        return None
-    try:
-        return _json.loads(text)
-    except Exception:
-        return None
+    return reply.data
 
 
 def _print_workers_table(worker_pids: list[int], owner_pid: int | None) -> None:

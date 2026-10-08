@@ -32,9 +32,9 @@ def test_template_mentions_every_optional_surface():
         "# subrepos =",
         "# federate_auto_up =",
         "# log_max_mb =",
-        "# [plugin.summarize]",
-        "# [plugin.classify]",
-        "# backend =",
+        "# [plugin.pii]",
+        "# [plugin.vision]",
+        "# scan_on_index =",
     ):
         assert needle in text, f"template lost the {needle!r} guidance"
 
@@ -60,7 +60,7 @@ def test_uncommenting_every_option_still_parses():
     assert cg["allow_fetch"] is False
     assert cg["federate_auto_up"] is True
     assert cg["log_max_mb"] == 5
-    summarize = data["plugin"]["summarize"]
-    assert summarize["backend"] == "auto"
-    assert summarize["min_kb"] == 4
-    assert data["plugin"]["classify"]["threshold"] == 0.7
+    assert data["plugin"]["pii"]["scan_on_index"] is False
+    assert data["plugin"]["vision"]["profile"] == "default"
+    # The frozen plugins left the repo; their keys are in their READMEs.
+    assert set(data["plugin"]) == {"pii", "vision"}

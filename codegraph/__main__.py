@@ -749,9 +749,9 @@ def main() -> None:
         sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES)
         or sys.argv[1] in ("status", "doctor")
     ):
-        # Agents parse hook output: the legacy mode = "secure" notice must
-        # not ride along with a hook, not even on stderr. status and
-        # doctor print it in their own output instead.
+        # Agents parse hook output: the config deprecation notice (legacy
+        # mode = "secure", dead keys) must not ride along with a hook, not
+        # even on stderr. status and doctor print it in their own output.
         from codegraph.core.config import suppress_legacy_mode_warning
 
         suppress_legacy_mode_warning()

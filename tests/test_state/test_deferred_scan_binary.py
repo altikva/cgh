@@ -4,16 +4,11 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Field fixes from a Windows monorepo: scanner text never
+# Description: Field fix from a Windows monorepo: scanner text never
 #              carries embedded nulls (binary docx/xlsx decoded with
-#              errors=replace used to poison subprocess argv), binary
-#              documents summarize from their section previews, and a
-#              failing summarize backend is named in the error instead of
-#              the scanned file.
+#              errors=replace used to poison subprocess argv).
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -53,58 +48,3 @@ class TestNullStripping:
         assert "fake zip" in seen[0]
         rows = store.query_findings(tmp_path, key_prefix="probe.")
         assert len(rows) == 1
-
-
-class TestBinaryExcerpt:
-    def test_replacement_soup_uses_section_previews(self, tmp_path, monkeypatch):
-        pytest.importorskip("cgh_summarize")
-        from cgh_summarize.scanner import build_prompt
-
-        class FakeIdx:
-            functions: list = []
-            classes: list = []
-            resources: list = []
-
-            class _Sec:
-                level = 1
-                title = "Overview"
-                body_preview = "the actual document text"
-
-            sections = [_Sec()]
-
-        class FakeParser:
-            def parse(self, path):
-                return FakeIdx()
-
-        monkeypatch.setattr(
-            "codegraph.parsers.get_parser_for_path", lambda p: FakeParser()
-        )
-        soup = "\ufffd" * 300 + "PK zip noise"
-        prompt = build_prompt(Path("doc.docx"), soup, "en")
-
-        assert "the actual document text" in prompt
-        assert "PK zip noise" not in prompt
-        assert "# Overview" in prompt
-
-
-class TestBackendErrorContext:
-    def test_scanner_names_the_failing_backend(self, tmp_path, monkeypatch):
-        pytest.importorskip("cgh_summarize")
-        from cgh_summarize.scanner import SummarizeScanner
-
-        (tmp_path / ".codegraph").mkdir()
-
-        class Broken:
-            name = "broken-local"
-            egress = "local"
-
-            def available(self, config):
-                return True
-
-            def summarize(self, prompt, config):
-                raise FileNotFoundError("[WinError 2] file not found")
-
-        scanner = SummarizeScanner({}, tmp_path, extras_fn=lambda: [Broken()])
-        big = "x = 1\n" * 2000
-        with pytest.raises(RuntimeError, match=r"summarize backend broken-local"):
-            scanner.scan(Path("/r/big.py"), big, None)

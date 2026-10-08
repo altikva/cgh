@@ -34,8 +34,9 @@ def test_ensure_gitignore_auth_key_tolerates_non_utf8(tmp_path):
 
 
 def test_guard_cleanup_tolerates_non_utf8_bobignore(tmp_path):
-    """cgh init removes the managed .bobignore block older versions
-    wrote; a CP1252 byte in the user's part must not crash that read."""
+    """cgh init counts, and `cgh guard --remove-rules` removes, the managed
+    .bobignore block older versions wrote; a CP1252 byte in the user's part
+    must not crash either read."""
     from codegraph.state.guard import cleanup_guard_leftovers
 
     (tmp_path / ".bobignore").write_bytes(
@@ -43,7 +44,8 @@ def test_guard_cleanup_tolerates_non_utf8_bobignore(tmp_path):
         b"# >>> cgh guard (managed, do not edit) >>>\n.codegraph/\n"
         b"# <<< cgh guard <<<\n"
     )
-    report = cleanup_guard_leftovers(tmp_path)  # must not raise
+    assert cleanup_guard_leftovers(tmp_path).kept_rules == 1  # must not raise
+    report = cleanup_guard_leftovers(tmp_path, remove_rules=True)
     assert report.bobignore_lines == [".codegraph/"]
     txt = (tmp_path / ".bobignore").read_text(encoding="utf-8", errors="replace")
     assert "build/" in txt and "cgh guard" not in txt

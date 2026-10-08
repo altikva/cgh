@@ -156,13 +156,22 @@ def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | No
     Returns the tool's JSON dict when the owner served it, None when no owner
     answered (the caller then opens the DB itself). A timed-out owner still
     holds the lock, so a local open would only wait and fail: print the
-    remedy and exit 1 instead.
+    remedy and exit 1 instead. Same for an owner from an older cgh that
+    lacks ``tool``: it holds the lock all the same.
     """
-    from codegraph.cli.owner_client import call_owner_tool, note_route, stuck_owner_hint
+    from codegraph.cli.owner_client import (
+        call_owner_tool,
+        note_route,
+        older_owner_hint,
+        stuck_owner_hint,
+    )
 
     reply = call_owner_tool(root, tool, arguments)
     if reply.status == "timeout":
         console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
+        raise SystemExit(1)
+    if reply.status == "unknown_tool":
+        console.print(f"[yellow]{older_owner_hint(root, tool)}[/yellow]")
         raise SystemExit(1)
     if reply.ok and isinstance(reply.data, dict):
         note_route(command, "owner")

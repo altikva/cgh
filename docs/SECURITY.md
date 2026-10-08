@@ -27,10 +27,14 @@ Installed plugins can, as described for each one below.
   `.codegraph/activity.log`.
 - **Code generation** (`cgh-codegen`): the backend is your choice in
   `[plugin.codegen]`. Every file it would send (the reference, a file
-  being extended) and the spec first go through a built-in secret check:
-  a private key, cloud or provider token, or hardcoded credential refuses
-  the run, for any backend and any egress setting, and the refusal names
-  the file and line, not the value. Before a cloud backend sees a
+  being extended) and the spec first go through a built-in secret check.
+  It is regex based and blocks known secret formats: private key blocks,
+  AWS access key ids, GCP service-account key files, GitHub, Slack and
+  Stripe live tokens, bearer tokens and hardcoded `password` / `secret` /
+  `api_key` / `token` assignments. A match refuses the run, for any
+  backend and any egress setting, and the refusal names the file and
+  line, not the value. It is best effort, not a guarantee: a secret in a
+  format it has no pattern for is sent. Before a cloud backend sees a
   reference, an egress gate also checks its findings (below), and every
   cloud call is logged.
 - **Summaries** (`cgh-summarize`, frozen): since 0.3.0 it uses local
@@ -64,8 +68,11 @@ Without them the gate has no PII or confidentiality labels to act on;
 secrets are still caught by cgh-codegen's own check, which reads the
 file itself. An `egress` value other than `"open"` or `"strict"` is
 treated as `"strict"`. Run `cgh pii scan` to check a tree for secrets on
-demand. The PII and secret patterns are regex based. They catch common shapes
-and miss what they have no pattern for, so treat the gate as a useful
+demand; it knows three secret shapes (AWS access key ids, PEM private
+keys, hardcoded `password` / `secret` / `api_key` / `token` assignments),
+so a clean run is best effort, not proof the tree holds no secret. The
+PII and secret patterns are regex based. They catch common shapes and
+miss what they have no pattern for, so treat the gate as a useful
 filter, not a guarantee. Findings are stored as the scanner reported
 them. Repos indexed before 0.15.0 with `mode = "secure"` may still
 hold pseudonyms such as `<pii.email:3fa2c1b4d5>` for older findings;
@@ -87,11 +94,15 @@ The key file has `600` permissions and the `.codegraph/` directory is `700` (own
 `mode = "secure"` was removed in 0.15.0. A config that still sets it
 loads with the normal behavior, prints a one-line notice on stderr, and
 `cgh status` / `cgh doctor` show the same notice; delete the line to
-silence it. Run `cgh init` (or `cgh guard`) once: it removes the deny
-rules cgh had written to `.claude/settings.local.json` (only the ones
-recorded in `.codegraph/guard_denies.json`), cgh's managed block in
-`.bobignore`, and the guard hooks cgh had added to Claude Code, Gemini
-CLI and Codex configs. Entries you wrote yourself are left alone.
+silence it. `cgh init`, `cgh setup` and `cgh guard` remove the guard
+hooks cgh had added to Claude Code, Gemini CLI and Codex configs (they do
+nothing any more). They keep the deny rules cgh had written to
+`.claude/settings.local.json` and its managed block in `.bobignore`,
+since those still keep files from your agent, and print how many remain.
+`cgh guard --remove-rules` removes exactly those (the deny rules recorded
+in `.codegraph/guard_denies.json` and the managed block) and the sidecar.
+Entries you wrote yourself are left alone either way. See
+[UPGRADING-0.15.md](UPGRADING-0.15.md).
 
 ---
 

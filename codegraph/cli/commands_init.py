@@ -481,8 +481,9 @@ def _note_deprecated_secure_flag(args: argparse.Namespace) -> None:
 
 
 def _cleanup_guard_leftovers(root: Path) -> None:
-    """Remove the deny entries and guard hooks older cgh versions wrote
-    into this repo (only those, identified by cgh's sidecar and markers)."""
+    """Remove the guard hooks older cgh versions wrote into this repo (only
+    those, identified by cgh's markers). The deny rules they wrote are kept
+    and counted, with the command that removes them."""
     from codegraph.cli.commands_guard import print_cleanup_report
     from codegraph.state.guard import cleanup_guard_leftovers
 
@@ -491,7 +492,7 @@ def _cleanup_guard_leftovers(root: Path) -> None:
     except Exception as exc:  # cleanup must never abort an init
         console.print(f"  [dim]guard cleanup skipped: {exc}[/dim]")
         return
-    if report.changed:
+    if report.changed or report.kept_rules:
         print_cleanup_report(console, report)
 
 

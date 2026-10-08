@@ -163,12 +163,16 @@ def _short_path(path: str) -> str:
 # MCP server
 # ---------------------------------------------------------------------------
 
+from codegraph.integrations.tool_guide import SEARCH_GUIDE
+
 mcp = FastMCP(
     name="codegraph",
     instructions=(
         "Local code graph + Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
         "and line numbers so you only read the specific lines you need.\n\n"
+        + SEARCH_GUIDE
+        + "\n"
         "Tool execution is SERVER-SIDE and costs zero model tokens. Only the\n"
         "JSON response counts (capped + truncated). When in doubt: call the\n"
         "tool. It is almost always cheaper than Read/Grep over full files.\n\n"
@@ -181,8 +185,8 @@ mcp = FastMCP(
         "       1. memory_search(query, kind='feedback') BEFORE asking the user\n"
         "  • User hints at a past plan ('the refactor we planned'):\n"
         "       1. plan_search(query)\n"
-        "  • Problem that might have been solved before (gotchas, patterns):\n"
-        "       1. knowledge_search(query), persisted learnings across sessions\n"
+        "  • Problem that might have been solved before (saved gotchas, fixes):\n"
+        "       1. knowledge_search(query), notes from earlier sessions, not code\n"
         "  • You learn something worth remembering:\n"
         "       1. knowledge_record(title, body, kind, tags)\n"
         "  • Context ~80% full (long session, many results):\n"
@@ -203,7 +207,8 @@ mcp = FastMCP(
         "       CRITICAL: without reload you restart from zero.\n"
         "  • Symbol lookup ('where is Foo', 'what calls Bar'):\n"
         "       1. symbol_lookup / find_callers / find_callees\n"
-        "       2. search_symbols for fuzzy, fts_search for docstrings\n"
+        "       2. search_symbols for a half-known name, fts_search for code\n"
+        "          described in words (a sentence, French or English)\n"
         "  • Text/regex pattern search ('find every occurrence of X'):\n"
         "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
         "          Returns {file, line, text}. Then Read only those lines.\n"

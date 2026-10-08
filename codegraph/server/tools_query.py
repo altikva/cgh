@@ -413,8 +413,9 @@ def register(mcp) -> None:
         query: str, limit: int = 20, role: str = "", layer: str = ""
     ) -> str:
         """
-        Fuzzy search for symbols (functions, classes, TF resources) by name.
-        Uses substring match. Federated, `limit` is per scope, results are
+        Find symbols (functions, classes, TF resources) whose NAME contains
+        the query (substring match). Use it for a half-known name; for code
+        described in words use fts_search. Federated, `limit` is per scope, results are
         concatenated; sort/trim downstream if needed.
 
         Optional `role` / `layer` filters keep only symbols whose File node

@@ -19,6 +19,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   that matches nothing as written the same way; its response is unchanged.
 
 ### Fixed
+- **cgh could fail to start with pydantic 2.14** when an older fastmcp was
+  installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed.
+  The fastmcp floor is now 2.12.
+
+### Fixed
 - **Links to `github.com/altikva/codegraph` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`
   pointed there; they now point at `github.com/altikva/cgh`.

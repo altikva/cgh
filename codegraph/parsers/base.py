@@ -66,6 +66,16 @@ class ResourceDef:
     start_line: int
     end_line: int = 0
     kind: str = "resource"  # "resource", "variable", "output", "service"
+    # Terraform: the in-module address ("google_x.y", "data.t.n", "var.v",
+    # "local.l", "module.m", "output.o"), the addresses the block's
+    # expressions reference (as written: "module.m.out" keeps the output),
+    # a module block's raw `source` and its input argument names, and a
+    # one-line summary for text search.
+    address: str = ""
+    refs: list[str] = field(default_factory=list)
+    source: str = ""
+    inputs: list[str] = field(default_factory=list)
+    docstring: str = ""
 
 
 @dataclass(slots=True)

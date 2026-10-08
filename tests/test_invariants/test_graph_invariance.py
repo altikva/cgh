@@ -137,17 +137,41 @@ FIXTURE: dict[str, str] = {
         "  }\n"
         "}\n"
     ),
+    # Terraform: references across the files of one module directory, a
+    # local module (inputs and outputs), a tfvars assignment.
     "infra/main.tf": (
         'variable "region" {\n  default = "eu"\n}\n\n'
         'resource "google_storage_bucket" "data" {\n'
         "  location = var.region\n"
+        "  name     = local.bucket_name\n"
+        "}\n\n"
+        'module "net" {\n  source = "./modules/net"\n  region = var.region\n}\n\n'
+        'resource "google_compute_instance" "vm" {\n'
+        "  network    = module.net.network_id\n"
+        "  project    = data.google_project.p.project_id\n"
+        "  depends_on = [google_storage_bucket.data]\n"
         "}\n"
+    ),
+    "infra/locals.tf": (
+        'locals {\n  bucket_name = "b-${var.region}"\n}\n\n'
+        'data "google_project" "p" {}\n'
+    ),
+    "infra/outputs.tf": (
+        'output "bucket" {\n  value = google_storage_bucket.data.url\n}\n\n'
+        'output "network" {\n  value = module.net.network_id\n}\n'
+    ),
+    "infra/terraform.tfvars": 'region = "eu"\n',
+    "infra/modules/net/variables.tf": 'variable "region" {}\n',
+    "infra/modules/net/main.tf": (
+        'resource "google_compute_network" "n" {\n  name = "n-${var.region}"\n}\n'
+    ),
+    "infra/modules/net/outputs.tf": (
+        'output "network_id" {\n  value = google_compute_network.n.id\n}\n'
     ),
 }
 
 # Edge kinds the fixture must populate, or the comparison proves nothing.
-# TF_DEPENDS has no writer yet, so it stays out.
-EXPECTED_NONEMPTY = sorted(k for k in EDGES if k != "TF_DEPENDS")
+EXPECTED_NONEMPTY = sorted(EDGES)
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -334,3 +358,34 @@ def test_cgh_tree_invariant(self_graphs, kind):
 
 def test_cgh_tree_has_calls(self_graphs):
     assert len(self_graphs["A"]["CALLS"]) > 1000
+
+
+def test_terraform_references_cross_files_and_modules(graphs):
+    a = graphs["A"]
+    assert (
+        "infra/main.tf::google_storage_bucket.data",
+        "infra/locals.tf::local.bucket_name",
+    ) in a["TF_DEPENDS"]
+    # module.net.network_id lands on the output of the module's directory,
+    # and the module block feeds that directory's variable.
+    assert (
+        "infra/main.tf::google_compute_instance.vm",
+        "infra/modules/net/outputs.tf::output.network_id",
+    ) in a["TF_REFS_VAR"]
+    assert (
+        "infra/main.tf::module.net",
+        "infra/modules/net/variables.tf::var.region",
+    ) in a["TF_REFS_VAR"]
+    # var.region inside the module resolves in the module, never to the root.
+    assert (
+        "infra/modules/net/main.tf::google_compute_network.n",
+        "infra/main.tf::var.region",
+    ) not in a["TF_REFS_VAR"]
+    assert (
+        "infra/terraform.tfvars::tfvars.region",
+        "infra/main.tf::var.region",
+    ) in a["TF_VAR_REFS"]
+    assert (
+        "infra/outputs.tf::output.bucket",
+        "infra/main.tf::google_storage_bucket.data",
+    ) in a["TF_VAR_DEPENDS"]

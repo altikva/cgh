@@ -58,6 +58,7 @@ dependencies = [
     # Used directly by the YAML section parser; declared so the nested
     # sections it tests for do not depend on a transitive install.
     "pyyaml>=6.0",
+    "tree-sitter-hcl>=1.2",
 ]
 
 [project.optional-dependencies]

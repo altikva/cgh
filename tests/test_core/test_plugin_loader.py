@@ -7,8 +7,9 @@
 # Description: Plugin loader tests. Synthetic entry
 #              points exercise the five registration surfaces, the
 #              [plugins] enabled/disabled config, the API version check,
-#              failure isolation (import error, register() raising, no
-#              register), duplicate names, and load idempotence.
+#              failure isolation (import error, register() raising and
+#              the rollback of what it registered, no register),
+#              duplicate names, and load idempotence.
 
 from __future__ import annotations
 
@@ -155,6 +156,42 @@ class TestFailureIsolation:
 
         assert records[0].status == "broken"
         assert "register() raised" in records[0].reason
+
+    def test_half_registered_plugin_is_rolled_back(self, monkeypatch):
+        """An old plugin that registers its CLI, then imports a name core
+        removed, must not leave the verb or a scanner behind."""
+
+        def register(api):
+            api.register_cli(lambda sub: sub.add_parser("zzz-half"))
+            api.register_scanner(SimpleNamespace(name="half", deferred=False))
+            api.register_extension("zzz.ns", object())
+            from codegraph.guard import sync_static_rules  # noqa: F401
+
+        def good(api):
+            api.register_cli(lambda sub: sub.add_parser("zzz-good"))
+
+        _install(
+            monkeypatch,
+            _entry_point("half", lambda: _module("half", register=register)),
+            _entry_point("good", lambda: _module("good", register=good)),
+        )
+        records = plugins.load_plugins()
+
+        assert [r.status for r in records] == ["broken", "active"]
+        assert "ModuleNotFoundError" in records[0].reason
+        assert [n for n, _ in plugins.cli_registrars()] == ["good"]
+        assert plugins.scanners() == []
+        assert plugins.get_extensions("zzz.ns") == []
+
+    def test_import_of_removed_core_name_marks_broken(self, monkeypatch):
+        def load():
+            from codegraph.plugin_api import a_name_core_removed  # noqa: F401
+
+        _install(monkeypatch, _entry_point("old", load))
+        records = plugins.load_plugins()
+
+        assert records[0].status == "broken"
+        assert "import failed" in records[0].reason
 
     def test_missing_register_marks_broken(self, monkeypatch):
         _install(monkeypatch, _entry_point("bad", lambda: _module("bad")))

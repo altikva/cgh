@@ -71,6 +71,10 @@ pip install cgh                 # or: pipx install cgh / uv tool install cgh
 pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
 ```
 
+`cgh[plugins]` and `cgh[full]` bring cgh-docs, cgh-codegen and cgh-bugreport.
+cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
+understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
+
 No Python? Run the standalone binary through npm, or download it from the
 [latest release](https://github.com/altikva/cgh/releases/latest):
 

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-pii"
-version = "0.3.1"
-description = "PII and secret detection for cgh: emails, phones, IBANs, cards, keys become findings during indexing"
+version = "0.4.0"
+description = "Secret scanning and PII redaction for cgh: cgh pii scan finds private keys and credentials on demand, cgh pii redact anonymizes documents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

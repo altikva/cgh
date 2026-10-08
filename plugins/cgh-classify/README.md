@@ -1,10 +1,18 @@
 # cgh-classify
 
+> **Frozen.** 0.2.0 is the final release. Its main consumers, the core
+> egress gate's confidentiality labels and the guard, went away with
+> secure mode in cgh 0.15.0, and `cgh[plugins]` no longer installs it.
+> It still works and still installs by name (`pip install cgh-classify`),
+> gets no new features, and may be removed from the cgh repository
+> later. cgh-codegen's egress gate still honors a `confidential` finding
+> when one exists.
+
 Human-trainable confidentiality classification for
 [cgh](https://github.com/altikva/cgh). You label a few files, a
 lightweight local model (TF-IDF + naive Bayes, standard library only)
-generalizes to the rest, and the egress gate enforces the
-result. Nothing ever leaves the machine.
+generalizes to the rest, and the result lands as `confidential`
+findings. Nothing ever leaves the machine.
 
 ```bash
 pip install cgh-classify
@@ -17,7 +25,7 @@ cgh findings --key confidential
 
 ## How labels and predictions interact
 
-| Source | Finding written | Effect on the egress gate |
+| Source | Finding written | Effect on an egress gate (cgh-codegen) |
 |---|---|---|
 | Human label, confidential | `confidential = true` (block) | blocked everywhere |
 | Human label, public | `confidential = false` | allowlisted, including strict mode |
@@ -31,8 +39,12 @@ where the gate is an allowlist.
 
 ## Configuration
 
+`cgh classify label` and `cgh classify train` write findings when you
+run them. Classifying every file on each index is opt-in since 0.2.0:
+
 ```toml
 [plugin.classify]
+# scan_on_index = false  # re-classify every indexed file
 # threshold = 0.7      # predict confidential above this probability
 # uncertain_low = 0.35 # review window lower bound
 # uncertain_high = 0.65

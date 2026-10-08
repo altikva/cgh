@@ -50,7 +50,7 @@ scripted or empty-repo bootstrap.
 2. Generates MCP auth key (`.codegraph/auth.key`)
 3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
-5. Removes the deny rules, `.bobignore` block and guard hooks an older cgh wrote (only those)
+5. Removes the guard hooks an older cgh wrote (only those); keeps its deny rules and `.bobignore` block and prints how many remain (`cgh guard --remove-rules` removes them)
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
 6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the codegraph usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
 7. Offers Claude-specific auto-accept for MCP tool calls
@@ -653,7 +653,7 @@ cgh plugins [--json] [--root DIR]
 
 | Column | Meaning |
 |--------|---------|
-| `status` | `active`, `disabled` (via `[plugins]` config), `incompatible` (API version mismatch), `broken` (import or registration failed), `duplicate` |
+| `status` | `active`, `disabled` (via `[plugins]` config), `incompatible` (API version mismatch), `broken` (import or registration failed, or a first-party plugin older than this cgh accepts, never imported), `duplicate` |
 | `api` | The `CGH_PLUGIN_API` version the plugin declares |
 | `surfaces` | What it registered: `parsers`, `scanners`, `mcp`, `cli`, `extensions` |
 | `note` | The reason for any non-active status |
@@ -766,15 +766,17 @@ agent's own permission rules (for example `permissions.deny` in Claude
 Code settings) to keep files out of reach.
 
 ```
-cgh guard [status|sync] [--root DIR]
+cgh guard [status|sync] [--remove-rules] [--root DIR]
 ```
 
 Both actions do the same thing: print the deprecation note and remove
-what an older cgh wrote into the repo, namely the `Read()` deny rules
-recorded in `.codegraph/guard_denies.json`, the managed block in
-`.bobignore`, and the guard hook entries in the Claude Code, Gemini CLI
-and Codex configs. Entries you wrote yourself are never touched.
-`cgh init` and `cgh setup` run the same cleanup.
+the guard hook entries an older cgh wrote into the Claude Code, Gemini
+CLI and Codex configs (they do nothing any more). The `Read()` deny rules
+it recorded in `.codegraph/guard_denies.json` and its managed block in
+`.bobignore` still keep files from your agent, so they are kept and
+counted. `--remove-rules` removes exactly those, and the sidecar.
+Entries you wrote yourself are never touched. `cgh init` and `cgh setup`
+run the same cleanup without `--remove-rules`.
 
 ### `memory`
 

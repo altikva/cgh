@@ -13,9 +13,11 @@ authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 # cgh itself is a peer dependency, deliberately not declared: the plugin
 # only ever loads through cgh's entry point group, so it is inert without
 # cgh installed, and declaring it makes resolvers overlay a second cgh on
-# top of a dev checkout. Requires cgh >= 0.10 at runtime. The vision
-# models are reached over the local Ollama HTTP API; pillow serves the
-# benchmarked 2x pre-scaling of small thin-line diagrams.
+# top of a dev checkout. Requires cgh >= 0.10 at runtime (emit_result and
+# the output options through plugin_api); cgh 0.15 refuses releases older
+# than 0.6.0. The vision models are reached over the local Ollama HTTP
+# API; pillow serves the benchmarked 2x pre-scaling of small thin-line
+# diagrams.
 dependencies = ["pillow>=10"]
 
 # `cgh vision file.pdf` rasterizes pages to images so the pipeline can read

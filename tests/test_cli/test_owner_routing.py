@@ -118,12 +118,45 @@ class TestOwnerClient:
             {
                 "result": {
                     "isError": True,
-                    "content": [{"type": "text", "text": "Unknown tool"}],
+                    "content": [{"type": "text", "text": "fn_name is required"}],
                 }
             }
         )
         reply = oc._parse_tool_result(raw)
-        assert reply.status == "error" and "Unknown tool" in reply.error
+        assert reply.status == "error" and "fn_name is required" in reply.error
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Unknown tool: 'impact_report'",  # FastMCP
+            "Unknown tool: impact_report",  # low-level MCP SDK
+        ],
+    )
+    def test_unknown_tool_result_is_its_own_status(self, text):
+        raw = json.dumps(
+            {"result": {"isError": True, "content": [{"type": "text", "text": text}]}}
+        )
+        reply = oc._parse_tool_result(raw)
+        assert reply.status == "unknown_tool" and "impact_report" in reply.error
+
+    def test_unknown_tool_jsonrpc_error_is_its_own_status(self):
+        raw = json.dumps(
+            {"error": {"code": -32602, "message": "Unknown tool: impact_report"}}
+        )
+        assert oc._parse_tool_result(raw).status == "unknown_tool"
+
+    def test_error_mentioning_unknown_tool_later_stays_an_error(self):
+        raw = json.dumps(
+            {
+                "result": {
+                    "isError": True,
+                    "content": [
+                        {"type": "text", "text": "query failed: Unknown tool table"}
+                    ],
+                }
+            }
+        )
+        assert oc._parse_tool_result(raw).status == "error"
 
     def test_silent_owner_times_out(self, tmp_path):
         # A listening socket that never answers stands in for a wedged owner.
@@ -197,14 +230,33 @@ class TestImpactRouting:
         assert [t["file"] for t in report["tests_to_run"]] == ["test_lib.py"]
 
     def test_owner_error_falls_back_to_local(self, impact_repo, monkeypatch, capsys):
-        # e.g. an older owner that predates the impact_report tool.
+        # Any tool error other than "unknown tool" keeps the local fallback.
         monkeypatch.setattr(
             oc,
             "call_owner_tool",
-            lambda *a, **k: OwnerReply("error", error="Unknown tool"),
+            lambda *a, **k: OwnerReply("error", error="graph query failed"),
         )
         cmd_impact(_impact_args(impact_repo))
         assert json.loads(capsys.readouterr().out)["since_changed"] == ["lib.py"]
+
+    def test_older_owner_fails_fast_without_local_open(
+        self, impact_repo, monkeypatch, capsys
+    ):
+        # An owner started by an older cgh has no impact_report tool but still
+        # holds the graph: a local open would only wait on the lock and fail.
+        monkeypatch.setattr(
+            oc,
+            "call_owner_tool",
+            lambda *a, **k: OwnerReply(
+                "unknown_tool", error="Unknown tool: 'impact_report'"
+            ),
+        )
+        _forbid_local_open(monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            cmd_impact(_impact_args(impact_repo))
+        assert exc.value.code == 1
+        err = json.loads(capsys.readouterr().out)["error"]
+        assert "older cgh" in err and "cgh stop" in err and "impact_report" in err
 
     def test_stuck_owner_fails_fast_without_local_open(
         self, impact_repo, monkeypatch, capsys
@@ -314,6 +366,19 @@ class TestQueryRouting:
         assert exc.value.code == 1
         assert "cgh doctor --owner" in captured_console.getvalue()
 
+    def test_older_owner_exits_with_hint(self, tmp_path, monkeypatch, captured_console):
+        monkeypatch.setattr(
+            oc,
+            "call_owner_tool",
+            lambda *a, **k: OwnerReply("unknown_tool", error="Unknown tool: 'x'"),
+        )
+        _forbid_local_open(monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            cq.cmd_callers(argparse.Namespace(root=str(tmp_path), fn_name="x"))
+        assert exc.value.code == 1
+        out = captured_console.getvalue()
+        assert "older cgh" in out and "cgh stop" in out
+
 
 # ---------------------------------------------------------------------------
 # Integration: a real owner holds the graph, `cgh impact` still answers
@@ -343,6 +408,10 @@ def test_impact_cli_with_live_owner(impact_repo):
         # Make the owner open its write connection, as any agent call does.
         warm = oc.call_owner_tool(root, "live_graph_stats", timeout=30)
         assert warm.ok, warm.error
+        # The real server's answer to a tool it does not have, as an owner
+        # from an older cgh gives for impact_report.
+        missing = oc.call_owner_tool(root, "no_such_tool_for_test", timeout=30)
+        assert missing.status == "unknown_tool", missing
 
         result = subprocess.run(
             [

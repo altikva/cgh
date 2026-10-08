@@ -16,6 +16,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -24,7 +25,12 @@ from typing import Any, Literal
 # the ceiling only exists so a wedged owner cannot hang the CLI forever.
 _DEFAULT_TIMEOUT = 30.0
 
-OwnerStatus = Literal["ok", "absent", "timeout", "error"]
+OwnerStatus = Literal["ok", "absent", "timeout", "unknown_tool", "error"]
+
+# How an MCP server says it has no tool by that name. FastMCP answers
+# ``Unknown tool: 'name'`` as an isError result; the low-level MCP SDK says
+# ``Unknown tool: name``; some versions answer with a JSON-RPC error instead.
+_UNKNOWN_TOOL_RE = re.compile(r"^\s*unknown tool\b", re.IGNORECASE)
 
 
 @dataclass
@@ -33,8 +39,10 @@ class OwnerReply:
 
     ``status`` is "ok" (``data`` holds the tool's parsed JSON, ``text`` its
     raw text), "absent" (no live owner, nothing was sent), "timeout" (the
-    owner accepted the call but did not answer in time) or "error" (HTTP,
-    auth, transport or tool error, detail in ``error``).
+    owner accepted the call but did not answer in time), "unknown_tool"
+    (the owner is alive but has no such tool, typically an owner started by
+    an older cgh) or "error" (HTTP, auth, transport or tool error, detail in
+    ``error``).
     """
 
     status: OwnerStatus
@@ -151,7 +159,8 @@ def _parse_tool_result(raw: str) -> OwnerReply:
     if envelope.get("error"):
         err = envelope["error"]
         msg = err.get("message") if isinstance(err, dict) else str(err)
-        return OwnerReply("error", error=str(msg))
+        status: OwnerStatus = "unknown_tool" if _is_unknown_tool(msg) else "error"
+        return OwnerReply(status, error=str(msg))
     result = envelope.get("result") or {}
     content = result.get("content") or []
     text = next(
@@ -159,7 +168,8 @@ def _parse_tool_result(raw: str) -> OwnerReply:
         None,
     )
     if result.get("isError"):
-        return OwnerReply("error", error=text or "tool error")
+        status = "unknown_tool" if _is_unknown_tool(text) else "error"
+        return OwnerReply(status, error=text or "tool error")
     if text is None:
         return OwnerReply("error", error="empty tool result")
     try:
@@ -167,6 +177,21 @@ def _parse_tool_result(raw: str) -> OwnerReply:
     except ValueError:
         data = None
     return OwnerReply("ok", data=data, text=text)
+
+
+def _is_unknown_tool(message: object) -> bool:
+    return isinstance(message, str) and bool(_UNKNOWN_TOOL_RE.match(message))
+
+
+def older_owner_hint(root: str, tool: str) -> str:
+    """Why a current CLI cannot use a live owner that lacks ``tool``."""
+    return (
+        f"The cgh owner running for this repo has no `{tool}` tool: it was "
+        "started by an older cgh and still holds the graph, so this command "
+        f"cannot open it either. Run `cgh stop --root {root}` (the next agent "
+        "call starts a current owner) and retry, or retry once the agent "
+        "sessions using the old owner have ended."
+    )
 
 
 def stuck_owner_hint(root: str, reply: OwnerReply) -> str:
@@ -190,6 +215,7 @@ __all__ = [
     "call_owner_tool",
     "live_owner_port",
     "note_route",
+    "older_owner_hint",
     "owner_timeout",
     "stuck_owner_hint",
 ]

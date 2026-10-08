@@ -1728,6 +1728,11 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if legacy_secure:
         # Informational, not a failed check: the config still loads.
         console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    # Informational, not a check: a stale plugin is skipped, cgh still works.
+    for reason in _too_old_plugin_reasons(root):
+        from rich.markup import escape
+
+        console.print(f"[yellow]!![/yellow] plugin skipped: {escape(reason)}")
 
     # Overall
     total = len(checks)
@@ -1781,6 +1786,17 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 f"{', '.join(blocking)}[/red]"
             )
             raise SystemExit(1)
+
+
+def _too_old_plugin_reasons(root: Path) -> list[str]:
+    """Why each installed first-party plugin too old for this core was
+    skipped. Empty when none is, or when plugins cannot be loaded."""
+    try:
+        from codegraph.plugins import load_plugins
+
+        return [r.reason for r in load_plugins(root) if r.too_old]
+    except Exception:
+        return []
 
 
 def _print_claude_audit(audit: dict) -> None:

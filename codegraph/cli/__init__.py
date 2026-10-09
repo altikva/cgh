@@ -82,11 +82,29 @@ def _get_conn(root, readonly=False):
     return get_connection(root)
 
 
+def _query_conn(root):
+    """A read-only graph connection for a query command answering without
+    an owner (None when locked, see _get_conn). A store written in an older
+    graph format is refused first, on stderr with exit 1: it lacks edges a
+    re-parse adds, so its answers would be silently incomplete. An owner
+    re-parses such a store when it starts, so only this local path checks."""
+    import sys
+
+    from codegraph.state.scan_meta import outdated_store_message
+
+    message = outdated_store_message(root)
+    if message:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+    return _get_conn(root, readonly=True)
+
+
 __all__ = [
     "LOGO",
     "VERSION",
     "_get_conn",
     "_lang_color",
+    "_query_conn",
     "_rows",
     "_short_path",
     "console",

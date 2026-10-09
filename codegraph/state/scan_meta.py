@@ -248,6 +248,24 @@ def recorded_graph_format(meta: dict | None) -> int | None:
         return 0
 
 
+def outdated_store_message(repo_root: str | Path) -> str:
+    """The remedy to print when the store under ``repo_root`` was written in
+    an older graph format, else "". Reads the scan record only: a query on
+    such a store either fails on a missing column or, worse, answers from
+    a graph that lacks the edges only a re-parse adds."""
+    try:
+        fmt = recorded_graph_format(read_meta(repo_root))
+    except Exception:  # best-effort probe: never block a query on it
+        return ""
+    if fmt is None or fmt >= GRAPH_FORMAT:
+        return ""
+    return (
+        f"cgh: this index was written in graph format {fmt}, this cgh needs "
+        f"{GRAPH_FORMAT}. Run `cgh index` once to upgrade it (an MCP owner "
+        "does it on its own when it starts)."
+    )
+
+
 def foreign_root(meta: dict | None, repo_root: str | Path) -> str:
     """The root a scan record was written at when it is not ``repo_root``
     (a .codegraph copied from another checkout), else "". Only reads the

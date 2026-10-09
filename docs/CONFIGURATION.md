@@ -77,6 +77,11 @@ log_backup_count = 3
 # disabled = ["terraform"]
 
 
+[terraform]
+# Map a remote module source to a local checkout (opt-in, read-only).
+# module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modules" }
+
+
 [mcp]
 # Auto-start file watcher when the MCP server starts.
 auto_watch = true
@@ -164,6 +169,38 @@ package-lock.json, yarn.lock, pnpm-lock.yaml
 Parser language names correspond to the `lang` attribute on each parser class: `python`, `typescript`, `terraform`, `markdown`, `vue`.
 
 If `enabled` is set, only those parsers are active. `disabled` is then applied on top to further exclude.
+
+#### `[terraform]`
+
+`module_sources` maps a remote Terraform module source (git URL, registry
+address) to a local directory, so a `module` block with that source links
+to the module's variables and outputs like a local `./` source does: its
+arguments to the module's `var.<name>`, `module.m.out` to the module's
+output. Without it a remote module is opaque.
+
+```toml
+[terraform]
+module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modules" }
+```
+
+- The key is matched as a prefix of the source's package, the part before
+  its `//subdir`, on a path boundary: `git::` and a trailing `.git` are
+  ignored on both sides, and the longest matching key wins. So the key
+  above maps
+  `git::https://github.com/altikva/gcp-modules.git//modules/kms?ref=v0.1.0`
+  to `../gcp-modules/modules/kms`. A registry address works the same way
+  (`"acme/kms/google" = "../modules/kms"`).
+- The `//subdir` is joined to the mapped directory. The `?ref=` is
+  ignored: links follow whatever the local checkout holds, which may differ
+  from the pinned ref.
+- Paths are relative to the project root, or absolute.
+- When the mapped directory is indexed by this graph (inside the repo or an
+  `extra_dirs` entry) the links are ordinary edges. Otherwise (outside every
+  index, or inside a federated subrepo) cgh reads that directory's
+  variables and outputs into this graph when a calling file is indexed:
+  read-only, nothing written there, nothing fetched over the network.
+- A change to the mapping takes effect on the next full re-index
+  (`cgh index --force`).
 
 #### `[mcp]`
 

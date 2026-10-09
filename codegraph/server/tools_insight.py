@@ -239,6 +239,7 @@ def register(mcp) -> None:
         edge = "IMPORTS" if as_path else "CALLS"
 
         from codegraph.analysis.terraform import dependent_files as tf_dependents
+        from codegraph.analysis.terraform import impacted_files as tf_impacted_files
         from codegraph.analysis.terraform import nodes_named as tf_nodes_named
         from codegraph.analysis.terraform import referrers as tf_referrers
 
@@ -305,7 +306,18 @@ def register(mcp) -> None:
                     start_keys += found
             if not start_keys:
                 return []
-            keys, trunc = reverse_bfs(conn, start_keys)
+            if as_path and start_keys[0].endswith((".tf", ".tfvars")):
+                # Terraform: walk back from the file's blocks, so only the
+                # files holding blocks that reference them count, not every
+                # file of the module directory.
+                keys, _changed, trunc = tf_impacted_files(
+                    conn,
+                    {start_keys[0]: None},
+                    max_depth=max_depth,
+                    cap=_IMPACT_CAP,
+                )
+            else:
+                keys, trunc = reverse_bfs(conn, start_keys)
 
             out: list[dict] = []
             if as_path:

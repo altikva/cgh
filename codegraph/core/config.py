@@ -259,6 +259,15 @@ class CodegraphConfig:
     # then federates queries (read-only) to the children's databases.
     # Paths are relative to project_root or absolute.
     subrepos: list[str] = field(default_factory=list)
+    # Sibling directories indexed into this graph (`cgh add-dir`). Read
+    # here so Terraform module sources can tell an indexed directory from
+    # one outside every index.
+    extra_dirs: list[str] = field(default_factory=list)
+    # [terraform] module_sources: opt-in map from a remote module source
+    # package (git URL, registry address) to a local checkout, so a module
+    # call with that source links to the module's variables and outputs.
+    # Paths are relative to project_root or absolute; never fetched.
+    terraform_module_sources: dict[str, str] = field(default_factory=dict)
     # When the parent owner starts, also start the owner of every
     # initialized subrepo whose owner is down. Children started this way
     # live exactly as long as the parent owner.
@@ -366,6 +375,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.log_backup_count = int(cg["log_backup_count"])
     if "subrepos" in cg:
         config.subrepos = list(cg["subrepos"])
+    if "extra_dirs" in cg:
+        config.extra_dirs = [str(d) for d in cg["extra_dirs"]]
     if "federate_auto_up" in cg:
         config.federate_auto_up = bool(cg["federate_auto_up"])
     if "mode" in cg:
@@ -373,6 +384,13 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.legacy_secure_mode = str(cg["mode"]).strip().lower() == "secure"
     if "allow_fetch" in cg:
         config.allow_fetch = bool(cg["allow_fetch"])
+
+    terraform = data.get("terraform", {})
+    sources = terraform.get("module_sources") if isinstance(terraform, dict) else None
+    if isinstance(sources, dict):
+        config.terraform_module_sources = {
+            str(k): str(v) for k, v in sources.items() if isinstance(v, str)
+        }
 
     parsers = data.get("parsers", {})
     if "enabled" in parsers:
@@ -463,6 +481,14 @@ max_file_size_kb = 500
 # enabled = ["python", "typescript", "markdown"]
 # Uncomment to disable specific parsers:
 # disabled = ["terraform"]
+
+[terraform]
+# Map a remote module source to a local checkout so module calls with that
+# source link to the module's variables and outputs. The key is matched as a
+# prefix of the source before its //subdir (git:: and .git are ignored); the
+# //subdir is joined to the mapped path and ?ref= is ignored, so the checkout
+# may sit at another ref than the one pinned. Nothing is ever fetched.
+# module_sources = { "git::https://github.com/acme/tf-modules" = "../tf-modules" }
 
 [mcp]
 # Auto-start file watcher when serving

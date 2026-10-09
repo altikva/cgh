@@ -525,6 +525,9 @@ def _relink_calls_named(
 #   tf_ref    Terraform block id -> "<module dir>::<address>" it uses
 #   tf_modout Terraform block id -> "<module dir>::module.<m>", extra = the
 #             output name (see codegraph/analysis/terraform.py)
+#   tf_modres Terraform moved / import / removed block id ->
+#             "<module dir>::module.<m>", extra = a resource address inside
+#             that module
 #   calls_import  file path -> a repo file it imports (at module level or in
 #             a function body), read by the call rules of its call sites
 NameRef = tuple[str, str, str, str]
@@ -858,16 +861,24 @@ def _handler_candidate_files(idx: FileIndex, repo_root: Path | None) -> list[str
     return sorted(targets)
 
 
-def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
+def _ingest_terraform(
+    conn: GraphDB, idx: FileIndex, cfg=None, root: Path | None = None
+) -> list[NameRef]:
     """Ingest a file's Terraform blocks and link the addresses they use.
 
+    Module sources resolve through the opt-in [terraform] module_sources
+    mapping; a mapped module directory no index covers has its variables
+    and outputs read (read-only) into this graph first, so the call links.
     Returns the name references to record, so a block defined in a file
     indexed later, or reindexed, links itself back (_resolve_inbound_refs).
     """
     from codegraph.analysis import terraform as _tf
 
-    _tf.ingest_blocks(conn, idx.resources)
-    refs = _tf.ref_rows(idx.resources)
+    sources = _tf.ModuleSources.from_config(cfg, root)
+    _tf.ingest_blocks(conn, idx.resources, sources)
+    for directory in _tf.external_module_dirs(idx.resources, sources):
+        _tf.ingest_external_module(conn, directory)
+    refs = _tf.ref_rows(idx.resources, sources)
     _tf.resolve_outbound(conn, refs)
     return refs
 
@@ -1233,7 +1244,7 @@ def _index_file(
             conn, idx, cfg=eff_cfg, repo_root=root, pending_calls=pending_calls
         )
     if idx.resources:
-        refs += _ingest_terraform(conn, idx)
+        refs += _ingest_terraform(conn, idx, eff_cfg, root)
     if idx.sections:
         refs += _ingest_markdown(conn, idx)
 

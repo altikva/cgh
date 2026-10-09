@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,59 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
     return list(dict.fromkeys(files)), None
 
 
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def _changed_ranges(diff_text: str) -> dict[str, list[tuple[int, int]]]:
+    """{path: [(first, last)]} of the new-side lines a `git diff -U0`
+    touches. A pure deletion marks the lines around the cut, so the block
+    it happened in still counts as changed."""
+    out: dict[str, list[tuple[int, int]]] = {}
+    current = ""
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            name = line[4:].strip()
+            current = name[2:] if name.startswith("b/") else ""
+            continue
+        m = _HUNK.match(line)
+        if not m or not current:
+            continue
+        start, count = int(m.group(1)), int(m.group(2) or "1")
+        if count == 0:
+            out.setdefault(current, []).append((max(1, start), start + 1))
+        else:
+            out.setdefault(current, []).append((start, start + count - 1))
+    return out
+
+
+def _git_changed_lines(
+    root: str, since: str, files: list[str]
+) -> dict[str, list[tuple[int, int]]]:
+    """Changed line ranges of the Terraform files among ``files`` (the
+    impact of a .tf change is computed per block). {} on any git error:
+    the whole file then counts as changed."""
+    tf = [f for f in files if f.endswith((".tf", ".tfvars"))]
+    if not tf or since.startswith("-"):
+        return {}
+    cmd = ["git", "diff", "-U0", "--no-color", "--no-ext-diff", f"{since}...", "--"]
+    try:
+        result = subprocess.run(
+            [*cmd, *tf],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=root,
+            timeout=30,
+            **quiet_subprocess_kwargs(),
+        )
+    except Exception:
+        return {}
+    if result.returncode != 0:
+        return {}
+    return _changed_ranges(result.stdout)
+
+
 def _build_report(conn, root: str, changed_files: list[str]) -> dict:
     """Assemble the impact report from a local read-only connection.
 
@@ -154,6 +208,17 @@ def _render_markdown(report: dict, since: str) -> str:
         lines.append("- _no importing tests found_")
     lines.append("")
 
+    related = report.get("related") or []
+    if related:
+        lines.append(f"**Related mentions ({len(related)})**")
+        for r in related[:25]:
+            lines.append(
+                f"- `{r['file']}:{r['line']}` {r['name']} (mentions `{r['mentions']}`)"
+            )
+        if len(related) > 25:
+            lines.append(f"- _... {len(related) - 25} more_")
+        lines.append("")
+
     if report.get("truncated"):
         lines.append("> Note: blast radius was truncated (large graph).")
     lines.append("")
@@ -197,12 +262,18 @@ def cmd_impact(args: argparse.Namespace) -> None:
     # A live owner holds the graph DB for writing, which blocks our own
     # read-only open, so ask it first. No owner (CI) -> open read-only here.
     # Never start an owner from this command.
+    from codegraph.analysis.impact import format_changed_entry
     from codegraph.cli.owner_client import (
         call_owner_tool,
         note_route,
         older_owner_hint,
         stuck_owner_hint,
     )
+
+    # The changed lines of a Terraform file ride along as path#L<ranges>, so
+    # its impact starts from the blocks the diff touches.
+    ranges = _git_changed_lines(root, since, changed)
+    changed = [format_changed_entry(f, ranges.get(f)) for f in changed]
 
     reply = call_owner_tool(root, "impact_report", {"changed_files": changed})
     if reply.ok and isinstance(reply.data, dict) and "error" not in reply.data:

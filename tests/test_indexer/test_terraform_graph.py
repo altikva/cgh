@@ -241,12 +241,13 @@ def test_impact_of_a_tf_file_and_an_address(repo):
     out = json.loads(tools["impact_of"](target, max_depth=1))
     assert out["direction"] == "importers"
     assert {_rel(repo, r["node"]) for r in out["impacted"]} == {"env/main.tf"}
-    # Further out: env/main.tf's bucket is used by env/outputs.tf.
+    # Further out, block by block: only the reader block uses the output and
+    # nothing references the reader, so env/outputs.tf (which uses the
+    # bucket, another block of env/main.tf) is not reached.
     out = json.loads(tools["impact_of"](target, max_depth=2))
-    assert {_rel(repo, r["node"]) for r in out["impacted"]} == {
-        "env/main.tf",
-        "env/outputs.tf",
-    }
+    assert {_rel(repo, r["node"]) for r in out["impacted"]} == {"env/main.tf"}
+    out = json.loads(tools["impact_of"](str(repo / "env/main.tf"), max_depth=2))
+    assert {_rel(repo, r["node"]) for r in out["impacted"]} == {"env/outputs.tf"}
     out = json.loads(tools["impact_of"]("var.project_id", max_depth=2))
     nodes = {_rel(repo, r["node"]) for r in out["impacted"]}
     assert "env/main.tf::google_storage_bucket.data" in nodes

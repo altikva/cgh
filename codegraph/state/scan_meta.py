@@ -291,6 +291,33 @@ def git_hash_object(repo_root: str | Path, path: str | Path) -> str | None:
     return out if out else None
 
 
+def git_hash_objects(repo_root: str | Path, paths: list[Path]) -> dict[str, str]:
+    """Blob SHAs of many files in one ``git hash-object --stdin-paths`` run,
+    as {str(path): sha}: the values git_hash_object gives one by one,
+    without a subprocess per file. {} when git fails (a path vanished, no
+    git), so callers fall back to the per-file call."""
+    if not paths:
+        return {}
+    try:
+        r = subprocess.run(
+            ["git", "hash-object", "--stdin-paths"],
+            input="".join(f"{p}\n" for p in paths),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            timeout=max(5, len(paths) // 50),
+            **quiet_subprocess_kwargs(),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return {}
+    shas = r.stdout.split()
+    if r.returncode != 0 or len(shas) != len(paths):
+        return {}
+    return {str(p): sha for p, sha in zip(paths, shas, strict=True)}
+
+
 def scan_status(repo_root: str | Path) -> dict:
     """
     Compute the freshness of the graph vs the working tree.

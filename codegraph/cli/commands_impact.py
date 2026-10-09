@@ -57,6 +57,14 @@ def _git(root: str, *args: str) -> tuple[str, str | None]:
     return result.stdout, None
 
 
+def _diff_base(root: str, since: str) -> str:
+    """The merge base of ``since`` and HEAD, or ``since`` itself when there
+    is no common ancestor (or an unborn HEAD)."""
+    base, err = _git(root, "merge-base", since, "HEAD")
+    base = base.strip() if err is None else ""
+    return base or since
+
+
 def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
     """Return (changed_files, error). Diffs the working tree against ``since``.
 
@@ -69,11 +77,7 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
     """
     if since.startswith("-"):
         return [], f"invalid git ref: {since!r}"
-    base, err = _git(root, "merge-base", since, "HEAD")
-    base = base.strip() if err is None else ""
-    if not base:
-        # No common ancestor (or an unborn HEAD): diff against the ref itself.
-        base = since
+    base = _diff_base(root, since)
     out, err = _git(root, "diff", "--name-only", "--diff-filter=ACMR", base, "--")
     if err is not None:
         return [], err
@@ -118,16 +122,19 @@ def _changed_ranges(diff_text: str) -> dict[str, list[tuple[int, int]]]:
 def _git_changed_lines(
     root: str, since: str, files: list[str]
 ) -> dict[str, list[tuple[int, int]]]:
-    """Changed line ranges of the Terraform files among ``files`` (the
-    impact of a .tf change is computed per block). {} on any git error:
-    the whole file then counts as changed."""
-    tf = [f for f in files if f.endswith((".tf", ".tfvars"))]
-    if not tf or since.startswith("-"):
+    """Changed line ranges of ``files``, from the same diff as
+    _git_changed_files: the merge base of ``since`` against the working
+    tree, so uncommitted edits count too. The impact of a code file starts
+    from the functions and classes those lines touch, the impact of a .tf
+    file from its blocks. A file without ranges (untracked, or any git
+    error, which returns {}) counts as changed as a whole."""
+    if not files or since.startswith("-"):
         return {}
-    cmd = ["git", "diff", "-U0", "--no-color", "--no-ext-diff", f"{since}...", "--"]
+    base = _diff_base(root, since)
+    cmd = ["git", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--"]
     try:
         result = subprocess.run(
-            [*cmd, *tf],
+            cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -140,7 +147,8 @@ def _git_changed_lines(
         return {}
     if result.returncode != 0:
         return {}
-    return _changed_ranges(result.stdout)
+    wanted = set(files)
+    return {f: r for f, r in _changed_ranges(result.stdout).items() if f in wanted}
 
 
 def _build_report(conn, root: str, changed_files: list[str]) -> dict:
@@ -270,8 +278,8 @@ def cmd_impact(args: argparse.Namespace) -> None:
         stuck_owner_hint,
     )
 
-    # The changed lines of a Terraform file ride along as path#L<ranges>, so
-    # its impact starts from the blocks the diff touches.
+    # The changed lines of a file ride along as path#L<ranges>, so its
+    # impact starts from the symbols (or Terraform blocks) the diff touches.
     ranges = _git_changed_lines(root, since, changed)
     changed = [format_changed_entry(f, ranges.get(f)) for f in changed]
 

@@ -217,7 +217,8 @@ class TestImpactRouting:
 
         cmd_impact(_impact_args(impact_repo))
 
-        assert calls == [("impact_report", {"changed_files": ["lib.py"]})]
+        # The changed lines of a code file ride along with it.
+        assert calls == [("impact_report", {"changed_files": ["lib.py#L2"]})]
         report = json.loads(capsys.readouterr().out)
         assert report == {**fake, "since": "HEAD~1"}
 

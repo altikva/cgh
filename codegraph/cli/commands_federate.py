@@ -86,7 +86,12 @@ def _cmd_remove(args: argparse.Namespace) -> None:
         return
     root = Path(os.path.abspath(args.root))
     for raw in paths:
-        if remove_subrepo(root, raw):
+        try:
+            removed = remove_subrepo(root, raw)
+        except ValueError as exc:
+            console.print(f"[red]✗ {raw}:[/red] {exc}")
+            continue
+        if removed:
             console.print(f"[green]✓ removed[/green] {raw}")
         else:
             console.print(f"[dim]not federated: {raw}[/dim]")

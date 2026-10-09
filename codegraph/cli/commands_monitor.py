@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path
 
@@ -1226,16 +1225,13 @@ def cmd_reset(args: argparse.Namespace) -> None:
     if args.drop_extra_dirs:
         config_path = cg_dir / "config.toml"
         if config_path.exists():
-            content = config_path.read_text(encoding="utf-8")
-            new_content = re.sub(
-                r"^\s*extra_dirs\s*=\s*\[.*?\]\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE | re.DOTALL,
-            )
-            if new_content != content:
-                config_path.write_text(new_content, encoding="utf-8")
-                console.print("[green]Dropped extra_dirs from config.toml[/green]")
+            from codegraph.core.config_edit import ConfigEditError, remove_key
+
+            try:
+                if remove_key(config_path, "codegraph", "extra_dirs"):
+                    console.print("[green]Dropped extra_dirs from config.toml[/green]")
+            except ConfigEditError as exc:
+                console.print(f"[red]Could not drop extra_dirs:[/red] {exc}")
 
     # 4. Re-index (unless --no-reindex)
     if not args.no_reindex:

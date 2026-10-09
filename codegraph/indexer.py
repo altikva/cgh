@@ -1745,26 +1745,33 @@ def _index_extra_dirs(
         if not extra_root.exists() or not extra_root.is_dir():
             continue
         activity_log(repo_root, "extra_dir_scan", str(extra_root))
+        files: list[Path] = []
         for dirpath, dirnames, filenames in os.walk(extra_root):
             dirnames[:] = [
                 d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
             ]
             for filename in filenames:
                 full_path = Path(dirpath) / filename
-                if not is_supported(full_path):
-                    continue
-                try:
-                    ok = index_file(
-                        full_path,
-                        repo_root,
-                        reparse=reparse or (tf_reparse and _is_terraform(full_path)),
-                    )
-                    if ok:
-                        stats["indexed"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+                if is_supported(full_path):
+                    files.append(full_path)
+        # One git run hashes them all; index_file would spawn one per file.
+        from codegraph.state.scan_meta import git_hash_objects
+
+        shas = git_hash_objects(repo_root, files)
+        for full_path in files:
+            try:
+                ok = index_file(
+                    full_path,
+                    repo_root,
+                    git_blob_sha=shas.get(str(full_path)),
+                    reparse=reparse or (tf_reparse and _is_terraform(full_path)),
+                )
+                if ok:
+                    stats["indexed"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception:
+                stats["errors"] += 1
     return extra_dirs
 
 
@@ -1942,6 +1949,63 @@ def rebuild_corrupt_graph(repo_root: str | Path, exc: BaseException) -> dict | N
         return None
 
 
+def _rel_or_abs(path: Path, root: Path) -> str:
+    """``path`` relative to ``root``, or absolute when outside it: the key
+    the index loop looks a blob SHA up by."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _foreign_root(repo_root: Path) -> str:
+    """Describe why the stored graph belongs to another root, or return "".
+
+    The scan metadata records the root it was written at. Metadata from an
+    older writer has no root, so the File nodes are checked instead: an
+    absolute path outside the root and outside every declared extra dir can
+    only come from a store built elsewhere."""
+    from codegraph.state.scan_meta import read_meta
+
+    current = repo_root.resolve()
+    meta = read_meta(repo_root) or {}
+    recorded = meta.get("root")
+    if recorded:
+        return f"{recorded} -> {current}" if recorded != str(current) else ""
+    if not meta:
+        try:
+            from codegraph.core.db import get_db_path
+
+            if not get_db_path(repo_root).exists():
+                return ""
+        except Exception:
+            return ""
+    try:
+        paths = [
+            p for (p,) in get_connection(repo_root).list_node_fields("File", ["path"])
+        ]
+    except Exception:
+        return ""
+    if not paths:
+        return ""
+    allowed = {str(repo_root), str(current)}
+    try:
+        from codegraph.core.config import load_config
+
+        cfg = load_config(repo_root)
+        for entry in list(cfg.extra_dirs) + list(cfg.include_dirs):
+            p = Path(entry)
+            p = p if p.is_absolute() else repo_root / p
+            allowed.update({str(p), str(p.resolve())})
+    except Exception:
+        return ""
+    prefixes = tuple(a.rstrip(os.sep) + os.sep for a in allowed)
+    for p in paths:
+        if os.path.isabs(p) and not p.startswith(prefixes):
+            return f"file outside the root: {p}"
+    return ""
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,
@@ -2048,12 +2112,28 @@ def _index_repo(
             repo_root, on_file=on_file, on_discovery=on_discovery
         )
 
+    method_requested = method
+
+    # A store built at another root (a copied .codegraph, a moved checkout)
+    # holds absolute paths of that root. A plain walk would upsert the new
+    # paths beside the old ones, leaving every symbol and caller twice. Wipe
+    # the graph and index from scratch; the FTS rows of the old paths are
+    # dropped by the orphan purge at the end of the scan.
+    moved = _foreign_root(repo_root)
+    if moved:
+        from codegraph.state.scan_meta import clear_meta
+
+        _activity_log(repo_root, "root_moved_rebuild", moved)
+        _recover_corrupt_graph(repo_root)
+        clear_meta(repo_root)
+        if method == "git_diff":
+            method = "auto"
+
     # An index written by an older graph format lacks data that only a parse
     # produces (call sites, for format 2), so every file is parsed again once,
     # mtime cache or not. git_diff would only see changed files: widen it.
     from codegraph.state.scan_meta import graph_format_outdated
 
-    method_requested = method
     reparse = graph_format_outdated(repo_root)
     if reparse:
         _activity_log(repo_root, "graph_format_upgrade", "full re-parse")
@@ -2097,6 +2177,15 @@ def _index_repo(
     if deletions:
         _delete_gone(repo_root, deletions, _activity_log)
 
+    # Files git does not track at HEAD (untracked, new) are hashed in one git
+    # run instead of one subprocess each.
+    from codegraph.state.scan_meta import git_hash_objects
+
+    unstaged_shas = git_hash_objects(
+        repo_root,
+        [p for p in parseable if _rel_or_abs(p, repo_root) not in blob_shas],
+    )
+
     # ------------------------------------------------------------------
     # Index loop (shared across all methods)
     # ------------------------------------------------------------------
@@ -2105,7 +2194,7 @@ def _index_repo(
             rel = str(full_path.relative_to(repo_root))
         except ValueError:
             rel = str(full_path)
-        sha = blob_shas.get(rel)
+        sha = blob_shas.get(rel) or unstaged_shas.get(str(full_path))
         if sha is None:
             sha = _git_hash(repo_root, full_path)
         ok = index_file(
@@ -2202,7 +2291,11 @@ def _incremental_reindex(
     Returns a dict with: mode, reindexed, deleted, unchanged, elapsed_s.
     """
     from codegraph.state.activity import log as _activity_log
-    from codegraph.state.scan_meta import git_tree_blob_shas, read_meta, write_meta
+    from codegraph.state.scan_meta import (
+        clear_meta,
+        git_tree_blob_shas,
+        write_meta,
+    )
 
     repo_root = Path(repo_root)
     t0 = time.time()
@@ -2215,10 +2308,10 @@ def _incremental_reindex(
     # which recomputes every path from the current root. A plain full walk is
     # not enough: it upserts the new paths but leaves the old-root File nodes
     # orphaned in the graph.
-    recorded_root = (read_meta(repo_root) or {}).get("root")
-    if recorded_root and recorded_root != str(repo_root.resolve()):
+    if _foreign_root(repo_root):
         _activity_log(repo_root, "incremental_fallback", "root moved")
         _recover_corrupt_graph(repo_root)
+        clear_meta(repo_root)
         return {
             "mode": "fallback_full",
             **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),

@@ -160,7 +160,27 @@ def _route(root: str, command: str, tool: str, arguments: dict):
     """``route_owner_read`` with the remedy printed on this module's console."""
     from codegraph.cli.owner_client import route_owner_read
 
+    _warn_if_copied(root)
     return route_owner_read(root, command, tool, arguments, _say_stuck)
+
+
+def _warn_if_copied(root: str) -> None:
+    """One stderr line when the store was copied from another checkout: the
+    answers still come, but their paths point at that tree."""
+    import sys
+
+    from codegraph.state.scan_meta import foreign_root, read_meta
+
+    try:
+        old = foreign_root(read_meta(root), root)
+    except Exception:
+        return
+    if old:
+        print(
+            f"cgh: this .codegraph was built at {old}; results point at that "
+            "tree until `cgh index` rebuilds it here",
+            file=sys.stderr,
+        )
 
 
 def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:

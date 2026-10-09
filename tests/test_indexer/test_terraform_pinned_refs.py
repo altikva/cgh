@@ -171,6 +171,37 @@ def test_status_and_doctor_show_module_sources(repo, capsys):
     assert "module_sources:" in out and "v404" in out
 
 
+def test_status_shows_an_edited_mapping_as_pending(repo, capsys, monkeypatch):
+    # Before, the row kept the indexed path until the next index, beside a
+    # notice saying the mapping changed.
+    from codegraph.cli import commands_monitor
+
+    other = repo.parent / "mods2"
+    other.mkdir()
+    (repo / ".codegraph/config.toml").write_text(
+        MAPPING.replace('"../mods"', '"../mods2"'), encoding="utf-8"
+    )
+    commands_monitor.cmd_status(
+        argparse.Namespace(root=str(repo), json=True, workers=False)
+    )
+    [mapping] = json.loads(capsys.readouterr().out)["module_sources"]["mappings"]
+    assert mapping["path"] == str(other)
+    assert mapping["pending"] is True
+    assert mapping["indexed_path"] == str(repo.parent / "mods")
+    monkeypatch.setattr(commands_monitor.console, "width", 400)
+    commands_monitor.cmd_status(
+        argparse.Namespace(root=str(repo), json=False, workers=False)
+    )
+    out = capsys.readouterr().out
+    assert "mods2 (dir) pending reindex" in out
+    index_repo(repo, method="os_walk")
+    commands_monitor.cmd_status(
+        argparse.Namespace(root=str(repo), json=True, workers=False)
+    )
+    [mapping] = json.loads(capsys.readouterr().out)["module_sources"]["mappings"]
+    assert mapping["path"] == str(other) and "pending" not in mapping
+
+
 def test_a_ref_appearing_reparses_terraform(repo):
     mods = repo.parent / "mods"
     assert not module_sources_changed(repo)

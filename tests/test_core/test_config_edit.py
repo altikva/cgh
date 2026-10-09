@@ -97,6 +97,26 @@ class TestAddDirWithoutSection:
         assert data["codegraph"]["extra_dirs"] == ["../front"]
         assert data["plugin"]["codegen"]["model"] == "x"
 
+    def test_bare_path_means_add(self, tmp_path, monkeypatch):
+        # `cgh add-dir ../front` used to fail on the action choices.
+        from codegraph.__main__ import main
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        (tmp_path / "front").mkdir()
+        (tmp_path / "infra").mkdir()
+        cfg = _cfg(root, NO_SECTION)
+        monkeypatch.chdir(root)
+        monkeypatch.setattr("sys.argv", ["cgh", "add-dir", "../front", "../infra"])
+        main()
+        data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+        assert data["codegraph"]["extra_dirs"] == ["../front", "../infra"]
+        # The named actions still work.
+        monkeypatch.setattr("sys.argv", ["cgh", "add-dir", "remove", "../infra"])
+        main()
+        data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+        assert data["codegraph"]["extra_dirs"] == ["../front"]
+
     def test_add_dir_over_default_template_comment(self, tmp_path, monkeypatch):
         from codegraph.core.config import generate_default_config
 

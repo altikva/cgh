@@ -389,18 +389,49 @@ def _code_symbols(conn: Any, file_path: str) -> list[dict[str, Any]]:
     return out
 
 
+def _inside(inner: dict[str, Any], outer: dict[str, Any]) -> bool:
+    """True when ``inner``'s span lies within ``outer``'s, ``inner`` not
+    being ``outer`` itself."""
+    return (
+        inner["id"] != outer["id"]
+        and outer["start"] <= inner["start"]
+        and inner["end"] <= outer["end"]
+        and (inner["start"], inner["end"]) != (outer["start"], outer["end"])
+    )
+
+
+def _own_lines_hit(
+    sym: dict[str, Any], children: list[dict[str, Any]], lo: int, hi: int
+) -> bool:
+    """True when a line of ``lo``..``hi`` falls in ``sym`` and outside every
+    one of its ``children`` (the symbols nested in it)."""
+    first, last = max(lo, sym["start"]), min(hi, sym["end"])
+    line = first
+    for child in sorted(children, key=lambda c: c["start"]):
+        if child["end"] < line:
+            continue
+        if child["start"] > line:
+            break
+        line = child["end"] + 1
+        if line > last:
+            return False
+    return line <= last
+
+
 def changed_code_symbols(
     conn: Any, file_path: str, ranges: list[tuple[int, int]] | None
 ) -> tuple[list[dict[str, Any]], list[str], bool]:
     """What a diff of a code file changed: (symbols, function_ids, module_level).
 
-    ``symbols`` are the functions and classes whose line span intersects a
-    changed range (all of them when ``ranges`` is None). ``function_ids`` are
-    the functions a caller walk starts from: the changed functions, plus the
-    methods of a class changed outside any of its methods (a class attribute,
-    a base list). ``module_level`` is True when ``ranges`` is None or a range
-    touches no symbol at all (an import, a module constant): the file as a
-    whole changed, and its whole blast radius applies."""
+    ``symbols`` are the innermost functions and classes a changed range
+    touches (all of them when ``ranges`` is None): an edit inside a method
+    marks that method, not its class; the class counts as changed only when
+    a range touches its own lines, outside every method (a class attribute,
+    a base list). ``function_ids`` are the functions a caller walk starts
+    from: the changed functions, plus every method of a changed class.
+    ``module_level`` is True when ``ranges`` is None or a range touches no
+    symbol at all (an import, a module constant): the file as a whole
+    changed, and its whole blast radius applies."""
     syms = _code_symbols(conn, file_path)
     if ranges is None:
         return syms, [s["id"] for s in syms if s["kind"] == "function"], True
@@ -412,19 +443,16 @@ def changed_code_symbols(
         if not touching:
             module_level = True
             continue
-        funcs = [s for s in touching if s["kind"] == "function"]
         for s in touching:
-            hit[s["id"]] = s
-        fids.update(s["id"] for s in funcs)
-        if not funcs:
-            for c in touching:
-                fids.update(
-                    s["id"]
-                    for s in syms
-                    if s["kind"] == "function"
-                    and c["start"] <= s["start"]
-                    and s["end"] <= c["end"]
-                )
+            if s["kind"] == "function":
+                # A function holding the edited one changes with it.
+                hit[s["id"]] = s
+                fids.add(s["id"])
+                continue
+            children = [c for c in syms if _inside(c, s)]
+            if _own_lines_hit(s, children, lo, hi):
+                hit[s["id"]] = s
+                fids.update(c["id"] for c in children if c["kind"] == "function")
     ordered = [s for s in syms if s["id"] in hit]
     return ordered, sorted(fids), module_level
 
@@ -615,6 +643,7 @@ def build_impact_report(
     whole_files: list[str] = []  # module-level change: the file's whole radius
     symbol_files: list[str] = []  # symbol-level change: callers of those
     symbol_ids: list[str] = []
+    class_files: list[str] = []  # a class changed outside its methods
     for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
         ranges = lines_of.get(rel_f)
         for sym in symbols_in_file(conn, abs_f, ranges):
@@ -622,24 +651,27 @@ def build_impact_report(
         if abs_f.endswith((".tf", ".tfvars")):
             tf_changes[abs_f] = ranges
             continue
-        _, fids, module_level = changed_code_symbols(conn, abs_f, ranges)
+        syms, fids, module_level = changed_code_symbols(conn, abs_f, ranges)
         if module_level:
             whole_files.append(abs_f)
         else:
             symbol_files.append(abs_f)
             symbol_ids += fids
+            if any(s["kind"] == "class" for s in syms):
+                class_files.append(abs_f)
 
     # Blast radius. A module-level change (or a file without line ranges)
     # reaches the files that transitively import it, then the files whose
     # functions reach any of its functions over CALLS. A change inside
-    # functions or classes reaches the direct importers of the file and the
-    # callers of those symbols only. A Terraform change walks back from its
-    # changed blocks instead: the files holding blocks that reference them,
-    # not every file of the module directory.
+    # functions reaches the callers of those functions only; a class changed
+    # outside its methods also reaches the direct importers of its file
+    # (they may build or subclass it). A Terraform change walks back from
+    # its changed blocks instead: the files holding blocks that reference
+    # them, not every file of the module directory.
     radius, radius_trunc = reverse_import_bfs(conn, whole_files, max_depth=3)
     callers, callers_trunc = reverse_calls_bfs(conn, whole_files, max_depth=3)
     if symbol_files:
-        direct, direct_trunc = reverse_import_bfs(conn, symbol_files, max_depth=1)
+        direct, direct_trunc = reverse_import_bfs(conn, class_files, max_depth=1)
         sym_callers, sym_trunc = reverse_calls_bfs(
             conn, symbol_files, max_depth=3, start_ids=symbol_ids
         )

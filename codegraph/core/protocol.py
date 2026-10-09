@@ -127,6 +127,10 @@ class GraphDB(Protocol):
         """Name references outside ``exclude_file`` whose name is in
         ``names``, as (kind, from_id, file_path, name, extra) rows."""
 
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        """Every name reference of ``kind`` in the graph, as (from_id, name,
+        extra) rows. Read by the endpoints query for the router prefixes."""
+
     def node_keys_matching(
         self, label: str, field: str, values: list[Any]
     ) -> list[tuple[Any, Any]]:

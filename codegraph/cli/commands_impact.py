@@ -202,7 +202,8 @@ def _render_markdown(report: dict, since: str) -> str:
     if endpoints:
         for e in endpoints:
             method = e.get("method") or "?"
-            lines.append(f"- `{method} {e.get('path', '')}` ({e['file']})")
+            where = f"{e['file']}:{e['line']}" if e.get("line") else e["file"]
+            lines.append(f"- `{method} {e.get('path', '')}` ({where})")
     else:
         lines.append("- _none_")
     lines.append("")

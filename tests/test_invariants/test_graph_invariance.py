@@ -444,7 +444,7 @@ def test_typescript_bases_are_linked(graphs):
 
 
 def test_cross_file_handler_is_linked(graphs):
-    assert ("pkg/urls.py::ANY::/users/<int:pk>/", "pkg/views.py::user_detail") in (
+    assert ("pkg/urls.py::5::ANY::/users/<int:pk>/", "pkg/views.py::user_detail") in (
         graphs["A"]["IMPLEMENTED_BY"]
     )
 

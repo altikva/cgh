@@ -245,8 +245,8 @@ cgh stop [--root DIR]
 
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
-`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh graph`,
-`cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
+`cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -395,6 +395,44 @@ Accepts relative or absolute paths. The file must be indexed.
 ```bash
 cgh outline CLAUDE.md
 cgh outline docs/ARCHITECTURE.md
+```
+
+---
+
+### `endpoints`
+
+List HTTP routes with their method, full path, handler and `file:line`. Same
+query as the MCP `endpoints` tool, federated across subrepos (a non-parent
+scope is shown next to the route).
+
+```
+cgh endpoints [PATTERN] [--method M] [--include-tests] [--limit N] [--json] [--root DIR]
+```
+
+- **Full paths**: a FastAPI or Flask route's full path joins its router's
+  `APIRouter(prefix=...)` / `Blueprint(url_prefix=...)` with the prefixes of
+  the `include_router` / `register_blueprint` calls that reach it, across
+  files and through nested routers. A router included under several prefixes
+  has several full paths. Only string literals compose: a prefix taken from a
+  constant or an f-string leaves the route without a full path, marked
+  `prefix not literal` (`full_path_partial` in JSON).
+- **PATTERN**: a path or a glob, matched against the full paths, then the
+  local path. Parameter names are ignored (`{id}` matches `{donation_id}`).
+  A path starting with `/` that matches nothing falls back to routes whose
+  local path is a suffix of it, marked `suffix match`: several routers can
+  declare the same local path, so check the file.
+- `--method`: keep one method (any case).
+- `--include-tests`: also list the routes declared in test files, left out by
+  default (the summary line counts them).
+- `--limit N`: show the first N routes (default: all).
+- `--json`: `{pattern, total, tests_excluded, truncated, endpoints, warnings}`.
+
+**Example:**
+
+```bash
+cgh endpoints "/v1/donations/{id}/cancel"
+cgh endpoints "*/donations*" --method POST
+cgh endpoints --include-tests --json
 ```
 
 ---

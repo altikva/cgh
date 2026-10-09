@@ -907,13 +907,20 @@ def _ingest_endpoints(
     except OSError:
         return 0
 
+    from codegraph.analysis.call_rules import is_test_path
+
+    is_test = is_test_path(str(path), str(repo_root) if repo_root else None)
+    # A test mounting a real router under a prefix of its own must not give
+    # that router's routes a full path the app never serves.
+    if refs is not None and path.suffix == ".py" and repo_root and not is_test:
+        refs.extend(_router_refs(path, src, repo_root))
+
     eps = _extract_endpoints(path, src)
     if not eps:
         return 0
 
     # purge_file_data already cleaned old endpoints for this path during
     # the upstream _purge_file call, so no separate purge needed here.
-
     local: set[str] = set()
     for ep in eps:
         conn.upsert_node(
@@ -926,6 +933,8 @@ def _ingest_endpoints(
                 "framework": ep.framework,
                 "file_path": ep.file_path,
                 "start_line": ep.start_line,
+                "router": ep.router,
+                "is_test": is_test,
             },
         )
         conn.ensure_edge("DEFINES_ENDPOINT", str(path), ep.id)
@@ -950,6 +959,19 @@ def _ingest_endpoints(
             conn, remote, _handler_candidate_files(idx, repo_root), refs
         )
     return len(eps)
+
+
+def _router_refs(path: Path, src: str, repo_root: Path) -> list[NameRef]:
+    """The router prefixes and include calls of a Python file, kept as name
+    references so the endpoints query composes full paths across files."""
+    from codegraph.analysis.endpoints import python_router_refs
+    from codegraph.imports.resolver import resolve_import
+
+    def resolve_module(module: str) -> str | None:
+        target = resolve_import("python", module, path, repo_root)
+        return str(target) if target is not None else None
+
+    return python_router_refs(path, src, resolve_module)
 
 
 def _link_remote_handlers(

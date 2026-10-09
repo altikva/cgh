@@ -46,7 +46,7 @@ URLS_RELATIVE = (
     'urlpatterns = [path("users/<int:pk>/", user_detail)]\n'
 )
 VIEWS = "def user_detail(request, pk):\n    return pk\n"
-ENDPOINT = "pkg/urls.py::ANY::/users/<int:pk>/"
+ENDPOINT = "pkg/urls.py::5::ANY::/users/<int:pk>/"
 
 
 def _write(root: Path, files: dict[str, str]) -> None:

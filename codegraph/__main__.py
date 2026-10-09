@@ -76,6 +76,7 @@ from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
+    cmd_endpoints,
     cmd_grep,
     cmd_lookup,
     cmd_outline,
@@ -127,6 +128,7 @@ def _print_help():
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
+                ("endpoints", "HTTP routes with full paths, handler and location"),
                 (
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
@@ -386,7 +388,8 @@ def _register_setup_and_serve(sub) -> None:
 
 
 def _register_inspect(sub) -> None:
-    """Register stats, logs, search, lookup, callers, callees, outline, doctor."""
+    """Register stats, logs, search, lookup, callers, callees, outline,
+    endpoints, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -530,6 +533,29 @@ def _register_inspect(sub) -> None:
     # --- outline ---
     p = sub.add_parser("outline", help="Show heading outline of a Markdown file (tree)")
     p.add_argument("file", help="Markdown file path")
+    _add_root(p)
+
+    # --- endpoints ---
+    p = sub.add_parser(
+        "endpoints", help="List HTTP routes: method, full path, handler, file:line"
+    )
+    p.add_argument(
+        "pattern",
+        nargs="?",
+        default="",
+        help="Path or glob, matched on full paths then local paths "
+        '(e.g. "/v1/donations/{id}/cancel", "*/donations*")',
+    )
+    p.add_argument("--method", "-m", default="", help="GET, POST, ... (any case)")
+    p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Also list routes declared in test files",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=0, help="Max routes to show (default: all)"
+    )
+    p.add_argument("--json", action="store_true")
     _add_root(p)
 
     # --- doctor ---
@@ -859,6 +885,7 @@ def main() -> None:
         "callers": cmd_callers,
         "callees": cmd_callees,
         "outline": cmd_outline,
+        "endpoints": cmd_endpoints,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,

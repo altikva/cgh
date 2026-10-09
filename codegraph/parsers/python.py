@@ -272,6 +272,13 @@ class PythonParser(BaseParser):
                 args_node = node.child_by_field_name("superclasses")
                 if args_node:
                     for arg in args_node.children:
+                        # Base[T] and mod.Base[int, str] subclass Base and
+                        # mod.Base: keep the subscripted name, drop the args.
+                        while arg.type == "subscript":
+                            value = arg.child_by_field_name("value")
+                            if value is None:
+                                break
+                            arg = value
                         if arg.type in ("identifier", "dotted_name", "attribute"):
                             bases.append(_ident(arg, src))
 

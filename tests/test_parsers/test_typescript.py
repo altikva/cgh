@@ -71,3 +71,32 @@ class TestTypeScriptParser:
         for fn in idx.functions:
             assert fn.start_line > 0
             assert fn.file_path == str(sample_typescript)
+
+    def test_class_bases(self, tmp_path):
+        f = tmp_path / "bases.ts"
+        f.write_text(
+            "class A extends Base<T> implements I, J<K>, ns.L {}\n"
+            "class B extends ns.Base {}\n"
+            "class C extends mixin(X) {}\n"
+            "export default class D extends E {}\n"
+            "class F {}\n"
+        )
+        bases = {c.name: c.bases for c in get_parser(".ts").parse(f).classes}
+        assert bases == {
+            "A": ["Base", "I", "J", "ns.L"],
+            "B": ["ns.Base"],
+            # An expression base names no class.
+            "C": [],
+            "D": ["E"],
+            "F": [],
+        }
+
+    def test_class_bases_js_and_tsx(self, tmp_path):
+        for name in ("bases.js", "bases.tsx"):
+            f = tmp_path / name
+            f.write_text("class A extends React.Component {}\nclass B extends A {}\n")
+            idx = get_parser(f.suffix).parse(f)
+            assert {c.name: c.bases for c in idx.classes} == {
+                "A": ["React.Component"],
+                "B": ["A"],
+            }

@@ -15,10 +15,21 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 import os
+import sys
 import threading
 import time
 from typing import Any
+
+# DuckDB (1.5) tries `import pandas` twice while converting each bound
+# parameter value and does not remember the failure: with pandas absent, each
+# try searches every sys.path entry again, over a third of a full index. A None entry in sys.modules makes that import fail at once with
+# the same ModuleNotFoundError. Set only when pandas is not installed, so an
+# installed pandas is never hidden; optional users (duckdb's .df() and its
+# spark shim) already handle the ImportError, and find_spec still returns None.
+if "pandas" not in sys.modules and importlib.util.find_spec("pandas") is None:
+    sys.modules["pandas"] = None  # type: ignore[assignment]
 
 import duckdb
 

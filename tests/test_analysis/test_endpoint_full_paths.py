@@ -534,3 +534,20 @@ def test_cli_endpoints_asks_the_live_owner_first(tmp_path, monkeypatch, capsys):
         "method": "",
         "include_tests": True,
     }
+
+
+def test_matching_cost_stays_bounded_on_adversarial_input():
+    # Several catch-alls, back-to-back parameters and an oversized pattern
+    # must answer at once instead of backtracking.
+    import time
+
+    from codegraph.analysis import endpoint_query as q
+
+    start = time.monotonic()
+    many_rest = "/v1/" + "/".join(["{p:path}"] * 12)
+    assert q._path_match(many_rest, "/v1/" + "/".join(["a"] * 60), False)
+    seg = q._stored_segment("{a}{b}{c}{d}{e}{f}.pdf")
+    assert q._segment_score(seg, "x" * 5000) is None
+    assert q._segment_score(seg, "123.pdf") is not None
+    assert "too long" in q.select_endpoints([], "/" + "a/" * 100)["error"]
+    assert time.monotonic() - start < 1.0

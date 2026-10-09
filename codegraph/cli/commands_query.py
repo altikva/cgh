@@ -183,6 +183,20 @@ def _warn_if_copied(root: str) -> None:
         )
 
 
+def _refuse_if_copied(root: str) -> None:
+    """Exit 1 with the remedy on stderr when the store was copied from another
+    checkout, for commands that look a file up by its path: every such lookup
+    misses there, and an empty answer would read as a real one."""
+    import sys
+
+    from codegraph.state.scan_meta import copied_store_message
+
+    message = copied_store_message(root)
+    if message:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+
+
 def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:
     """Run ``tool`` on this repo's live owner, which holds the graph DB for
     writing and so blocks our own read-only open while it runs.
@@ -866,6 +880,7 @@ def _outline_conn(conn, abs_path: str, rel_arg: str) -> list[dict]:
 
 def cmd_outline(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    _refuse_if_copied(root)
 
     file_path = args.file
     if not os.path.isabs(file_path):

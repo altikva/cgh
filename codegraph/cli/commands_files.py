@@ -194,8 +194,14 @@ def _print_list(
 
 
 def cmd_files(args: argparse.Namespace) -> None:
+    from codegraph.cli.commands_query import _refuse_if_copied, _warn_if_copied
+
     root = Path(os.path.abspath(args.root))
     if args.check:
+        # A path check on a copied store always answers "not indexed".
+        _refuse_if_copied(str(root))
         _check(root, args.check)
     else:
+        # The listing still says what was indexed, under the old tree's paths.
+        _warn_if_copied(str(root))
         _list(root, args.pattern, args.limit)

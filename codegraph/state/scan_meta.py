@@ -53,7 +53,12 @@ _META_FILE = "scan_meta.json"
 #      class, and an attribute typed with a class whose module a method
 #      imports in its body keeps that import: such calls no longer link to
 #      every method of the name.
-GRAPH_FORMAT = 10
+#  11: Python route decorators spanning several lines, giving the path as
+#      path=, with an empty path, or written as api_route(...) are stored as
+#      endpoints (with their handler), so endpoints and impact see them, and
+#      a file under a test directory or named like a test gets the test role
+#      even inside a handlers/ or services/ directory.
+GRAPH_FORMAT = 11
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.
@@ -279,6 +284,23 @@ def foreign_root(meta: dict | None, repo_root: str | Path) -> str:
     except OSError:
         return ""
     return str(recorded) if str(recorded) != current else ""
+
+
+def copied_store_message(repo_root: str | Path) -> str:
+    """The refusal to print when the store under ``repo_root`` was copied
+    from another checkout, else "". For commands that look a file up by its
+    path (impact, outline, files --check): the store holds the old tree's
+    paths, so every lookup misses and the answer would be silently empty."""
+    try:
+        old = foreign_root(read_meta(repo_root), repo_root)
+    except Exception:  # best-effort probe: never block a command on it
+        return ""
+    if not old:
+        return ""
+    return (
+        f"cgh: this .codegraph was built at {old}. It holds that tree's paths, "
+        "so a path here matches nothing. Run `cgh index` here to rebuild it."
+    )
 
 
 def copied_notice(ss: dict) -> str | None:

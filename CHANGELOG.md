@@ -47,6 +47,19 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
+- **TypeScript and JavaScript classes had no bases.** `extends` and
+  `implements` were never read, so INHERITS was empty for TS, JS and TSX,
+  and `this.f()` / `super.f()` could not follow the base class. Type
+  arguments are dropped (`extends Store<T>` links to `Store`). Classes in
+  `.vue` files and `abstract class` declarations are still not indexed.
+  The first index after upgrading re-parses the whole repo once.
+- **Python generic bases were dropped.** `class A(Base[T])`,
+  `Generic[T]`, `mod.Base[T]` and `Base[int, str]` now record `Base`,
+  `Generic` and `mod.Base` like their plain forms.
+- **Indexing on the DuckDB backend was slow without pandas.** DuckDB
+  searched the whole import path for pandas twice per query parameter;
+  cgh now makes that lookup fail at once when pandas is not installed. A
+  full index of a 1,300 file repo takes about a third less time.
 - **cgh-bugreport refused about one crash report in 50,000** (0.1.3). Its
   random report id could look like an international phone number, which
   its own PII tripwire then rejected, with a message blaming cgh-bugreport.

@@ -1965,13 +1965,13 @@ def _foreign_root(repo_root: Path) -> str:
     older writer has no root, so the File nodes are checked instead: an
     absolute path outside the root and outside every declared extra dir can
     only come from a store built elsewhere."""
-    from codegraph.state.scan_meta import read_meta
+    from codegraph.state.scan_meta import foreign_root, read_meta
 
     current = repo_root.resolve()
     meta = read_meta(repo_root) or {}
-    recorded = meta.get("root")
-    if recorded:
-        return f"{recorded} -> {current}" if recorded != str(current) else ""
+    if meta.get("root"):
+        old = foreign_root(meta, repo_root)
+        return f"{old} -> {current}" if old else ""
     if not meta:
         try:
             from codegraph.core.db import get_db_path

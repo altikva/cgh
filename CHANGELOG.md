@@ -69,6 +69,30 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
+- **`cgh callers Class.method` listed calls on other classes.** A call on
+  a local built from a sibling implementation (`kms = InMemoryKmsClient()`),
+  on an object a typed factory returns (`fernet = _get_fernet()`, a
+  `MultiFernet`), or on an attribute built from a library class imported
+  inside `__init__` was linked to every method of the name. Python calls
+  on such locals and attributes now resolve to their class (no edge for a
+  library class), and a `Class.method` query drops the callers whose
+  receiver is known to be of an unrelated class. Calls through an
+  interface and on receivers of unknown type are still listed. The first
+  index after upgrading re-parses the repo once.
+- **`cgh status` called a copied `.codegraph` fresh.** Until the next
+  index, a store copied from another checkout answered with the old tree's
+  paths while status said `fresh`. `cgh status` (state `copied`,
+  `scan.copied_from` in `--json`), `cgh stats` and `cgh doctor` now say
+  where it was built and to run `cgh index`; query commands print a
+  one-line warning on stderr. A store seeded by `cgh init --from` is not
+  flagged.
+- **The `cgh status` "Module sources" row showed the indexed mapping after
+  an edit.** It now shows the mapping from the current config and marks a
+  changed or new entry `pending reindex`, with the path it was indexed
+  under.
+- **`cgh add-dir <path>` failed.** A path in place of the action now adds
+  it, as `cgh add-dir add <path>` does; `add`, `remove` and `list` work as
+  before.
 - **Editing `[terraform] module_sources` needed a deleted `.codegraph`.** A
   changed mapping, or a pinned ref now resolving to another commit, makes
   the next `cgh index`, incremental reindex or owner start parse the
@@ -103,11 +127,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   rebuilds from scratch when the recorded root differs, or when a store
   without one holds files outside the root and its extra dirs.
 - **`cgh impact` marked every symbol of a changed code file.** The diff
-  hunks now select the functions and classes they touch (a one-line edit
-  of a method in ondonne-api's `donation_manager.py`: 37 symbols and 210
-  impacted files before, 2 and 30 now), and the blast radius of such a change is the
-  file's direct importers plus the callers of those symbols. A change
-  outside any symbol keeps the whole-file radius. Changed lines are read
+  hunks now select the innermost functions and classes they touch: an edit
+  inside a method marks that method only, and its class counts as changed
+  only when a hunk touches the class's own lines (an attribute, the bases).
+  The blast radius is the callers of the changed symbols, plus the file's
+  direct importers when a class changed (a one-line edit of a method in
+  ondonne-api's `donation_manager.py` marked 37 symbols and 210 impacted
+  files before). A change outside any symbol keeps the whole-file radius. Changed lines are read
   from the same diff as the file list, so uncommitted edits are precise
   too; a `.tf` edit not yet committed used to count as a whole-file change
   (one module argument of ondonne-infra's `module.kms`: 8 entries marked

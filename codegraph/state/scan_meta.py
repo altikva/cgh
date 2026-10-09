@@ -48,7 +48,12 @@ _META_FILE = "scan_meta.json"
 #      into a directory of its own (<dir>@<ref>), and a mapped module's
 #      resources, data sources and locals are read too, not only its
 #      variables and outputs.
-GRAPH_FORMAT = 9
+#  10: a call on a Python local variable whose class is known (x = C(...),
+#      x: C = ..., x = f() with f annotated -> C) is stored as a call on that
+#      class, and an attribute typed with a class whose module a method
+#      imports in its body keeps that import: such calls no longer link to
+#      every method of the name.
+GRAPH_FORMAT = 10
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.
@@ -243,6 +248,33 @@ def recorded_graph_format(meta: dict | None) -> int | None:
         return 0
 
 
+def foreign_root(meta: dict | None, repo_root: str | Path) -> str:
+    """The root a scan record was written at when it is not ``repo_root``
+    (a .codegraph copied from another checkout), else "". Only reads the
+    record: an older writer recorded no root, and that case is left to the
+    indexer, which checks the stored paths."""
+    recorded = (meta or {}).get("root")
+    if not recorded:
+        return ""
+    try:
+        current = str(Path(repo_root).resolve())
+    except OSError:
+        return ""
+    return str(recorded) if str(recorded) != current else ""
+
+
+def copied_notice(ss: dict) -> str | None:
+    """One line on a store copied from another root, from a scan_status()
+    result, or None when the store was built here."""
+    old = ss.get("copied_from")
+    if not old:
+        return None
+    return (
+        f"this .codegraph was built at {old}: results point at that tree until "
+        "it is rebuilt here. Run `cgh index`"
+    )
+
+
 def format_notice(ss: dict) -> str | None:
     """One line on an index older than this cgh's graph format, from a
     scan_status() result, or None when the format is current."""
@@ -327,13 +359,16 @@ def scan_status(repo_root: str | Path) -> dict:
       dirty                                      (bool | None, working tree)
       behind_by                                  (int | None, commits)
       changed_files                              (list[str], since indexed_sha)
-      fresh                                      (bool, no drift and the
-                                                  graph format is current)
+      fresh                                      (bool, no drift, the graph
+                                                  format is current and the
+                                                  store was built here)
+      copied_from                                (root the store was built
+                                                  at, when not this one)
       indexing                                   ({pid, since} | None)
       graph_format, graph_format_current,
       format_outdated                            (index older than this cgh)
-      state      fresh | stale | outdated | reindexing | indexing |
-                 indexed | none
+      state      fresh | stale | outdated | copied | reindexing |
+                 indexing | indexed | none
 
     ``indexing`` is set while an index of this repo is running. The metadata
     is only written when an index completes, so during a first index
@@ -377,13 +412,20 @@ def scan_status(repo_root: str | Path) -> dict:
     # adds, so it is not fresh whatever its git HEAD says.
     recorded = recorded_graph_format(meta or None)
     outdated = recorded is not None and recorded < GRAPH_FORMAT
+    # A store copied from another checkout holds that checkout's absolute
+    # paths: not fresh, whatever its git HEAD says, until `cgh index`
+    # rebuilds it here.
+    copied_from = foreign_root(meta, root)
     fresh = (
         indexed_sha is not None
         and current_sha is not None
         and indexed_sha == current_sha
         and not outdated
+        and not copied_from
     )
-    if outdated:
+    if copied_from:
+        state = "reindexing" if indexing else "copied"
+    elif outdated:
         state = "reindexing" if indexing else "outdated"
     elif indexing:
         state = "indexing"
@@ -399,6 +441,7 @@ def scan_status(repo_root: str | Path) -> dict:
         "graph_format": recorded,
         "graph_format_current": GRAPH_FORMAT,
         "format_outdated": outdated,
+        "copied_from": copied_from or None,
         "imports": (meta.get("stats") or {}).get("imports") or {},
         "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
         "module_sources": meta.get("module_sources") or {},

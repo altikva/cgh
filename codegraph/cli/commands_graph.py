@@ -249,6 +249,9 @@ def _graph_explore(args: argparse.Namespace, root: str) -> None:
     )
 
 
+_ADD_DIR_ACTIONS = ("add", "remove", "list")
+
+
 def cmd_add_dir(args: argparse.Namespace) -> None:
     """Add or manage extra directories in the graph."""
     from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
@@ -268,11 +271,17 @@ def cmd_add_dir(args: argparse.Namespace) -> None:
 
     extra_dirs = data.get("codegraph", {}).get("extra_dirs", [])
 
+    # `cgh add-dir ../frontend`: a first argument that is not an action is
+    # the first path to add.
+    if args.action is not None and args.action not in _ADD_DIR_ACTIONS:
+        args.paths = [args.action, *(args.paths or [])]
+        args.action = "add"
+
     # List mode
     if args.action == "list" or (args.action is None and not args.paths):
         if not extra_dirs:
             console.print("[dim]No extra directories configured.[/dim]")
-            console.print("[dim]Add with: cgh add-dir add ../frontend[/dim]")
+            console.print("[dim]Add with: cgh add-dir ../frontend[/dim]")
         else:
             console.print("[bold]Extra directories:[/bold]\n")
             for d in extra_dirs:
@@ -393,8 +402,10 @@ def register_graph_parser(sub) -> None:
     p.add_argument(
         "action",
         nargs="?",
-        choices=["add", "remove", "list"],
-        help="Action (default: list)",
+        help=(
+            "add, remove or list (default: list); a path in its place adds it: "
+            "`cgh add-dir ../frontend` is `cgh add-dir add ../frontend`"
+        ),
     )
     p.add_argument("paths", nargs="*", help="Directory paths")
     p.add_argument("--root", default=os.getcwd())

@@ -216,8 +216,10 @@ module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modul
   commit (a moved branch, a tag fetched since), is noticed by the next
   `cgh index`, incremental reindex or owner start, which parses the
   Terraform files again. `cgh status` (human and `--json`, key
-  `module_sources`) and `cgh doctor` list each mapping with its path and
-  the refs found and missing.
+  `module_sources`) and `cgh doctor` list each mapping of the current
+  config with its path and the refs found and missing; a mapping edited
+  since the last index is marked `pending reindex` (`pending` and
+  `indexed_path` in `--json`).
 
 #### `[mcp]`
 

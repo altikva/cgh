@@ -349,7 +349,18 @@ cgh callers <fn_name> [--root DIR]
 
 ```bash
 cgh callers verify_token
+cgh callers GoogleKmsClient.destroy_crypto_key
+cgh callers app.services.envelope_encryption.GoogleKmsClient.destroy_crypto_key
 ```
+
+`Class.method` (optionally prefixed by its module path) selects that
+method. It also lists the callers of the interface methods it implements:
+a class it inherits (an ABC, a class named in TypeScript `extends` or
+`implements`) or a
+`typing.Protocol` it conforms to (it defines every method the Protocol
+declares). A call through `self._kms: KmsClient` links to
+`KmsClient.destroy_crypto_key`; those callers are shown with
+`via KmsClient.destroy_crypto_key`.
 
 ---
 

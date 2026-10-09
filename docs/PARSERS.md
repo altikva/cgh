@@ -426,9 +426,23 @@ source links nothing unless `[terraform] module_sources` in
 that directory. A mapped directory the graph already indexes (the repo, an
 `extra_dirs` entry) links like a local one; any other (outside every index,
 or inside a federated subrepo, whose graph the parent cannot link into) has
-its variables and outputs read into this graph on demand, read-only, without
-a File node or text-search entry, and read again when its `.tf` files change
-and a caller is re-indexed. Nothing is fetched over the network.
+its blocks read into this graph on demand, read-only, without a File node or
+text-search entry: resources, data sources, locals, variables and outputs,
+linked among themselves (variables and outputs only for a directory in a
+federated subrepo, whose own graph holds its resources). It is read again
+when its `.tf` files change and a caller is re-indexed.
+
+When the mapped directory sits in a git checkout and the source pins a
+`?ref=` (tag, branch or commit), the module is read from git at that ref
+(`git ls-tree` and `git cat-file`, no checkout, no worktree, no fetch) into a
+directory of its own, `<dir>@<ref>` (for example
+`gcp-modules/modules/kms@v0.1.0/main.tf`), so two calls pinning different
+refs each link to their own version. Within one process a copy is read
+again only when the ref resolves to another commit. A ref the checkout lacks falls back to the
+working tree, logs a warning and shows in `cgh status` and `cgh doctor`.
+`module.m.<address>` (`module.kms.google_kms_key_ring.r`) finds the block
+inside module `m` for `cgh lookup`, `symbol_lookup`, `find_callers` and
+`impact_of`. Nothing is fetched over the network.
 
 Each module input is also an entry of its own, `module.<m>.<argument>`
 (kind `tf_module_arg`), on the argument's lines and pointing at the

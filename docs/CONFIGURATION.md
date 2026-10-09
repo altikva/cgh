@@ -190,17 +190,34 @@ module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modul
   `git::https://github.com/altikva/gcp-modules.git//modules/kms?ref=v0.1.0`
   to `../gcp-modules/modules/kms`. A registry address works the same way
   (`"acme/kms/google" = "../modules/kms"`).
-- The `//subdir` is joined to the mapped directory. The `?ref=` is
-  ignored: links follow whatever the local checkout holds, which may differ
-  from the pinned ref.
+- The `//subdir` is joined to the mapped directory.
+- When the mapped directory is not indexed by this graph and sits in a git
+  checkout, the `?ref=` is honoured: the module's `.tf` files are read from
+  git at that tag, branch (local, or `origin/<branch>`) or commit, with
+  `git ls-tree` and `git cat-file`. Nothing is checked out, no worktree is
+  made and nothing is fetched, so the ref must already be in the checkout
+  (`git fetch --tags` there yourself). Each ref gets its own copy, shown as
+  `<dir>@<ref>` (`../gcp-modules/modules/kms@v0.1.0/main.tf`), so modules
+  pinned at different refs link to their own variables and outputs. A ref
+  the checkout lacks falls back to the working tree, with a warning in the
+  index log and a notice in `cgh status` and `cgh doctor` naming the ref and
+  the module. Without a ref, or when the directory is no git checkout or is
+  indexed here, the working tree is read as is.
 - Paths are relative to the project root, or absolute.
 - When the mapped directory is indexed by this graph (inside the repo or an
   `extra_dirs` entry) the links are ordinary edges. Otherwise (outside every
-  index, or inside a federated subrepo) cgh reads that directory's
-  variables and outputs into this graph when a calling file is indexed:
-  read-only, nothing written there, nothing fetched over the network.
-- A change to the mapping takes effect on the next full re-index
-  (`cgh index --force`).
+  index, or inside a federated subrepo) cgh reads that directory's blocks
+  into this graph when a calling file is indexed: resources, data sources,
+  locals, variables and outputs (variables and outputs only inside a
+  federated subrepo), read-only, nothing written there, nothing fetched
+  over the network. `cgh lookup google_x.y` finds a resource of the module,
+  and `module.kms.google_x.y` the one inside the module `kms` calls.
+- A change to the mapping, or a pinned ref that now resolves to another
+  commit (a moved branch, a tag fetched since), is noticed by the next
+  `cgh index`, incremental reindex or owner start, which parses the
+  Terraform files again. `cgh status` (human and `--json`, key
+  `module_sources`) and `cgh doctor` list each mapping with its path and
+  the refs found and missing.
 
 #### `[mcp]`
 

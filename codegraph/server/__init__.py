@@ -418,8 +418,18 @@ def _startup_index_needed(root, reindex: bool) -> bool:
         # this triggers falls back to one full re-parse.
         _log.info("graph format of %s is outdated, re-indexing it", root)
         return True
-    from codegraph.indexer import older_writer_pending
+    from codegraph.indexer import module_sources_changed, older_writer_pending
 
+    try:
+        tf_changed = module_sources_changed(root)
+    except Exception:
+        tf_changed = False
+    if tf_changed:
+        # [terraform] module_sources or a ref it pins changed: the
+        # incremental reindex falls back to a walk that re-parses the .tf
+        # files.
+        _log.info("module_sources of %s changed, re-indexing Terraform", root)
+        return True
     if older_writer_pending(root):
         # An older cgh (a rollback) rewrote files without their references;
         # the incremental reindex parses those files again.

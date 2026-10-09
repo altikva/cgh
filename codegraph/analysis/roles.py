@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from codegraph.analysis.call_rules import is_test_path
+
 # Framework-agnostic defaults. Each rule is (path fragment, role, layer).
 # Matched as a substring against the POSIX-normalised relative path.
 # Teams with different conventions can override via .codegraph/config.toml
@@ -193,9 +195,13 @@ def classify(path: str | Path, repo_root: str | Path | None = None) -> tuple[str
 
     Matching order:
       1. Custom rules from .codegraph/config.toml [roles]
-      2. Built-in path-fragment defaults (longest-match wins)
-      3. Filename patterns
-      4. ("other", "other")
+      2. Test files: under a test directory (tests/, test/, __tests__/, ...)
+         or named like one (test_*.py, *_test.py, *.test.ts, *.spec.ts, ...),
+         whatever their other directories. tests/unit/handlers/test_x.py is
+         a test, not a handler.
+      3. Built-in path-fragment defaults (longest-match wins)
+      4. Filename patterns
+      5. ("other", "other")
     """
     p = Path(path)
     try:
@@ -212,7 +218,12 @@ def classify(path: str | Path, repo_root: str | Path | None = None) -> tuple[str
             if fragment in rel_lower:
                 return role, layer
 
-    # 2. Built-in defaults, prefer the MOST SPECIFIC match (longest wins)
+    # 2. A test stays a test whatever directory it sits in, so impact lists
+    #    it among the tests to run and coverage tools count it as a test.
+    if is_test_path(rel_posix.lstrip("/"), None):
+        return "test", "test"
+
+    # 3. Built-in defaults, prefer the MOST SPECIFIC match (longest wins)
     best_match: tuple[str, str] | None = None
     best_len = -1
     for fragment, role, layer in _DEFAULT_PATH_RULES:
@@ -223,7 +234,7 @@ def classify(path: str | Path, repo_root: str | Path | None = None) -> tuple[str
     if best_match is not None:
         return best_match
 
-    # 3. Fallback: name pattern
+    # 4. Fallback: name pattern
     for pat, role, layer in _NAME_RULES:
         if pat.search(p.name):
             return role, layer

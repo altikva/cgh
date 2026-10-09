@@ -5,13 +5,15 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Extract HTTP endpoint definitions from source files.
-#              Supports FastAPI / Flask / Starlette decorators and Django
+#              Supports FastAPI / Flask / Starlette decorators (on one line or
+#              several, path given by position or as path=) and Django
 #              urlpatterns (Python), Nuxt server/api file-based routes plus
 #              Express/Fastify and NestJS decorators (JS/TS), Spring
 #              @*Mapping decorators (Java), and Gin/Echo router calls (Go).
 
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,44 +34,82 @@ class EndpointDef:
 # Python, FastAPI / Flask / Starlette decorators
 # ---------------------------------------------------------------------------
 
-# Captures @router.get("/path") / @app.post("/path", ...) / @bp.route(...)
+# Finds the start of @router.get(...) / @app.post(...) / @bp.route(...) /
+# @router.api_route(...). The arguments are read with the ast module from the
+# whole decorator, which may span several lines.
 _PY_DECORATOR = re.compile(
-    r"""@\s*(?P<obj>[a-zA-Z_][\w.]*)       # router object or attribute access
-         \.(?P<method>get|post|put|patch|delete|head|options|route)
+    r"""^\s*@\s*(?P<obj>[a-zA-Z_][\w.]*)    # router object or attribute access
+         \.(?P<method>get|post|put|patch|delete|head|options|route|api_route)
          \s*\(
-           \s*['"](?P<path>[^'"]+)['"]     # the path string
     """,
     re.VERBOSE,
 )
 
-# If @bp.route("/x", methods=["POST"]) is used, extract the methods list
-_PY_ROUTE_METHODS = re.compile(r"methods\s*=\s*\[([^\]]+)\]")
+# A decorator call longer than this many lines is not read.
+_PY_DECORATOR_MAX_LINES = 40
+
+
+def _py_decorator_call(lines: list[str], start: int) -> tuple[ast.Call, int] | None:
+    """Parse the decorator call opening at ``lines[start]`` (0-based).
+
+    Returns the call and the 0-based index of its last line, or None when no
+    complete call parses within the line budget.
+    """
+    first = lines[start].lstrip()[1:]  # drop the "@"
+    text = first
+    for end in range(start, min(start + _PY_DECORATOR_MAX_LINES, len(lines))):
+        if end > start:
+            text += "\n" + lines[end]
+        try:
+            node = ast.parse(text.strip(), mode="eval").body
+        except SyntaxError:
+            continue
+        return (node, end) if isinstance(node, ast.Call) else None
+    return None
+
+
+def _py_str(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
 def extract_python(path: str | Path, src: str) -> list[EndpointDef]:
     out: list[EndpointDef] = []
     lines = src.splitlines()
-    for i, line in enumerate(lines, start=1):
-        m = _PY_DECORATOR.search(line)
+    for i, line in enumerate(lines):
+        m = _PY_DECORATOR.match(line)
         if not m:
             continue
+        parsed = _py_decorator_call(lines, i)
+        if parsed is None:
+            continue
+        call, end = parsed
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        url = _py_str(call.args[0]) if call.args else _py_str(kwargs.get("path"))
+        if url is None:
+            continue
         method = m.group("method").upper()
-        url = m.group("path")
 
-        if method == "ROUTE":
-            # Flask-style: infer methods from methods=[...]
-            mm = _PY_ROUTE_METHODS.search(line)
-            if mm:
-                for raw in mm.group(1).split(","):
-                    mth = raw.strip().strip("\"'").upper()
-                    if not mth:
-                        continue
-                    out.append(_build_py_endpoint(path, i, mth, url, lines))
+        if method in ("ROUTE", "API_ROUTE"):
+            # Methods come from methods=[...]. A methods value that is not a
+            # literal list (a module constant) is not known here: ANY.
+            methods_node = kwargs.get("methods")
+            if methods_node is None:
+                methods = ["GET"]
+            elif isinstance(methods_node, (ast.List, ast.Tuple, ast.Set)):
+                methods = [
+                    s.upper()
+                    for s in map(_py_str, methods_node.elts)
+                    if s and s.strip()
+                ]
             else:
-                out.append(_build_py_endpoint(path, i, "GET", url, lines))
+                methods = ["ANY"]
+            for mth in methods:
+                out.append(_build_py_endpoint(path, i + 1, mth, url, lines, end + 1))
             continue
 
-        out.append(_build_py_endpoint(path, i, method, url, lines))
+        out.append(_build_py_endpoint(path, i + 1, method, url, lines, end + 1))
     return out
 
 
@@ -79,10 +119,14 @@ def _build_py_endpoint(
     method: str,
     url: str,
     lines: list[str],
+    after: int | None = None,
 ) -> EndpointDef:
-    """Build an EndpointDef + sniff the handler function name on the next non-decorator line."""
+    """Build an EndpointDef + sniff the handler function name on the next
+    non-decorator line. ``after`` is the 0-based index of the first line past
+    the decorator (a decorator may span several lines)."""
     handler = None
-    for j in range(line_no, min(line_no + 15, len(lines))):
+    begin = line_no if after is None else after
+    for j in range(begin, min(begin + 15, len(lines))):
         ln = lines[j].lstrip()
         if ln.startswith("@"):
             continue  # other decorators stacked

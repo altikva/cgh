@@ -98,6 +98,23 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   where it was built and to run `cgh index`; query commands print a
   one-line warning on stderr. A store seeded by `cgh init --from` is not
   flagged.
+- **`cgh impact` on a copied `.codegraph` answered empty with exit 0.** Its
+  diff maps to this checkout's paths while the store holds the old tree's,
+  so nothing matched. `cgh impact`, `cgh outline` and `cgh files --check`
+  now refuse such a store with exit 1 and say to run `cgh index` (`{"error":
+  ...}` on stdout with `--json`); `cgh files` warns like the query commands.
+- **Route decorators written over several lines were not endpoints.**
+  `@router.post(` with the path on the next line, a `path="..."` argument,
+  an empty path (`@router.get("")`) and `@router.api_route(..., methods=[...])`
+  are now extracted with their handler, so `endpoints` lists them and
+  `cgh impact` reaches them from an edited function (540 to 704 endpoints
+  on a FastAPI app). The first index after upgrading re-parses the repo once.
+- **A test under a `handlers/` or `services/` directory was classed by that
+  directory.** `tests/unit/handlers/test_x.py` counted as an impacted
+  handler and was missing from `tests_to_run`. A file under a test
+  directory or named like a test (`test_*.py`, `*_test.py`, `*.test.ts`,
+  `*.spec.ts`, `__tests__/`) now always gets the test role; custom
+  `[roles]` rules still come first.
 - **The `cgh status` "Module sources" row showed the indexed mapping after
   an edit.** It now shows the mapping from the current config and marks a
   changed or new entry `pending reindex`, with the path it was indexed

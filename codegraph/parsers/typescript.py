@@ -21,10 +21,12 @@ from tree_sitter import Language, Node, Parser
 from . import register_parser
 from .base import (
     BaseParser,
+    Bindings,
     ClassDef,
     FileIndex,
     ImportRef,
     SymbolDef,
+    bind_calls,
 )
 
 _TS_LANGUAGE = Language(tsts.language_typescript())
@@ -50,8 +52,44 @@ def _ident(node: Node, src: bytes) -> str:
     return normalize_identifier(_text(node, src))
 
 
-def _collect_calls(node: Node, src: bytes) -> list[str]:
+def _receiver(obj: Node, src: bytes) -> str:
+    """The receiver of a member call as CallRef.receiver describes it."""
+    if obj.type == "this":
+        return "self"
+    if obj.type == "super":
+        return "super"
+    if obj.type == "identifier":
+        return _ident(obj, src)
+    if obj.type == "member_expression":
+        parts: list[str] = []
+        cur: Node | None = obj
+        while cur is not None and cur.type == "member_expression":
+            prop = cur.child_by_field_name("property")
+            if prop is None:
+                return "?"
+            parts.append(_ident(prop, src))
+            cur = cur.child_by_field_name("object")
+        if cur is None or cur.type not in ("identifier", "this"):
+            return "?"
+        parts.append(_ident(cur, src))
+        return ".".join(reversed(parts))
+    if obj.type == "parenthesized_expression" and obj.named_child_count == 1:
+        return _receiver(obj.named_children[0], src)
+    # new Foo().f() calls a method of Foo; foo().f() one of what foo returns.
+    callee = None
+    if obj.type == "new_expression":
+        callee = obj.child_by_field_name("constructor")
+    elif obj.type == "call_expression":
+        callee = obj.child_by_field_name("function")
+    if callee is not None and callee.type == "identifier":
+        return f"{_ident(callee, src)}()"
+    return "?"
+
+
+def _collect_calls(node: Node, src: bytes) -> tuple[list[str], list[tuple[str, str]]]:
+    """Called names (deduplicated, in order) and raw (name, receiver) pairs."""
     calls: list[str] = []
+    raw: list[tuple[str, str]] = []
     visited: set[int] = set()
 
     def walk(n: Node) -> None:
@@ -67,11 +105,44 @@ def _collect_calls(node: Node, src: bytes) -> list[str]:
                 # Allow $ (JS identifier char) plus Unicode word chars.
                 if re.match(r"^[\w$]+$", name, re.UNICODE):
                     calls.append(name)
+                    if fn.type == "identifier":
+                        raw.append((name, ""))
+                    elif fn.type == "member_expression":
+                        obj = fn.child_by_field_name("object")
+                        raw.append((name, _receiver(obj, src) if obj else "?"))
+                    else:
+                        raw.append((name, "?"))
         for child in n.children:
             walk(child)
 
     walk(node)
-    return list(dict.fromkeys(calls))
+    return list(dict.fromkeys(calls)), raw
+
+
+def _import_bindings(node: Node, module: str, src: bytes) -> Bindings:
+    """The names an import statement binds, as {local: (module, symbol)}:
+    a default import gives symbol "default", a namespace import ""."""
+    out: Bindings = {}
+    for child in node.children:
+        if child.type != "import_clause":
+            continue
+        for sub in child.children:
+            if sub.type == "identifier":
+                out[_ident(sub, src)] = (module, "default")
+            elif sub.type == "namespace_import":
+                for leaf in sub.children:
+                    if leaf.type == "identifier":
+                        out[_ident(leaf, src)] = (module, "")
+            elif sub.type == "named_imports":
+                for spec in sub.children:
+                    if spec.type != "import_specifier":
+                        continue
+                    name = spec.child_by_field_name("name")
+                    alias = spec.child_by_field_name("alias")
+                    if name is not None:
+                        local = alias if alias is not None else name
+                        out[_ident(local, src)] = (module, _ident(name, src))
+    return out
 
 
 def _fn_name(node: Node, src: bytes) -> str:
@@ -120,12 +191,15 @@ class TypeScriptParser(BaseParser):
         tree = parser.parse(src)
         root = tree.root_node
         index = FileIndex(path=path_str, lang=lang_label)
+        bindings: Bindings = {}
+        pending: list[tuple[SymbolDef, list[tuple[str, str]]]] = []
 
         def _visit(node: Node, current_class: str | None = None) -> None:
             # --- import ---
             if node.type == "import_statement":
                 source_node = node.child_by_field_name("source")
                 module = _text(source_node, src).strip("\"'") if source_node else ""
+                bindings.update(_import_bindings(node, module, src))
                 symbols: list[str] = []
                 for child in node.children:
                     if child.type == "import_clause":
@@ -175,7 +249,7 @@ class TypeScriptParser(BaseParser):
                 "method_definition",
             ):
                 name = _fn_name(node, src)
-                calls = _collect_calls(node, src)
+                calls, raw_calls = _collect_calls(node, src)
                 fn_id = (
                     f"{path_str}::{current_class}.{name}"
                     if current_class
@@ -188,19 +262,19 @@ class TypeScriptParser(BaseParser):
                     if node.type == "arrow_function"
                     else "function"
                 )
-                index.functions.append(
-                    SymbolDef(
-                        id=fn_id,
-                        name=name,
-                        file_path=path_str,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        docstring="",
-                        class_name=current_class,
-                        calls=calls,
-                        kind=kind,
-                    )
+                fn = SymbolDef(
+                    id=fn_id,
+                    name=name,
+                    file_path=path_str,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    docstring="",
+                    class_name=current_class,
+                    calls=calls,
+                    kind=kind,
                 )
+                index.functions.append(fn)
+                pending.append((fn, raw_calls))
                 return
 
             for child in node.children:
@@ -209,4 +283,6 @@ class TypeScriptParser(BaseParser):
         for child in root.children:
             _visit(child)
 
+        for fn, raw_calls in pending:
+            fn.call_refs = bind_calls(raw_calls, bindings)
         return index

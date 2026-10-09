@@ -31,7 +31,10 @@ _META_FILE = "scan_meta.json"
 #      for the same reason.
 #   4: Terraform is parsed into addressed blocks (data, module, locals,
 #      providers and .tfvars entries too) with reference edges between them.
-GRAPH_FORMAT = 4
+#   5: call sites carry their shape (bare, self, module, attribute) and the
+#      import behind the name, and CALLS edges follow it instead of linking
+#      every function of the called name.
+GRAPH_FORMAT = 5
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

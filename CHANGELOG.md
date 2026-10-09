@@ -58,6 +58,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   resolved from both ends whatever the order. No action needed: the first
   index after upgrading (`cgh index`, or the owner's start) re-parses the
   whole repo once.
+- **CALLS edges linked a call to every function of the same name.**
+  `data.get(...)` landed on any `get` in the repo, `atexit.register` on
+  every `register`, production code on test doubles, and an imported name
+  on its look-alikes in other modules, so `find_callers` and `impact_of`
+  were mostly noise on common names. Python and TS/JS calls now follow
+  their shape and imports: `f()` goes to the definition the file imports
+  (aliases included), `self.f()` to the class and its bases, `module.f()`
+  to that module, `obj.f()` only to methods, and calls into third-party or
+  standard library modules get no edge. Code outside tests never links
+  into test files. Calls the old rule hid behind a same-named local
+  function (a router calling the handler method of the same name) are now
+  linked. The first index after upgrading re-parses the repo once.
 - **Inheritance, docs references and route handlers had the same blind
   spot.** A base class, a function or class mentioned in a Markdown doc, or
   a file a doc links to was missed when defined in a file indexed later, and

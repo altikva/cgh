@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import random
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -199,11 +200,27 @@ FIXTURE: dict[str, str] = {
         "moved {\n  from = module.net.google_compute_network.old\n"
         "  to   = module.net.google_compute_network.n\n}\n"
     ),
-    # A remote module mapped to a checkout outside the repo (EXTERNAL).
+    # A remote module mapped to a checkout outside the repo (EXTERNAL), and
+    # one mapped to a git checkout pinned at two refs plus one it lacks
+    # (PINNED, read from git at each ref).
     ".codegraph/config.toml": (
         "[terraform]\n"
         'module_sources = { "git::https://example.com/acme/tf-modules" '
-        '= "../ext-modules" }\n'
+        '= "../ext-modules", "git::https://example.com/acme/pinned" '
+        '= "../git-modules" }\n'
+    ),
+    "infra/pinned.tf": (
+        'module "old" {\n'
+        '  source = "git::https://example.com/acme/pinned.git//kms?ref=v1"\n'
+        "  a      = 1\n}\n\n"
+        'module "new" {\n'
+        '  source = "git::https://example.com/acme/pinned.git//kms?ref=v2"\n'
+        "  b      = 2\n}\n\n"
+        'module "lost" {\n'
+        '  source = "git::https://example.com/acme/pinned.git//kms?ref=v404"\n'
+        "  b      = 3\n}\n\n"
+        'resource "google_x" "uses" {\n'
+        "  old = module.old.ring\n  new = module.new.ring\n}\n"
     ),
     "infra/modules/net/variables.tf": 'variable "region" {}\n',
     "infra/modules/net/main.tf": (
@@ -222,6 +239,47 @@ EXTERNAL: dict[str, str] = {
         'output "ring_id" {\n  value = google_kms_key_ring.r.id\n}\n'
     ),
 }
+
+# The pinned module: tag v1 declares var.a, v2 (and the working tree) var.b.
+PINNED_V1 = {
+    "kms/variables.tf": 'variable "a" {}\n',
+    "kms/main.tf": 'resource "google_kms_key_ring" "r" {\n  name = var.a\n}\n',
+    "kms/outputs.tf": 'output "ring" {\n  value = google_kms_key_ring.r.id\n}\n',
+}
+PINNED_V2 = {
+    **PINNED_V1,
+    "kms/variables.tf": 'variable "b" {}\n',
+    "kms/main.tf": 'resource "google_kms_key_ring" "r" {\n  name = var.b\n}\n',
+}
+
+
+def make_pinned_repo(path: Path, versions: list[tuple[str, dict[str, str]]]) -> None:
+    """A git repo at ``path`` with one tagged commit per (tag, files)."""
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    path.mkdir(parents=True, exist_ok=True)
+    git("init", "-q")
+    for tag, files in versions:
+        _write(path, files)
+        git("add", "-A")
+        git("commit", "-q", "-m", tag)
+        git("tag", tag)
+
 
 # Edge kinds the fixture must populate, or the comparison proves nothing.
 EXPECTED_NONEMPTY = sorted(EDGES)
@@ -349,6 +407,7 @@ def graphs(request, tmp_path_factory):
         mp.setenv("CGH_DB", request.param)
         base = tmp_path_factory.mktemp(f"inv-{request.param}")
         _write(base, EXTERNAL)
+        make_pinned_repo(base / "git-modules", [("v1", PINNED_V1), ("v2", PINNED_V2)])
         yield build_graphs(FIXTURE, None, base, mp)
     reset_connection()
 
@@ -480,3 +539,44 @@ def test_terraform_moved_blocks_and_mapped_remote_module(graphs):
         ("infra/main.tf::module.kms.keyring", "kms/variables.tf::var.keyring"),
         ("infra/main.tf::google_compute_instance.vm", "kms/outputs.tf::output.ring_id"),
     }
+
+
+def test_terraform_pinned_refs_read_from_git(graphs):
+    """Each ?ref= links to the module as that tag holds it, a ref the checkout
+    lacks to its working tree; resources inside a pinned module link to its
+    variables, and module.m.out reaches the output of the right version."""
+    a = graphs["A"]
+
+    def pinned(kind: str) -> set[tuple[str, str]]:
+        return {
+            (f, t.rpartition("git-modules/")[2])
+            for f, t in a[kind]
+            if "git-modules/" in t
+        }
+
+    refs_var = pinned("TF_REFS_VAR")
+    assert ("infra/pinned.tf::module.old.a", "kms@v1/variables.tf::var.a") in refs_var
+    assert ("infra/pinned.tf::module.new.b", "kms@v2/variables.tf::var.b") in refs_var
+    assert ("infra/pinned.tf::module.lost.b", "kms/variables.tf::var.b") in refs_var
+    assert ("infra/pinned.tf::google_x.uses", "kms@v1/outputs.tf::output.ring") in (
+        refs_var
+    )
+    assert ("infra/pinned.tf::google_x.uses", "kms@v2/outputs.tf::output.ring") in (
+        refs_var
+    )
+    # No cross-version link: the v1 call never reaches var.b.
+    assert not any(
+        f.startswith("infra/pinned.tf::module.old") and "@v2" in t for f, t in refs_var
+    )
+    # Inside the pinned module (resources are read too): its own edges.
+    internal = {
+        (f.rpartition("git-modules/")[2], t.rpartition("git-modules/")[2])
+        for f, t in a["TF_REFS_VAR"]
+        if "git-modules/" in f
+    }
+    assert ("kms@v1/main.tf::google_kms_key_ring.r", "kms@v1/variables.tf::var.a") in (
+        internal
+    )
+    assert ("kms@v2/main.tf::google_kms_key_ring.r", "kms@v2/variables.tf::var.b") in (
+        internal
+    )

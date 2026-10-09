@@ -463,11 +463,16 @@ class TerraformParser(BaseParser):
 
     def parse(self, path: Path) -> FileIndex:
         path_str = str(path)
-        index = FileIndex(path=path_str, lang=self.lang)
         try:
             data = Path(path_str).read_bytes()
         except OSError:
-            return index
+            return FileIndex(path=path_str, lang=self.lang)
+        return self.parse_bytes(path_str, data)
+
+    def parse_bytes(self, path_str: str, data: bytes) -> FileIndex:
+        """Parse ``data`` as the content of ``path_str``, which need not
+        exist on disk (a module file read from git at a pinned ref)."""
+        index = FileIndex(path=path_str, lang=self.lang)
         tfvars = path_str.endswith(".tfvars")
         if _PARSER is None:
             if not tfvars:

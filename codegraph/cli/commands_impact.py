@@ -262,6 +262,16 @@ def cmd_impact(args: argparse.Namespace) -> None:
         )
         return
 
+    # The report maps this checkout's diff onto stored paths: on a store
+    # copied from another checkout nothing matches and the report would come
+    # back empty, which reads as "no impact". Refuse instead.
+    from codegraph.state.scan_meta import copied_store_message
+
+    copied = copied_store_message(root)
+    if copied:
+        _fail(want_json, copied)
+        return
+
     changed, err = _git_changed_files(root, since)
     if err is not None:
         _fail(want_json, err)

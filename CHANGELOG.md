@@ -69,6 +69,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   line in ondonne-infra's staging `kms.tf`: 29 files before, 6 now), and
   lists contracts entries that mention a changed address under `related`.
   `impact_of` on a `.tf` path is block-precise too.
+- **A federated worktree could read another ticket's branch.** When a repo
+  is a linked git worktree, federation replaced each configured child with a
+  worktree of that child sitting in the same directory. In a layout where all
+  ticket worktrees share one directory, it picked an arbitrary ticket of the
+  other repo instead of the configured seed. Only a child configured by its
+  main checkout is now replaced, and only when exactly one sibling worktree
+  qualifies; otherwise the configured path is used.
 - **TypeScript and JavaScript classes had no bases.** `extends` and
   `implements` were never read, so INHERITS was empty for TS, JS and TSX,
   and `this.f()` / `super.f()` could not follow the base class. Type

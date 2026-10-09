@@ -6,9 +6,39 @@ cgh 0.16 stores the calls and other by-name references (class bases,
 Markdown mentions and links, route handlers in another file) that it finds
 while parsing. Edges between files no longer depend on the order files were
 indexed in, and saving a file no longer drops the edges other files had into
-it. Expect more CALLS edges than 0.15 showed: on the cgh repo itself, about
-a quarter more. Calls are still matched by name, so a common name such as
-`get` or `register` links to every function of that name.
+it.
+
+### Fewer CALLS edges, and more precise ones
+
+Expect far fewer CALLS edges than 0.15 showed. On the ondonne API repo, 0.15
+stored 307,065 of them and 0.16 about 49,000. Most of the difference was
+noise: 0.15 linked a call to every function of the called name, so
+`data.get(...)` reached every `get` in the repo and production code reached
+the test doubles. 0.16 reads how each call is written and what the file
+imports (Python and TypeScript / JavaScript; other languages still match by
+name):
+
+- `f()` goes to the `f` of the same file, else to the one the file imports;
+- `module.f()` goes to that module, and to nothing when it is a library;
+- `self.f()` goes to the method of the class, else to its bases;
+- `self.manager.f()`, when the class types `manager` (an annotation,
+  `self.manager = Manager(...)`, an annotated `__init__` parameter, or in
+  TypeScript a typed field or a `constructor(private repo: Repo)`
+  parameter), goes to `Manager.f` or to the nearest base class defining it;
+- `obj.f()` on an object of unknown type goes to an `f` of a file the caller
+  imports, else to the few methods of that name in the repo, and to nothing
+  for a name every library uses (`get`, `add`, `commit` and the like);
+- production code never links into test files.
+
+What an agent sees differently: `find_callers`, `impact_of` and `cgh impact`
+list far fewer false callers. In exchange, a real caller can be missing when
+cgh cannot see the receiver's type. A call through an interface or protocol
+with many implementations lands on the interface's method, not on each
+implementation, and a call on an untyped object reaches a method only when
+the caller's file imports its class (or when few methods carry the name).
+`find_dead_code` can then list a function that is only called that way.
+When an expected caller is missing, check that the caller imports the
+class, or search the name with `pattern_search`.
 
 ## The one-time re-parse
 

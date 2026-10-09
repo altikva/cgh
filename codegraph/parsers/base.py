@@ -92,6 +92,26 @@ def bind_calls(raw: list[tuple[str, str]], bindings: Bindings) -> list[CallRef]:
     return list(out.values())
 
 
+def typed_receivers(
+    raw: list[tuple[str, str]], types: dict[str, str], instance: str
+) -> list[tuple[str, str]]:
+    """Rewrite a call on a typed instance attribute (``self.x.f()``,
+    ``this.x.f()``, ``instance`` naming the receiver) as a call on its
+    class, ``types`` mapping the attribute to the class name: ``T()`` for a
+    plain name (an instance of T), the dotted name itself for ``m.T``, the
+    shapes the call resolver already reads as a call on a class."""
+    if not types:
+        return raw
+    out: list[tuple[str, str]] = []
+    for name, receiver in raw:
+        head, dot, attr = receiver.partition(".")
+        cls = types.get(attr) if head == instance and dot and "." not in attr else None
+        if cls:
+            receiver = cls if "." in cls else f"{cls}()"
+        out.append((name, receiver))
+    return out
+
+
 @dataclass(slots=True)
 class ClassDef:
     """A class, struct, interface, trait, type, etc."""

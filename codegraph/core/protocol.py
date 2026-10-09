@@ -166,6 +166,19 @@ class GraphDB(Protocol):
         class id, base names): the class id is "" for a function that is no
         method, the base names are its class's recorded "inherits" names."""
 
+    def class_bases_named(self, names: list[str]) -> list[tuple[str, str]]:
+        """(class name, base name as written) for every recorded base of the
+        Classes whose name is in ``names``."""
+
+    def class_children_named(self, names: list[str]) -> list[tuple[str, str]]:
+        """(class name, base name as written) of the Classes recording a
+        base named in ``names``, bare or dotted (``m.Base`` for "Base");
+        the caller drops a dotted base whose last segment differs."""
+
+    def call_site_names_on(self, classes: list[str]) -> list[str]:
+        """The distinct called names of the by-name call sites on a known
+        class (kind "cls") whose class is in ``classes``."""
+
     def function_names_in(self, file_path: str) -> list[str]:
         """The distinct names of the Functions ``file_path`` defines."""
 

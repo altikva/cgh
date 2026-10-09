@@ -113,6 +113,61 @@ def test_python_call_shapes(tmp_path):
     assert ("thing", "", "late", "thing") in got
 
 
+def test_python_typed_attribute_calls_name_the_class(tmp_path):
+    """self.x.f() on an attribute typed in the class is a call on its class:
+    from a class-level annotation, an annotated assignment, a constructor
+    call, or an annotated parameter assigned in __init__."""
+    refs = _refs(
+        tmp_path,
+        "h.py",
+        "from typing import Optional\n"
+        "from app import models as m\n"
+        "from app.managers import ReceiptManager, Other\n"
+        "from sqlalchemy.ext.asyncio import AsyncSession\n\n\n"
+        "class H:\n"
+        "    repo: Other\n\n"
+        "    def __init__(self, session: AsyncSession, manager: ReceiptManager,\n"
+        "                 opt: Optional[m.Cerfa] = None, u: 'Other | None' = None):\n"
+        "        self.manager = manager\n"
+        "        self.session = session\n"
+        "        self.cerfa = opt\n"
+        "        self.built = Builder(session)\n"
+        "        self.typed: m.Cerfa = make()\n"
+        "        self.mixed = Builder(session)\n"
+        "        self.loose = make()\n"
+        "        self.cleared = None\n\n"
+        "    def reset(self):\n"
+        "        self.mixed = Other()\n"
+        "        self.cleared = None\n\n"
+        "    def go(self):\n"
+        "        self.manager.get_by_id(1)\n"
+        "        self.session.execute(1)\n"
+        "        self.cerfa.load()\n"
+        "        self.built.run_it()\n"
+        "        self.typed.save()\n"
+        "        self.repo.find()\n"
+        "        self.mixed.go()\n"
+        "        self.loose.go()\n"
+        "        self.manager.inner.go()\n",
+    )["go"]
+    got = {(r.name, r.receiver, r.module, r.symbol) for r in refs}
+    assert ("get_by_id", "ReceiptManager()", "app.managers", "ReceiptManager") in got
+    assert (
+        "execute",
+        "AsyncSession()",
+        "sqlalchemy.ext.asyncio",
+        "AsyncSession",
+    ) in got
+    assert ("load", "m.Cerfa", "app", "models") in got
+    assert ("run_it", "Builder()", "", "") in got
+    assert ("save", "m.Cerfa", "app", "models") in got
+    assert ("find", "Other()", "app.managers", "Other") in got
+    # Two classes, or a value of unknown type: the attribute stays untyped.
+    assert ("go", "self.mixed", "", "") in got
+    assert ("go", "self.loose", "", "") in got
+    assert ("go", "self.manager.inner", "", "") in got
+
+
 def test_typescript_call_shapes(tmp_path):
     refs = _refs(
         tmp_path,
@@ -138,6 +193,37 @@ def test_typescript_call_shapes(tmp_path):
     assert ("put", "Store()", "", "") in got
     assert ("find", "this.repo", "", "") in got
     assert ("autoImported", "", "", "") in got
+
+
+def test_typescript_typed_fields_name_the_class(tmp_path):
+    refs = _refs(
+        tmp_path,
+        "w.ts",
+        "import { Repo } from './repo'\n"
+        "import * as ns from './ns'\n\n"
+        "export class W {\n"
+        "  private store: Store;\n"
+        "  cache = new Cache();\n"
+        "  opt?: Repo | null;\n"
+        "  deep: ns.Deep;\n"
+        "  mixed: Repo | Store;\n"
+        "  constructor(private readonly repo: Repo, public x: string, plain: P) {}\n"
+        "  go(): void {\n"
+        "    this.store.save(); this.cache.put(); this.opt.find(); this.repo.load()\n"
+        "    this.x.trim(); this.plain.z(); this.deep.q(); this.mixed.m()\n"
+        "  }\n"
+        "}\n",
+    )["go"]
+    got = {(r.name, r.receiver, r.module, r.symbol) for r in refs}
+    assert ("save", "Store()", "", "") in got
+    assert ("put", "Cache()", "", "") in got
+    assert ("find", "Repo()", "./repo", "Repo") in got
+    assert ("load", "Repo()", "./repo", "Repo") in got
+    assert ("q", "ns.Deep", "./ns", "") in got
+    # A builtin type, a plain parameter, a union of classes: untyped.
+    assert ("trim", "this.x", "", "") in got
+    assert ("z", "this.plain", "", "") in got
+    assert ("m", "this.mixed", "", "") in got
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +374,34 @@ def test_class_receiver_links_that_class():
     assert _ids(targets_for(site, [mine, other], ROOT)) == {mine.id}
 
 
+def test_class_receiver_climbs_to_the_nearest_base_defining_the_method():
+    """self.manager.get_by_id() with manager a ReceiptManager(BaseManager) is
+    BaseManager's, even when the caller imports another file defining a
+    get_by_id: the receiver's class beats the imported-file guess."""
+    base = _t("/r/base.py", cls="BaseManager", name="get_by_id")
+    mid = _t("/r/mid.py", cls="MidManager", bases=("BaseManager",), name="get_by_id")
+    cerfa = _t("/r/cerfa.py", cls="CerfaManager", name="get_by_id")
+    site = Site(
+        "/r/h.py::H.show",
+        "/r/h.py",
+        "get_by_id",
+        cr.CLS,
+        "/r/receipt.py",
+        "ReceiptManager",
+    )
+    imported = frozenset({"/r/cerfa.py"})
+    hierarchy = {"ReceiptManager": ("MidManager",), "MidManager": ("BaseManager",)}
+    hit = targets_for(site, [base, mid, cerfa], ROOT, imported, hierarchy)
+    assert _ids(hit) == {mid.id}
+    hit = targets_for(site, [base, cerfa], ROOT, imported, hierarchy)
+    assert _ids(hit) == {base.id}
+    # A cycle in the recorded bases ends the climb.
+    loop = {"ReceiptManager": ("A",), "A": ("ReceiptManager",)}
+    assert _ids(targets_for(site, [base, cerfa], ROOT, imported, loop)) == {cerfa.id}
+    # Without the hierarchy, the old guess from the imported file.
+    assert _ids(targets_for(site, [base, cerfa], ROOT, imported)) == {cerfa.id}
+
+
 def test_production_code_never_reaches_tests_and_languages_never_mix():
     double = _t("/r/tests/fakes.py", cls="Fake", name="save_all")
     ts = _t("/r/web/a.ts", name="save_all")
@@ -385,6 +499,52 @@ FIXTURE: dict[str, str] = {
         "def direct(s, i):\n"
         "    return M1Manager(s).get_by_id(i)\n"
     ),
+    # A typed attribute: its class's inherited method, not the one of a file
+    # the handler also imports.
+    "managers/receipt.py": (
+        "from managers.base import BaseManager\n\n\n"
+        "class ReceiptManager(BaseManager):\n"
+        "    def list_for_org(self):\n"
+        "        return 1\n"
+    ),
+    "managers/mid.py": (
+        "from managers.base import BaseManager\n\n\nclass MidManager(BaseManager):\n    pass\n"
+    ),
+    "managers/deep.py": (
+        "from managers.mid import MidManager\n\n\nclass DeepManager(MidManager):\n    pass\n"
+    ),
+    "managers/cerfa.py": (
+        "class CerfaManager:\n    def get_by_id(self, i):\n        return i\n"
+    ),
+    "handlers/receipt.py": (
+        "from managers.cerfa import CerfaManager\n"
+        "from managers.deep import DeepManager\n"
+        "from managers.receipt import ReceiptManager\n\n\n"
+        "class ReceiptHandler:\n"
+        "    deep: DeepManager\n\n"
+        "    def __init__(self, session, manager: ReceiptManager):\n"
+        "        self.manager = manager\n"
+        "        self.cerfa = CerfaManager(session)\n\n"
+        "    def show(self, i):\n"
+        "        return self.manager.get_by_id(i)\n\n"
+        "    def cerfa_of(self, i):\n"
+        "        return self.cerfa.get_by_id(i)\n\n"
+        "    def deep_of(self, i):\n"
+        "        return self.deep.get_by_id(i)\n"
+    ),
+    "web/repo.ts": (
+        "export class BaseRepo {\n  find(): number {\n    return 1\n  }\n}\n"
+        "export class UserRepo extends BaseRepo {}\n"
+    ),
+    "web/other.ts": "export class Other {\n  find(): number {\n    return 2\n  }\n}\n",
+    "web/service.ts": (
+        "import { UserRepo } from './repo'\n"
+        "import { Other } from './other'\n\n"
+        "export class UserService {\n"
+        "  constructor(private repo: UserRepo, private other: Other) {}\n"
+        "  one(): number {\n    return this.repo.find()\n  }\n"
+        "}\n"
+    ),
     "web/format.ts": "export function pad(s: string): string {\n  return ' ' + s\n}\n",
     "web/client.ts": (
         "import * as fmt from './format'\n"
@@ -455,6 +615,59 @@ def test_cross_file_calls_stay(indexed):
         "managers/base.py::BaseManager.__init__"
     }
     assert _callees(indexed, "web/client.ts::total") == {"web/format.ts::pad"}
+
+
+def test_typed_attribute_beats_the_imported_file(indexed):
+    base = "managers/base.py::BaseManager.get_by_id"
+    assert _callees(indexed, "handlers/receipt.py::ReceiptHandler.show") == {base}
+    assert _callees(indexed, "handlers/receipt.py::ReceiptHandler.deep_of") == {base}
+    assert _callees(indexed, "handlers/receipt.py::ReceiptHandler.cerfa_of") == {
+        "managers/cerfa.py::CerfaManager.get_by_id"
+    }
+    assert _callees(indexed, "web/service.ts::UserService.one") == {
+        "web/repo.ts::BaseRepo.find"
+    }
+
+
+def test_a_base_class_change_relinks_the_typed_calls(tmp_path, backend):
+    """The method a typed call reaches depends on the bases of classes in
+    other files: a change to any of them, in whichever order files come,
+    moves the edge."""
+    files = {
+        "h.py": (
+            "from deep import Deep\n\n\n"
+            "class H:\n"
+            "    def __init__(self, d: Deep):\n"
+            "        self.d = d\n\n"
+            "    def go(self):\n"
+            "        return self.d.load()\n"
+        ),
+        "deep.py": "from mid import Mid\n\n\nclass Deep(Mid):\n    pass\n",
+        "mid.py": "from base import Base\n\n\nclass Mid(Base):\n    pass\n",
+        "base.py": "class Base:\n    def load(self):\n        return 1\n",
+        "other.py": "class Other:\n    def load(self):\n        return 2\n",
+    }
+    _write(tmp_path, files)
+    for rel in ("h.py", "base.py", "other.py", "deep.py", "mid.py"):
+        assert index_file(tmp_path / rel, tmp_path)
+    assert _callees(_edges(tmp_path), "h.py::H.go") == {"base.py::Base.load"}
+
+    (tmp_path / "mid.py").write_text(
+        "from other import Other\n\n\nclass Mid(Other):\n    pass\n", encoding="utf-8"
+    )
+    assert index_file(tmp_path / "mid.py", tmp_path, force=True)
+    assert _callees(_edges(tmp_path), "h.py::H.go") == {"other.py::Other.load"}
+
+    (tmp_path / "mid.py").unlink()
+    from codegraph.indexer import _delete_file_relinking
+
+    _delete_file_relinking(get_connection(tmp_path), str(tmp_path / "mid.py"), tmp_path)
+    # Deep's base is gone: the class is known but defines no load, and the
+    # two methods of the name are few, so both stay candidates.
+    assert _callees(_edges(tmp_path), "h.py::H.go") == {
+        "base.py::Base.load",
+        "other.py::Other.load",
+    }
 
 
 def test_fixture_is_order_invariant(tmp_path, backend, monkeypatch):

@@ -69,6 +69,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
+- **A query on an index from an older cgh crashed before the first
+  reindex.** `cgh lookup` or `cgh search` right after upgrading printed a
+  database error (a missing `tf_resource` column). It now says to run
+  `cgh index` once; an MCP owner already upgrades the index when it starts.
 - **`cgh callers Class.method` listed calls on other classes.** A call on
   a local built from a sibling implementation (`kms = InMemoryKmsClient()`),
   on an object a typed factory returns (`fernet = _get_fernet()`, a

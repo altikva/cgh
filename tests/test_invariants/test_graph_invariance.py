@@ -171,8 +171,13 @@ FIXTURE: dict[str, str] = {
         "  name     = local.bucket_name\n"
         "}\n\n"
         'module "net" {\n  source = "./modules/net"\n  region = var.region\n}\n\n'
+        'module "kms" {\n'
+        '  source  = "git::https://example.com/acme/tf-modules.git//kms?ref=v1"\n'
+        "  keyring = var.region\n"
+        "}\n\n"
         'resource "google_compute_instance" "vm" {\n'
         "  network    = module.net.network_id\n"
+        "  key        = module.kms.ring_id\n"
         "  project    = data.google_project.p.project_id\n"
         "  depends_on = [google_storage_bucket.data]\n"
         "}\n"
@@ -186,12 +191,35 @@ FIXTURE: dict[str, str] = {
         'output "network" {\n  value = module.net.network_id\n}\n'
     ),
     "infra/terraform.tfvars": 'region = "eu"\n',
+    # moved blocks naming a resource of this directory and one inside the
+    # local module, before and after the files they name.
+    "infra/moved.tf": (
+        "moved {\n  from = google_storage_bucket.old\n"
+        "  to   = google_storage_bucket.data\n}\n\n"
+        "moved {\n  from = module.net.google_compute_network.old\n"
+        "  to   = module.net.google_compute_network.n\n}\n"
+    ),
+    # A remote module mapped to a checkout outside the repo (EXTERNAL).
+    ".codegraph/config.toml": (
+        "[terraform]\n"
+        'module_sources = { "git::https://example.com/acme/tf-modules" '
+        '= "../ext-modules" }\n'
+    ),
     "infra/modules/net/variables.tf": 'variable "region" {}\n',
     "infra/modules/net/main.tf": (
         'resource "google_compute_network" "n" {\n  name = "n-${var.region}"\n}\n'
     ),
     "infra/modules/net/outputs.tf": (
         'output "network_id" {\n  value = google_compute_network.n.id\n}\n'
+    ),
+}
+
+# The mapped remote module, written next to each graph's root (shared by
+# graphs A and B, never indexed itself: read on demand).
+EXTERNAL: dict[str, str] = {
+    "ext-modules/kms/variables.tf": 'variable "keyring" {}\n',
+    "ext-modules/kms/outputs.tf": (
+        'output "ring_id" {\n  value = google_kms_key_ring.r.id\n}\n'
     ),
 }
 
@@ -320,6 +348,7 @@ def graphs(request, tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("CGH_DB", request.param)
         base = tmp_path_factory.mktemp(f"inv-{request.param}")
+        _write(base, EXTERNAL)
         yield build_graphs(FIXTURE, None, base, mp)
     reset_connection()
 
@@ -427,3 +456,27 @@ def test_terraform_references_cross_files_and_modules(graphs):
         "infra/outputs.tf::output.bucket",
         "infra/main.tf::google_storage_bucket.data",
     ) in a["TF_VAR_DEPENDS"]
+
+
+def test_terraform_moved_blocks_and_mapped_remote_module(graphs):
+    a = graphs["A"]
+    assert (
+        "infra/moved.tf::moved.google_storage_bucket.data",
+        "infra/main.tf::google_storage_bucket.data",
+    ) in a["TF_DEPENDS"]
+    # module.net.google_compute_network.n: the module call and, through its
+    # local source, the resource inside the module.
+    moved_net = "infra/moved.tf::moved.module.net.google_compute_network.n"
+    assert (moved_net, "infra/main.tf::module.net") in a["TF_DEPENDS"]
+    assert (
+        moved_net,
+        "infra/modules/net/main.tf::google_compute_network.n",
+    ) in a["TF_DEPENDS"]
+    # The mapped remote module: its input and its output, read from the
+    # checkout outside the repo (an absolute path, the same in A and B).
+    ext = {(f, t) for f, t in a["TF_REFS_VAR"] if "ext-modules" in t}
+    assert {(f, t.rpartition("ext-modules/")[2]) for f, t in ext} == {
+        ("infra/main.tf::module.kms", "kms/variables.tf::var.keyring"),
+        ("infra/main.tf::module.kms.keyring", "kms/variables.tf::var.keyring"),
+        ("infra/main.tf::google_compute_instance.vm", "kms/outputs.tf::output.ring_id"),
+    }

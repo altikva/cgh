@@ -599,8 +599,8 @@ class TestReadCommandsParity:
         local = _run(monkeypatch, cq.cmd_search, args, cq) + capsys.readouterr().out
         assert via_owner == local
         assert "HelperBox" in local and "Using helper" in local
-        # cgh search never listed terraform symbols; the owner route agrees.
-        assert "main.tf" not in local
+        # Terraform blocks are listed too, by address, on both routes.
+        assert "var.helper" in local and "null_resource.helper" in local
 
     @pytest.mark.parametrize(
         "kw",
@@ -827,7 +827,13 @@ def test_read_commands_with_live_owner(read_repo):
 
     assert "Using helper  README.md:5-7" in via_owner["lookup"]
     names = {r["name"] for r in json.loads(via_owner["search"])["results"]}
-    assert names == {"helper", "HelperBox", "Using helper"}
+    assert names == {
+        "helper",
+        "HelperBox",
+        "Using helper",
+        "null_resource.helper",
+        "var.helper",
+    }
     assert "consts.py" in via_owner["files"]
     assert via_owner["check"].startswith("indexed  consts.py")
     graph = json.loads(via_owner["stats"])["graph"]

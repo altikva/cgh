@@ -9,10 +9,13 @@
 #              persisted name references scoped to the module directory
 #              (Terraform resolves var / local / resource addresses within
 #              one directory), and resolve those references from either
-#              end so the edges never depend on file order. At query time:
-#              the reference edges seen as callers / callees, and the files
-#              that depend on a .tf file, for find_callers, find_callees,
-#              impact_of and cgh impact.
+#              end so the edges never depend on file order. Module sources
+#              resolve locally or through the opt-in [terraform]
+#              module_sources mapping; a mapped directory outside the index
+#              has its variables and outputs read in on demand. At query
+#              time: the reference edges seen as callers / callees, and the
+#              block-precise blast radius of a change, for find_callers,
+#              find_callees, impact_of and cgh impact.
 
 from __future__ import annotations
 
@@ -27,8 +30,13 @@ from codegraph.core.graph_model import TF_REF_EDGES
 #   tf_modout  block id -> "<module dir>::module.<m>", extra = the output
 #              name: `module.m.out` resolves to output "out" of the
 #              directory module m's source points to.
+#   tf_modres  block id -> "<module dir>::module.<m>", extra = a resource
+#              address inside module m: a moved / import / removed block
+#              naming module.m.google_x.y resolves to that resource of the
+#              directory module m's source points to.
 TF_REF = "tf_ref"
 TF_MODOUT = "tf_modout"
+TF_MODRES = "tf_modres"
 
 _VAR_PREFIXES = ("var.", "output.", "tfvars.")
 _TF_FIELDS = ["id", "address", "kind"]
@@ -45,15 +53,123 @@ def label_for(res) -> str:
     return "TFVar" if res.kind in ("variable", "output", "tfvars") else "TFResource"
 
 
-def source_dir(module_dir: str, source: str) -> str:
-    """The directory a module source points to, for a local path only.
+def _split_source(source: str) -> tuple[str, str]:
+    """(package, subdir) of a module source: the `?ref=` query dropped, the
+    `//subdir` split off (a scheme's `://` is not a subdir marker)."""
+    source = source.partition("?")[0]
+    scheme = source.find("://")
+    cut = source.find("//", scheme + 3 if scheme >= 0 else 0)
+    if cut < 0:
+        return source, ""
+    return source[:cut], source[cut + 2 :].strip("/")
 
-    Terraform reads a source starting with ./ or ../ as a local directory;
-    anything else (registry, git, http, s3) is remote and gets no link.
+
+def _norm_package(package: str) -> str:
+    """A remote package for prefix matching: no `git::` forcing prefix, no
+    trailing slash, no `.git` suffix."""
+    package = package.strip()
+    if package.startswith("git::"):
+        package = package[len("git::") :]
+    package = package.rstrip("/")
+    if package.endswith(".git"):
+        package = package[: -len(".git")]
+    return package
+
+
+class ModuleSources:
+    """Where module sources point on disk, for one indexed repo.
+
+    A local source (./ or ../) is a directory next to the caller. A remote
+    one (git, registry, http) points nowhere unless the opt-in
+    ``[terraform] module_sources`` table maps its package to a local
+    checkout: the longest matching prefix wins, the `//subdir` is joined to
+    the mapped directory and the `?ref=` is ignored (the checkout may sit at
+    another ref than the one pinned). Nothing is ever fetched.
     """
-    if not source.startswith(("./", "../")):
+
+    def __init__(
+        self,
+        root: str = "",
+        mapping: dict[str, str] | None = None,
+        indexed: list[str] | None = None,
+        excluded: list[str] | None = None,
+    ) -> None:
+        self.root = root
+        pairs = []
+        for prefix, target in (mapping or {}).items():
+            key = _norm_package(str(prefix))
+            if key and target:
+                path = os.path.normpath(os.path.join(root or os.sep, str(target)))
+                pairs.append((key, path))
+        self.mapping = sorted(pairs, key=lambda p: -len(p[0]))
+        self.indexed = [os.path.normpath(d) for d in (indexed or [])]
+        self.excluded = [os.path.normpath(d) for d in (excluded or [])]
+
+    @classmethod
+    def from_config(cls, cfg, root) -> ModuleSources:
+        """Built from a loaded CodegraphConfig: the mapping, the repo root
+        and its extra_dirs (indexed here), the federated subrepos (not)."""
+        root_s = os.path.abspath(str(root)) if root else ""
+        if cfg is None or not root_s:
+            return cls(root_s)
+
+        def _abs(p: str) -> str:
+            return os.path.normpath(os.path.join(root_s, str(p)))
+
+        extra = [_abs(d) for d in getattr(cfg, "extra_dirs", []) or []]
+        subs = [_abs(d) for d in getattr(cfg, "subrepos", []) or []]
+        return cls(
+            root_s,
+            dict(getattr(cfg, "terraform_module_sources", {}) or {}),
+            [root_s, *extra],
+            subs,
+        )
+
+    def resolve(self, module_dir: str, source: str) -> str:
+        """The directory ``source`` points to, or "" when unknown."""
+        if source.startswith(("./", "../")):
+            return os.path.normpath(os.path.join(module_dir, source))
+        if not self.mapping or not source:
+            return ""
+        package, subdir = _split_source(source)
+        package = _norm_package(package)
+        for prefix, target in self.mapping:
+            if package == prefix:
+                rest = ""
+            elif package.startswith(prefix + "/"):
+                rest = package[len(prefix) + 1 :]
+            else:
+                continue
+            return os.path.normpath(os.path.join(target, rest, subdir))
         return ""
-    return os.path.normpath(os.path.join(module_dir, source))
+
+    def is_indexed(self, directory: str) -> bool:
+        """True when ``directory`` is indexed into this graph (under the
+        repo root or an extra_dir, outside any federated subrepo)."""
+
+        def under(base: str) -> bool:
+            return directory == base or directory.startswith(
+                base.rstrip(os.sep) + os.sep
+            )
+
+        if any(under(d) for d in self.excluded):
+            return False
+        return any(under(d) for d in self.indexed)
+
+
+_LOCAL_ONLY = ModuleSources()
+
+
+def source_dir(
+    module_dir: str, source: str, sources: ModuleSources | None = None
+) -> str:
+    """The directory a module source points to.
+
+    Terraform reads a source starting with ./ or ../ as a local directory.
+    Anything else (registry, git, http, s3) is remote and gets a directory
+    only through the ``[terraform] module_sources`` mapping.
+    """
+    return (sources or _LOCAL_ONLY).resolve(module_dir, source)
 
 
 def _key(directory: str, address: str) -> str:
@@ -65,8 +181,12 @@ def _key(directory: str, address: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def ingest_blocks(conn, resources: list) -> None:
-    """Upsert every block of one file and its DEFINES edge."""
+def ingest_blocks(
+    conn, resources: list, sources: ModuleSources | None = None, defines: bool = True
+) -> None:
+    """Upsert every block of one file and its DEFINES edge (``defines`` off
+    for the blocks of a module read outside the index, which has no File
+    node)."""
     for res in resources:
         module_dir = os.path.dirname(res.file_path)
         if label_for(res) == "TFVar":
@@ -84,7 +204,8 @@ def ingest_blocks(conn, resources: list) -> None:
                     "module_dir": module_dir,
                 },
             )
-            conn.ensure_edge("DEFINES_TFVAR", res.file_path, res.id)
+            if defines:
+                conn.ensure_edge("DEFINES_TFVAR", res.file_path, res.id)
         else:
             conn.upsert_node(
                 "TFResource",
@@ -99,17 +220,53 @@ def ingest_blocks(conn, resources: list) -> None:
                     "kind": res.kind,
                     "address": res.address,
                     "module_dir": module_dir,
-                    "source_dir": source_dir(module_dir, res.source),
+                    "source_dir": (
+                        source_dir(module_dir, res.source, sources)
+                        if res.kind == "module"
+                        else ""
+                    ),
                 },
             )
-            conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
+            if defines:
+                conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
 
 
-def ref_rows(resources: list) -> list[tuple[str, str, str, str]]:
+# Blocks whose refs are whole state addresses (module.m.google_x.y), not
+# expression references.
+_ADDRESS_KINDS = ("moved", "import", "removed")
+
+
+def _state_rows(res, module_dir: str) -> set[tuple[str, str, str, str]]:
+    """References of a moved / import / removed block: the module call
+    (module.m) and, through it, the resource inside the module's source
+    (tf_modres), or the resource of this directory."""
+    rows: set[tuple[str, str, str, str]] = set()
+    for ref in res.refs:
+        parts = ref.split(".")
+        if parts[0] == "module" and len(parts) >= 2:
+            module = _key(module_dir, f"module.{parts[1]}")
+            rows.add((TF_REF, res.id, module, ""))
+            rest = parts[2:]
+            width = 3 if rest[:1] == ["data"] else 2
+            if len(rest) >= width and rest[0] != "module":
+                rows.add((TF_MODRES, res.id, module, ".".join(rest[:width])))
+        elif parts[0] == "data" and len(parts) >= 3:
+            rows.add((TF_REF, res.id, _key(module_dir, ".".join(parts[:3])), ""))
+        elif len(parts) >= 2:
+            rows.add((TF_REF, res.id, _key(module_dir, ".".join(parts[:2])), ""))
+    return rows
+
+
+def ref_rows(
+    resources: list, sources: ModuleSources | None = None
+) -> list[tuple[str, str, str, str]]:
     """The name references one file's blocks record."""
     rows: set[tuple[str, str, str, str]] = set()
     for res in resources:
         module_dir = os.path.dirname(res.file_path)
+        if res.kind in _ADDRESS_KINDS:
+            rows |= _state_rows(res, module_dir)
+            continue
         for ref in res.refs:
             parts = ref.split(".")
             if parts[0] == "module" and len(parts) >= 3:
@@ -118,11 +275,87 @@ def ref_rows(resources: list) -> list[tuple[str, str, str, str]]:
                 rows.add((TF_MODOUT, res.id, _key(module_dir, module), parts[2]))
             else:
                 rows.add((TF_REF, res.id, _key(module_dir, ref), ""))
-        target = source_dir(module_dir, res.source) if res.kind == "module" else ""
-        if target:
-            for name in res.inputs:
-                rows.add((TF_REF, res.id, _key(target, f"var.{name}"), ""))
+        if res.kind in ("module", "module_arg"):
+            target = source_dir(module_dir, res.source, sources)
+            if target:
+                for name in res.inputs:
+                    rows.add((TF_REF, res.id, _key(target, f"var.{name}"), ""))
     return sorted(rows)
+
+
+def external_module_dirs(resources: list, sources: ModuleSources | None) -> list[str]:
+    """Module directories this file's calls point to that no index covers
+    (outside the repo and its extra_dirs, or in a federated subrepo)."""
+    if sources is None or not sources.mapping:
+        return []
+    out: set[str] = set()
+    for res in resources:
+        if res.kind != "module":
+            continue
+        target = sources.resolve(os.path.dirname(res.file_path), res.source)
+        if target and not sources.is_indexed(target):
+            out.add(target)
+    return sorted(out)
+
+
+# (id(conn), directory) -> the file signature last read into that graph.
+_EXTERNAL_SEEN: dict[tuple[int, str], tuple] = {}
+
+
+def _dir_signature(directory: str) -> tuple:
+    try:
+        entries = [
+            e for e in os.scandir(directory) if e.is_file() and e.name.endswith(".tf")
+        ]
+        out = []
+        for e in sorted(entries, key=lambda e: e.name):
+            st = e.stat()
+            out.append((e.name, st.st_mtime_ns, st.st_size))
+    except OSError:
+        return ()
+    return tuple(out)
+
+
+def ingest_external_module(conn, directory: str) -> None:
+    """Read the variables and outputs of a module directory outside the
+    index into this graph, so the calls pointing at it link their inputs
+    and outputs. Read-only on that directory: nothing is written there and
+    nothing is fetched. Its resources stay out (their own module's graph
+    is canonical for them), and so do its files: no File node, no FTS.
+    Skipped when the directory is unchanged since it was last read into
+    this graph."""
+    from codegraph.parsers.terraform import TerraformParser
+
+    sig = _dir_signature(directory)
+    seen_key = (id(conn), directory)
+    if (
+        sig
+        and _EXTERNAL_SEEN.get(seen_key) == sig
+        and conn.find_nodes("TFVar", where={"module_dir": directory}, limit=1)
+    ):
+        return
+    parser = TerraformParser()
+    current = {os.path.join(directory, name) for name, _m, _s in sig}
+    # A file removed from that directory since the last read: drop its copy.
+    for row in conn.find_nodes(
+        "TFVar", where={"module_dir": directory}, return_fields=["file_path"]
+    ):
+        gone = row["file_path"]
+        if gone not in current and not conn.find_nodes(
+            "File", where={"path": gone}, limit=1
+        ):
+            conn.purge_file_data(gone)
+    for name, _mtime, _size in sig:
+        path = os.path.join(directory, name)
+        if conn.find_nodes("File", where={"path": path}, limit=1):
+            continue  # indexed for real after all: never overwrite it
+        blocks = [
+            r for r in parser.parse(path).resources if r.kind in ("variable", "output")
+        ]
+        conn.purge_file_data(path)
+        ingest_blocks(conn, blocks, defines=False)
+        resolve_inbound(conn, path, blocks)
+    _EXTERNAL_SEEN[seen_key] = sig
 
 
 class _Blocks:
@@ -157,12 +390,12 @@ def _edges_for(refs, blocks: _Blocks) -> dict[str, list[tuple[str, str]]]:
         targets: list[tuple[str, str]] = []
         if kind == TF_REF:
             targets = [(tid, label) for tid, label, _s in blocks.at(name)]
-        elif kind == TF_MODOUT:
+        elif kind in (TF_MODOUT, TF_MODRES):
+            inner = f"output.{extra}" if kind == TF_MODOUT else extra
             for _mid, _label, src in blocks.at(name):
                 if src:
                     targets.extend(
-                        (tid, label)
-                        for tid, label, _s in blocks.at(_key(src, f"output.{extra}"))
+                        (tid, label) for tid, label, _s in blocks.at(_key(src, inner))
                     )
         src_label = label_of(from_id)
         for tid, label in targets:
@@ -199,10 +432,16 @@ def resolve_inbound(conn, file_path: str, resources: list) -> None:
     outputs = {
         res.address[len("output.") :] for res in resources if res.kind == "output"
     }
+    inner = {
+        res.address
+        for res in resources
+        if res.kind in ("resource", "data") and res.address
+    }
     rows = conn.name_refs_into(sorted(names), file_path) if names else []
-    if outputs:
-        # module.m.out written against a module whose source is this
-        # directory: those references are keyed by the module block.
+    if outputs or inner:
+        # module.m.out (or a moved block's module.m.google_x.y) written
+        # against a module whose source is this directory: those references
+        # are keyed by the module block.
         callers = [
             _key(r["module_dir"], r["address"])
             for r in conn.find_nodes(
@@ -215,12 +454,13 @@ def resolve_inbound(conn, file_path: str, resources: list) -> None:
             rows += [
                 r
                 for r in conn.name_refs_into(sorted(set(callers)), file_path)
-                if r[0] == TF_MODOUT and r[4] in outputs
+                if (r[0] == TF_MODOUT and r[4] in outputs)
+                or (r[0] == TF_MODRES and r[4] in inner)
             ]
     refs = [
         (kind, from_id, name, extra)
         for kind, from_id, _f, name, extra in rows
-        if kind in (TF_REF, TF_MODOUT)
+        if kind in (TF_REF, TF_MODOUT, TF_MODRES)
     ]
     if refs:
         _write(conn, _edges_for(refs, _Blocks(conn)))
@@ -241,7 +481,17 @@ def _edge_types_from(label: str) -> list[str]:
 
 # Kinds the query tools report a TFResource row under, by its block kind. A
 # TFVar row (variable, output, tfvars entry) stays "tf_var", type = its kind.
-TF_RESOURCE_KINDS = ("tf_resource", "tf_data", "tf_module", "tf_local", "tf_provider")
+TF_RESOURCE_KINDS = (
+    "tf_resource",
+    "tf_data",
+    "tf_module",
+    "tf_module_arg",
+    "tf_local",
+    "tf_provider",
+    "tf_moved",
+    "tf_import",
+    "tf_removed",
+)
 
 
 def tool_kind(label: str, kind: str | None) -> str:
@@ -419,3 +669,104 @@ def dependent_files(conn, file_path: str, limit: int | None = None) -> list[str]
                 seen.add(path)
                 out.append(path)
     return out
+
+
+def blocks_touching(
+    conn, file_path: str, ranges: list[tuple[int, int]] | None = None
+) -> list[dict[str, Any]]:
+    """The blocks of ``file_path`` overlapping any (first, last) line range,
+    or every block when ``ranges`` is None. A module input lies inside its
+    module block, so a changed input yields both."""
+    blocks = blocks_in_file(conn, file_path)
+    if ranges is None:
+        return blocks
+    out = []
+    for b in blocks:
+        start = b.get("start_line") or 0
+        end = b.get("end_line") or start
+        if any(start <= hi and end >= lo for lo, hi in ranges):
+            out.append(b)
+    return out
+
+
+def impacted_blocks(
+    conn,
+    start_ids: list[str],
+    max_depth: int = 3,
+    cap: int = 300,
+    fanout: int = 500,
+) -> tuple[list[str], bool]:
+    """Reverse BFS over the Terraform reference edges from ``start_ids``:
+    the blocks that reference them, then the blocks referencing those, up
+    to ``max_depth`` hops. Module boundaries are crossed both ways: a
+    module output is referenced by the blocks using module.m.out, and a
+    module variable by the module call (and its input) feeding it.
+    Returns (ordered block ids, truncated), start ids excluded."""
+    seen = set(start_ids)
+    frontier = list(start_ids)
+    ordered: list[str] = []
+    truncated = False
+    depth = 0
+    while frontier and depth < max(1, int(max_depth)):
+        depth += 1
+        nxt: list[str] = []
+        for node_id in frontier:
+            srcs = referrers(conn, node_id, limit=fanout)
+            if len(srcs) >= fanout:
+                truncated = True
+            for src in srcs:
+                if src in seen:
+                    continue
+                seen.add(src)
+                ordered.append(src)
+                nxt.append(src)
+                if len(ordered) >= cap:
+                    return ordered, True
+        frontier = nxt
+    return ordered, truncated
+
+
+def impacted_files(
+    conn,
+    changes: dict[str, list[tuple[int, int]] | None],
+    max_depth: int = 3,
+    cap: int = 300,
+) -> tuple[list[str], list[str], bool]:
+    """Terraform blast radius of a change set, block-precise.
+
+    ``changes`` maps a .tf / .tfvars path to its changed line ranges (None:
+    the whole file). The changed blocks are the ones overlapping those
+    lines; the result is (files holding a block that transitively
+    references a changed block, the changed block ids, truncated). The
+    changed files themselves are left out of the file list.
+    """
+    start: list[str] = []
+    for path, ranges in changes.items():
+        start += [str(b["id"]) for b in blocks_touching(conn, path, ranges)]
+    ids, truncated = impacted_blocks(conn, start, max_depth=max_depth, cap=cap)
+    files: list[str] = []
+    seen = set(changes)
+    for node_id in ids:
+        path = node_id.rpartition("::")[0]
+        if path and path not in seen:
+            seen.add(path)
+            files.append(path)
+    return files, start, truncated
+
+
+def mention_terms(conn, block_ids: list[str]) -> list[str]:
+    """What other files would write to mean the changed blocks: their
+    address (google_x.y, var.v), `module.m.` for a module call or one of
+    its inputs (contracts name module outputs that way), and `output.o`
+    as the bare output name is too common to search."""
+    terms: set[str] = set()
+    for node_id in block_ids:
+        address = node_id.rpartition("::")[2]
+        parts = address.split(".")
+        if parts[0] in ("tfvars", "moved", "import", "removed", "provider"):
+            continue
+        if parts[0] == "module" and len(parts) >= 2:
+            terms.add(f"module.{parts[1]}.")
+        elif parts[0] in ("var", "local", "output", "data") or len(parts) == 2:
+            terms.add(address)
+    return sorted(t for t in terms if len(t) >= 5)

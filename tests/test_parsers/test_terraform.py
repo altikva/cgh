@@ -152,7 +152,10 @@ class TestTerraformBlocks:
             "local.banner",
             "data.google_project.p",
             "module.net",
+            "module.net.region",
+            "module.net.name",
             "module.remote",
+            "module.remote.project",
             "google_compute_instance.vm",
             "var.region",
             "output.vm_ids",
@@ -212,6 +215,62 @@ class TestTerraformBlocks:
         assert net.inputs == ["region", "name"]  # meta-arguments left out
         assert {"var.region", "local.prefix"} <= set(net.refs)
         assert blocks["module.remote"].source.startswith("git::")
+
+    def test_module_arguments_are_entries_of_their_own(self, tmp_path):
+        idx = _parse(tmp_path, HCL)
+        blocks = _by_address(idx)
+        region = blocks["module.net.region"]
+        assert (region.kind, region.name, region.type) == (
+            "module_arg",
+            "region",
+            "module.net",
+        )
+        assert region.start_line == region.end_line
+        assert HCL.splitlines()[region.start_line - 1] == "  region = var.region"
+        assert region.inputs == ["region"]
+        assert region.source == "./modules/net"
+        # Expression references stay on the module block, not on the input.
+        assert region.refs == []
+        assert region.docstring == "module.net.region = var.region"
+        # Meta-arguments are not inputs.
+        assert "module.net.count" not in blocks
+        assert "module.net.source" not in blocks
+
+    def test_moved_import_and_removed_blocks(self, tmp_path):
+        text = (
+            "moved {\n"
+            "  from = module.vpc.google_compute_network.vpc\n"
+            "  to   = module.vpc.google_compute_network.this[0]\n"
+            "}\n"
+            "moved {\n  from = module.tasks.random_id.s\n  to = random_id.s\n}\n"
+            'import {\n  to = google_kms_key_ring.ring["a"]\n  id = "x"\n}\n'
+            "removed {\n  from = data.google_project.old\n"
+            "  lifecycle {\n    destroy = false\n  }\n}\n"
+            "moved {\n  from = 1\n}\n"
+        )
+        blocks = _by_address(_parse(tmp_path, text))
+        assert set(blocks) == {
+            "moved.module.vpc.google_compute_network.this",
+            "moved.random_id.s",
+            "import.google_kms_key_ring.ring",
+            "removed.data.google_project.old",
+        }
+        vpc = blocks["moved.module.vpc.google_compute_network.this"]
+        assert vpc.kind == "moved" and (vpc.start_line, vpc.end_line) == (1, 4)
+        assert vpc.refs == [
+            "module.vpc.google_compute_network.vpc",
+            "module.vpc.google_compute_network.this",
+        ]
+        assert blocks["moved.random_id.s"].refs == [
+            "module.tasks.random_id.s",
+            "random_id.s",
+        ]
+        assert blocks["import.google_kms_key_ring.ring"].refs == [
+            "google_kms_key_ring.ring"
+        ]
+        assert blocks["removed.data.google_project.old"].refs == [
+            "data.google_project.old"
+        ]
 
     def test_splat_reference(self, tmp_path):
         out = _by_address(_parse(tmp_path, HCL))["output.vm_ids"]

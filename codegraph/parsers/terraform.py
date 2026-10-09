@@ -13,8 +13,11 @@
 #              each keyed by its Terraform address (google_x.y, data.t.n,
 #              module.m, var.v, output.o, local.l) and carrying the
 #              addresses its expressions reference, nested blocks, string
-#              interpolations and heredocs included. A .tfvars file yields
-#              one entry per assignment, which references var.<key>.
+#              interpolations and heredocs included. A module call also
+#              yields one entry per input argument (module.m.<arg>), and a
+#              moved / import / removed block one entry referencing the
+#              state addresses it names. A .tfvars file yields one entry
+#              per assignment, which references var.<key>.
 #              Scoping (which module directory an address resolves in) is
 #              the indexer's job: see codegraph/analysis/terraform.py.
 
@@ -213,11 +216,100 @@ def _top_blocks(root) -> list:
     return [c for c in body.children if c.type == "block"]
 
 
+_RE_INDEX = re.compile(r"\[[^\]]*\]")
+_RE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def _state_address(expr) -> str:
+    """The resource address a moved / import / removed argument names,
+    instance keys dropped: module.vpc.google_x.y[0] gives
+    module.vpc.google_x.y. "" when the text is not an address."""
+    if expr is None:
+        return ""
+    text = _RE_INDEX.sub("", re.sub(r"\s+", "", _text(expr)))
+    parts = text.split(".")
+    if not parts or not all(_RE_IDENT.match(p) for p in parts):
+        return ""
+    return text
+
+
+# Blocks without a label that name state addresses (Terraform 1.1+ moved,
+# 1.5+ import, 1.7+ removed): the argument holding the address the block
+# is known by, and the arguments it references.
+_ADDRESS_BLOCKS = {
+    "moved": ("to", ("from", "to")),
+    "import": ("to", ("to",)),
+    "removed": ("from", ("from",)),
+}
+
+
+def _address_block(path_str: str, btype: str, block, body) -> ResourceDef | None:
+    """A moved / import / removed block, keyed by the address it names.
+
+    Its refs are full state addresses (module.m.google_x.y kept whole): the
+    indexer links module.m and, when the module's source is known, the
+    resource inside it (see codegraph/analysis/terraform.py)."""
+    key_arg, ref_args = _ADDRESS_BLOCKS[btype]
+    args = {name: expr for name, expr, _a in _attributes(body)}
+    key = _state_address(args.get(key_arg))
+    if not key:
+        return None
+    refs = [a for a in (_state_address(args.get(n)) for n in ref_args) if a]
+    start, end = _lines(block)
+    return ResourceDef(
+        id=f"{path_str}::{btype}.{key}",
+        name=key,
+        type=btype,
+        file_path=path_str,
+        start_line=start,
+        end_line=end,
+        kind=btype,
+        address=f"{btype}.{key}",
+        refs=list(dict.fromkeys(refs)),
+        docstring=_summary(btype, body),
+    )
+
+
+def _module_args(path_str: str, module: str, source: str, attrs) -> list:
+    """One entry per input argument of a module call, so a search for an
+    input name lands on the call: address module.<m>.<arg>, the argument's
+    own lines, its value as the text-search summary. It references the
+    module's variable of that name (when the source resolves), nothing
+    else: the module block keeps the expression references."""
+    out: list[ResourceDef] = []
+    for name, expr, attr in attrs:
+        if name in _MODULE_META:
+            continue
+        s, e = _lines(attr)
+        address = f"module.{module}.{name}"
+        out.append(
+            ResourceDef(
+                id=f"{path_str}::{address}",
+                name=name,
+                type=f"module.{module}",
+                file_path=path_str,
+                start_line=s,
+                end_line=e,
+                kind="module_arg",
+                address=address,
+                source=source,
+                inputs=[name],
+                docstring=_squash(f"{address} = {_text(expr)}", _SUMMARY_CAP),
+            )
+        )
+    return out
+
+
 def _parse_tf(path_str: str, root) -> list[ResourceDef]:
     out: list[ResourceDef] = []
     for block in _top_blocks(root):
         btype, labels, body = _block_parts(block)
         start, end = _lines(block)
+        if btype in _ADDRESS_BLOCKS:
+            res = _address_block(path_str, btype, block, body)
+            if res is not None:
+                out.append(res)
+            continue
         if btype == "locals":
             for name, expr, attr in _attributes(body):
                 s, e = _lines(attr)
@@ -278,6 +370,8 @@ def _parse_tf(path_str: str, root) -> list[ResourceDef]:
         res.id = f"{path_str}::{res.address}"
         res.refs = [r for r in _refs_in(block) if r != res.address]
         out.append(res)
+        if btype == "module":
+            out.extend(_module_args(path_str, labels[0], res.source, attrs))
     return out
 
 

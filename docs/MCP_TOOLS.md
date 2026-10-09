@@ -8,7 +8,7 @@ When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus wh
 |------|-------------|
 | `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries: no Read needed |
 | `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
-| `endpoints(path_pattern?, method?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers: works cross-repo when `extra_dirs` is configured |
+| `endpoints(path_pattern?, method?, include_tests?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers and, for FastAPI / Flask, full paths composed from router and include prefixes. A full path, a glob or a path with other parameter names finds a route; an unmatched path falls back to a flagged suffix match. Routes in test files are left out unless `include_tests`: works cross-repo when `extra_dirs` is configured |
 
 ### Code Navigation
 

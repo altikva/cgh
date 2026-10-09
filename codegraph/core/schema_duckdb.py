@@ -42,7 +42,9 @@ NODE_TABLES = [
         path        TEXT,
         framework   TEXT,
         file_path   TEXT,
-        start_line  BIGINT
+        start_line  BIGINT,
+        router      TEXT,
+        is_test     BOOLEAN
     )""",
     """CREATE TABLE IF NOT EXISTS function (
         id          TEXT PRIMARY KEY,
@@ -294,6 +296,8 @@ MIGRATIONS = [
     "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT ''",
     "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS hint TEXT DEFAULT ''",
     "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS ctx TEXT DEFAULT ''",
+    "ALTER TABLE endpoint ADD COLUMN IF NOT EXISTS router TEXT",
+    "ALTER TABLE endpoint ADD COLUMN IF NOT EXISTS is_test BOOLEAN",
 ]
 
 

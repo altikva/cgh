@@ -22,6 +22,7 @@
     "compact",
     "diff",
     "doctor",
+    "endpoints",
     "ensurepath",
     "examples",
     "federate",
@@ -254,6 +255,22 @@
           "--root",
           "--strict",
           "-h"
+        ]
+      },
+      "endpoints": {
+        "options": [
+          "--help",
+          "--include-tests",
+          "--json",
+          "--limit",
+          "--method",
+          "--root",
+          "-h",
+          "-m",
+          "-n"
+        ],
+        "positionals": [
+          "pattern"
         ]
       },
       "ensurepath": {

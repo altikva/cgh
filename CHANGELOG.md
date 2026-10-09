@@ -67,8 +67,29 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   their older rows show as `unknown`. The log stays in
   `.codegraph/call_log.db`: cgh sends it nowhere, and crash reports do not
   include it.
+- **`cgh endpoints` lists HTTP routes from the shell**, with method, full
+  path, handler and `file:line` (`--method`, `--include-tests`, `--limit`,
+  `--json`), through the same query as the MCP `endpoints` tool and federated
+  the same way.
+- **Endpoints carry their full paths.** A FastAPI or Flask route's router
+  prefix and the `include_router` / `register_blueprint` prefixes reaching it
+  are composed across files into `full_paths` (one per mount), so
+  `endpoints("/v1/donations/{id}/cancel")` finds the route agents would
+  otherwise look up in openapi.json. Parameter names are ignored, and a path
+  that matches nothing falls back to routes whose local path is a suffix of
+  it, flagged `match: "suffix"`. A prefix that is not a string literal leaves
+  the route without a full path (`full_path_partial`). Existing indexes
+  re-parse once on the next index.
 
 ### Fixed
+- **Two routers of one file declaring the same method and path kept only
+  one route.** Endpoints were keyed by file, method and path, so a second
+  `@images_router.get("")` replaced the first `@router.get("")`. They are now
+  keyed by file, line, method and path (ondonne-api: 704 to 706 routes).
+- **Routes declared in test files mixed with the real ones.** They are now
+  tagged as test routes and left out of `endpoints`, `cgh endpoints` (opt in
+  with `include_tests` / `--include-tests`) and the endpoints of `impact_of`
+  and `cgh impact`, which list the tests to run on their own.
 - **A query on an index from an older cgh crashed or answered short before
   the first reindex.** `cgh lookup` or `cgh search` right after upgrading
   printed a database error (a missing `tf_resource` column), and `cgh

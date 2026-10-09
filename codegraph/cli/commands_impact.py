@@ -5,7 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh impact --since <ref>` CI command for PR bots. Diffs the
-#              working tree against a git ref, then reads the graph read-only
+#              working tree (commits, staged and unstaged changes, untracked
+#              files) against a git ref, then reads the graph read-only
 #              to report changed symbols, the IMPORTS blast radius grouped by
 #              role / layer, endpoints touched, and tests to run. Emits JSON
 #              (machine-parseable on stdout) or a markdown PR-comment summary.
@@ -32,26 +33,11 @@ from codegraph.core.utils import quiet_subprocess_kwargs
 _err = Console(stderr=True)
 
 
-def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
-    """Return (changed_files, error). Diffs the working tree against ``since``.
-
-    Mirrors the validation in tools_index.index_changed_files: a leading dash
-    is rejected so a value like "--output=/x" cannot be read as a git flag,
-    and the trailing "--" keeps the ref from being parsed as a pathspec.
-    """
-    if since.startswith("-"):
-        return [], f"invalid git ref: {since!r}"
-    cmd = [
-        "git",
-        "diff",
-        "--name-only",
-        "--diff-filter=ACMR",
-        f"{since}...",
-        "--",
-    ]
+def _git(root: str, *args: str) -> tuple[str, str | None]:
+    """(stdout, error) of one git command run in ``root``."""
     try:
         result = subprocess.run(
-            cmd,
+            ["git", *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -61,16 +47,46 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
             **quiet_subprocess_kwargs(),
         )
     except Exception as exc:
-        return [], f"git diff failed: {exc}"
+        return "", f"git {args[0]} failed: {exc}"
     if result.returncode != 0:
-        msg = (result.stderr or "").strip() or f"git diff exited {result.returncode}"
-        return [], f"git diff failed: {msg}"
+        msg = (
+            result.stderr or ""
+        ).strip() or f"git {args[0]} exited {result.returncode}"
+        return "", f"git {args[0]} failed: {msg}"
+    return result.stdout, None
+
+
+def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
+    """Return (changed_files, error). Diffs the working tree against ``since``.
+
+    The base is the merge base of ``since`` and HEAD (a PR's diff against
+    its target branch), and the comparison is with the working tree, so
+    committed, staged and unstaged changes all count, plus untracked files
+    git does not ignore. A leading dash is rejected so a value like
+    "--output=/x" cannot be read as a git flag, and the trailing "--" keeps
+    the ref from being parsed as a pathspec.
+    """
+    if since.startswith("-"):
+        return [], f"invalid git ref: {since!r}"
+    base, err = _git(root, "merge-base", since, "HEAD")
+    base = base.strip() if err is None else ""
+    if not base:
+        # No common ancestor (or an unborn HEAD): diff against the ref itself.
+        base = since
+    out, err = _git(root, "diff", "--name-only", "--diff-filter=ACMR", base, "--")
+    if err is not None:
+        return [], err
+    untracked, err = _git(
+        root, "ls-files", "--others", "--exclude-standard", "--full-name"
+    )
+    if err is not None:
+        return [], err
     files = [
         f.strip()
-        for f in result.stdout.strip().splitlines()
+        for f in [*out.splitlines(), *untracked.splitlines()]
         if f.strip() and not f.strip().startswith(".codegraph/")
     ]
-    return files, None
+    return list(dict.fromkeys(files)), None
 
 
 def _build_report(conn, root: str, changed_files: list[str]) -> dict:

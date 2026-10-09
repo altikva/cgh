@@ -359,8 +359,10 @@ def _link_call_sites(
     if not sites:
         return
     from codegraph.analysis.call_rules import (
+        CLS,
         Candidates,
         Target,
+        class_bases,
         needs_imports,
         targets_for,
     )
@@ -380,6 +382,8 @@ def _link_call_sites(
         )
     root_s = str(root) if root is not None else None
     pools = {name: Candidates(targets, root_s) for name, targets in by_name.items()}
+    typed = {s.ctx for s in sites if s.kind == CLS and s.ctx and s.name in pools}
+    hierarchy = class_bases(conn, typed) if typed else {}
     no_imports: frozenset[str] = frozenset()
     desired: set[tuple[str, str]] = set()
     for site in sites:
@@ -390,7 +394,8 @@ def _link_call_sites(
         if not needs_imports(site.kind):
             imp = no_imports
         desired.update(
-            (site.from_id, t.id) for t in targets_for(site, candidates, root_s, imp)
+            (site.from_id, t.id)
+            for t in targets_for(site, candidates, root_s, imp, hierarchy)
         )
     if replace is not None:
         existing = set(conn.calls_by_name(sorted(by_name), replace))
@@ -432,6 +437,7 @@ def _resolve_inbound_calls(
     functions: list,
     old_names: list[str] | tuple[str, ...] = (),
     root: Path | None = None,
+    classes: set[str] | frozenset[str] = frozenset(),
 ) -> None:
     """Link call sites in OTHER files to the functions ``file_path`` defines.
 
@@ -443,11 +449,15 @@ def _resolve_inbound_calls(
     resolved again with the same rules as from the caller's side, so a
     definition appearing or vanishing here also updates edges to other
     files. Precisely resolved sites (to_id set) relink only to their exact
-    target, never by name.
+    target, never by name. A call on a known class climbs its bases, so the
+    calls on ``classes`` (the classes the file defines now or defined
+    before) and on their subclasses are resolved again too.
     """
-    from codegraph.analysis.call_rules import Site, needs_imports, real
+    from codegraph.analysis.call_rules import Site, needs_imports, real, subclasses
 
     names = {fn.name for fn in functions} | set(old_names)
+    if classes:
+        names.update(conn.call_site_names_on(sorted(subclasses(conn, set(classes)))))
     ids = {fn.id for fn in functions}
     if not names and not ids:
         return
@@ -475,17 +485,33 @@ def _delete_file_relinking(conn: GraphDB, path: str, repo_root) -> None:
     """Delete a file from the graph, then resolve again the calls elsewhere
     to the names it defined."""
     names = conn.function_names_in(path)
+    classes = _class_names_in(conn, path)
     conn.delete_file_completely(path)
-    _relink_calls_named(conn, path, names, Path(repo_root) if repo_root else None)
+    _relink_calls_named(
+        conn, path, names, Path(repo_root) if repo_root else None, classes
+    )
+
+
+def _class_names_in(conn: GraphDB, file_path: str) -> set[str]:
+    """The names of the Classes ``file_path`` defines."""
+    rows = conn.find_nodes(
+        "Class", where={"file_path": file_path}, return_fields=["name"]
+    )
+    return {r["name"] for r in rows if r.get("name")}
 
 
 def _relink_calls_named(
-    conn: GraphDB, file_path: str, names: list[str], root: Path | None
+    conn: GraphDB,
+    file_path: str,
+    names: list[str],
+    root: Path | None,
+    classes: set[str] | frozenset[str] = frozenset(),
 ) -> None:
-    """Resolve again the call sites of ``names`` after ``file_path`` lost its
-    functions (deleted, or no longer parseable)."""
-    if names:
-        _resolve_inbound_calls(conn, file_path, [], names, root)
+    """Resolve again the call sites of ``names``, and the calls on
+    ``classes``, after ``file_path`` lost its functions and classes
+    (deleted, or no longer parseable)."""
+    if names or classes:
+        _resolve_inbound_calls(conn, file_path, [], names, root, classes)
 
 
 # A name reference is (kind, from_id, name, extra), kept in the name_ref table
@@ -1130,6 +1156,7 @@ def _index_file(
     # The names this file defined: callers of those names elsewhere are
     # resolved again once the file is back in (or gone).
     old_names = conn.function_names_in(str(path))
+    old_classes = _class_names_in(conn, str(path))
     _purge_file(conn, str(path), fts_conn)
 
     try:
@@ -1142,7 +1169,7 @@ def _index_file(
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
         print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
-        _relink_calls_named(conn, str(path), old_names, root)
+        _relink_calls_named(conn, str(path), old_names, root, old_classes)
         return False
     except Exception as exc:
         # Catch-all: any other parse failure (decoding error, malformed source,
@@ -1153,7 +1180,7 @@ def _index_file(
         msg = f"{path}: {type(exc).__name__}: {exc}"
         print(f"[codegraph] parse error: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
-        _relink_calls_named(conn, str(path), old_names, root)
+        _relink_calls_named(conn, str(path), old_names, root, old_classes)
         return False
 
     lang = idx.lang
@@ -1230,7 +1257,14 @@ def _index_file(
     # defined before.
     for rows, imported in pending_calls:
         _resolve_calls(conn, idx, root, rows, imported)
-    _resolve_inbound_calls(conn, str(path), idx.functions, old_names, root)
+    _resolve_inbound_calls(
+        conn,
+        str(path),
+        idx.functions,
+        old_names,
+        root,
+        old_classes | {c.name for c in idx.classes},
+    )
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)

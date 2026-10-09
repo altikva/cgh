@@ -83,6 +83,24 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   into test files. Calls the old rule hid behind a same-named local
   function (a router calling the handler method of the same name) are now
   linked. The first index after upgrading re-parses the repo once.
+- **A call on a typed attribute went to the wrong class.**
+  `self.manager.get_by_id()` with `manager` a `ReceiptManager` landed on
+  the `get_by_id` of whatever other manager the file imported. An
+  attribute typed in its class (annotation, `self.x = C(...)`, annotated
+  `__init__` parameter; in TypeScript a typed field or a constructor
+  parameter property) now resolves to that class's method or the nearest
+  base defining it, and a call on a library type gets no edge. The first
+  index after upgrading re-parses the repo once.
+- **`cgh impact` and `impact_report` ignored CALLS.** The blast radius and
+  the tests to run came from module-level imports only, so a test importing
+  the changed module inside a test function was not listed. Both now also
+  follow imports made in function bodies and the callers of the changed
+  files' functions over CALLS (up to three calls away). The report keeps
+  its shape.
+- **`cgh impact --since <ref>` ignored uncommitted work.** It compared
+  commits only, so `--since HEAD` reported nothing on a dirty tree. It now
+  compares the working tree, as its help says: staged, unstaged and
+  untracked files count.
 - **Inheritance, docs references and route handlers had the same blind
   spot.** A base class, a function or class mentioned in a Markdown doc, or
   a file a doc links to was missed when defined in a file indexed later, and

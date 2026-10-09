@@ -70,16 +70,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **`cgh endpoints` lists HTTP routes from the shell**, with method, full
   path, handler and `file:line` (`--method`, `--include-tests`, `--limit`,
   `--json`), through the same query as the MCP `endpoints` tool and federated
-  the same way.
+  the same way. On an index copied from another checkout it refuses with the
+  `cgh index` remedy, like `cgh impact`.
 - **Endpoints carry their full paths.** A FastAPI or Flask route's router
   prefix and the `include_router` / `register_blueprint` prefixes reaching it
   are composed across files into `full_paths` (one per mount), so
-  `endpoints("/v1/donations/{id}/cancel")` finds the route agents would
-  otherwise look up in openapi.json. Parameter names are ignored, and a path
-  that matches nothing falls back to routes whose local path is a suffix of
-  it, flagged `match: "suffix"`. A prefix that is not a string literal leaves
-  the route without a full path (`full_path_partial`). Existing indexes
-  re-parse once on the next index.
+  `endpoints("/v1/donations/{id}/cancel")` or the concrete URL
+  `/v1/donations/123/cancel` finds the route agents would otherwise look up
+  in openapi.json. Parameter names are ignored, a `{p:path}` catch-all takes
+  the rest of the path on an exact match only (ranked after any more specific route), and an `ANY`
+  route answers every method filter. A path that matches no full path
+  exactly falls back to the routes it is a suffix of
+  (`/donations/{id}/cancel`), flagged `match: "suffix"`. A prefix that is not
+  a string literal leaves the route without a full path
+  (`full_path_partial`). The endpoints of `cgh impact` and `impact_of` carry
+  `full_paths` too. Existing indexes re-parse once on the next index.
 
 ### Fixed
 - **Two routers of one file declaring the same method and path kept only

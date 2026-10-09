@@ -740,6 +740,19 @@ def _endpoints_payload(root: str, arguments: dict) -> dict:
 def cmd_endpoints(args: argparse.Namespace) -> None:
     """HTTP routes with their full paths, handler and location."""
     root = os.path.abspath(args.root)
+    # A store copied from another checkout would answer with that tree's
+    # files and lines: refuse, as impact and outline do.
+    import sys
+
+    from codegraph.state.scan_meta import copied_store_message
+
+    copied = copied_store_message(root)
+    if copied:
+        if args.json:
+            print(json.dumps({"error": copied}, indent=2))
+        else:
+            print(copied, file=sys.stderr)
+        raise SystemExit(1)
     arguments = {
         "path_pattern": args.pattern or "",
         "method": args.method or "",

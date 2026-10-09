@@ -86,6 +86,14 @@ COMMANDS = [
     ("callees", lambda r: cq.cmd_callees(argparse.Namespace(root=r, fn_name="run"))),
     ("outline", lambda r: cq.cmd_outline(argparse.Namespace(root=r, file="lib.py"))),
     (
+        "endpoints",
+        lambda r: cq.cmd_endpoints(
+            argparse.Namespace(
+                root=r, pattern="", method="", include_tests=False, limit=0, json=True
+            )
+        ),
+    ),
+    (
         "impact",
         lambda r: cmd_impact(
             argparse.Namespace(root=r, since="HEAD~1", json=True, format="json", out="")

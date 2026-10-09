@@ -340,6 +340,14 @@ class DuckDBGraphDB:
             out.extend(tuple(r) for r in rows)
         return out
 
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        rows = self._conn.execute(
+            "SELECT from_id, name, extra FROM name_ref WHERE kind = ? "
+            "ORDER BY from_id, name, extra",
+            [kind],
+        ).fetchall()
+        return [tuple(r) for r in rows]
+
     def node_keys_matching(
         self, label: str, field: str, values: list[Any]
     ) -> list[tuple[Any, Any]]:

@@ -490,47 +490,62 @@ def symbols_in_file(
     return out
 
 
-def endpoints_of_functions(conn: Any, fn_ids: list[str]) -> list[dict[str, str]]:
+def _endpoint_row(fp: str, e: dict, side: str) -> dict[str, Any] | None:
+    """An impact endpoint row, None for a route declared in a test file
+    (impact lists the tests to run on their own)."""
+    if e.get(f"{side}_is_test"):
+        return None
+    return {
+        "file": fp,
+        "method": e.get(f"{side}_method", "") or "",
+        "path": e.get(f"{side}_path", "") or "",
+        "line": e.get(f"{side}_start_line"),
+    }
+
+
+def endpoints_of_functions(conn: Any, fn_ids: list[str]) -> list[dict[str, Any]]:
     """Endpoints whose handler (IMPLEMENTED_BY) is one of ``fn_ids``, as
     endpoints_in_files rows: the routes a symbol-level change reaches."""
-    seen: set[tuple[str, str, str]] = set()
-    out: list[dict[str, str]] = []
+    seen: set[tuple] = set()
+    out: list[dict[str, Any]] = []
     for fid in fn_ids:
         for e in conn.find_neighbors(
             "IMPLEMENTED_BY",
             dst_key=fid,
-            return_src=["method", "path", "file_path"],
+            return_src=["method", "path", "file_path", "start_line", "is_test"],
         ):
-            fp = e.get("src_file_path", "") or ""
-            method = e.get("src_method", "") or ""
-            path = e.get("src_path", "") or ""
-            key = (fp, method, path)
+            row = _endpoint_row(e.get("src_file_path", "") or "", e, "src")
+            if row is None:
+                continue
+            key = (row["file"], row["method"], row["path"], row["line"])
             if key not in seen:
                 seen.add(key)
-                out.append({"file": fp, "method": method, "path": path})
+                out.append(row)
     return out
 
 
-def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, str]]:
-    """Endpoints declared (DEFINES_ENDPOINT) in any of ``files``.
+def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, Any]]:
+    """Endpoints declared (DEFINES_ENDPOINT) in any of ``files``, outside
+    test files.
 
-    Returns ``[{file, method, path}]``, de-duplicated.
+    Returns ``[{file, method, path, line}]``, de-duplicated.
     """
-    seen: set[tuple[str, str, str]] = set()
-    out: list[dict[str, str]] = []
+    seen: set[tuple] = set()
+    out: list[dict[str, Any]] = []
     for fp in files:
         for e in conn.find_neighbors(
             "DEFINES_ENDPOINT",
             src_key=fp,
-            return_dst=["method", "path"],
+            return_dst=["method", "path", "start_line", "is_test"],
         ):
-            method = e.get("dst_method", "") or ""
-            path = e.get("dst_path", "") or ""
-            key = (fp, method, path)
+            row = _endpoint_row(fp, e, "dst")
+            if row is None:
+                continue
+            key = (fp, row["method"], row["path"], row["line"])
             if key in seen:
                 continue
             seen.add(key)
-            out.append({"file": fp, "method": method, "path": path})
+            out.append(row)
     return out
 
 
@@ -753,15 +768,17 @@ def build_impact_report(
     symbol_only = set(symbol_files) - set(class_files)
     by_file = [p for p in abs_changed if p not in symbol_only]
     by_file += [p for p in radius if p in file_level]
-    seen_ep: set[tuple[str, str, str]] = set()
+    seen_ep: set[tuple] = set()
     endpoints: list[dict] = []
     for e in endpoints_in_files(conn, by_file) + endpoints_of_functions(
         conn, sorted(set(symbol_ids) | reached)
     ):
-        key = (_rel(e["file"]), e["method"], e["path"])
+        key = (_rel(e["file"]), e["method"], e["path"], e["line"])
         if key not in seen_ep:
             seen_ep.add(key)
-            endpoints.append({"file": key[0], "method": key[1], "path": key[2]})
+            endpoints.append(
+                {"file": key[0], "method": key[1], "path": key[2], "line": key[3]}
+            )
 
     # Tests to run: the test files that import a file changed at module level
     # (at module level or in a function body), then the ones whose functions

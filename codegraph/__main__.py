@@ -917,24 +917,10 @@ def _outdated_store_hint(args: argparse.Namespace, exc: Exception) -> str:
     } and any(k in text for k in ("column", "Column", "table", "Table"))
     if not schema_error:
         return ""
-    try:
-        from codegraph.state.scan_meta import (
-            GRAPH_FORMAT,
-            read_meta,
-            recorded_graph_format,
-        )
+    from codegraph.state.scan_meta import outdated_store_message
 
-        root = os.path.abspath(getattr(args, "root", None) or os.getcwd())
-        fmt = recorded_graph_format(read_meta(root))
-    except Exception:  # best-effort probe: fall back to the original error
-        return ""
-    if fmt is None or fmt >= GRAPH_FORMAT:
-        return ""
-    return (
-        f"cgh: this index was written in graph format {fmt}, this cgh needs "
-        f"{GRAPH_FORMAT}. Run `cgh index` once to upgrade it (an MCP owner "
-        "does it on its own when it starts)."
-    )
+    root = os.path.abspath(getattr(args, "root", None) or os.getcwd())
+    return outdated_store_message(root)
 
 
 if __name__ == "__main__":

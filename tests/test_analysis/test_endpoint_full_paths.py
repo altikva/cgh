@@ -10,10 +10,14 @@
 #              files and through nested routers; a prefix that is not a
 #              literal stops the chain. A full path, a glob or a path with
 #              other parameter names finds the route, and a path that matches
-#              nothing falls back to a flagged suffix match. Two routers of
+#              nothing falls back to a flagged match of the routes it is a
+#              suffix of. A concrete URL fills the parameters, a catch-all
+#              takes the rest of the path without outranking a specific
+#              route, and an ANY route answers every method. Two routers of
 #              one file declaring the same method and path stay two routes,
 #              and routes declared in test files are left out by default,
-#              from the endpoints query, the CLI and impact alike.
+#              from the endpoints query, the CLI and impact alike. Impact
+#              rows carry the full paths too.
 
 from __future__ import annotations
 
@@ -26,7 +30,7 @@ from rich.console import Console
 
 import codegraph.cli.commands_query as cq
 from codegraph.analysis.endpoint_query import list_endpoints, select_endpoints
-from codegraph.analysis.impact import endpoints_in_files
+from codegraph.analysis.impact import endpoints_in_files, endpoints_of_functions
 from codegraph.core.db import get_connection, reset_connection
 from codegraph.indexer import index_repo
 
@@ -35,12 +39,13 @@ FILES = {
     "app/config.py": 'PREFIX = "/dyn"\n',
     "app/main.py": (
         "from fastapi import FastAPI\n\n"
-        "from app.routers import api_router\n"
+        "from app.routers import api_router, auth_proxy\n"
         "from app.routers import health\n\n\n"
         "def create_app():\n"
         "    app = FastAPI()\n"
         "    app.include_router(api_router)\n"
-        "    app.include_router(health.router)\n\n"
+        "    app.include_router(health.router)\n"
+        "    app.include_router(auth_proxy.router)\n\n"
         '    @app.get("/ping")\n'
         "    def ping():\n"
         '        return "pong"\n\n'
@@ -51,13 +56,62 @@ FILES = {
         "from app.config import PREFIX\n"
         "from app.routers import email as email_mod\n"
         "from app.routers.donations import router as donations_router\n"
-        "from app.routers.dyn import router as dyn_router\n\n"
+        "from app.routers.dyn import router as dyn_router\n"
+        "from app.routers.pledges import router as pledges_router\n"
+        "from app.routers.reconciliation import router as reconciliation_router\n"
+        "from app.routers.crm import router as crm_router\n"
+        "from app.routers.associations import router as associations_router\n\n"
         'api_router = APIRouter(prefix="/v1")\n'
         "api_router.include_router(donations_router)\n"
         "api_router.include_router(email_mod.router)\n"
         'api_router.include_router(email_mod.router, prefix="/legacy")\n'
         "api_router.include_router(email_mod.images_router)\n"
         "api_router.include_router(dyn_router, prefix=PREFIX)\n"
+        "api_router.include_router(pledges_router)\n"
+        "api_router.include_router(reconciliation_router)\n"
+        "api_router.include_router(crm_router)\n"
+        "api_router.include_router(associations_router)\n"
+    ),
+    # Look-alike routes the suffix fallback must not pick, or rank first.
+    "app/routers/pledges.py": (
+        "from fastapi import APIRouter\n\n"
+        'router = APIRouter(prefix="/pledges")\n\n\n'
+        '@router.post("/{pledge_id}/cancel")\n'
+        "def cancel_pledge(pledge_id: int):\n"
+        "    return pledge_id\n"
+    ),
+    "app/routers/reconciliation.py": (
+        "from fastapi import APIRouter\n\n"
+        'router = APIRouter(prefix="/reconciliation")\n\n\n'
+        '@router.post("/import")\n'
+        "def import_statement():\n"
+        "    return 1\n"
+    ),
+    "app/routers/crm.py": (
+        "from fastapi import APIRouter\n\n"
+        'router = APIRouter(prefix="/crm")\n\n\n'
+        '@router.post("/{kind}/import")\n'
+        "def import_contacts(kind: str):\n"
+        "    return kind\n"
+    ),
+    "app/routers/associations.py": (
+        "from fastapi import APIRouter\n\n"
+        'router = APIRouter(prefix="/associations")\n\n\n'
+        '@router.get("/{association_id}/declaration-documents")\n'
+        "def declaration_documents(association_id: int):\n"
+        "    return []\n"
+    ),
+    # A proxy: a specific route and a catch-all declared for any method.
+    "app/routers/auth_proxy.py": (
+        "from fastapi import APIRouter\n\n"
+        'PROXY_METHODS = ["GET", "POST"]\n'
+        'router = APIRouter(prefix="/auth/v1")\n\n\n'
+        '@router.get("/settings")\n'
+        "def auth_settings():\n"
+        "    return {}\n\n\n"
+        '@router.api_route("/{path:path}", methods=PROXY_METHODS)\n'
+        "def auth_proxy(path: str):\n"
+        "    return path\n"
     ),
     "app/routers/health.py": (
         "from fastapi import APIRouter\n\n"
@@ -200,57 +254,123 @@ def test_two_routers_of_one_file_with_the_same_route_are_both_kept(repo):
 
 
 @pytest.mark.parametrize(
-    "pattern",
+    ("pattern", "how"),
     [
-        "/v1/donations/{donation_id}/cancel",
-        "/v1/donations/{id}/cancel",
-        "*/donations/{donation_id}/cancel",
-        "*/donations/{id}/cancel",
-        "/{donation_id}/cancel",
+        ("/v1/donations/{donation_id}/cancel", "full_path"),
+        ("/v1/donations/{id}/cancel", "full_path"),
+        ("/v1/donations/123/cancel", "full_path"),
+        ("*/donations/{donation_id}/cancel", "full_path"),
+        ("*/donations/{id}/cancel", "full_path"),
+        ("/donations/{donation_id}/cancel", "suffix"),
+        ("/donations/123/cancel", "suffix"),
     ],
 )
-def test_full_path_and_glob_queries_find_the_route(repo, pattern):
+def test_full_path_concrete_and_glob_queries_find_the_route(repo, pattern, how):
     rows = _select(repo, pattern)
-    assert [r["handler"] for r in rows] == ["cancel_donation"]
-    assert rows[0]["match"] in ("full_path", "path")
+    assert [(r["handler"], r["match"]) for r in rows] == [("cancel_donation", how)]
 
 
-def test_unmatched_path_falls_back_to_a_flagged_suffix_match(repo):
-    # The real mount is /v1/donations/...: this path has another prefix.
-    rows = _select(repo, "/api/v2/donations/{id}/cancel")
-    assert [(r["handler"], r["match"]) for r in rows] == [("cancel_donation", "suffix")]
+def test_suffix_is_matched_against_the_full_path(repo):
+    # The query is a tail of the route's full path, not the other way round.
+    assert [r["handler"] for r in _select(repo, "/declaration-documents")] == [
+        "declaration_documents"
+    ]
+    rows = _select(repo, "/reconciliation/import")
+    assert rows[0]["handler"] == "import_statement"
+    assert {r["match"] for r in rows} == {"suffix"}
+    # A local path that is a tail of the query is no match any more.
+    assert _select(repo, "/api/v2/donations/{id}/cancel") == []
 
 
 def test_suffix_matches_rank_by_shared_literal_segments():
+    def ep(full, handler):
+        return {"path": "", "full_paths": [full], "file_path": "f", "handler": handler}
+
     eps = [
-        {
-            "path": "/{a}/attribute/cancel",
-            "full_paths": [],
-            "file_path": "f",
-            "handler": "loose",
-        },
+        ep("/v1/{grp}/{id}/cancel", "loose"),
+        ep("/v1/x/{id}/cancel", "best"),
+        ep("/v1/y/{id}/cancel", "other"),
+    ]
+    rows = select_endpoints([("parent", eps)], "/x/{id}/cancel")["by_framework"][
+        "unknown"
+    ]
+    assert [(r["handler"], r["match"]) for r in rows] == [
+        ("best", "suffix"),
+        ("loose", "suffix"),
+    ]
+
+
+def test_local_path_is_matched_only_without_a_full_path():
+    eps = [
+        {"path": "/{id}/cancel", "full_paths": [], "file_path": "f", "handler": "a"},
         {
             "path": "/{id}/cancel",
-            "full_paths": [],
+            "full_paths": ["/v1/a/{id}/cancel"],
             "file_path": "f",
-            "handler": "close",
-        },
-        {
-            "path": "/donations/{id}/cancel",
-            "full_paths": [],
-            "file_path": "f",
-            "handler": "best",
+            "handler": "b",
         },
     ]
-    payload = select_endpoints([("parent", eps)], "/api/donations/{id}/cancel")
-    rows = payload["by_framework"]["unknown"]
-    assert [r["handler"] for r in rows] == ["best", "close", "loose"]
-    assert {r["match"] for r in rows} == {"suffix"}
+    rows = select_endpoints([("parent", eps)], "/{x}/cancel")["by_framework"]["unknown"]
+    assert [(r["handler"], r["match"]) for r in rows] == [("a", "path")]
 
 
-def test_generic_local_paths_never_match_by_suffix(repo):
-    # dyn's local path is a lone parameter, list_* are "": too generic.
-    assert _select(repo, "/nowhere/{anything}") == []
+@pytest.mark.parametrize("pattern", ["/", "/{x}", "/123", "/nowhere/{anything}"])
+def test_generic_queries_never_match_everything(repo, pattern):
+    # Only dyn's local path (a lone parameter, no full path) equals "/{x}".
+    assert {r["handler"] for r in _select(repo, pattern)} <= {"resolve"}
+    assert _select(repo, "/123") == []
+    assert _select(repo, "/") == []
+
+
+@pytest.mark.parametrize("method", ["", "GET", "post", "DELETE"])
+@pytest.mark.parametrize("pattern", ["/auth/v1/token", "/auth/v1/token/refresh"])
+def test_catch_all_any_route_answers_every_method(repo, pattern, method):
+    rows = _select(repo, pattern, method=method)
+    assert [(r["handler"], r["method"], r["match"]) for r in rows] == [
+        ("auth_proxy", "ANY", "full_path")
+    ]
+
+
+def test_catch_all_ranks_after_a_specific_route(repo):
+    rows = _select(repo, "/auth/v1/settings", method="GET")
+    assert [r["handler"] for r in rows] == ["auth_settings", "auth_proxy"]
+    assert [
+        r["handler"] for r in _select(repo, "/auth/v1/settings", method="POST")
+    ] == ["auth_proxy"]
+    # A catch-all takes one segment at least.
+    assert _select(repo, "/auth/v1") == []
+
+
+def test_catch_all_never_matches_by_suffix(repo):
+    # "/v1/abc" shares "v1" with /auth/v1/{path:path} but is no full path.
+    assert _select(repo, "/v1/abc") == []
+    assert _select(repo, "/v1/123/456") == []
+    assert [
+        (r["handler"], r["method"], r["match"]) for r in _select(repo, "/auth/v1/token")
+    ] == [("auth_proxy", "ANY", "full_path")]
+
+
+def test_concrete_segment_prefers_a_parameter_with_text():
+    def ep(full, handler):
+        return {"path": "", "full_paths": [full], "file_path": "f", "handler": handler}
+
+    eps = [ep("/r/{id}", "bare"), ep("/r/{id}.pdf", "pdf")]
+    rows = select_endpoints([("parent", eps)], "/r/123.pdf")["by_framework"]["unknown"]
+    assert [r["handler"] for r in rows] == ["pdf", "bare"]
+
+
+def test_flask_path_converter_is_a_catch_all():
+    eps = [
+        {
+            "path": "/files/<path:name>",
+            "full_paths": ["/static/files/<path:name>"],
+            "file_path": "f",
+            "handler": "serve",
+            "method": "GET",
+        }
+    ]
+    payload = select_endpoints([("parent", eps)], "/static/files/a/b.txt", method="GET")
+    assert [r["handler"] for r in payload["by_framework"]["unknown"]] == ["serve"]
 
 
 def test_test_routes_are_left_out_by_default(repo):
@@ -285,6 +405,56 @@ def test_impact_leaves_test_routes_out(repo):
     assert sorted(r["line"] for r in rows) == [7, 12]
 
 
+def test_impact_rows_carry_full_paths(repo):
+    conn = get_connection(repo)
+    rows = endpoints_in_files(conn, [str(repo / "app/routers/email.py")])
+    assert sorted(tuple(sorted(r["full_paths"])) for r in rows) == [
+        ("/v1/images",),
+        ("/v1/legacy/templates", "/v1/templates"),
+    ]
+    dyn = endpoints_in_files(conn, [str(repo / "app/routers/dyn.py")])
+    assert [r["full_paths"] for r in dyn] == [[]]
+    cancel = endpoints_of_functions(
+        conn, [str(repo / "app/routers/donations.py") + "::cancel_donation"]
+    )
+    assert [r["full_paths"] for r in cancel] == [["/v1/donations/{donation_id}/cancel"]]
+
+
+def test_impact_markdown_shows_the_full_path():
+    from codegraph.cli.commands_impact import _render_markdown
+
+    def row(path, full):
+        return {
+            "file": "a.py",
+            "line": 3,
+            "method": "GET",
+            "path": path,
+            "full_paths": full,
+        }
+
+    report = {
+        "since_changed": [],
+        "changed_symbols": [],
+        "impacted": [],
+        "impacted_count": 0,
+        "impacted_by_role": {},
+        "impacted_by_layer": {},
+        "endpoints": [
+            row("/{id}", ["/v1/x/{id}"]),
+            row("", ["/v1/a", "/v1/b"]),
+            row("/raw", []),
+        ],
+        "tests_to_run": [],
+        "related": [],
+        "truncated": False,
+        "note": "",
+    }
+    text = _render_markdown(report, "HEAD")
+    assert "- `GET /v1/x/{id}` (a.py:3)" in text
+    assert "- `GET ` (a.py:3) under `/v1/a`, `/v1/b`" in text
+    assert "- `GET /raw` (a.py:3)" in text
+
+
 @pytest.fixture
 def captured_console(monkeypatch):
     buf = io.StringIO()
@@ -315,8 +485,9 @@ def test_cli_endpoints_json(repo, capsys):
 
 
 def test_cli_endpoints_text_method_and_limit(repo, captured_console):
-    cq.cmd_endpoints(_args(repo, method="post", limit=1))
+    cq.cmd_endpoints(_args(repo, "*/cancel", method="post", limit=1))
     text = captured_console.getvalue()
+    assert "2 endpoint(s), showing 1" in text
     assert "POST" in text
     assert "/v1/donations/{donation_id}/cancel" in text
     assert "app/routers/donations.py:11" in text
@@ -363,3 +534,20 @@ def test_cli_endpoints_asks_the_live_owner_first(tmp_path, monkeypatch, capsys):
         "method": "",
         "include_tests": True,
     }
+
+
+def test_matching_cost_stays_bounded_on_adversarial_input():
+    # Several catch-alls, back-to-back parameters and an oversized pattern
+    # must answer at once instead of backtracking.
+    import time
+
+    from codegraph.analysis import endpoint_query as q
+
+    start = time.monotonic()
+    many_rest = "/v1/" + "/".join(["{p:path}"] * 12)
+    assert q._path_match(many_rest, "/v1/" + "/".join(["a"] * 60), False)
+    seg = q._stored_segment("{a}{b}{c}{d}{e}{f}.pdf")
+    assert q._segment_score(seg, "x" * 5000) is None
+    assert q._segment_score(seg, "123.pdf") is not None
+    assert "too long" in q.select_endpoints([], "/" + "a/" * 100)["error"]
+    assert time.monotonic() - start < 1.0

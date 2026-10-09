@@ -316,3 +316,31 @@ def test_path_lookups_answer_on_the_original_store(tmp_path, backend, capsys):
     )
     captured = capsys.readouterr()
     assert "indexed" in captured.out and captured.err == ""
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_endpoints_refuses_a_copied_store(tmp_path, backend, capsys, as_json):
+    import argparse
+    import json
+
+    from codegraph.cli.commands_query import cmd_endpoints
+
+    old, new = _copy(tmp_path)
+    args = argparse.Namespace(
+        root=str(new),
+        pattern="",
+        method="",
+        include_tests=False,
+        limit=0,
+        json=as_json,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_endpoints(args)
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    if as_json:
+        message = json.loads(captured.out)["error"]
+    else:
+        assert captured.out == ""
+        message = captured.err
+    assert str(old) in message and "cgh index" in message

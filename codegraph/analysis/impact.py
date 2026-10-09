@@ -301,20 +301,28 @@ def reverse_calls_bfs(
     ``max_depth`` calls. Catches the callers no import edge shows (an import
     inside a function body, a call through an attribute of a known class).
 
+    A method of ``start_files`` also counts the callers of the interface
+    methods it implements (a call through the interface links there, see
+    analysis/interfaces.py).
+
     Returns ``(ordered_file_paths, truncated)``; ``start_files`` are not
     included. Caps the per-function fan-out, the functions visited and the
     files returned.
     """
+    from codegraph.analysis.interfaces import InterfaceResolver
+
     starts = set(start_files)
+    own = {
+        str(r["id"])
+        for f in start_files
+        for r in conn.find_nodes(
+            "Function", where={"file_path": f}, return_fields=["id"]
+        )
+        if r.get("id")
+    }
+    resolver = InterfaceResolver(conn)
     frontier = sorted(
-        {
-            str(r["id"])
-            for f in start_files
-            for r in conn.find_nodes(
-                "Function", where={"file_path": f}, return_fields=["id"]
-            )
-            if r.get("id")
-        }
+        own | {i for fid in sorted(own) for i in resolver.interfaces_of(fid)}
     )
     seen: set[str] = set(frontier)
     files: list[str] = []

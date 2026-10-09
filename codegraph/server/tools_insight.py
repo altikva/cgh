@@ -245,16 +245,21 @@ def register(mcp) -> None:
 
         tf_ids: set[str] = set()
 
-        def reverse_bfs(conn, start_keys: list[str]) -> tuple[list[str], bool]:
+        def reverse_bfs(
+            conn, start_keys: list[str], first_hop: list[str] | None = None
+        ) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
             start keys within max_depth hops. Returns (keys, truncated).
+            ``first_hop`` keys count as reached in the first hop (the files
+            calling a file's methods through an interface).
 
             Terraform has no imports or calls: a .tf file's dependents are
             the files whose blocks reference its blocks, and a block's are
             the blocks referencing it (the TF reference edges)."""
-            seen: set[str] = set(start_keys)
-            frontier = list(start_keys)
-            ordered: list[str] = []
+            extra = [k for k in first_hop or () if k not in start_keys]
+            seen: set[str] = set(start_keys) | set(extra)
+            frontier = list(start_keys) + extra
+            ordered: list[str] = list(extra)
             truncated = False
             depth = 0
             while frontier and depth < max(1, int(max_depth)):
@@ -289,9 +294,20 @@ def register(mcp) -> None:
             return ordered, truncated
 
         def query(conn):
+            from codegraph.analysis.interfaces import (
+                InterfaceResolver,
+                interface_caller_files,
+                qualified_methods,
+            )
+
             # Resolve the starting key(s) within this scope.
+            first_hop: list[str] = []
             if as_path:
                 start_keys = [_abs(arg)]
+                if not start_keys[0].endswith((".tf", ".tfvars")):
+                    # Callers through an interface the file implements do
+                    # not import it.
+                    first_hop = interface_caller_files(conn, start_keys[0])
             else:
                 start_keys = [
                     r["id"]
@@ -300,6 +316,13 @@ def register(mcp) -> None:
                     )
                 ]
                 if "." in arg:
+                    # Class.method: that method and the interface methods it
+                    # implements (their callers reach it through them).
+                    resolver = InterfaceResolver(conn)
+                    for fid in qualified_methods(conn, arg):
+                        for key in (fid, *resolver.interfaces_of(fid)):
+                            if key not in start_keys:
+                                start_keys.append(key)
                     # A Terraform address (var.region, google_x.y).
                     found = [str(r["id"]) for r in tf_nodes_named(conn, arg)]
                     tf_ids.update(found)
@@ -317,7 +340,7 @@ def register(mcp) -> None:
                     cap=_IMPACT_CAP,
                 )
             else:
-                keys, trunc = reverse_bfs(conn, start_keys)
+                keys, trunc = reverse_bfs(conn, start_keys, first_hop)
 
             out: list[dict] = []
             if as_path:

@@ -301,6 +301,11 @@ def register(mcp) -> None:
         (a method and its test double), each caller lists the matched
         definitions' files in `targets`.
 
+        A `Class.method` name also lists the callers of the interface
+        methods it implements (a base class, an ABC, a Protocol the class
+        conforms to), since a call through the interface links to the
+        interface's method; those rows carry `via` ("KmsClient.encrypt").
+
         For a Terraform address (var.region, google_x.y, module.m) it
         returns each block that uses it.
         """

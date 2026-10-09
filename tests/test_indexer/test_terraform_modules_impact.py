@@ -247,9 +247,12 @@ def test_mapped_checkout_is_read_never_indexed_or_written(repo):
         str(p.relative_to(modules)) for p in modules.rglob("*") if p.is_file()
     ) == sorted(MODULES)
     conn = get_connection(repo)
-    # Variables and outputs only: no File node, no resource of the module.
+    # Its blocks, resources included, but no File node for its files.
     assert not conn.find_nodes("File", contains={"path": "tf-modules"})
-    assert not conn.find_nodes("TFResource", contains={"file_path": "tf-modules"})
+    resources = conn.find_nodes(
+        "TFResource", contains={"file_path": "tf-modules"}, return_fields=["address"]
+    )
+    assert [r["address"] for r in resources] == ["google_kms_key_ring.this"]
     copies = conn.find_nodes(
         "TFVar", contains={"file_path": "tf-modules"}, return_fields=["address"]
     )

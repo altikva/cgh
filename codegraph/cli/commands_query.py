@@ -30,6 +30,7 @@ from codegraph.analysis.federation import (
     for_each_child_graphdb,
     has_subrepos,
 )
+from codegraph.analysis.terraform import TF_RESOURCE_KINDS
 from codegraph.cli import _get_conn, _short_path, console
 from codegraph.cli.owner_client import note_route
 
@@ -208,7 +209,9 @@ def _owner_warnings(data: dict) -> list[str]:
 
 # The kinds `cgh search` matches by name, so the owner's search_symbols tool
 # returns exactly the rows _search_symbols_conn gives on a local open.
-_SEARCH_KINDS = "function,class,md_section"
+_SEARCH_KINDS = ",".join(
+    ["function", "class", *TF_RESOURCE_KINDS, "tf_var", "md_section"]
+)
 
 
 def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
@@ -222,6 +225,12 @@ def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
             limit=fetch,
         ):
             out.append((kind, row["name"], row["file_path"], row["start_line"]))
+    # Terraform blocks by address or name, module inputs included
+    # (module.kms.<argument>), in the order search_symbols gives them.
+    from codegraph.analysis.terraform import search as tf_search
+
+    for hit in tf_search(conn, query, fetch, True, set()):
+        out.append((hit["kind"], hit["name"], hit["file"], hit["start_line"]))
     for row in conn.find_nodes(
         "MdSection",
         contains={"title": query},
@@ -552,6 +561,10 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         "tf_resource": "[magenta]tf[/magenta]",
         "tf_data": "[magenta]data[/magenta]",
         "tf_module": "[magenta]mod[/magenta]",
+        "tf_module_arg": "[magenta]arg[/magenta]",
+        "tf_moved": "[magenta]moved[/magenta]",
+        "tf_import": "[magenta]import[/magenta]",
+        "tf_removed": "[magenta]removed[/magenta]",
         "tf_local": "[magenta]local[/magenta]",
         "tf_provider": "[magenta]prov[/magenta]",
         "tf_var": "[magenta]var[/magenta]",

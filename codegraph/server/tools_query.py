@@ -486,7 +486,8 @@ def register(mcp) -> None:
         back when set.
 
         Terraform kinds for `kinds`: tf_resource, tf_data, tf_module,
-        tf_local, tf_provider, tf_var.
+        tf_module_arg (a module call's input, module.m.<arg>), tf_local,
+        tf_provider, tf_moved, tf_import, tf_removed, tf_var.
         """
         wanted = {k.strip() for k in kinds.split(",") if k.strip()}
 

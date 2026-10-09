@@ -295,27 +295,33 @@ def reverse_calls_bfs(
     conn: Any,
     start_files: list[str],
     max_depth: int = 3,
+    start_ids: list[str] | None = None,
 ) -> tuple[list[str], bool]:
     """Bounded reverse BFS over CALLS: the files holding a function that
     calls a function of ``start_files``, directly or through up to
     ``max_depth`` calls. Catches the callers no import edge shows (an import
     inside a function body, a call through an attribute of a known class).
+    ``start_ids`` starts the walk from those functions only instead of every
+    function of ``start_files``.
 
     Returns ``(ordered_file_paths, truncated)``; ``start_files`` are not
     included. Caps the per-function fan-out, the functions visited and the
     files returned.
     """
     starts = set(start_files)
-    frontier = sorted(
-        {
-            str(r["id"])
-            for f in start_files
-            for r in conn.find_nodes(
-                "Function", where={"file_path": f}, return_fields=["id"]
-            )
-            if r.get("id")
-        }
-    )
+    if start_ids is not None:
+        frontier = sorted(set(start_ids))
+    else:
+        frontier = sorted(
+            {
+                str(r["id"])
+                for f in start_files
+                for r in conn.find_nodes(
+                    "Function", where={"file_path": f}, return_fields=["id"]
+                )
+                if r.get("id")
+            }
+        )
     seen: set[str] = set(frontier)
     files: list[str] = []
     file_seen: set[str] = set()
@@ -351,6 +357,70 @@ def reverse_calls_bfs(
     return files, truncated
 
 
+def _code_symbols(conn: Any, file_path: str) -> list[dict[str, Any]]:
+    """Functions and classes of ``file_path`` ordered by start line, with
+    their id, kind and line span."""
+    out: list[dict[str, Any]] = []
+    for label, kind in (("Function", "function"), ("Class", "class")):
+        for s in conn.find_nodes(
+            label,
+            where={"file_path": file_path},
+            return_fields=["id", "name", "start_line", "end_line"],
+        ):
+            start = int(s.get("start_line") or 0)
+            out.append(
+                {
+                    "id": str(s.get("id") or ""),
+                    "name": s.get("name", ""),
+                    "kind": kind,
+                    "start": start,
+                    "end": int(s.get("end_line") or start),
+                }
+            )
+    out.sort(key=lambda s: (s["start"], s["kind"] != "class"))
+    return out
+
+
+def changed_code_symbols(
+    conn: Any, file_path: str, ranges: list[tuple[int, int]] | None
+) -> tuple[list[dict[str, Any]], list[str], bool]:
+    """What a diff of a code file changed: (symbols, function_ids, module_level).
+
+    ``symbols`` are the functions and classes whose line span intersects a
+    changed range (all of them when ``ranges`` is None). ``function_ids`` are
+    the functions a caller walk starts from: the changed functions, plus the
+    methods of a class changed outside any of its methods (a class attribute,
+    a base list). ``module_level`` is True when ``ranges`` is None or a range
+    touches no symbol at all (an import, a module constant): the file as a
+    whole changed, and its whole blast radius applies."""
+    syms = _code_symbols(conn, file_path)
+    if ranges is None:
+        return syms, [s["id"] for s in syms if s["kind"] == "function"], True
+    module_level = False
+    hit: dict[str, dict[str, Any]] = {}
+    fids: set[str] = set()
+    for lo, hi in ranges:
+        touching = [s for s in syms if s["start"] <= hi and s["end"] >= lo]
+        if not touching:
+            module_level = True
+            continue
+        funcs = [s for s in touching if s["kind"] == "function"]
+        for s in touching:
+            hit[s["id"]] = s
+        fids.update(s["id"] for s in funcs)
+        if not funcs:
+            for c in touching:
+                fids.update(
+                    s["id"]
+                    for s in syms
+                    if s["kind"] == "function"
+                    and c["start"] <= s["start"]
+                    and s["end"] <= c["end"]
+                )
+    ordered = [s for s in syms if s["id"] in hit]
+    return ordered, sorted(fids), module_level
+
+
 def symbols_in_file(
     conn: Any, file_path: str, ranges: list[tuple[int, int]] | None = None
 ) -> list[dict[str, str]]:
@@ -358,26 +428,16 @@ def symbols_in_file(
 
     Returns ``[{name, kind, lines}]`` ordered by start line. Used by the
     impact command to report which symbols actually changed in a diff.
-    ``ranges`` (changed line ranges) keeps only the Terraform blocks they
-    touch; functions and classes are listed whole either way.
+    ``ranges`` (changed line ranges) keeps only the symbols and Terraform
+    blocks they touch; None lists every one of them.
     """
     from codegraph.analysis.terraform import blocks_touching, label_of, tool_kind
 
-    out: list[dict[str, str]] = []
-    for label, kind in (("Function", "function"), ("Class", "class")):
-        for s in conn.find_nodes(
-            label,
-            where={"file_path": file_path},
-            return_fields=["name", "start_line", "end_line"],
-            order_by=["start_line"],
-        ):
-            out.append(
-                {
-                    "name": s.get("name", ""),
-                    "kind": kind,
-                    "lines": f"{s.get('start_line', '')}-{s.get('end_line', '')}",
-                }
-            )
+    syms, _, _ = changed_code_symbols(conn, file_path, ranges)
+    out: list[dict[str, str]] = [
+        {"name": s["name"], "kind": s["kind"], "lines": f"{s['start']}-{s['end']}"}
+        for s in syms
+    ]
     if file_path.endswith((".tf", ".tfvars")):
         for b in blocks_touching(conn, file_path, ranges):
             out.append(
@@ -543,25 +603,47 @@ def build_impact_report(
     abs_changed = [str(root_path / f) for f in changed_files]
 
     changed_symbols: list[dict] = []
+    tf_changes: dict[str, list[tuple[int, int]] | None] = {}
+    whole_files: list[str] = []  # module-level change: the file's whole radius
+    symbol_files: list[str] = []  # symbol-level change: callers of those
+    symbol_ids: list[str] = []
     for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
-        for sym in symbols_in_file(conn, abs_f, lines_of.get(rel_f)):
+        ranges = lines_of.get(rel_f)
+        for sym in symbols_in_file(conn, abs_f, ranges):
             changed_symbols.append({"file": rel_f, **sym})
+        if abs_f.endswith((".tf", ".tfvars")):
+            tf_changes[abs_f] = ranges
+            continue
+        _, fids, module_level = changed_code_symbols(conn, abs_f, ranges)
+        if module_level:
+            whole_files.append(abs_f)
+        else:
+            symbol_files.append(abs_f)
+            symbol_ids += fids
 
-    # Blast radius: files that transitively import any changed file, then
-    # the files whose functions reach a changed file's functions over CALLS.
-    # A Terraform change walks back from its changed blocks instead: the
-    # files holding blocks that reference them, not every file of the
-    # module directory.
-    tf_changes = {
-        abs_f: lines_of.get(rel_f)
-        for abs_f, rel_f in zip(abs_changed, changed_files, strict=False)
-        if abs_f.endswith((".tf", ".tfvars"))
-    }
-    code_changed = [f for f in abs_changed if f not in tf_changes]
-    radius, radius_trunc = reverse_import_bfs(conn, code_changed, max_depth=3)
-    callers, callers_trunc = reverse_calls_bfs(conn, code_changed, max_depth=3)
+    # Blast radius. A module-level change (or a file without line ranges)
+    # reaches the files that transitively import it, then the files whose
+    # functions reach any of its functions over CALLS. A change inside
+    # functions or classes reaches the direct importers of the file and the
+    # callers of those symbols only. A Terraform change walks back from its
+    # changed blocks instead: the files holding blocks that reference them,
+    # not every file of the module directory.
+    radius, radius_trunc = reverse_import_bfs(conn, whole_files, max_depth=3)
+    callers, callers_trunc = reverse_calls_bfs(conn, whole_files, max_depth=3)
+    if symbol_files:
+        direct, direct_trunc = reverse_import_bfs(conn, symbol_files, max_depth=1)
+        sym_callers, sym_trunc = reverse_calls_bfs(
+            conn, symbol_files, max_depth=3, start_ids=symbol_ids
+        )
+        in_radius = set(radius) | set(whole_files)
+        radius += [p for p in direct if p not in in_radius]
+        known = set(callers) | set(whole_files)
+        callers += [p for p in sym_callers if p not in known]
+        radius_trunc = radius_trunc or direct_trunc or sym_trunc
+    changed_set = set(abs_changed)
+    radius = [p for p in radius if p not in changed_set]
     in_radius = set(radius)
-    radius += [p for p in callers if p not in in_radius]
+    radius += [p for p in callers if p not in in_radius and p not in changed_set]
     radius_trunc = radius_trunc or callers_trunc
     related: list[dict] = []
     if tf_changes:

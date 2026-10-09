@@ -613,13 +613,16 @@ def add_subrepo(
 
     cfg_path = parent / _DB_DIR / "config.toml"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    from codegraph.core.config_edit import set_key
+
     existing = _read_config_toml(cfg_path)
-    cg = existing.setdefault("codegraph", {})
-    subs = list(cg.get("subrepos", []))
+    subs = list(existing.get("codegraph", {}).get("subrepos", []))
     if stored not in subs:
         subs.append(stored)
-        cg["subrepos"] = subs
-        _write_config_toml(cfg_path, existing)
+        # In-place edit: comments and nested tables survive, a missing
+        # [codegraph] table is created, and an unreadable config raises
+        # instead of being overwritten.
+        set_key(cfg_path, "codegraph", "subrepos", subs)
 
     return child, verify_child(child)
 
@@ -649,9 +652,9 @@ def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
         new_subs.append(entry)
 
     if removed:
-        cg["subrepos"] = new_subs
-        existing["codegraph"] = cg
-        _write_config_toml(cfg_path, existing)
+        from codegraph.core.config_edit import set_key
+
+        set_key(cfg_path, "codegraph", "subrepos", new_subs)
     return removed
 
 

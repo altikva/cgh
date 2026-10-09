@@ -40,6 +40,9 @@ APP = "from lib import helper\n\n\ndef run():\n    return helper()\n"
 TEST = "from lib import helper\n\n\ndef test_helper():\n    assert helper() == 1\n"
 # Defines its own helper and calls it: the local definition wins.
 LOCAL = "def helper():\n    return 2\n\n\ndef user():\n    return helper()\n"
+# Calls helper through a star import: no import names it, so every
+# definition of the star-imported files is a candidate.
+STAR = "from lib import *\nfrom alt import *\n\n\ndef run():\n    return helper()\n"
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -107,11 +110,10 @@ def test_edges_do_not_depend_on_file_order(tmp_path, backend):
         results.append(_rel_edges(root))
         reset_connection()
     assert all(r == results[0] for r in results)
+    # Both callers import helper from lib: local.py's helper is not theirs.
     assert results[0] == {
         ("app.py::run", "lib.py::helper"),
-        ("app.py::run", "local.py::helper"),
         ("tests/test_lib.py::test_helper", "lib.py::helper"),
-        ("tests/test_lib.py::test_helper", "local.py::helper"),
         ("local.py::user", "local.py::helper"),
     }
 
@@ -151,7 +153,7 @@ def test_editing_caller_updates_outbound_edges(tmp_path, backend):
 
 
 def test_deleted_callee_drops_edges_and_keeps_other_definition(tmp_path, backend):
-    _write(tmp_path, {"app.py": APP, "lib.py": LIB, "alt.py": LIB})
+    _write(tmp_path, {"app.py": STAR, "lib.py": LIB, "alt.py": LIB})
     _index(tmp_path, ["app.py", "lib.py", "alt.py"])
     assert {b for a, b in _rel_edges(tmp_path) if a == "app.py::run"} == {
         "lib.py::helper",
@@ -162,13 +164,13 @@ def test_deleted_callee_drops_edges_and_keeps_other_definition(tmp_path, backend
     assert {b for a, b in _rel_edges(tmp_path) if a == "app.py::run"} == {
         "alt.py::helper"
     }
-    # A definition appearing later in another file is linked from the stored
-    # call site, without reindexing the caller.
-    _write(tmp_path, {"new.py": LIB})
-    _index(tmp_path, ["new.py"])
+    # A definition appearing again is linked from the stored call site,
+    # without reindexing the caller.
+    _write(tmp_path, {"lib.py": LIB})
+    _index(tmp_path, ["lib.py"])
     assert {b for a, b in _rel_edges(tmp_path) if a == "app.py::run"} == {
         "alt.py::helper",
-        "new.py::helper",
+        "lib.py::helper",
     }
 
 

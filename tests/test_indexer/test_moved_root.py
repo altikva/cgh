@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,64 @@ def test_incremental_of_a_copied_store_without_meta_rebuilds(tmp_path, backend):
     clear_meta(new)
     incremental_reindex(new)
     _assert_clean(new, old)
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _seed(tmp_path: Path) -> tuple[Path, Path]:
+    """What `cgh init --from` does for a ticket worktree: a seed checkout is
+    indexed once, the ticket is a `git worktree add` of it, and the seed's
+    store is copied over and rewritten to the ticket's root."""
+    from codegraph.state.relocate import relocate_store
+
+    seed = tmp_path / "seed"
+    ticket = tmp_path / "ticket"
+    _make(seed)
+    (seed / ".gitignore").write_text(".codegraph/\n")
+    _git(seed, "init", "-q", "-b", "main")
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-q", "-m", "init")
+    index_repo(seed)
+    reset_connection()
+    _git(seed, "worktree", "add", "-q", "-b", "ticket", str(ticket))
+    (ticket / ".codegraph").mkdir()
+    relocate_store(seed, ticket)
+    reset_connection()
+    return seed.resolve(), ticket.resolve()
+
+
+def test_seeded_worktree_stays_incremental(tmp_path, backend, monkeypatch):
+    # A seed rewrites the recorded root, so the copied-store check trusts it
+    # and the reindex that follows the seed parses only what the ticket
+    # branch changed, instead of rebuilding the whole graph.
+    import codegraph.indexer as indexer
+
+    seed, ticket = _seed(tmp_path)
+    assert read_meta(ticket)["root"] == str(ticket)
+    (ticket / "pkg" / "extra.py").write_text("def extra():\n    return 2\n")
+    _git(ticket, "add", "pkg/extra.py")
+    _git(ticket, "commit", "-q", "-m", "ticket work")
+
+    verdicts: list[str] = []
+    real_foreign = indexer._foreign_root
+    monkeypatch.setattr(
+        indexer,
+        "_foreign_root",
+        lambda root: verdicts.append(real_foreign(root)) or verdicts[-1],
+    )
+    stats = incremental_reindex(ticket)
+    assert not any(verdicts), verdicts
+    assert stats["mode"] == "incremental", stats
+    assert [Path(p).name for p in stats["reindexed"]] == ["extra.py"], stats
+    assert stats["unchanged_count"] >= 2, stats
+    _assert_clean(ticket, seed)
 
 
 def test_extra_dir_outside_the_root_is_not_foreign(tmp_path, backend):

@@ -35,7 +35,7 @@ _NODE_TABLES = [
     )""",
     """CREATE TABLE IF NOT EXISTS endpoint (
         id TEXT PRIMARY KEY, method TEXT, path TEXT, framework TEXT,
-        file_path TEXT, start_line BIGINT
+        file_path TEXT, start_line BIGINT, router TEXT, is_test BOOLEAN
     )""",
     """CREATE TABLE IF NOT EXISTS function (
         id TEXT PRIMARY KEY, name TEXT, file_path TEXT, start_line BIGINT,
@@ -76,6 +76,8 @@ _MIGRATIONS = [
     ("call_site", "kind", "TEXT NOT NULL DEFAULT ''"),
     ("call_site", "hint", "TEXT NOT NULL DEFAULT ''"),
     ("call_site", "ctx", "TEXT NOT NULL DEFAULT ''"),
+    ("endpoint", "router", "TEXT"),
+    ("endpoint", "is_test", "BOOLEAN"),
 ]
 
 _EDGE_TABLES = [
@@ -449,6 +451,14 @@ class SQLiteGraphDB:
             ).fetchall()
             out.extend(tuple(r) for r in rows)
         return out
+
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        rows = self._conn.execute(
+            "SELECT from_id, name, extra FROM name_ref WHERE kind = ? "
+            "ORDER BY from_id, name, extra",
+            [kind],
+        ).fetchall()
+        return [tuple(r) for r in rows]
 
     def node_keys_matching(
         self, label: str, field: str, values: list[Any]

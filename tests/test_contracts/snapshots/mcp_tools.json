@@ -124,6 +124,10 @@
   },
   "endpoints": {
     "properties": {
+      "include_tests": {
+        "default": false,
+        "type": "boolean"
+      },
       "method": {
         "default": "",
         "type": "string"

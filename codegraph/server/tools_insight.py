@@ -438,30 +438,30 @@ def register(mcp) -> None:
             )
             truncated = True
 
-        # Endpoints declared in any impacted file (DEFINES_ENDPOINT).
+        # Endpoints declared in any impacted file (DEFINES_ENDPOINT), not
+        # the throwaway routes of test files.
         def endpoint_query(conn):
-            rows: list[dict] = []
-            for _scope, fp in files_for_endpoints:
-                for e in conn.find_neighbors(
-                    "DEFINES_ENDPOINT",
-                    src_key=fp,
-                    return_dst=["method", "path"],
-                ):
-                    rows.append(
-                        {
-                            "file": fp,
-                            "method": e.get("dst_method", ""),
-                            "path": e.get("dst_path", ""),
-                        }
-                    )
-            return rows
+            from codegraph.analysis.impact import endpoints_in_files
+
+            return endpoints_in_files(
+                conn, sorted({fp for _s, fp in files_for_endpoints})
+            )
 
         if files_for_endpoints:
             ep_rows, ep_warnings = _federate(endpoint_query)
             warnings = warnings + ep_warnings
-            seen_ep = {(e["file"], e.get("path", "")) for e in endpoints}
+
+            def _ep_key(e: dict) -> tuple:
+                return (
+                    e["file"],
+                    e.get("method", ""),
+                    e.get("path", ""),
+                    e.get("line"),
+                )
+
+            seen_ep = {_ep_key(e) for e in endpoints}
             for e in ep_rows:
-                key = (e["file"], e.get("path", ""))
+                key = _ep_key(e)
                 if key in seen_ep:
                     continue
                 seen_ep.add(key)

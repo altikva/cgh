@@ -58,7 +58,11 @@ _META_FILE = "scan_meta.json"
 #      endpoints (with their handler), so endpoints and impact see them, and
 #      a file under a test directory or named like a test gets the test role
 #      even inside a handlers/ or services/ directory.
-GRAPH_FORMAT = 11
+#  12: an endpoint is keyed by its file, line, method and path (two routers of
+#      one file declaring the same method and path no longer merge), records
+#      its router variable and whether its file is a test file, and Python
+#      files keep their router prefixes and include calls for the full path.
+GRAPH_FORMAT = 12
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

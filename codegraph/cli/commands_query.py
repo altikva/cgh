@@ -693,6 +693,123 @@ def cmd_lookup(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_endpoints
+# ---------------------------------------------------------------------------
+
+
+def _endpoints_payload(root: str, arguments: dict) -> dict:
+    """The endpoints tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.endpoint_query import list_endpoints, select_endpoints
+
+    route, served = _route(root, "endpoints", "endpoints", arguments)
+    if route == "owner" and "tests_excluded" not in served:
+        # An owner from an older cgh ignores the new filters and fields; it
+        # still holds the graph lock, so no local open either.
+        route = "older"
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'endpoints')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", list_endpoints(conn)))
+    buckets, failures = _query_children_scoped(root, list_endpoints)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = select_endpoints(
+        per_scope,
+        path_pattern=arguments["path_pattern"],
+        method=arguments["method"],
+        include_tests=arguments["include_tests"],
+        short_path=lambda p: _short_path(p, root),
+    )
+    if warnings:
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_endpoints(args: argparse.Namespace) -> None:
+    """HTTP routes with their full paths, handler and location."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "path_pattern": args.pattern or "",
+        "method": args.method or "",
+        "include_tests": bool(args.include_tests),
+    }
+    payload = _endpoints_payload(root, arguments)
+    rows = [
+        {**row, "framework": framework}
+        for framework, items in (payload.get("by_framework") or {}).items()
+        for row in items
+    ]
+    limit = args.limit if args.limit and args.limit > 0 else None
+    shown = rows[:limit] if limit else rows
+    truncated = len(shown) < len(rows)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "pattern": arguments["path_pattern"] or None,
+                    "total": len(rows),
+                    "tests_excluded": payload.get("tests_excluded", 0),
+                    "truncated": truncated,
+                    "endpoints": shown,
+                    "warnings": payload.get("warnings") or [],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    if not rows:
+        what = (
+            f" matching '{arguments['path_pattern']}'"
+            if arguments["path_pattern"]
+            else ""
+        )
+        console.print(f"[dim]No endpoints{escape(what)}[/dim]")
+    for row in shown:
+        full = row.get("full_paths") or []
+        main = full[0] if full else row["path"]
+        tags = []
+        if main != row["path"]:
+            tags.append("local " + (row["path"] or '""'))
+        if row.get("full_path_partial"):
+            tags.append("prefix not literal")
+        if row.get("match") == "suffix":
+            tags.append("suffix match")
+        if row.get("test"):
+            tags.append("test")
+        if federated and row.get("scope", "parent") != "parent":
+            tags.append(row["scope"])
+        tag = f"  [dim]({escape(', '.join(tags))})[/dim]" if tags else ""
+        console.print(
+            f"  [bold]{row['method']:<6}[/bold] [cyan]{escape(main or '/')}[/cyan]"
+            f"  [green]{escape(row.get('handler') or '?')}[/green]"
+            f"  [dim]{escape(row['file'])}:{row.get('line')}[/dim]{tag}"
+        )
+        for other in full[1:]:
+            console.print(f"         [cyan]{escape(other)}[/cyan]  [dim](also)[/dim]")
+    more = f", showing {len(shown)}" if truncated else ""
+    excluded = payload.get("tests_excluded", 0)
+    note = f", {excluded} test route(s) left out (--include-tests)" if excluded else ""
+    if rows or excluded:
+        console.print(f"[dim]{len(rows)} endpoint(s){more}{note}[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # cmd_callers
 # ---------------------------------------------------------------------------
 

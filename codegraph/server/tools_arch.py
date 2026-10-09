@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 from collections import defaultdict
 
@@ -174,76 +173,42 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def endpoints(path_pattern: str = "", method: str = "") -> str:
+    def endpoints(
+        path_pattern: str = "", method: str = "", include_tests: bool = False
+    ) -> str:
         """
         List HTTP endpoints in the codebase.
 
         Optional filters:
-          path_pattern, glob like "*/donations*" or "/api/stats/*"
+          path_pattern, a path or glob: "/v1/donations/{id}/cancel",
+            "*/donations*", "/api/stats/*". Matched against each route's
+            full paths (router prefixes and include_router / blueprint
+            prefixes composed), then its local path; parameter names are
+            ignored. A path starting with "/" that matches nothing falls
+            back to routes whose local path is a suffix of it, flagged
+            match: "suffix" (several routers may hold that local path).
           method, GET / POST / PUT / PATCH / DELETE (case-insensitive)
+          include_tests, also list routes declared in test files (left out
+            by default, counted in tests_excluded)
 
-        Returns: [{method, path, framework, file, line, handler}] grouped by
-        framework. Includes both FastAPI decorators and Nuxt server/api
-        routes, so cross-repo questions ("does the frontend call this Python
-        route?") become navigable.
+        Returns: {total, tests_excluded, by_framework: {framework: [{method,
+        path, full_paths, handler, file, line, scope, match?,
+        full_path_partial?, test?}]}}. full_paths is empty, and
+        full_path_partial true, when a prefix is not a string literal.
+        Includes FastAPI / Flask decorators and Nuxt server/api routes, so
+        cross-repo questions ("does the frontend call this Python route?")
+        become navigable.
         """
-        method_filter = method.strip().upper() or None
+        from codegraph.analysis.endpoint_query import list_endpoints, select_endpoints
 
-        def query(conn):
-            try:
-                eps = conn.find_nodes(
-                    "Endpoint",
-                    return_fields=[
-                        "id",
-                        "method",
-                        "path",
-                        "framework",
-                        "file_path",
-                        "start_line",
-                    ],
-                    order_by=["path", "method"],
-                )
-            except RuntimeError:
-                return []
-            # OPTIONAL MATCH equivalent: for each endpoint, look up handler
-            # name via the IMPLEMENTED_BY edge. None when there's no handler.
-            out = []
-            for ep in eps:
-                handlers = conn.find_neighbors(
-                    "IMPLEMENTED_BY",
-                    src_key=ep["id"],
-                    return_dst=["name"],
-                )
-                ep["handler_name"] = handlers[0]["dst_name"] if handlers else None
-                out.append(ep)
-            return out
-
-        per_scope = _query_each(query)
-        grouped: dict[str, list[dict]] = defaultdict(list)
-        for scope, rows in per_scope:
-            for row in rows:
-                url = row.get("path") or ""
-                mth = row.get("method") or ""
-                if method_filter and mth != method_filter:
-                    continue
-                if path_pattern and not fnmatch.fnmatch(url, path_pattern):
-                    continue
-                grouped[row.get("framework") or "unknown"].append(
-                    {
-                        "scope": scope,
-                        "method": mth,
-                        "path": url,
-                        "handler": row.get("handler_name"),
-                        "file": _short_path(row["file_path"], _srv._root),
-                        "line": row.get("start_line"),
-                    }
-                )
-
-        total = sum(len(v) for v in grouped.values())
-        return json.dumps(
-            {
-                "total": total,
-                "by_framework": dict(grouped),
-            },
-            indent=2,
+        per_scope, warnings = federate_scoped(_get_conn, _srv._root, list_endpoints)
+        payload = select_endpoints(
+            per_scope,
+            path_pattern=path_pattern,
+            method=method,
+            include_tests=include_tests,
+            short_path=lambda p: _short_path(p, _srv._root),
         )
+        if warnings:
+            payload["warnings"] = warnings
+        return json.dumps(payload, indent=2)

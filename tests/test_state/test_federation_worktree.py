@@ -83,3 +83,47 @@ def test_resolve_children_uses_sibling(layout):
     children = resolve_children(layout["api_wt"])
     assert layout["front_wt"].resolve() in children
     assert layout["front_main"].resolve() not in children
+
+
+def test_configured_child_worktree_is_kept(tmp_path):
+    """A child configured as a linked worktree (a seed checkout) is never
+    swapped for a ticket worktree that happens to sit beside the parent."""
+    from codegraph.integrations.worktree import worktree_sibling
+
+    api_main = tmp_path / "ws" / "api"
+    front_main = tmp_path / "ws" / "front"
+    _mkrepo(api_main)
+    _mkrepo(front_main)
+    seed_front = tmp_path / "seed" / "front"
+    _git(front_main, "worktree", "add", "-q", "--detach", str(seed_front))
+    api_ticket = tmp_path / "t" / "api-461"
+    front_ticket = tmp_path / "t" / "front-371"
+    _git(api_main, "worktree", "add", "-q", str(api_ticket))
+    _git(front_main, "worktree", "add", "-q", str(front_ticket))
+    (front_ticket / ".codegraph").mkdir()
+
+    assert worktree_sibling(api_ticket, seed_front) is None
+
+
+def test_flat_layout_with_several_siblings_keeps_configured_path(tmp_path):
+    """Every ticket worktree in one directory: two front tickets sit beside
+    an api ticket, so neither is picked."""
+    from codegraph.analysis.federation import resolve_children
+    from codegraph.integrations.worktree import worktree_sibling
+
+    api_main = tmp_path / "ws" / "api"
+    front_main = tmp_path / "ws" / "front"
+    _mkrepo(api_main)
+    _mkrepo(front_main)
+    api_ticket = tmp_path / "t" / "api-461"
+    _git(api_main, "worktree", "add", "-q", str(api_ticket))
+    for name in ("front-371", "front-375"):
+        wt = tmp_path / "t" / name
+        _git(front_main, "worktree", "add", "-q", str(wt))
+        (wt / ".codegraph").mkdir()
+
+    assert worktree_sibling(api_ticket, front_main) is None
+    cfg = api_ticket / ".codegraph"
+    cfg.mkdir()
+    (cfg / "config.toml").write_text(f'[codegraph]\nsubrepos = ["{front_main}"]\n')
+    assert resolve_children(api_ticket) == [front_main.resolve()]

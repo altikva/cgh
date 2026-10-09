@@ -207,6 +207,10 @@ _REST = re.compile(r"^(\{[^}/:]*:path\}|<path:[^>/]*>)$")
 # concrete one 1, a bare parameter or catch-all taking a concrete one nothing.
 _LIT, _PARAM_PAIR = 2, 1
 
+# Bounds on a query pattern, far above any real route.
+_MAX_PATTERN_CHARS = 2048
+_MAX_SEGMENTS = 64
+
 
 def _norm(path: str) -> str:
     """Parameters as ``{}``, no trailing slash: the form paths compare in."""
@@ -227,8 +231,14 @@ def _stored_segment(seg: str) -> tuple[str, Any]:
         return ("rest", None)
     if not _SEG_PARAM.search(seg):
         return ("lit", seg)
-    parts = _SEG_PARAM.split(seg)
-    regex = re.compile("[^/]+".join(re.escape(x) for x in parts) + "$")
+    # Adjacent parameters ("{a}{b}") collapse into one "[^/]+": back to back
+    # they would backtrack polynomially on a long query segment.
+    pattern = ""
+    for k, part in enumerate(_SEG_PARAM.split(seg)):
+        if k and not pattern.endswith("[^/]+"):
+            pattern += "[^/]+"
+        pattern += re.escape(part)
+    regex = re.compile(pattern + "$")
     return ("param", (_SEG_PARAM.sub("{}", seg), regex))
 
 
@@ -252,32 +262,45 @@ def _align(
     stored: list[tuple[str, Any]], query: list[str]
 ) -> tuple[int, int, bool] | None:
     """The best way ``stored`` matches all of ``query``:
-    ``(score, shared literal segments, catch-all used)``, or None."""
-    best: tuple[int, int, bool] | None = None
+    ``(score, shared literal segments, catch-all used)``, or None.
 
-    def walk(i: int, j: int, score: int, lits: int, rest: bool) -> None:
-        nonlocal best
+    Memoised on (stored index, query index), so several catch-alls cost
+    O(len(stored) * len(query)**2) instead of growing exponentially."""
+    memo: dict[tuple[int, int], tuple[int, int, bool] | None] = {}
+
+    def better(a, b):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        return a if (a[0], a[1], not a[2]) >= (b[0], b[1], not b[2]) else b
+
+    def walk(i: int, j: int) -> tuple[int, int, bool] | None:
         if i == len(stored):
-            if j == len(query) and (
-                best is None
-                or (score, lits, not rest) > (best[0], best[1], not best[2])
-            ):
-                best = (score, lits, rest)
-            return
+            return (0, 0, False) if j == len(query) else None
         if j == len(query):
-            return
+            return None
+        key = (i, j)
+        if key in memo:
+            return memo[key]
         seg = stored[i]
+        best: tuple[int, int, bool] | None = None
         if seg[0] == "rest":
             # One or more segments, whatever they are.
             for k in range(j + 1, len(query) + 1):
-                walk(i + 1, k, score, lits, True)
-            return
-        got = _segment_score(seg, query[j])
-        if got is not None:
-            walk(i + 1, j + 1, score + got, lits + (got == _LIT), rest)
+                tail = walk(i + 1, k)
+                if tail is not None:
+                    best = better(best, (tail[0], tail[1], True))
+        else:
+            got = _segment_score(seg, query[j])
+            if got is not None:
+                tail = walk(i + 1, j + 1)
+                if tail is not None:
+                    best = (tail[0] + got, tail[1] + (got == _LIT), tail[2])
+        memo[key] = best
+        return best
 
-    walk(0, 0, 0, 0, False)
-    return best
+    return walk(0, 0)
 
 
 def _path_match(stored: str, query: str, suffix: bool) -> tuple[int, bool] | None:
@@ -396,6 +419,18 @@ def select_endpoints(
     """
     method_filter = method.strip().upper() or None
     pattern = path_pattern.strip()
+    if len(pattern) > _MAX_PATTERN_CHARS or len(_split(pattern)) > _MAX_SEGMENTS:
+        # No real route is this long; the cap bounds the matching cost of a
+        # pattern an agent or a script passes in.
+        return {
+            "total": 0,
+            "by_framework": {},
+            "tests_excluded": 0,
+            "error": (
+                f"path_pattern too long (max {_MAX_PATTERN_CHARS} characters, "
+                f"{_MAX_SEGMENTS} segments)"
+            ),
+        }
     real: list[tuple[str, dict]] = []
     tests: list[tuple[str, dict]] = []
     for scope, rows in per_scope:

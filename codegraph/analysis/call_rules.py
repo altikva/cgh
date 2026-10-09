@@ -28,7 +28,7 @@ from codegraph.parsers.base import CallRef, FileIndex, SymbolDef
 BARE = "bare"  # f()
 SELF = "self"  # self.f(), cls.f(), this.f(), super().f(); ctx "Class:Base1,Base2"
 MOD = "mod"  # m.f() where m is an imported module; hint = its file
-CLS = "cls"  # C.f() where C is a name imported from a repo file; ctx = "C"
+CLS = "cls"  # C.f(), C().f() or self.x.f() with x typed C; ctx = "C"
 ATTR = "attr"  # obj.f() on a receiver of unknown type
 
 # call_site.hint for an import that does not resolve to a repo file: a
@@ -40,6 +40,11 @@ EXTERNAL = "!"
 # files the caller imports, which always win). Above it the name is too
 # common to guess: get, run, commit, register...
 MAX_METHOD_FANOUT = 3
+
+# How many levels of base classes a call on a known class climbs to find the
+# method it inherits, and how many levels of subclasses a change to a class
+# reaches when the calls typed by them are resolved again.
+MAX_CLASS_DEPTH = 8
 
 # Methods every codebase calls on objects of other libraries: builtin
 # containers and strings, files and paths, DB sessions and cursors, HTTP
@@ -406,6 +411,24 @@ class _Pool:
             self._roots = [t for t in self.methods if not classes.intersection(t.bases)]
         return self._roots
 
+    def inherited(
+        self, cls: str, hierarchy: dict[str, tuple[str, ...]]
+    ) -> list[Target]:
+        """The methods of the nearest base classes of ``cls`` that define the
+        name, climbing ``hierarchy`` ({class name: base names}) level by
+        level: ReceiptManager(BaseManager) gives BaseManager.get_by_id."""
+        seen = {cls}
+        level = sorted(set(hierarchy.get(cls, ())) - seen)
+        for _ in range(MAX_CLASS_DEPTH):
+            if not level:
+                break
+            found = [t for b in level for t in self.by_class.get(b, ())]
+            if found:
+                return found
+            seen.update(level)
+            level = sorted({p for b in level for p in hierarchy.get(b, ())} - seen)
+        return []
+
     def few_roots(self, name: str) -> list[Target]:
         """The methods left once overriding ones are set aside, when they
         are few and the name is not one every library uses."""
@@ -467,11 +490,13 @@ def targets_for(
     candidates: Candidates | list[Target],
     root: str | None,
     imported: frozenset[str] = frozenset(),
+    hierarchy: dict[str, tuple[str, ...]] | None = None,
 ) -> list[Target]:
     """The functions ``site`` calls among ``candidates`` (every function
     named ``site.name``). ``imported`` holds the repo files the caller's file
-    imports. Production code never links into test files, and a call never
-    crosses language families."""
+    imports, ``hierarchy`` the base class names of the classes a CLS site
+    names and of their bases (see class_bases). Production code never links
+    into test files, and a call never crosses language families."""
     if not isinstance(candidates, Candidates):
         candidates = Candidates(candidates, root)
     caller = site.file_path
@@ -505,9 +530,46 @@ def targets_for(
         # the caller imports say nothing about it.
         return pool.few_roots(site.name)
     if kind == CLS:
-        found = pool.by_class.get(site.ctx)
+        # The receiver's class is known: its own method, else the one it
+        # inherits, before any guess from the files the caller imports.
+        found = pool.by_class.get(site.ctx) or pool.inherited(site.ctx, hierarchy or {})
         return found or pool.unknown_receiver(site, imported)
     return pool.unknown_receiver(site, imported)
+
+
+def class_bases(conn, classes: set[str]) -> dict[str, tuple[str, ...]]:
+    """{class name: base names} for ``classes`` and their bases, up to
+    MAX_CLASS_DEPTH levels, from the recorded class bases (a dotted base
+    keeps its last segment, as INHERITS matches it)."""
+    out: dict[str, set[str]] = {}
+    todo = set(classes)
+    for _ in range(MAX_CLASS_DEPTH + 1):
+        todo -= set(out)
+        if not todo:
+            break
+        for name in todo:
+            out[name] = set()
+        for name, base in conn.class_bases_named(sorted(todo)):
+            if name in out and base:
+                out[name].add(base.rsplit(".", 1)[-1])
+        todo = {b for name in todo for b in out.get(name, ())}
+    return {k: tuple(sorted(v)) for k, v in out.items()}
+
+
+def subclasses(conn, classes: set[str]) -> set[str]:
+    """``classes`` and the classes deriving from them, up to MAX_CLASS_DEPTH
+    levels: the classes whose method lookup a change to ``classes`` can
+    alter."""
+    out = set(classes)
+    level = set(classes)
+    for _ in range(MAX_CLASS_DEPTH):
+        if not level:
+            break
+        rows = conn.class_children_named(sorted(level))
+        level = {c for c, base in rows if c and base.rsplit(".", 1)[-1] in level}
+        level -= out
+        out |= level
+    return out
 
 
 def needs_imports(kind: str) -> bool:

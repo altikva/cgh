@@ -7,14 +7,16 @@
 # Description: Pure GraphDB-protocol helpers shared by the test-mapping MCP
 #              tools (tests_for / untested) and the `cgh impact` CI command.
 #              Computes test-to-code mapping on the fly from IMPORTS + CALLS
-#              edges plus File.role, with no new edge type, plus a bounded
-#              reverse-BFS over IMPORTS for blast radius. Backend-neutral:
-#              every call goes through the GraphDB protocol, no raw SQL.
+#              edges, the imports made inside function bodies and File.role,
+#              with no new edge type, plus bounded reverse walks over imports
+#              and CALLS for blast radius. Backend-neutral: every call goes
+#              through the GraphDB protocol, no raw SQL.
 #              build_impact_report assembles the full `cgh impact` payload
 #              for both the CLI and the impact_report MCP tool.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,11 @@ from typing import Any
 TEST_ROLE = "test"
 _FANOUT_CAP = 500
 _REVERSE_CAP = 300
+# Functions a reverse CALLS walk may visit before it stops (truncated).
+_CALLERS_CAP = 3000
+# The name reference the indexer records for every repo file a file imports,
+# at module level or inside a function body (indexer.CALLS_IMPORT).
+_CALLS_IMPORT = "calls_import"
 
 
 def _is_test_role(role: str | None) -> bool:
@@ -66,29 +73,55 @@ def resolve_target_file(conn: Any, target: str) -> str | None:
     return None
 
 
+def _split_importers(conn: Any, target_file: str) -> tuple[list[str], list[str]]:
+    """(module-level importers, function-body-only importers) of
+    ``target_file``. IMPORTS edges carry the first; the imports made inside
+    a function body are only recorded with the call sites (the file's
+    "calls_import" references, which list module-level imports too)."""
+    module = [
+        p
+        for p in dict.fromkeys(
+            r.get("src_path") or ""
+            for r in conn.find_neighbors(
+                "IMPORTS", dst_key=target_file, return_src=["path"], limit=_FANOUT_CAP
+            )
+        )
+        if p
+    ]
+    names = sorted({target_file, os.path.realpath(target_file)})
+    known = set(module)
+    local = sorted(
+        {
+            ref_file
+            for kind, _from, ref_file, _name, _extra in conn.name_refs_into(
+                names, target_file
+            )
+            if kind == _CALLS_IMPORT and ref_file and ref_file not in known
+        }
+    )
+    return module, local
+
+
+def importers_of(conn: Any, target_file: str) -> list[str]:
+    """Files that import ``target_file``, at module level (IMPORTS) or
+    inside a function body. Order-preserving, capped at _FANOUT_CAP."""
+    module, local = _split_importers(conn, target_file)
+    return (module + local)[:_FANOUT_CAP]
+
+
 def tests_for_file(conn: Any, target_file: str) -> list[dict[str, str]]:
-    """Test files that import ``target_file`` directly.
+    """Test files that import ``target_file`` directly, at module level or
+    inside a function body.
 
     Inferred heuristic: a test file is a File node whose role is `test`, and
-    that has an IMPORTS edge into the target file. Returns
-    ``[{"file", "role"}]`` (de-duplicated, order-preserving).
+    that imports the target file. Returns ``[{"file", "role"}]``
+    (de-duplicated, order-preserving).
     """
-    seen: set[str] = set()
     out: list[dict[str, str]] = []
-    for row in conn.find_neighbors(
-        "IMPORTS",
-        dst_key=target_file,
-        return_src=["path", "role"],
-        limit=_FANOUT_CAP,
-    ):
-        path = row.get("src_path")
-        role = row.get("src_role") or ""
-        if not path or path in seen:
-            continue
-        if not _is_test_role(role):
-            continue
-        seen.add(path)
-        out.append({"file": path, "role": role})
+    for path in importers_of(conn, target_file):
+        role, _ = file_role(conn, path)
+        if _is_test_role(role):
+            out.append({"file": path, "role": role})
     return out
 
 
@@ -97,8 +130,9 @@ def tests_calling_symbol(conn: Any, symbol: str) -> list[dict[str, str]]:
 
     Inferred heuristic: find Function nodes named ``symbol``, walk CALLS
     backward one hop, and keep callers that live in a `test`-role file.
-    CALLS edges are same-file-scoped (per BUG-2) and name-matched, so this is
-    a candidate set, not ground truth. Returns ``[{"file", "role"}]``.
+    CALLS edges are resolved from the call's shape and the caller's imports,
+    not run, so this is a candidate set, not ground truth. Returns
+    ``[{"file", "role"}]``.
     """
     target_ids = [
         r["id"]
@@ -214,9 +248,12 @@ def reverse_import_bfs(
     start_files: list[str],
     max_depth: int = 3,
 ) -> tuple[list[str], bool]:
-    """Bounded reverse BFS over IMPORTS: every file that transitively imports
-    any of ``start_files`` within ``max_depth`` hops. A Terraform file counts
-    as imported by the files whose blocks reference its blocks.
+    """Bounded reverse BFS over imports: every file that transitively imports
+    any of ``start_files`` within ``max_depth`` hops. A file importing one
+    only inside a function body is in, but the walk does not go on from it:
+    a hub such as a conftest.py would pull in every test, and the callers of
+    that function are found over CALLS (reverse_calls_bfs). A Terraform file
+    counts as imported by the files whose blocks reference its blocks.
 
     Returns ``(ordered_file_paths, truncated)``. ``start_files`` themselves are
     not included in the result. Caps both the per-node fan-out and the total
@@ -233,28 +270,84 @@ def reverse_import_bfs(
         depth += 1
         nxt: list[str] = []
         for key in frontier:
-            rows = conn.find_neighbors(
-                "IMPORTS",
-                dst_key=key,
-                return_src=["path"],
-                limit=_FANOUT_CAP,
-            )
-            if len(rows) >= _FANOUT_CAP:
+            srcs, local = _split_importers(conn, key)
+            if len(srcs) >= _FANOUT_CAP:
                 truncated = True
             # A .tf file is "imported" by the files whose blocks reference
             # its blocks (Terraform has no import statement).
-            srcs = [r.get("src_path") for r in rows]
             srcs += tf_dependent_files(conn, key, limit=_FANOUT_CAP)
-            for src in srcs:
+            leaves = set(local) - set(srcs)
+            for src in srcs + local:
                 if not src or src in seen:
                     continue
                 seen.add(src)
                 ordered.append(src)
-                nxt.append(src)
+                if src not in leaves:
+                    nxt.append(src)
                 if len(ordered) >= _REVERSE_CAP:
                     return ordered, True
         frontier = nxt
     return ordered, truncated
+
+
+def reverse_calls_bfs(
+    conn: Any,
+    start_files: list[str],
+    max_depth: int = 3,
+) -> tuple[list[str], bool]:
+    """Bounded reverse BFS over CALLS: the files holding a function that
+    calls a function of ``start_files``, directly or through up to
+    ``max_depth`` calls. Catches the callers no import edge shows (an import
+    inside a function body, a call through an attribute of a known class).
+
+    Returns ``(ordered_file_paths, truncated)``; ``start_files`` are not
+    included. Caps the per-function fan-out, the functions visited and the
+    files returned.
+    """
+    starts = set(start_files)
+    frontier = sorted(
+        {
+            str(r["id"])
+            for f in start_files
+            for r in conn.find_nodes(
+                "Function", where={"file_path": f}, return_fields=["id"]
+            )
+            if r.get("id")
+        }
+    )
+    seen: set[str] = set(frontier)
+    files: list[str] = []
+    file_seen: set[str] = set()
+    truncated = False
+    for _ in range(max(1, int(max_depth))):
+        nxt: list[str] = []
+        for fid in frontier:
+            rows = conn.find_neighbors(
+                "CALLS",
+                dst_key=fid,
+                return_src=["id", "file_path"],
+                limit=_FANOUT_CAP,
+            )
+            if len(rows) >= _FANOUT_CAP:
+                truncated = True
+            for row in rows:
+                caller = row.get("src_id") or ""
+                if not caller or caller in seen:
+                    continue
+                seen.add(caller)
+                nxt.append(caller)
+                path = row.get("src_file_path") or ""
+                if path and path not in starts and path not in file_seen:
+                    file_seen.add(path)
+                    files.append(path)
+                    if len(files) >= _REVERSE_CAP:
+                        return files, True
+            if len(seen) >= _CALLERS_CAP:
+                return files, True
+        if not nxt:
+            break
+        frontier = nxt
+    return files, truncated
 
 
 def symbols_in_file(conn: Any, file_path: str) -> list[dict[str, str]]:
@@ -345,8 +438,15 @@ def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
         for sym in symbols_in_file(conn, abs_f):
             changed_symbols.append({"file": rel_f, **sym})
 
-    # Blast radius: files that transitively import any changed file.
+    # Blast radius: files that transitively import any changed file, then
+    # the files whose functions reach a changed file's functions over CALLS.
     radius, radius_trunc = reverse_import_bfs(conn, abs_changed, max_depth=3)
+    callers, callers_trunc = reverse_calls_bfs(conn, abs_changed, max_depth=3)
+    in_radius = set(radius)
+    radius += [p for p in callers if p not in in_radius]
+    if len(radius) > _REVERSE_CAP:
+        radius, callers_trunc = radius[:_REVERSE_CAP], True
+    radius_trunc = radius_trunc or callers_trunc
 
     impacted: list[dict] = []
     by_role: dict[str, int] = {}
@@ -365,16 +465,22 @@ def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
         for e in endpoints_in_files(conn, abs_changed + radius)
     ]
 
-    # Tests to run: for each changed file, the test files that exercise it.
+    # Tests to run: the test files that import a changed file (at module
+    # level or in a function body), then the ones whose functions reach a
+    # changed file's functions over CALLS.
     test_seen: set[str] = set()
     tests: list[dict] = []
-    for abs_f in abs_changed:
-        for t in tests_for_file(conn, abs_f):
-            rel_t = _rel(t["file"])
-            if rel_t in test_seen:
-                continue
-            test_seen.add(rel_t)
-            tests.append({"file": rel_t, "role": t["role"]})
+    found = [t for abs_f in abs_changed for t in tests_for_file(conn, abs_f)]
+    for path in callers:
+        role, _ = file_role(conn, path)
+        if _is_test_role(role):
+            found.append({"file": path, "role": role})
+    for t in found:
+        rel_t = _rel(t["file"])
+        if rel_t in test_seen:
+            continue
+        test_seen.add(rel_t)
+        tests.append({"file": rel_t, "role": t["role"]})
 
     return {
         "since_changed": list(changed_files),

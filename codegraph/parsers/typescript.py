@@ -27,6 +27,7 @@ from .base import (
     ImportRef,
     SymbolDef,
     bind_calls,
+    typed_receivers,
 )
 
 _TS_LANGUAGE = Language(tsts.language_typescript())
@@ -175,6 +176,72 @@ def _class_bases(node: Node, src: bytes) -> list[str]:
     return bases
 
 
+def _ts_type_name(node: Node | None, src: bytes) -> str:
+    """The class a type annotation names: ``T``, ``ns.T``, ``T | null`` or
+    ``T | undefined`` give T; anything else gives ""."""
+    if node is None:
+        return ""
+    if node.type == "type_annotation":
+        named = node.named_children
+        return _ts_type_name(named[0], src) if len(named) == 1 else ""
+    if node.type in ("type_identifier", "nested_type_identifier"):
+        return _text(node, src)
+    if node.type == "union_type":
+        sides = [
+            c
+            for c in node.named_children
+            if not (c.type == "literal_type" or _text(c, src) == "undefined")
+        ]
+        return _ts_type_name(sides[0], src) if len(sides) == 1 else ""
+    return ""
+
+
+def _ts_attr_types(body: Node, src: bytes) -> dict[str, str]:
+    """The class of each instance field a class body types: a field with a
+    type annotation or initialised with ``new C()``, and a constructor
+    parameter property (``constructor(private repo: Repo)``)."""
+    seen: dict[str, set[str]] = {}
+    for child in body.named_children:
+        if child.type == "public_field_definition":
+            name = child.child_by_field_name("name")
+            if name is None:
+                continue
+            ann = child.child_by_field_name("type")
+            value = child.child_by_field_name("value")
+            cls = ""
+            if ann is not None:
+                cls = _ts_type_name(ann, src)
+            elif value is not None and value.type == "new_expression":
+                ctor = value.child_by_field_name("constructor")
+                if ctor is not None and ctor.type in (
+                    "identifier",
+                    "member_expression",
+                ):
+                    cls = _text(ctor, src)
+            seen.setdefault(_ident(name, src), set()).add(cls or "?")
+        elif child.type == "method_definition":
+            name = child.child_by_field_name("name")
+            params = child.child_by_field_name("parameters")
+            if name is None or params is None or _text(name, src) != "constructor":
+                continue
+            for p in params.named_children:
+                is_property = any(
+                    c.type in ("accessibility_modifier", "readonly")
+                    or _text(c, src) == "readonly"
+                    for c in p.children
+                )
+                pattern = p.child_by_field_name("pattern")
+                if not is_property or pattern is None or pattern.type != "identifier":
+                    continue
+                cls = _ts_type_name(p.child_by_field_name("type"), src)
+                seen.setdefault(_ident(pattern, src), set()).add(cls or "?")
+    return {
+        attr: next(iter(classes))
+        for attr, classes in seen.items()
+        if len(classes) == 1 and "?" not in classes
+    }
+
+
 def _fn_name(node: Node, src: bytes) -> str:
     """Best-effort function name extraction across declaration styles."""
     # function foo() / function* foo()
@@ -223,6 +290,8 @@ class TypeScriptParser(BaseParser):
         index = FileIndex(path=path_str, lang=lang_label)
         bindings: Bindings = {}
         pending: list[tuple[SymbolDef, list[tuple[str, str]]]] = []
+        # Per class name, the classes of its typed fields.
+        attr_types: dict[str, dict[str, str]] = {}
 
         def _visit(node: Node, current_class: str | None = None) -> None:
             # --- import ---
@@ -262,6 +331,8 @@ class TypeScriptParser(BaseParser):
                     )
                 )
                 if body:
+                    types = _ts_attr_types(body, src)
+                    attr_types[name] = {} if name in attr_types else types
                     for child in body.children:
                         _visit(child, current_class=name)
                 return
@@ -309,5 +380,9 @@ class TypeScriptParser(BaseParser):
             _visit(child)
 
         for fn, raw_calls in pending:
+            if fn.class_name:
+                raw_calls = typed_receivers(
+                    raw_calls, attr_types.get(fn.class_name, {}), "this"
+                )
             fn.call_refs = bind_calls(raw_calls, bindings)
         return index

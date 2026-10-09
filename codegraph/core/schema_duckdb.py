@@ -215,13 +215,18 @@ EDGE_TABLES = [
 # Every call a function makes, kept by callee NAME (to_id empty) or, for the
 # precise resolver, by resolved target id. CALLS edges are derived from these
 # rows, so reindexing a callee's file can relink the callers in other files
-# instead of losing them. No PK: the indexer dedupes before writing.
+# instead of losing them. kind, hint and ctx carry the call's shape for the
+# by-name rows (see indexer._call_site_rows); "" everywhere means no shape,
+# linked by name alone. No PK: the indexer dedupes before writing.
 SIDE_TABLES = [
     """CREATE TABLE IF NOT EXISTS call_site (
         from_id    TEXT,
         file_path  TEXT,
         name       TEXT,
-        to_id      TEXT NOT NULL DEFAULT ''
+        to_id      TEXT NOT NULL DEFAULT '',
+        kind       TEXT NOT NULL DEFAULT '',
+        hint       TEXT NOT NULL DEFAULT '',
+        ctx        TEXT NOT NULL DEFAULT ''
     )""",
     # Every other reference resolved by name, kept so its edge can be rebuilt
     # from either end: a class base (kind "inherits"), a markdown code mention
@@ -258,6 +263,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_imports_to ON edge_imports(to_path)",
     "CREATE INDEX IF NOT EXISTS idx_calls_to ON edge_calls(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_inherits_to ON edge_inherits(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_has_method_to ON edge_has_method(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_function_file ON function(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_class_file ON class(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_md_section_file ON md_section(file_path)",
@@ -267,6 +273,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_from ON name_ref(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
     "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
@@ -284,6 +291,9 @@ MIGRATIONS = [
     "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS end_line BIGINT",
     "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS address TEXT",
     "ALTER TABLE tf_var ADD COLUMN IF NOT EXISTS module_dir TEXT",
+    "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT ''",
+    "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS hint TEXT DEFAULT ''",
+    "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS ctx TEXT DEFAULT ''",
 ]
 
 

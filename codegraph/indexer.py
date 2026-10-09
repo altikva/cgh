@@ -328,96 +328,164 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _call_site_rows(functions: list, lang: str = "") -> list[tuple[str, str, str]]:
-    """The by-name call sites of ``functions`` as (from_id, name, "") rows.
+def _call_site_rows(
+    idx: FileIndex, root: Path | None
+) -> tuple[list[tuple[str, ...]], frozenset[str]]:
+    """The by-name call sites of a parsed file as call_site rows
+    (from_id, name, "", kind, hint, ctx), and the repo files it imports;
+    see analysis/call_rules.py."""
+    from codegraph.analysis.call_rules import site_rows
 
-    Names matching a language built-in callable are filtered out (see
-    parsers/builtins.py) so callees like isinstance / println / parseInt
-    don't accumulate spurious edges.
+    return site_rows(idx, root)
+
+
+def _link_call_sites(
+    conn: GraphDB,
+    sites: list,
+    root: Path | None,
+    imported: dict[str, frozenset[str]],
+    replace: str | None,
+) -> None:
+    """Create the CALLS edges of by-name ``sites`` (call_rules.Site).
+
+    ``imported`` maps a caller file to the repo files it imports. With
+    ``replace`` (a file path), ``sites`` must be every by-name site outside
+    that file calling one of their names: edges from those sites into
+    functions of the names that the rules no longer pick are dropped. A
+    rule can depend on every function of a name (how many methods carry it,
+    which file of an import defines it), so a definition appearing or
+    vanishing elsewhere can take an edge away as well as add one.
     """
-    from codegraph.parsers.builtins import is_builtin
+    if not sites:
+        return
+    from codegraph.analysis.call_rules import (
+        Candidates,
+        Target,
+        needs_imports,
+        targets_for,
+    )
 
-    rows: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for fn in functions:
-        for called_name in fn.calls:
-            if (fn.id, called_name) in seen:
-                continue
-            if lang and is_builtin(lang, called_name):
-                continue
-            seen.add((fn.id, called_name))
-            rows.append((fn.id, called_name, ""))
-    return rows
+    by_name: dict[str, list] = {}
+    for fn_id, name, file_path, class_id, bases in conn.call_targets_named(
+        sorted({s.name for s in sites})
+    ):
+        by_name.setdefault(name, []).append(
+            Target(
+                fn_id,
+                name,
+                file_path,
+                class_id.rsplit("::", 1)[-1] if class_id else "",
+                tuple(b.rsplit(".", 1)[-1] for b in bases),
+            )
+        )
+    root_s = str(root) if root is not None else None
+    pools = {name: Candidates(targets, root_s) for name, targets in by_name.items()}
+    no_imports: frozenset[str] = frozenset()
+    desired: set[tuple[str, str]] = set()
+    for site in sites:
+        candidates = pools.get(site.name)
+        if candidates is None:
+            continue
+        imp = imported.get(site.file_path, no_imports)
+        if not needs_imports(site.kind):
+            imp = no_imports
+        desired.update(
+            (site.from_id, t.id) for t in targets_for(site, candidates, root_s, imp)
+        )
+    if replace is not None:
+        existing = set(conn.calls_by_name(sorted(by_name), replace))
+        stale = existing - desired
+        if stale:
+            conn.delete_calls(sorted(stale))
+        desired -= existing
+    if desired:
+        conn.ensure_edges("CALLS", sorted(desired))
 
 
 def _resolve_calls(
     conn: GraphDB,
-    functions: list,
-    lang: str = "",
-    rows: list[tuple[str, str, str]] | None = None,
+    idx: FileIndex,
+    root: Path | None,
+    rows: list[tuple[str, ...]],
+    imported: frozenset[str],
 ) -> None:
     """
-    After all Function nodes exist, create CALLS edges by matching call
-    names to known function names. Best-effort: unresolved names are skipped.
+    Create the CALLS edges of ``idx``'s call sites ``rows`` (see
+    analysis/call_rules.py for the rules). Unresolved names are skipped.
 
     Only links to functions already in the graph: calls into a file indexed
     later are linked by that file's _resolve_inbound_calls, from the call
     sites this file recorded.
     """
-    if rows is None:
-        rows = _call_site_rows(functions, lang)
+    from codegraph.analysis.call_rules import Site
+
     if not rows:
         return
-    file_of = {fn.id: fn.file_path for fn in functions}
-    defs: dict[str, list[tuple[str, str]]] = {}
-    for fn_id, name, file_path in conn.function_defs_named(
-        sorted({name for _, name, _ in rows})
-    ):
-        defs.setdefault(name, []).append((fn_id, file_path))
-    edges: list[tuple[str, str]] = []
-    for from_id, called_name, _ in rows:
-        candidates = defs.get(called_name, [])
-        # Prefer a definition in the same file. A local call like run()
-        # almost never means "every function named run in the repo"; only
-        # fan out across files when there is no same-file match.
-        same_file = [c for c, fp in candidates if fp == file_of[from_id]]
-        for callee_id in same_file or [c for c, _ in candidates]:
-            edges.append((from_id, callee_id))
-    conn.ensure_edges("CALLS", edges)
+    file_of = {fn.id: fn.file_path for fn in idx.functions}
+    sites = [Site(r[0], file_of[r[0]], r[1], r[3], r[4], r[5]) for r in rows]
+    _link_call_sites(conn, sites, root, {str(idx.path): imported}, replace=None)
 
 
-def _resolve_inbound_calls(conn: GraphDB, file_path: str, functions: list) -> None:
+def _resolve_inbound_calls(
+    conn: GraphDB,
+    file_path: str,
+    functions: list,
+    old_names: list[str] | tuple[str, ...] = (),
+    root: Path | None = None,
+) -> None:
     """Link call sites in OTHER files to the functions ``file_path`` defines.
 
     purge_file_data drops every CALLS edge into a file's symbols, and a
     caller indexed before this file could not see its functions at all, so
     without this pass a cross-file call depends on indexing order and is
-    erased by every reindex of the callee's file. Applies the outbound rule
-    from the caller's side: a caller whose own file defines the name keeps
-    linking only there. Precisely resolved sites (to_id set) relink only to
-    their exact target, never by name.
+    erased by every reindex of the callee's file. Every by-name site calling
+    a name the file defines now or defined before (``old_names``) is
+    resolved again with the same rules as from the caller's side, so a
+    definition appearing or vanishing here also updates edges to other
+    files. Precisely resolved sites (to_id set) relink only to their exact
+    target, never by name.
     """
-    if not functions:
-        return
-    by_name: dict[str, list[str]] = {}
-    for fn in functions:
-        by_name.setdefault(fn.name, []).append(fn.id)
+    from codegraph.analysis.call_rules import Site, needs_imports, real
+
+    names = {fn.name for fn in functions} | set(old_names)
     ids = {fn.id for fn in functions}
-    sites = conn.call_sites_into(sorted(by_name), sorted(ids), file_path)
-    if not sites:
+    if not names and not ids:
         return
-    named = sorted({name for _, _, name, to_id in sites if not to_id})
-    defined_in = {(name, fp) for _, name, fp in conn.function_defs_named(named)}
-    edges: list[tuple[str, str]] = []
-    for from_id, caller_file, name, to_id in sites:
-        if to_id:
-            if to_id in ids:
-                edges.append((from_id, to_id))
-            continue
-        if (name, caller_file) in defined_in:
-            continue
-        edges.extend((from_id, callee_id) for callee_id in by_name.get(name, ()))
-    conn.ensure_edges("CALLS", edges)
+    rows = conn.call_sites_into(sorted(names), sorted(ids), file_path)
+    if not rows:
+        return
+    exact = [(r[0], r[3]) for r in rows if r[3] and r[3] in ids]
+    sites = [Site(r[0], r[1], r[2], r[4], r[5], r[6]) for r in rows if not r[3]]
+    callers = sorted({s.file_path for s in sites if needs_imports(s.kind)})
+    imported: dict[str, set[str]] = {}
+    for src, dst in conn.name_refs_from(CALLS_IMPORT, callers) if callers else ():
+        imported.setdefault(src, set()).add(real(dst))
+    _link_call_sites(
+        conn,
+        sites,
+        root,
+        {k: frozenset(v) for k, v in imported.items()},
+        replace=file_path,
+    )
+    if exact:
+        conn.ensure_edges("CALLS", exact)
+
+
+def _delete_file_relinking(conn: GraphDB, path: str, repo_root) -> None:
+    """Delete a file from the graph, then resolve again the calls elsewhere
+    to the names it defined."""
+    names = conn.function_names_in(path)
+    conn.delete_file_completely(path)
+    _relink_calls_named(conn, path, names, Path(repo_root) if repo_root else None)
+
+
+def _relink_calls_named(
+    conn: GraphDB, file_path: str, names: list[str], root: Path | None
+) -> None:
+    """Resolve again the call sites of ``names`` after ``file_path`` lost its
+    functions (deleted, or no longer parseable)."""
+    if names:
+        _resolve_inbound_calls(conn, file_path, [], names, root)
 
 
 # A name reference is (kind, from_id, name, extra), kept in the name_ref table
@@ -431,7 +499,10 @@ def _resolve_inbound_calls(conn: GraphDB, file_path: str, functions: list) -> No
 #   tf_ref    Terraform block id -> "<module dir>::<address>" it uses
 #   tf_modout Terraform block id -> "<module dir>::module.<m>", extra = the
 #             output name (see codegraph/analysis/terraform.py)
+#   calls_import  file path -> a repo file it imports (at module level or in
+#             a function body), read by the call rules of its call sites
 NameRef = tuple[str, str, str, str]
+CALLS_IMPORT = "calls_import"
 
 
 def _keys_by_value(conn: GraphDB, label: str, field: str, values) -> dict:
@@ -573,11 +644,18 @@ def _resolve_calls_precise(
 
 
 def _ingest_code(
-    conn: GraphDB, idx: FileIndex, cfg=None, repo_root: Path | None = None
+    conn: GraphDB,
+    idx: FileIndex,
+    cfg=None,
+    repo_root: Path | None = None,
+    pending_calls: list | None = None,
 ) -> list[NameRef]:
     """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.).
 
-    Returns the file's class-base name references to record."""
+    Returns the file's name references to record. The by-name call sites are
+    stored here and appended to ``pending_calls`` as (rows, imported): their
+    edges are created once the file's references are recorded, since the
+    call rules read the base classes of the methods they may link to."""
     for fn in idx.functions:
         conn.upsert_node(
             "Function",
@@ -621,14 +699,18 @@ def _ingest_code(
     precise = None
     if repo_root is not None and _precise_calls_enabled(cfg, idx.lang):
         precise = _resolve_calls_precise(conn, idx, repo_root)
+    refs = _resolve_inherits(conn, idx.classes)
     if precise is None:
-        rows = _call_site_rows(idx.functions, idx.lang)
+        rows, imported = _call_site_rows(idx, repo_root)
         conn.replace_call_sites(str(idx.path), rows)
-        _resolve_calls(conn, idx.functions, idx.lang, rows=rows)
+        refs += [(CALLS_IMPORT, str(idx.path), f, "") for f in sorted(imported)]
+        if pending_calls is not None:
+            pending_calls.append((rows, imported))
+        else:
+            _resolve_calls(conn, idx, repo_root, rows, imported)
     else:
         conn.replace_call_sites(str(idx.path), sorted({(c, "", t) for c, t in precise}))
-    _resolve_inbound_calls(conn, str(idx.path), idx.functions)
-    return _resolve_inherits(conn, idx.classes)
+    return refs
 
 
 # Import resolution coverage for the current scan, keyed by language. Without
@@ -1045,6 +1127,9 @@ def _index_file(
             pass
 
     fts_conn = _get_fts(repo_root) if repo_root else None
+    # The names this file defined: callers of those names elsewhere are
+    # resolved again once the file is back in (or gone).
+    old_names = conn.function_names_in(str(path))
     _purge_file(conn, str(path), fts_conn)
 
     try:
@@ -1057,6 +1142,7 @@ def _index_file(
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
         print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
+        _relink_calls_named(conn, str(path), old_names, root)
         return False
     except Exception as exc:
         # Catch-all: any other parse failure (decoding error, malformed source,
@@ -1067,6 +1153,7 @@ def _index_file(
         msg = f"{path}: {type(exc).__name__}: {exc}"
         print(f"[codegraph] parse error: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
+        _relink_calls_named(conn, str(path), old_names, root)
         return False
 
     lang = idx.lang
@@ -1113,8 +1200,11 @@ def _index_file(
 
     # Ingest into graph
     refs: list[NameRef] = []
+    pending_calls: list = []
     if idx.functions or idx.classes:
-        refs += _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
+        refs += _ingest_code(
+            conn, idx, cfg=eff_cfg, repo_root=root, pending_calls=pending_calls
+        )
     if idx.resources:
         refs += _ingest_terraform(conn, idx)
     if idx.sections:
@@ -1134,6 +1224,13 @@ def _index_file(
     if refs:
         conn.replace_name_refs(str(path), refs)
     _resolve_inbound_refs(conn, str(path), idx)
+
+    # CALLS last: the call rules read the recorded base classes and imports.
+    # Then the calls of other files to the names this file defines now or
+    # defined before.
+    for rows, imported in pending_calls:
+        _resolve_calls(conn, idx, root, rows, imported)
+    _resolve_inbound_calls(conn, str(path), idx.functions, old_names, root)
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)
@@ -1172,7 +1269,7 @@ def _reparse_unstamped(repo_root: Path, activity_log) -> list[str]:
         p = Path(path)
         try:
             if not p.exists():
-                conn.delete_file_completely(path)
+                _delete_file_relinking(conn, path, repo_root)
                 if fts_conn is not None:
                     delete_file_symbols(fts_conn, path)
                 continue
@@ -1519,7 +1616,7 @@ def _delete_gone(repo_root: Path, deletions: list[Path], activity_log) -> None:
     conn = get_connection(repo_root)
     for gone in deletions:
         try:
-            conn.delete_file_completely(str(gone))
+            _delete_file_relinking(conn, str(gone), repo_root)
             if fts_conn is not None:
                 delete_file_symbols(fts_conn, str(gone))
             from codegraph.state.findings import purge_file_findings
@@ -2116,7 +2213,7 @@ def _incremental_reindex(
     delete_errors = 0
     for path in to_delete:
         try:
-            conn.delete_file_completely(path)
+            _delete_file_relinking(conn, path, repo_root)
             if fts_conn is not None:
                 delete_file_symbols(fts_conn, path)
             from codegraph.state.findings import purge_file_findings

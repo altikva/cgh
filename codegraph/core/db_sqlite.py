@@ -73,6 +73,9 @@ _MIGRATIONS = [
     ("tf_var", "end_line", "BIGINT"),
     ("tf_var", "address", "TEXT"),
     ("tf_var", "module_dir", "TEXT"),
+    ("call_site", "kind", "TEXT NOT NULL DEFAULT ''"),
+    ("call_site", "hint", "TEXT NOT NULL DEFAULT ''"),
+    ("call_site", "ctx", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 _EDGE_TABLES = [
@@ -144,7 +147,9 @@ _EDGE_TABLES = [
 # from either end, plus the per-file stamps that reveal an older writer.
 _SIDE_TABLES = [
     """CREATE TABLE IF NOT EXISTS call_site (
-        from_id TEXT, file_path TEXT, name TEXT, to_id TEXT NOT NULL DEFAULT ''
+        from_id TEXT, file_path TEXT, name TEXT, to_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT '', hint TEXT NOT NULL DEFAULT '',
+        ctx TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS name_ref (
         kind TEXT, from_id TEXT, file_path TEXT, name TEXT,
@@ -157,6 +162,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_imports_to ON edge_imports(to_path)",
     "CREATE INDEX IF NOT EXISTS idx_calls_to ON edge_calls(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_inherits_to ON edge_inherits(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_has_method_to ON edge_has_method(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_function_file ON function(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_class_file ON class(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_md_section_file ON md_section(file_path)",
@@ -166,6 +172,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_call_site_to ON call_site(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_name ON name_ref(name)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_name_ref_from ON name_ref(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
@@ -465,23 +472,24 @@ class SQLiteGraphDB:
 
     # --- Call sites -----------------------------------------------------
 
-    def replace_call_sites(
-        self, file_path: str, rows: list[tuple[str, str, str]]
-    ) -> None:
+    def replace_call_sites(self, file_path: str, rows: list[tuple[str, ...]]) -> None:
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
-        for chunk in _chunks(rows, 200):
-            values = ", ".join("(?, ?, ?, ?)" for _ in chunk)
-            params = [v for f, n, t in chunk for v in (f, file_path, n, t)]
+        full = [(*row, "", "", "")[:6] for row in rows]
+        for chunk in _chunks(full, 120):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [
+                v for f, n, t, k, h, c in chunk for v in (f, file_path, n, t, k, h, c)
+            ]
             self._conn.execute(
-                "INSERT INTO call_site (from_id, file_path, name, to_id) "
+                "INSERT INTO call_site (from_id, file_path, name, to_id, kind, hint, ctx) "
                 f"VALUES {values}",
                 params,
             )
 
     def call_sites_into(
         self, names: list[str], ids: list[str], exclude_file: str
-    ) -> list[tuple[str, str, str, str]]:
-        out: list[tuple[str, str, str, str]] = []
+    ) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
         for column, guard, keys in (
             ("name", "to_id = '' AND ", names),
             ("to_id", "", ids),
@@ -489,11 +497,11 @@ class SQLiteGraphDB:
             for chunk in _chunks(sorted(set(keys))):
                 ph = ", ".join("?" for _ in chunk)
                 rows = self._conn.execute(
-                    "SELECT from_id, file_path, name, to_id FROM call_site "
-                    f"WHERE {guard}{column} IN ({ph}) AND file_path <> ?",
+                    "SELECT from_id, file_path, name, to_id, kind, hint, ctx "
+                    f"FROM call_site WHERE {guard}{column} IN ({ph}) AND file_path <> ?",
                     [*chunk, exclude_file],
                 ).fetchall()
-                out.extend(tuple(r) for r in rows)
+                out.extend(tuple("" if v is None else v for v in r) for r in rows)
         return out
 
     def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
@@ -503,6 +511,67 @@ class SQLiteGraphDB:
             rows = self._conn.execute(
                 f"SELECT id, name, file_path FROM function WHERE name IN ({ph})",
                 chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def call_targets_named(
+        self, names: list[str]
+    ) -> list[tuple[str, str, str, str, tuple[str, ...]]]:
+        found: dict[str, tuple[str, str, str, str]] = {}
+        bases: dict[str, set[str]] = {}
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT f.id, f.name, f.file_path, h.from_id, r.name FROM function f "
+                "LEFT JOIN edge_has_method h ON h.to_id = f.id "
+                "LEFT JOIN name_ref r ON r.from_id = h.from_id AND r.kind = 'inherits' "
+                f"WHERE f.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            for fn_id, name, file_path, class_id, base in rows:
+                found.setdefault(fn_id, (fn_id, name, file_path, class_id or ""))
+                if base:
+                    bases.setdefault(fn_id, set()).add(base)
+        return [(*row, tuple(sorted(bases.get(row[0], ())))) for row in found.values()]
+
+    def function_names_in(self, file_path: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT name FROM function WHERE file_path = ?", [file_path]
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def calls_by_name(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 250):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT e.from_id, e.to_id FROM edge_calls e "
+                "WHERE e.from_id IN (SELECT from_id FROM call_site "
+                f"  WHERE to_id = '' AND file_path <> ? AND name IN ({ph})) "
+                f"AND e.to_id IN (SELECT id FROM function WHERE name IN ({ph}))",
+                [exclude_file, *chunk, *chunk],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def delete_calls(self, pairs: list[tuple[str, str]]) -> None:
+        for chunk in _chunks(sorted(set(pairs)), 200):
+            cond = " OR ".join("(from_id = ? AND to_id = ?)" for _ in chunk)
+            self._conn.execute(
+                f"DELETE FROM edge_calls WHERE {cond}", [v for p in chunk for v in p]
+            )
+
+    def name_refs_from(self, kind: str, paths: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(paths))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT file_path, name FROM name_ref "
+                f"WHERE kind = ? AND file_path IN ({ph})",
+                [kind, *chunk],
             ).fetchall()
             out.extend(tuple(r) for r in rows)
         return out

@@ -296,13 +296,15 @@ def reverse_calls_bfs(
     start_files: list[str],
     max_depth: int = 3,
     start_ids: list[str] | None = None,
+    reached: set[str] | None = None,
 ) -> tuple[list[str], bool]:
     """Bounded reverse BFS over CALLS: the files holding a function that
     calls a function of ``start_files``, directly or through up to
     ``max_depth`` calls. Catches the callers no import edge shows (an import
     inside a function body, a call through an attribute of a known class).
     ``start_ids`` starts the walk from those functions only instead of every
-    function of ``start_files``.
+    function of ``start_files``. ``reached``, when given, collects the ids
+    of the calling functions the walk visits.
 
     A method of ``start_files`` also counts the callers of the interface
     methods it implements (a call through the interface links there, see
@@ -351,6 +353,8 @@ def reverse_calls_bfs(
                     continue
                 seen.add(caller)
                 nxt.append(caller)
+                if reached is not None:
+                    reached.add(caller)
                 path = row.get("src_file_path") or ""
                 if path and path not in starts and path not in file_seen:
                     file_seen.add(path)
@@ -483,6 +487,27 @@ def symbols_in_file(
                     "lines": f"{b.get('start_line', '')}-{b.get('end_line', '')}",
                 }
             )
+    return out
+
+
+def endpoints_of_functions(conn: Any, fn_ids: list[str]) -> list[dict[str, str]]:
+    """Endpoints whose handler (IMPLEMENTED_BY) is one of ``fn_ids``, as
+    endpoints_in_files rows: the routes a symbol-level change reaches."""
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, str]] = []
+    for fid in fn_ids:
+        for e in conn.find_neighbors(
+            "IMPLEMENTED_BY",
+            dst_key=fid,
+            return_src=["method", "path", "file_path"],
+        ):
+            fp = e.get("src_file_path", "") or ""
+            method = e.get("src_method", "") or ""
+            path = e.get("src_path", "") or ""
+            key = (fp, method, path)
+            if key not in seen:
+                seen.add(key)
+                out.append({"file": fp, "method": method, "path": path})
     return out
 
 
@@ -670,10 +695,16 @@ def build_impact_report(
     # them, not every file of the module directory.
     radius, radius_trunc = reverse_import_bfs(conn, whole_files, max_depth=3)
     callers, callers_trunc = reverse_calls_bfs(conn, whole_files, max_depth=3)
+    # Files reached file by file (module-level changes, importers of a class
+    # changed outside its methods): their endpoints and importing tests all
+    # count. The symbol walk only counts the functions it reaches.
+    file_level = set(radius) | set(callers)
+    reached: set[str] = set()
     if symbol_files:
         direct, direct_trunc = reverse_import_bfs(conn, class_files, max_depth=1)
+        file_level.update(direct)
         sym_callers, sym_trunc = reverse_calls_bfs(
-            conn, symbol_files, max_depth=3, start_ids=symbol_ids
+            conn, symbol_files, max_depth=3, start_ids=symbol_ids, reached=reached
         )
         in_radius = set(radius) | set(whole_files)
         radius += [p for p in direct if p not in in_radius]
@@ -715,18 +746,35 @@ def build_impact_report(
         if layer:
             by_layer[layer] = by_layer.get(layer, 0) + 1
 
-    # Endpoints declared in the changed files OR any impacted file.
-    endpoints = [
-        {"file": _rel(e["file"]), "method": e["method"], "path": e["path"]}
-        for e in endpoints_in_files(conn, abs_changed + radius)
-    ]
+    # Endpoints: every route of a file changed or reached file by file; for
+    # a symbol-level change, only the routes whose handler is a changed
+    # symbol or reaches one over CALLS, not every route of a router file
+    # that holds one caller.
+    symbol_only = set(symbol_files) - set(class_files)
+    by_file = [p for p in abs_changed if p not in symbol_only]
+    by_file += [p for p in radius if p in file_level]
+    seen_ep: set[tuple[str, str, str]] = set()
+    endpoints: list[dict] = []
+    for e in endpoints_in_files(conn, by_file) + endpoints_of_functions(
+        conn, sorted(set(symbol_ids) | reached)
+    ):
+        key = (_rel(e["file"]), e["method"], e["path"])
+        if key not in seen_ep:
+            seen_ep.add(key)
+            endpoints.append({"file": key[0], "method": key[1], "path": key[2]})
 
-    # Tests to run: the test files that import a changed file (at module
-    # level or in a function body), then the ones whose functions reach a
-    # changed file's functions over CALLS.
+    # Tests to run: the test files that import a file changed at module level
+    # (at module level or in a function body), then the ones whose functions
+    # reach a changed function over CALLS. A symbol-level change counts only
+    # the tests the caller walk reaches, not every test importing its file.
     test_seen: set[str] = set()
     tests: list[dict] = []
-    found = [t for abs_f in abs_changed for t in tests_for_file(conn, abs_f)]
+    found = [
+        t
+        for abs_f in abs_changed
+        if abs_f not in symbol_only
+        for t in tests_for_file(conn, abs_f)
+    ]
     for path in callers:
         role, _ = file_role(conn, path)
         if _is_test_role(role):

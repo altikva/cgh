@@ -31,7 +31,7 @@ from codegraph.analysis.federation import (
     has_subrepos,
 )
 from codegraph.analysis.terraform import TF_RESOURCE_KINDS
-from codegraph.cli import _get_conn, _short_path, console
+from codegraph.cli import _query_conn, _short_path, console
 from codegraph.cli.owner_client import note_route
 
 # ---------------------------------------------------------------------------
@@ -392,7 +392,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     else:
         # No owner: open the graph read-only. An older owner holds the graph
         # lock, so go straight to the FTS instead of waiting on it.
-        conn = _get_conn(root, readonly=True) if route == "local" else None
+        conn = _query_conn(root) if route == "local" else None
         if conn is None:
             # Graph DB locked (MCP server is running). Fall back to FTS,
             # SQLite supports concurrent readers, so this always works.
@@ -620,7 +620,7 @@ def cmd_lookup(args: argparse.Namespace) -> None:
 
     # No owner: open the graph read-only. An older owner holds the graph
     # lock, so go straight to the FTS instead of waiting on it.
-    conn = _get_conn(root, readonly=True) if route == "local" else None
+    conn = _query_conn(root) if route == "local" else None
     if conn is None:
         # Fallback to FTS when the graph DB is locked by the MCP server
         if route == "older":
@@ -713,7 +713,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
         ]
         warnings = _owner_warnings(served)
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
@@ -805,7 +805,7 @@ def cmd_callees(args: argparse.Namespace) -> None:
         ]
         warnings = _owner_warnings(served)
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
@@ -889,7 +889,7 @@ def cmd_outline(args: argparse.Namespace) -> None:
             if r.get("scope", "parent") == "parent"
         ]
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"

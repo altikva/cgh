@@ -133,12 +133,17 @@ def _receiver_filter(
 ) -> Callable[[str], bool] | None:
     """For the method ``fn_id`` of a class, a test telling whether a caller's
     CALLS edge to it (or to an interface method it implements) can be a
-    call of that class's method. A caller whose every call of the name is
-    on a receiver of a known class (a ``C().f()``, a typed attribute or
-    local, ``self.f()`` in class C), none of them related to the method's
-    class (the class itself, its bases, its subclasses, the interfaces it
-    implements), is rejected: the edge was a guess by name. A receiver of
-    unknown type keeps the caller. None for a plain function."""
+    call of that class's method.
+
+    A caller is rejected only when every call of the name in it is on a
+    receiver whose class is positively known (a ``C().f()``, a typed
+    attribute or local, ``self.f()`` in class C, ``f().m()`` with ``f``
+    annotated ``-> C``) and unrelated to the method's class: not the class
+    itself, a base, a subclass, an interface it implements, nor a class
+    some indexed class composes with it (two mixins of one handler).
+    Anything uncertain keeps the caller: a receiver of unknown type, a call
+    result whose return type is not known, a name that is no class of the
+    repo. None for a plain function."""
     from codegraph.analysis.call_rules import CLS, SELF, class_bases, subclasses
     from codegraph.analysis.interfaces import label
 
@@ -146,27 +151,85 @@ def _receiver_filter(
     if not owner:
         return None
     cls = label(owner)
-    related = set(class_bases(conn, {cls})) | subclasses(conn, {cls})
+    below = subclasses(conn, {cls})
+    related = set(class_bases(conn, {cls})) | below
     related.update(label(resolver.owner(i)) for i in ifaces if resolver.owner(i))
     method = label(fn_id).rsplit(".", 1)[-1]
-    sites: dict[str, list[tuple[str, str, str]]] = {}
+    sites: dict[str, list[tuple[str, str, str, str, str]]] = {}
     for row in conn.call_sites_into([method], [fn_id, *ifaces], ""):
-        from_id, _path, _name, to_id, kind, _hint, ctx = row[:7]
-        sites.setdefault(from_id, []).append((to_id, kind, ctx))
+        from_id, path, _name, to_id, kind, hint, ctx = row[:7]
+        sites.setdefault(from_id, []).append((to_id, kind, ctx, hint, path))
+    verdicts: dict[str, bool] = {}
+    classes: dict[str, bool] = {}
+
+    def is_class(name: str) -> bool:
+        if name not in classes:
+            classes[name] = bool(
+                conn.find_nodes(
+                    "Class", where={"name": name}, return_fields=["id"], limit=1
+                )
+            )
+        return classes[name]
+
+    def is_related(known: str) -> bool:
+        if known not in verdicts:
+            verdicts[known] = (
+                known in related
+                or bool(subclasses(conn, {known}) & below)  # composed with it
+            )
+        return verdicts[known]
 
     def keep(caller: str) -> bool:
-        for to_id, kind, ctx in sites.get(caller, ()):
+        for to_id, kind, ctx, hint, path in sites.get(caller, ()):
             if to_id:
                 return True  # resolved to this very function or interface
             if kind == CLS:
                 known = ctx.rsplit(".", 1)[-1]
+                if known and not is_class(known):
+                    # f().m(): the class f returns, when its annotation says.
+                    known = _returned_class(conn, known, hint, path)
+                    if known and not is_class(known):
+                        known = ""
             elif kind == SELF:
                 known = ctx.partition(":")[0]
             else:
                 return True  # receiver of unknown type
-            if not known or known in related:
+            if not known or is_related(known):
                 return True
         # No site at all: an edge from a parser without call shapes.
         return not sites.get(caller)
 
     return keep
+
+
+def _returned_class(conn, name: str, hint: str, caller_file: str) -> str:
+    """The class the module-level function ``name`` is annotated to return,
+    for an ``f().m()`` receiver: the definition in the file the call's
+    import names (``hint``), else in the caller's own file. "" when none
+    is found, several disagree, or the return is not annotated with one
+    class."""
+    from codegraph.analysis.call_rules import EXTERNAL, real
+    from codegraph.analysis.interfaces import label
+    from codegraph.parsers.python import return_types
+
+    if hint == EXTERNAL:
+        return ""
+    defs = [
+        (str(r.get("file_path") or ""), int(r.get("start_line") or 0))
+        for r in conn.find_nodes(
+            "Function",
+            where={"name": name},
+            return_fields=["id", "file_path", "start_line"],
+        )
+        if label(str(r.get("id") or "")) == name
+    ]
+    defs = [d for d in defs if d[0].endswith((".py", ".pyw", ".pyi"))]
+    if hint:
+        wanted = set(hint.split("|"))
+        defs = [d for d in defs if real(d[0]) in wanted]
+    else:
+        defs = [d for d in defs if d[0] == caller_file]
+    found = {return_types(path).get(line, "") for path, line in defs}
+    if len(found) != 1:
+        return ""
+    return found.pop().rsplit(".", 1)[-1]

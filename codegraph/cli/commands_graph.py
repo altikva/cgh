@@ -14,7 +14,7 @@ from pathlib import Path
 
 from rich.panel import Panel
 
-from codegraph.cli import console
+from codegraph.cli import _query_conn, console
 
 # "explore" is the interactive whole-graph view; the others render a
 # Mermaid diagram, which stays readable only at a few dozen nodes.
@@ -100,7 +100,6 @@ def _fetch_payload_via_owner(root: str, max_symbols: int) -> dict | None:
 
 def cmd_graph(args: argparse.Namespace) -> None:
     """Generate and display a graph visualization."""
-    from codegraph.core.db import get_readonly_connection
     from codegraph.viz import generate_html, open_in_browser
     from codegraph.viz.graphviews import (
         viz_call_graph,
@@ -130,7 +129,7 @@ def cmd_graph(args: argparse.Namespace) -> None:
 
     if mermaid_code is None:
         # Owner not running, open the graph DB directly.
-        conn = get_readonly_connection(root)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"
@@ -199,7 +198,6 @@ def cmd_graph(args: argparse.Namespace) -> None:
 
 def _graph_explore(args: argparse.Namespace, root: str) -> None:
     """The interactive view: whole graph, canvas force layout, in a browser."""
-    from codegraph.core.db import get_readonly_connection
     from codegraph.viz import generate_graph_view_html, open_in_browser
     from codegraph.viz.graphdata import build_graph_payload
 
@@ -213,7 +211,7 @@ def _graph_explore(args: argparse.Namespace, root: str) -> None:
 
     payload = _fetch_payload_via_owner(root, max_symbols)
     if payload is None:
-        conn = get_readonly_connection(root)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"

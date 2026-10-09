@@ -28,6 +28,7 @@ from .base import (
     ImportRef,
     SymbolDef,
     bind_calls,
+    typed_receivers,
 )
 
 PY_LANGUAGE = Language(tsp.language())
@@ -141,6 +142,143 @@ def _receiver(obj: Node, src: bytes) -> str:
     return "?"
 
 
+# Annotations that type nothing a call can be resolved on.
+_UNTYPED = frozenset(
+    {
+        *("Any", "object", "None", "typing.Any", "str", "bytes", "int", "float"),
+        *("bool", "dict", "list", "set", "tuple", "frozenset", "type"),
+    }
+)
+_DOTTED = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*")
+
+
+def _type_name(node: Node | None, src: bytes) -> str:
+    """The class an annotation names: ``T``, ``m.T``, ``"T"``, ``Optional[T]``
+    and ``T | None`` give T; anything else (a container, a union of classes,
+    a callable) gives ""."""
+    if node is None:
+        return ""
+    kind = node.type
+    if kind == "type":
+        named = [c for c in node.children if c.is_named]
+        return _type_name(named[0], src) if len(named) == 1 else ""
+    if kind in ("identifier", "attribute"):
+        text = _text(node, src)
+        ok = _DOTTED.fullmatch(text) and text not in _UNTYPED
+        return text if ok else ""
+    if kind == "string":
+        text = _text(node, src).strip("\"'").strip()
+        return text if _DOTTED.fullmatch(text) and text not in _UNTYPED else ""
+    if kind in ("generic_type", "subscript"):
+        head = node.children[0] if node.children else None
+        if head is None or _text(head, src).rsplit(".", 1)[-1] != "Optional":
+            return ""
+        args = [
+            c
+            for p in node.children[1:]
+            for c in (p.children if p.type == "type_parameter" else [p])
+            if c.is_named
+        ]
+        return _type_name(args[0], src) if len(args) == 1 else ""
+    if kind in ("binary_operator", "union_type"):
+        sides = [c for c in node.children if c.is_named and c.type != "none"]
+        sides = [s for s in sides if _text(s, src) != "None"]
+        return _type_name(sides[0], src) if len(sides) == 1 else ""
+    return ""
+
+
+def _self_attr(node: Node, src: bytes) -> str:
+    """``x`` for a ``self.x`` node, else ""."""
+    if node.type != "attribute":
+        return ""
+    obj = node.child_by_field_name("object")
+    attr = node.child_by_field_name("attribute")
+    if obj is None or attr is None or obj.type != "identifier":
+        return ""
+    return _ident(attr, src) if _ident(obj, src) == "self" else ""
+
+
+def _param_types(fn_node: Node, src: bytes) -> dict[str, str]:
+    """The annotated parameters of a function, as {name: class}."""
+    out: dict[str, str] = {}
+    params = fn_node.child_by_field_name("parameters")
+    for p in params.children if params is not None else ():
+        if p.type not in ("typed_parameter", "typed_default_parameter"):
+            continue
+        name = p.child_by_field_name("name")
+        if name is None:
+            name = next((c for c in p.children if c.type == "identifier"), None)
+        if name is not None:
+            out[_ident(name, src)] = _type_name(p.child_by_field_name("type"), src)
+    return out
+
+
+def _attr_types(body: Node, src: bytes) -> dict[str, str]:
+    """The class of each instance attribute a class body types without doubt.
+
+    Read from class-level annotations (``x: T``) and, in every method, from
+    ``self.x: T = ...``, ``self.x = T(...)`` (a capitalised callee) and
+    ``self.x = param`` where ``param`` is annotated. An attribute assigned
+    anything else (other than None), or two different classes, stays untyped.
+    """
+    seen: dict[str, set[str]] = {}
+
+    def note(attr: str, cls: str) -> None:
+        seen.setdefault(attr, set()).add(cls or "?")
+
+    def walk(n: Node, params: dict[str, str]) -> None:
+        if n.type == "class_definition":
+            return
+        if n.type == "assignment":
+            left = n.child_by_field_name("left")
+            attr = _self_attr(left, src) if left is not None else ""
+            if attr:
+                ann = n.child_by_field_name("type")
+                right = n.child_by_field_name("right")
+                if ann is not None:
+                    note(attr, _type_name(ann, src))
+                elif right is None or right.type == "none":
+                    pass
+                elif right.type == "call":
+                    fn = right.child_by_field_name("function")
+                    name = _text(fn, src) if fn is not None else ""
+                    last = name.rsplit(".", 1)[-1]
+                    typed = _DOTTED.fullmatch(name) and last[:1].isupper()
+                    note(attr, name if typed else "")
+                elif right.type == "identifier":
+                    note(attr, params.get(_ident(right, src), ""))
+                else:
+                    note(attr, "")
+            elif left is not None and left.type == "pattern_list":
+                for item in left.children:
+                    if _self_attr(item, src):
+                        note(_self_attr(item, src), "")
+        for child in n.children:
+            walk(child, params)
+
+    for child in body.children:
+        node = child
+        if node.type == "decorated_definition":
+            node = _first_child_of_type(node, "function_definition") or node
+        if node.type == "function_definition":
+            fn_body = node.child_by_field_name("body")
+            if fn_body is not None:
+                walk(fn_body, _param_types(node, src))
+        elif node.type == "expression_statement":
+            for stmt in node.children:
+                if stmt.type != "assignment":
+                    continue
+                left = stmt.child_by_field_name("left")
+                ann = stmt.child_by_field_name("type")
+                if left is not None and left.type == "identifier" and ann is not None:
+                    note(_ident(left, src), _type_name(ann, src))
+    return {
+        attr: next(iter(classes))
+        for attr, classes in seen.items()
+        if len(classes) == 1 and "?" not in classes
+    }
+
+
 def _collect_calls(
     node: Node, src: bytes
 ) -> tuple[list[str], list[tuple[str, str]], Bindings]:
@@ -213,6 +351,8 @@ class PythonParser(BaseParser):
         # is read, since an import may follow the function that uses it.
         module_bindings: Bindings = {}
         pending: list[tuple[SymbolDef, list[tuple[str, str]], Bindings]] = []
+        # Per class name, the classes of its typed instance attributes.
+        attr_types: dict[str, dict[str, str]] = {}
 
         def _visit(node: Node, current_class: str | None = None) -> None:
             if node.type in ("import_statement", "import_from_statement"):
@@ -295,6 +435,10 @@ class PythonParser(BaseParser):
                         kind="class",
                     )
                 )
+                if body_node:
+                    # Two classes of one name in a file: neither is typed.
+                    types = _attr_types(body_node, src)
+                    attr_types[name] = {} if name in attr_types else types
                 # Recurse into class body with class context
                 if body_node:
                     for child in body_node.children:
@@ -348,5 +492,9 @@ class PythonParser(BaseParser):
             _visit(child)
 
         for fn, raw_calls, local_bindings in pending:
+            if fn.class_name:
+                raw_calls = typed_receivers(
+                    raw_calls, attr_types.get(fn.class_name, {}), "self"
+                )
             fn.call_refs = bind_calls(raw_calls, {**module_bindings, **local_bindings})
         return index

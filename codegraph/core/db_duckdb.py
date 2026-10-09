@@ -425,6 +425,45 @@ class DuckDBGraphDB:
                     bases.setdefault(fn_id, set()).add(base)
         return [(*row, tuple(sorted(bases.get(row[0], ())))) for row in found.values()]
 
+    def class_bases_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM "class" c '
+                "JOIN name_ref r ON r.from_id = c.id AND r.kind = 'inherits' "
+                f"WHERE c.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def class_children_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 100):
+            ph = ", ".join("?" for _ in chunk)
+            like = " OR ".join("r.name LIKE ?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM name_ref r JOIN "class" c '
+                "ON c.id = r.from_id WHERE r.kind = 'inherits' "
+                f"AND (r.name IN ({ph}) OR {like})",
+                [*chunk, *(f"%.{n}" for n in chunk)],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def call_site_names_on(self, classes: list[str]) -> list[str]:
+        out: set[str] = set()
+        for chunk in _chunks(sorted(set(classes))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT name FROM call_site "
+                f"WHERE to_id = '' AND kind = 'cls' AND ctx IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.update(r[0] for r in rows)
+        return sorted(out)
+
     def function_names_in(self, file_path: str) -> list[str]:
         rows = self._conn.execute(
             "SELECT DISTINCT name FROM function WHERE file_path = ?", [file_path]

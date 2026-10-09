@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
@@ -185,6 +186,38 @@ def _type_name(node: Node | None, src: bytes) -> str:
         sides = [s for s in sides if _text(s, src) != "None"]
         return _type_name(sides[0], src) if len(sides) == 1 else ""
     return ""
+
+
+def return_types(path: str) -> dict[int, str]:
+    """{start line: class} of every function of a Python file whose return
+    annotation names one class (see _type_name). Read at query time to type
+    an ``f().m()`` receiver whose ``f`` another file defines; empty when
+    the file cannot be read."""
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return {}
+    return _return_types(path, stat.st_mtime_ns, stat.st_size)
+
+
+@functools.lru_cache(maxsize=256)
+def _return_types(path: str, _mtime: int, _size: int) -> dict[int, str]:
+    try:
+        src = Path(path).read_bytes()
+    except OSError:
+        return {}
+    out: dict[int, str] = {}
+
+    def walk(n: Node) -> None:
+        if n.type == "function_definition":
+            cls = _type_name(n.child_by_field_name("return_type"), src)
+            if cls:
+                out[n.start_point[0] + 1] = cls
+        for child in n.children:
+            walk(child)
+
+    walk(_parser.parse(src).root_node)
+    return out
 
 
 def _self_attr(node: Node, src: bytes) -> str:

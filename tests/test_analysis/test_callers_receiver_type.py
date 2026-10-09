@@ -11,7 +11,10 @@
 #              factory returns, or on an attribute built from a library class
 #              imported inside __init__ used to be listed under every method of
 #              the name. A call through the Protocol stays listed with `via`,
-#              and a receiver of unknown type stays listed.
+#              and a receiver of unknown type stays listed. The filter never
+#              drops on uncertainty: a factory result is typed by its return
+#              annotation (imported or local), an unannotated one or a fixture
+#              is kept, and a self call reaches a sibling mixin's method.
 
 from __future__ import annotations
 
@@ -99,7 +102,64 @@ REPO = {
         "    client = InMemoryKmsClient()\n"
         "    await client.ensure_crypto_key('k')\n\n\n"
         "async def test_unknown_receiver(client):\n"
-        "    await client.destroy_crypto_key('k')\n"
+        "    await client.destroy_crypto_key('k')\n\n\n"
+        "def _google_client(fake) -> GoogleKmsClient:\n"
+        "    client = GoogleKmsClient()\n"
+        "    client._client = fake\n"
+        "    return client\n\n\n"
+        "async def test_google_helper_ensure_key():\n"
+        "    await _google_client(object()).ensure_crypto_key('k')\n\n\n"
+        "async def test_fixture_ensure_key(kms_fixture):\n"
+        "    await kms_fixture.ensure_crypto_key('k')\n"
+    ),
+    "app/bus.py": (
+        "class EventBus:\n"
+        "    async def publish(self, name: str) -> None:\n"
+        "        return None\n\n"
+        "    def subscribe(self, name: str, fn) -> None:\n"
+        "        return None\n\n\n"
+        "class AfterCommitEventBus(EventBus):\n"
+        "    async def publish(self, name: str) -> None:\n"
+        "        return None\n\n\n"
+        "class AuditLog:\n"
+        "    async def publish(self, name: str) -> None:\n"
+        "        return None\n"
+    ),
+    "app/deps.py": (
+        "from typing import Optional\n\n"
+        "from app.bus import AuditLog, EventBus\n\n\n"
+        "def get_event_bus() -> EventBus:\n"
+        "    return EventBus()\n\n\n"
+        "def maybe_bus() -> Optional[EventBus]:\n"
+        "    return None\n\n\n"
+        "def get_audit_log() -> 'AuditLog':\n"
+        "    return AuditLog()\n\n\n"
+        "def make_anything():\n"
+        "    return AuditLog()\n"
+    ),
+    "app/handler.py": (
+        "class CheckoutMixin:\n"
+        "    def _site_origins(self) -> set:\n"
+        "        return set()\n\n\n"
+        "class PaymentsMixin:\n"
+        "    def create_portal_session(self) -> set:\n"
+        "        return self._site_origins()\n\n\n"
+        "class Handler(CheckoutMixin, PaymentsMixin):\n"
+        "    pass\n"
+    ),
+    "tests/test_bus.py": (
+        "from app.deps import get_audit_log, get_event_bus, make_anything, maybe_bus\n\n\n"
+        "async def test_factory_publish():\n"
+        "    await get_event_bus().publish('x')\n\n\n"
+        "async def test_optional_factory_publish():\n"
+        "    await maybe_bus().publish('x')\n\n\n"
+        "async def test_audit_publish():\n"
+        "    await get_audit_log().publish('x')\n\n\n"
+        "async def test_unannotated_factory_publish():\n"
+        "    await make_anything().publish('x')\n\n\n"
+        "def test_local_import_subscribe():\n"
+        "    from app.deps import get_event_bus as bus\n\n"
+        "    bus().subscribe('x', print)\n"
     ),
 }
 
@@ -166,8 +226,56 @@ def test_constructor_of_another_implementation_is_dropped(repo):
         repo, "GoogleKmsClient.ensure_crypto_key"
     )
     assert _rows(repo, "GoogleKmsClient.ensure_crypto_key") == {
-        "test_google_ensure_key": None
+        "test_google_ensure_key": None,
+        "test_google_helper_ensure_key": None,
+        "test_fixture_ensure_key": None,
     }
+
+
+def test_test_helper_returning_an_implementation_types_the_receiver(repo):
+    # _google_client(...) is annotated -> GoogleKmsClient in the test file.
+    assert "test_google_helper_ensure_key" in _rows(
+        repo, "GoogleKmsClient.ensure_crypto_key"
+    )
+    assert "test_google_helper_ensure_key" not in _rows(
+        repo, "InMemoryKmsClient.ensure_crypto_key"
+    )
+
+
+def test_fixture_receiver_is_kept(repo):
+    for name in (
+        "InMemoryKmsClient.ensure_crypto_key",
+        "GoogleKmsClient.ensure_crypto_key",
+        "KmsClient.ensure_crypto_key",
+    ):
+        assert "test_fixture_ensure_key" in _rows(repo, name), name
+
+
+def test_imported_factory_return_annotation_types_the_receiver(repo):
+    # get_event_bus() -> EventBus, maybe_bus() -> Optional[EventBus].
+    for name in ("EventBus.publish", "AfterCommitEventBus.publish"):
+        rows = _rows(repo, name)
+        assert "test_factory_publish" in rows, (name, rows)
+        assert "test_optional_factory_publish" in rows, (name, rows)
+        assert "test_audit_publish" not in rows, (name, rows)
+    audit = _rows(repo, "AuditLog.publish")
+    assert "test_audit_publish" in audit
+    assert "test_factory_publish" not in audit
+    assert "test_optional_factory_publish" not in audit
+    # Imported inside the test body, under an alias.
+    assert "test_local_import_subscribe" in _rows(repo, "EventBus.subscribe")
+
+
+def test_unannotated_factory_receiver_is_kept(repo):
+    for name in ("EventBus.publish", "AfterCommitEventBus.publish", "AuditLog.publish"):
+        assert "test_unannotated_factory_publish" in _rows(repo, name), name
+
+
+def test_self_call_reaches_a_sibling_mixin(repo):
+    # Handler(CheckoutMixin, PaymentsMixin): PaymentsMixin's self call
+    # lands on CheckoutMixin's method in every Handler.
+    rows = _rows(repo, "CheckoutMixin._site_origins")
+    assert "create_portal_session" in rows
 
 
 def test_known_unrelated_receiver_class_is_dropped_at_query_time(repo):

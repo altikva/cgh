@@ -20,7 +20,7 @@ import argparse
 import os
 from pathlib import Path
 
-from codegraph.cli import _get_conn, _short_path, console
+from codegraph.cli import _query_conn, _short_path, console
 
 
 def register_files_parser(sub) -> None:
@@ -107,7 +107,7 @@ def _is_indexed(root: Path, abspath: str) -> bool | None:
     route, served = _ask_owner(root, {"path": abspath})
     if route == "owner" and "indexed" in served:
         return bool(served["indexed"])
-    conn = _get_conn(str(root), readonly=True) if route == "local" else None
+    conn = _query_conn(str(root)) if route == "local" else None
     if conn is not None:
         try:
             return conn.query_node_field("File", "path", abspath, "path") is not None
@@ -154,7 +154,7 @@ def _list(root: Path, pattern: str, limit: int) -> None:
     if route == "owner" and "total" in served:
         _print_list(root, served.get("files") or [], served["total"], limit, source)
         return
-    conn = _get_conn(str(root), readonly=True) if route == "local" else None
+    conn = _query_conn(str(root)) if route == "local" else None
     if conn is not None:
         try:
             contains = {"path": pattern} if pattern else None

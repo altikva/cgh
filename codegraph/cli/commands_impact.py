@@ -320,7 +320,15 @@ def _report_via_local_open(
     error is folded into the failure message. Returns None after _fail."""
     from codegraph.cli.owner_client import stuck_owner_hint
     from codegraph.core.db import get_readonly_connection
+    from codegraph.state.scan_meta import outdated_store_message
 
+    # A store from an older graph format lacks edges a re-parse adds: its
+    # report would be silently incomplete, so refuse it (an owner re-parses
+    # on start, so only this local path checks).
+    outdated = outdated_store_message(root)
+    if outdated:
+        _fail(want_json, outdated)
+        return None
     try:
         conn = get_readonly_connection(root)
     except Exception as exc:

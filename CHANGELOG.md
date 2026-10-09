@@ -69,20 +69,28 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
-- **A query on an index from an older cgh crashed before the first
-  reindex.** `cgh lookup` or `cgh search` right after upgrading printed a
-  database error (a missing `tf_resource` column). It now says to run
-  `cgh index` once; an MCP owner already upgrades the index when it starts.
+- **A query on an index from an older cgh crashed or answered short before
+  the first reindex.** `cgh lookup` or `cgh search` right after upgrading
+  printed a database error (a missing `tf_resource` column), and `cgh
+  callers`, `callees` and `impact` silently answered from the old graph
+  (8 callers instead of 11). Every graph query answering without an owner
+  now checks the recorded graph format first and, on an older one, says
+  to run `cgh index` once and exits 1; an MCP owner already upgrades the
+  index when it starts.
 - **`cgh callers Class.method` listed calls on other classes.** A call on
   a local built from a sibling implementation (`kms = InMemoryKmsClient()`),
   on an object a typed factory returns (`fernet = _get_fernet()`, a
   `MultiFernet`), or on an attribute built from a library class imported
   inside `__init__` was linked to every method of the name. Python calls
   on such locals and attributes now resolve to their class (no edge for a
-  library class), and a `Class.method` query drops the callers whose
-  receiver is known to be of an unrelated class. Calls through an
-  interface and on receivers of unknown type are still listed. The first
-  index after upgrading re-parses the repo once.
+  library class), and a `Class.method` query drops a caller only when its
+  receiver's class is known and unrelated (not the class, a base, a
+  subclass, an interface it implements, or a mixin composed with it in
+  some class). Calls through an interface, on a call result whose return
+  type is not annotated, and on receivers of unknown type are still
+  listed; `get_event_bus().publish()` is typed by the factory's `-> EventBus`
+  annotation, imported or not. The first index after upgrading re-parses
+  the repo once.
 - **`cgh status` called a copied `.codegraph` fresh.** Until the next
   index, a store copied from another checkout answered with the old tree's
   paths while status said `fresh`. `cgh status` (state `copied`,
@@ -137,7 +145,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   The blast radius is the callers of the changed symbols, plus the file's
   direct importers when a class changed (a one-line edit of a method in
   ondonne-api's `donation_manager.py` marked 37 symbols and 210 impacted
-  files before). A change outside any symbol keeps the whole-file radius. Changed lines are read
+  files before). The tests to run and the endpoints follow the same walk:
+  the tests and route handlers that reach a changed symbol, not every test
+  importing the file or every route of a router file holding a caller
+  (that edit: 14 tests and 11 endpoints before, 3 and 1 now). A change
+  outside any symbol keeps the whole-file radius. Changed lines are read
   from the same diff as the file list, so uncommitted edits are precise
   too; a `.tf` edit not yet committed used to count as a whole-file change
   (one module argument of ondonne-infra's `module.kms`: 8 entries marked

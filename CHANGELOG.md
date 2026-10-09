@@ -69,6 +69,34 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   line in ondonne-infra's staging `kms.tf`: 29 files before, 6 now), and
   lists contracts entries that mention a changed address under `related`.
   `impact_of` on a `.tf` path is block-precise too.
+- **`cgh add-dir` printed success and wrote nothing** when config.toml had
+  no `[codegraph]` table, or only the commented `extra_dirs` line of the
+  default template. `add-dir`, `add_directory`, `federate add/remove` and
+  `clean --drop-extra-dirs` now edit the key in place: the table is created
+  when missing, comments and other tables are kept, and a write that does
+  not read back fails with an error instead of a success line. `federate`
+  no longer rewrites the whole file, which used to drop comments and break
+  nested tables such as `[plugin.codegen]`.
+- **A copied `.codegraph` kept the old root's nodes.** `cgh index` on a
+  store built in another directory upserted the new paths beside the old
+  ones, so every caller showed up twice. Every index entry point now
+  rebuilds from scratch when the recorded root differs, or when a store
+  without one holds files outside the root and its extra dirs.
+- **`cgh impact` marked every symbol of a changed code file.** The diff
+  hunks now select the functions and classes they touch (a one-line edit
+  of a method in ondonne-api's `donation_manager.py`: 37 symbols and 210
+  impacted files before, 2 and 30 now), and the blast radius of such a change is the
+  file's direct importers plus the callers of those symbols. A change
+  outside any symbol keeps the whole-file radius. Changed lines are read
+  from the same diff as the file list, so uncommitted edits are precise
+  too; a `.tf` edit not yet committed used to count as a whole-file change
+  (one module argument of ondonne-infra's `module.kms`: 8 entries marked
+  changed before, the call and that argument now).
+- **A full index hashed untracked and extra-dir files one subprocess at a
+  time, and searched the text index without an index on the file path.**
+  Both are batched or indexed now, with the same graph: ondonne-api
+  indexes in 117 s instead of 130 s, ondonne-infra with gcp-modules in
+  4.7 s instead of 6.3 s.
 - **A federated worktree could read another ticket's branch.** When a repo
   is a linked git worktree, federation replaced each configured child with a
   worktree of that child sitting in the same directory. In a layout where all

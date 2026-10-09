@@ -178,6 +178,9 @@ def get_fts_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
             docstring   TEXT NOT NULL DEFAULT ''
         )
     """)
+    # Every reindex of a file deletes its rows by path: without this index
+    # each delete scans the whole table, quadratic over a full index.
+    conn.execute("CREATE INDEX IF NOT EXISTS symbols_file_path ON symbols(file_path)")
     # The trigram indexes (symbols_tri etc.) split identifiers into 3-grams
     # so a fragment inside an identifier ("andl" in DonationHandler) matches
     # where the word tokenizer never emits it; fts_search fuses the two with

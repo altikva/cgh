@@ -180,14 +180,17 @@ def register(mcp) -> None:
         List HTTP endpoints in the codebase.
 
         Optional filters:
-          path_pattern, a path or glob: "/v1/donations/{id}/cancel",
-            "*/donations*", "/api/stats/*". Matched against each route's
-            full paths (router prefixes and include_router / blueprint
-            prefixes composed), then its local path; parameter names are
-            ignored. A path starting with "/" that matches nothing falls
-            back to routes whose local path is a suffix of it, flagged
-            match: "suffix" (several routers may hold that local path).
-          method, GET / POST / PUT / PATCH / DELETE (case-insensitive)
+          path_pattern, a path, concrete URL or glob:
+            "/v1/donations/{id}/cancel", "/v1/donations/123/cancel",
+            "*/donations*". Matched against each route's full paths (router
+            prefixes and include_router / blueprint prefixes composed), or
+            its local path when it has none; parameter names are ignored, a
+            {p:path} catch-all takes the rest of the path, on an exact match
+            only, and ranks after a more specific route. A path starting with "/" that matches
+            nothing falls back to the routes it is a suffix of
+            ("/donations/{id}/cancel"), flagged match: "suffix".
+          method, GET / POST / PUT / PATCH / DELETE (case-insensitive);
+            routes declared for ANY method always pass
           include_tests, also list routes declared in test files (left out
             by default, counted in tests_excluded)
 

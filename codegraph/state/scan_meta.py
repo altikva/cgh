@@ -293,8 +293,9 @@ def foreign_root(meta: dict | None, repo_root: str | Path) -> str:
 def copied_store_message(repo_root: str | Path) -> str:
     """The refusal to print when the store under ``repo_root`` was copied
     from another checkout, else "". For commands that look a file up by its
-    path (impact, outline, files --check): the store holds the old tree's
-    paths, so every lookup misses and the answer would be silently empty."""
+    path (impact, outline, files --check) or answers with one (endpoints):
+    the store holds the old tree's paths, so every lookup misses and the
+    answer would be silently empty or point at the other tree."""
     try:
         old = foreign_root(read_meta(repo_root), repo_root)
     except Exception:  # best-effort probe: never block a command on it

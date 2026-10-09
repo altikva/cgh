@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from codegraph.analysis.endpoint_query import FullPathIndex
+
 # Hard caps so a pathological graph never produces an unbounded result.
 TEST_ROLE = "test"
 _FANOUT_CAP = 500
@@ -503,9 +505,12 @@ def _endpoint_row(fp: str, e: dict, side: str) -> dict[str, Any] | None:
     }
 
 
-def endpoints_of_functions(conn: Any, fn_ids: list[str]) -> list[dict[str, Any]]:
+def endpoints_of_functions(
+    conn: Any, fn_ids: list[str], full_paths: FullPathIndex | None = None
+) -> list[dict[str, Any]]:
     """Endpoints whose handler (IMPLEMENTED_BY) is one of ``fn_ids``, as
     endpoints_in_files rows: the routes a symbol-level change reaches."""
+    full_paths = full_paths or FullPathIndex(conn)
     seen: set[tuple] = set()
     out: list[dict[str, Any]] = []
     for fid in fn_ids:
@@ -520,16 +525,22 @@ def endpoints_of_functions(conn: Any, fn_ids: list[str]) -> list[dict[str, Any]]
             key = (row["file"], row["method"], row["path"], row["line"])
             if key not in seen:
                 seen.add(key)
+                row["full_paths"] = full_paths.get(*key)
                 out.append(row)
     return out
 
 
-def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, Any]]:
+def endpoints_in_files(
+    conn: Any, files: list[str], full_paths: FullPathIndex | None = None
+) -> list[dict[str, Any]]:
     """Endpoints declared (DEFINES_ENDPOINT) in any of ``files``, outside
     test files.
 
-    Returns ``[{file, method, path, line}]``, de-duplicated.
+    Returns ``[{file, method, path, line, full_paths}]``, de-duplicated.
+    ``full_paths`` is composed as the endpoints query does; pass one
+    FullPathIndex to every call of a run so it is composed once.
     """
+    full_paths = full_paths or FullPathIndex(conn)
     seen: set[tuple] = set()
     out: list[dict[str, Any]] = []
     for fp in files:
@@ -545,6 +556,7 @@ def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
+            row["full_paths"] = full_paths.get(*key)
             out.append(row)
     return out
 
@@ -770,14 +782,21 @@ def build_impact_report(
     by_file += [p for p in radius if p in file_level]
     seen_ep: set[tuple] = set()
     endpoints: list[dict] = []
-    for e in endpoints_in_files(conn, by_file) + endpoints_of_functions(
-        conn, sorted(set(symbol_ids) | reached)
+    route_paths = FullPathIndex(conn)
+    for e in endpoints_in_files(conn, by_file, route_paths) + endpoints_of_functions(
+        conn, sorted(set(symbol_ids) | reached), route_paths
     ):
         key = (_rel(e["file"]), e["method"], e["path"], e["line"])
         if key not in seen_ep:
             seen_ep.add(key)
             endpoints.append(
-                {"file": key[0], "method": key[1], "path": key[2], "line": key[3]}
+                {
+                    "file": key[0],
+                    "method": key[1],
+                    "path": key[2],
+                    "line": key[3],
+                    "full_paths": e["full_paths"],
+                }
             )
 
     # Tests to run: the test files that import a file changed at module level

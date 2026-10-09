@@ -667,7 +667,7 @@ def _callers_conn(conn, fn_name: str) -> list[tuple]:
     from codegraph.analysis.callers import callers_of
 
     return [
-        (c["caller"], c["file"], c["line"], c.get("targets", []))
+        (c["caller"], c["file"], c["line"], c.get("targets", []), c.get("via", ""))
         for c in callers_of(conn, fn_name)
     ]
 
@@ -687,6 +687,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 c["file"],
                 c["line"],
                 c.get("targets", []),
+                c.get("via", ""),
             )
             for c in served.get("callers") or []
         ]
@@ -720,8 +721,8 @@ def cmd_callers(args: argparse.Namespace) -> None:
     # unreadable (thousands of lines), so callers are grouped under each
     # distinct list instead, printed once.
     groups: dict[tuple, list[tuple]] = {}
-    for scope, name, fp, line, targets in rows:
-        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line))
+    for scope, name, fp, line, targets, via in rows:
+        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line, via))
     for targets, members in groups.items():
         branch = tree
         if targets:
@@ -730,12 +731,16 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 + ", ".join(_short_path(t, root) for t in targets)
                 + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
             )
-        for scope, name, fp, line in members:
+        for scope, name, fp, line, via in members:
             short = _short_path(fp, root)
             scope_tag = (
                 f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
             )
-            branch.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{scope_tag}")
+            # Reached through an interface method the queried one implements.
+            via_tag = f"  [dim]via {via}[/dim]" if via else ""
+            branch.add(
+                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via_tag}{scope_tag}"
+            )
     console.print(tree)
 
 

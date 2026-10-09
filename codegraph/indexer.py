@@ -877,7 +877,7 @@ def _ingest_terraform(
     sources = _tf.ModuleSources.from_config(cfg, root)
     _tf.ingest_blocks(conn, idx.resources, sources)
     for directory in _tf.external_module_dirs(idx.resources, sources):
-        _tf.ingest_external_module(conn, directory)
+        _tf.ingest_external_module(conn, directory, sources)
     refs = _tf.ref_rows(idx.resources, sources)
     _tf.resolve_outbound(conn, refs)
     return refs
@@ -1715,7 +1715,11 @@ def _purge_fts_orphans(repo_root: Path, activity_log) -> int:
 
 
 def _index_extra_dirs(
-    repo_root: Path, stats: dict, activity_log, reparse: bool = False
+    repo_root: Path,
+    stats: dict,
+    activity_log,
+    reparse: bool = False,
+    tf_reparse: bool = False,
 ) -> list[str]:
     """Index the sibling directories declared in config.toml. A
     malformed config must not silently shrink coverage."""
@@ -1760,7 +1764,7 @@ def _index_extra_dirs(
                     full_path,
                     repo_root,
                     git_blob_sha=shas.get(str(full_path)),
-                    reparse=reparse,
+                    reparse=reparse or (tf_reparse and _is_terraform(full_path)),
                 )
                 if ok:
                     stats["indexed"] += 1
@@ -1769,6 +1773,73 @@ def _index_extra_dirs(
             except Exception:
                 stats["errors"] += 1
     return extra_dirs
+
+
+def _is_terraform(path: Path | str) -> bool:
+    return str(path).endswith((".tf", ".tfvars"))
+
+
+def _module_sources_reparse(repo_root: Path, cfg, reparse: bool, activity_log) -> bool:
+    """Whether this run parses the Terraform files again because the
+    [terraform] module_sources mapping, or a commit one of its pinned refs
+    resolves to, changed since the last scan (scan_meta keeps the
+    fingerprint). Then, and on a full re-parse, the module blocks read from
+    outside the index are dropped first so they are read again under the
+    current mapping. Errors count as no change."""
+    from codegraph.analysis import terraform as _tf
+
+    try:
+        changed = not reparse and module_sources_changed(repo_root, cfg)
+        if changed or reparse:
+            dropped = _tf.purge_external_modules(get_connection(repo_root))
+            if changed:
+                activity_log(
+                    repo_root,
+                    "module_sources_changed",
+                    f"re-parsing Terraform files, dropped {dropped} module files",
+                )
+        return changed
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"module_sources check failed: {exc}")
+        return False
+
+
+def module_sources_changed(repo_root: str | Path, cfg=None) -> bool:
+    """True when the module_sources fingerprint scan_meta recorded differs
+    from the current one (mapping edited, a pinned ref moved, appeared or
+    vanished). No scan record counts as unchanged: a first index parses
+    everything anyway."""
+    from codegraph.analysis.terraform import module_sources_fingerprint
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import read_meta
+
+    meta = read_meta(repo_root)
+    if meta is None:
+        return False
+    stored = meta.get("module_sources") or {}
+    if cfg is None:
+        cfg = load_config(repo_root)
+    current = module_sources_fingerprint(cfg, repo_root, stored.get("pinned") or [])
+    return current != (stored.get("fingerprint") or "")
+
+
+def _record_module_sources(repo_root: Path, activity_log) -> None:
+    """Store what module_sources resolves to now in scan_meta (fingerprint,
+    pinned refs, per mapping the refs found and missing), and log a
+    warning per missing ref."""
+    from codegraph.analysis import terraform as _tf
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import record_module_sources
+
+    try:
+        state = _tf.module_sources_report(
+            get_connection(repo_root), load_config(repo_root), repo_root
+        )
+        record_module_sources(repo_root, state)
+        for notice in _tf.module_sources_notices(state):
+            activity_log(repo_root, "module_sources_ref_missing", notice)
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"module_sources report failed: {exc}")
 
 
 def _is_graph_corrupt(exc: BaseException) -> bool:
@@ -2095,6 +2166,7 @@ def _index_repo(
 
     scan_cfg = _load_config(repo_root)
     parseable = _filter_parseable(candidates, scan_cfg, stats)
+    tf_reparse = _module_sources_reparse(repo_root, scan_cfg, reparse, _activity_log)
 
     if on_discovery:
         on_discovery(len(parseable), actual_method)
@@ -2126,7 +2198,11 @@ def _index_repo(
         if sha is None:
             sha = _git_hash(repo_root, full_path)
         ok = index_file(
-            full_path, repo_root, git_blob_sha=sha, cfg=scan_cfg, reparse=reparse
+            full_path,
+            repo_root,
+            git_blob_sha=sha,
+            cfg=scan_cfg,
+            reparse=reparse or (tf_reparse and _is_terraform(full_path)),
         )
         status = "indexed" if ok else "error"
         if ok:
@@ -2146,7 +2222,7 @@ def _index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log, reparse)
+    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log, reparse, tf_reparse)
     repaired = _reparse_unstamped(repo_root, _activity_log)
     if repaired:
         stats["older_writer_reparsed"] = len(repaired)
@@ -2170,6 +2246,7 @@ def _index_repo(
         write_meta(repo_root, stats)
     except Exception:
         pass
+    _record_module_sources(repo_root, _activity_log)
 
     _activity_log(
         repo_root,
@@ -2261,6 +2338,18 @@ def _incremental_reindex(
 
     if graph_format_outdated(repo_root):
         _activity_log(repo_root, "incremental_fallback", "graph format upgrade")
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
+    # A changed module_sources mapping or pinned ref: the full walk parses
+    # the Terraform files again (the others stay skipped by mtime).
+    try:
+        tf_changed = module_sources_changed(repo_root)
+    except Exception:
+        tf_changed = False
+    if tf_changed:
+        _activity_log(repo_root, "incremental_fallback", "module_sources changed")
         return {
             "mode": "fallback_full",
             **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
@@ -2445,6 +2534,7 @@ def _incremental_reindex(
         )
     except Exception:
         pass
+    _record_module_sources(repo_root, _activity_log)
 
     _activity_log(
         repo_root,

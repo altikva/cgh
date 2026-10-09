@@ -171,3 +171,71 @@ def test_extra_dir_outside_the_root_is_not_foreign(tmp_path, backend):
     index_repo(root, method="os_walk")
     clear_meta(root)
     assert _foreign_root(root) == ""
+
+
+def _status(root: Path, capsys, as_json: bool) -> str:
+    import argparse
+
+    from codegraph.cli import commands_monitor
+
+    commands_monitor.console.width = 300
+    commands_monitor.cmd_status(
+        argparse.Namespace(root=str(root), json=as_json, refresh=False, workers=False)
+    )
+    return capsys.readouterr().out
+
+
+def test_status_flags_a_copied_store_before_the_next_index(tmp_path, backend, capsys):
+    # Before, status read the copied record's git HEAD and said "fresh" while
+    # every answer pointed at the old tree.
+    import json
+
+    from codegraph.state.scan_meta import scan_status
+
+    old, new = _copy(tmp_path)
+    ss = scan_status(new)
+    assert ss["state"] == "copied" and ss["fresh"] is False
+    assert ss["copied_from"] == str(old)
+    scan = json.loads(_status(new, capsys, as_json=True))["scan"]
+    assert scan["state"] == "copied" and scan["copied_from"] == str(old)
+    row = next(
+        ln for ln in _status(new, capsys, as_json=False).splitlines() if "Scan" in ln
+    )
+    assert "copied" in row and "fresh" not in row and "cgh index" in row
+    index_repo(new)
+    assert scan_status(new)["copied_from"] is None
+
+
+def test_doctor_flags_a_copied_store(tmp_path, backend, capsys, monkeypatch):
+    import argparse
+
+    from codegraph.cli import commands_monitor
+
+    old, new = _copy(tmp_path)
+    monkeypatch.setattr(commands_monitor.console, "width", 300)
+    commands_monitor.cmd_doctor(argparse.Namespace(root=str(new), strict=False))
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if "was built at" in ln)
+    assert str(old) in line and "cgh index" in line
+
+
+def test_query_commands_warn_on_stderr(tmp_path, backend, capsys):
+    from codegraph.cli.commands_query import _warn_if_copied
+
+    old, new = _copy(tmp_path)
+    _warn_if_copied(str(new))
+    assert str(old) in capsys.readouterr().err
+    _warn_if_copied(str(old))
+    assert capsys.readouterr().err == ""
+
+
+def test_seeded_worktree_is_not_flagged_as_copied(tmp_path, backend, capsys):
+    import json
+
+    from codegraph.state.scan_meta import scan_status
+
+    _seed_root, ticket = _seed(tmp_path)
+    ss = scan_status(ticket)
+    assert ss["copied_from"] is None and ss["state"] != "copied"
+    scan = json.loads(_status(ticket, capsys, as_json=True))["scan"]
+    assert scan["copied_from"] is None and scan["state"] != "copied"

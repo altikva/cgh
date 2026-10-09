@@ -17,6 +17,7 @@ from pathlib import Path
 from rich import box
 from rich.console import Group
 from rich.live import Live
+from rich.markup import escape as _escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -153,12 +154,17 @@ def _stats_content(root: str) -> Group:
 
     # Scan freshness banner
     try:
-        from codegraph.state.scan_meta import format_notice
+        from codegraph.state.scan_meta import copied_notice, format_notice
         from codegraph.state.scan_meta import scan_status as _scan_status
 
         ss = _scan_status(root)
         outdated = format_notice(ss)
-        if outdated:
+        copied = copied_notice(ss)
+        if copied:
+            renderables.append(
+                Text.from_markup(f"[yellow]copied[/yellow], {_escape(copied)}")
+            )
+        elif outdated:
             word = "reindexing" if ss.get("indexing") else "outdated"
             renderables.append(Text.from_markup(f"[yellow]{word}[/yellow], {outdated}"))
         elif ss.get("indexed_sha"):
@@ -489,8 +495,11 @@ def _scan_line(scan: dict, ss: dict) -> str:
     """
     when = _format_indexed_at(scan.get("indexed_at"))
     when_suffix = f"  [dim]· {when}[/dim]" if when else ""
-    from codegraph.state.scan_meta import format_notice
+    from codegraph.state.scan_meta import copied_notice, format_notice
 
+    copied = copied_notice(ss)
+    if copied:
+        return f"[yellow]copied[/yellow]  {_escape(copied)}{when_suffix}"
     notice = format_notice(ss)
     if notice:
         word = "reindexing" if ss.get("indexing") else "outdated"
@@ -707,6 +716,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             "graph_format": ss.get("graph_format"),
             "graph_format_current": ss.get("graph_format_current"),
             "format_outdated": ss.get("format_outdated"),
+            "copied_from": ss.get("copied_from"),
             "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
             "indexed_branch": ss.get("indexed_branch"),
             "indexed_at": ss.get("indexed_at"),
@@ -830,21 +840,45 @@ def _module_sources_notices(root: str | Path) -> list[str]:
 
 
 def _module_sources_view(root: str | Path) -> dict:
-    """[terraform] module_sources as the last scan resolved it, for status
-    and doctor: per mapping its path, whether it is a git checkout, the
-    pinned refs found (with their commit) and missing. {} when no mapping
-    is configured."""
+    """[terraform] module_sources for status and doctor: one entry per
+    mapping of the current config, with its path, whether it is a git
+    checkout, and the pinned refs the last scan found (with their commit)
+    and missing. A mapping the last scan did not index as configured now
+    (added, or its path edited) is marked ``pending`` (reindex needed), with
+    the path it was indexed under, if any. {} when no mapping is configured."""
+    from codegraph.analysis.terraform import ModuleSources, git_toplevel
     from codegraph.core.config import load_config
     from codegraph.state.scan_meta import read_meta
 
     try:
-        mapping = dict(load_config(root).terraform_module_sources or {})
+        cfg = load_config(root)
+        mapping = dict(cfg.terraform_module_sources or {})
     except Exception:
-        mapping = {}
+        return {}
     if not mapping:
         return {}
     state = (read_meta(root) or {}).get("module_sources") or {}
-    return {"configured": mapping, "mappings": state.get("mappings") or []}
+    indexed = {m.get("source"): m for m in state.get("mappings") or []}
+    mappings = []
+    for source, path in sorted(ModuleSources.from_config(cfg, root).mapping):
+        done = indexed.get(source)
+        if done is not None and done.get("path") == path:
+            mappings.append(done)
+            continue
+        exists = os.path.isdir(path)
+        entry = {
+            "source": source,
+            "path": path,
+            "exists": exists,
+            "git": bool(exists and git_toplevel(path)),
+            "refs_found": {},
+            "refs_missing": {},
+            "pending": True,
+        }
+        if done is not None:
+            entry["indexed_path"] = done.get("path")
+        mappings.append(entry)
+    return {"configured": mapping, "mappings": mappings}
 
 
 def _module_sources_lines(view: dict) -> list[str]:
@@ -856,7 +890,17 @@ def _module_sources_lines(view: dict) -> list[str]:
         found = ", ".join(m.get("refs_found") or {}) or "none"
         missing = ", ".join(m.get("refs_missing") or {})
         kind = "git" if m.get("git") else ("dir" if m.get("exists") else "missing")
-        line = f"{escape(m['source'])} -> {escape(m['path'])} ({kind}); refs found: {found}"
+        line = f"{escape(m['source'])} -> {escape(m['path'])} ({kind})"
+        if m.get("pending"):
+            was = m.get("indexed_path")
+            line += (
+                f" [yellow]pending reindex[/yellow] (indexed: {escape(was)})"
+                if was
+                else " [yellow]pending reindex[/yellow]"
+            )
+            lines.append(line)
+            continue
+        line += f"; refs found: {found}"
         if missing:
             line += f"; [yellow]missing: {escape(missing)}[/yellow]"
         lines.append(line)
@@ -1844,12 +1888,22 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         console.print(f"[yellow]!![/yellow] {notice}")
     # Informational too: an index from an older graph format still answers,
     # with fewer edges, until its one-time re-parse; never blocks --strict.
+    # So is a store copied from another checkout: its answers point at that
+    # tree until `cgh index` rebuilds it here.
     try:
-        from codegraph.state.scan_meta import format_notice, scan_status
+        from codegraph.state.scan_meta import (
+            copied_notice,
+            format_notice,
+            scan_status,
+        )
 
-        outdated = format_notice(scan_status(root))
+        ss = scan_status(root)
+        outdated = format_notice(ss)
+        copied = copied_notice(ss)
     except Exception:
-        outdated = None
+        outdated = copied = None
+    if copied:
+        console.print(f"[yellow]!![/yellow] {_escape(copied)}")
     if outdated:
         console.print(f"[yellow]!![/yellow] {outdated}")
     # Informational, not a check: a stale plugin is skipped, cgh still works.

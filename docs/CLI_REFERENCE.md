@@ -626,12 +626,13 @@ cgh add-dir [action] [paths...] [--root DIR]
 | `list` (default) | Show configured extra directories |
 | `add <paths...>` | Add directory paths to the config |
 | `remove <paths...>` | Remove directory paths from the config |
+| `<paths...>` | Same as `add <paths...>`: a first argument that is not an action is a path to add |
 
 **Example:**
 
 ```bash
 cgh add-dir list
-cgh add-dir add ../ondonne-frontend ../ondonne-infra
+cgh add-dir ../ondonne-frontend ../ondonne-infra   # same as: cgh add-dir add ...
 cgh add-dir remove ../ondonne-infra
 ```
 

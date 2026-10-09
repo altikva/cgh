@@ -213,20 +213,47 @@ def _param_types(fn_node: Node, src: bytes) -> dict[str, str]:
     return out
 
 
-def _attr_types(body: Node, src: bytes) -> dict[str, str]:
-    """The class of each instance attribute a class body types without doubt.
+def _body_imports(body: Node, src: bytes) -> Bindings:
+    """The import bindings made anywhere inside a function body."""
+    out: Bindings = {}
+
+    def walk(n: Node) -> None:
+        if n.type in ("import_statement", "import_from_statement"):
+            out.update(_import_bindings(n, src))
+            return
+        for child in n.children:
+            walk(child)
+
+    walk(body)
+    return out
+
+
+# Suffix of the binding key a class attribute's type gets when its module is
+# imported inside a method (``from google.cloud import kms`` in __init__,
+# then ``self._client = kms.Client()``): the other methods see no import of
+# ``kms``, so the type is written ``kms#.Client`` and ``kms#`` is bound for
+# them. "#" is never part of an identifier, so no local name can clash.
+_LOCAL_IMPORT_MARK = "#"
+
+
+def _attr_types(body: Node, src: bytes) -> tuple[dict[str, str], Bindings]:
+    """The class of each instance attribute a class body types without doubt,
+    and the bindings those types need in every method of the class.
 
     Read from class-level annotations (``x: T``) and, in every method, from
     ``self.x: T = ...``, ``self.x = T(...)`` (a capitalised callee) and
     ``self.x = param`` where ``param`` is annotated. An attribute assigned
     anything else (other than None), or two different classes, stays untyped.
+    A type whose module the method imports in its own body is written with
+    _LOCAL_IMPORT_MARK and its binding returned.
     """
     seen: dict[str, set[str]] = {}
+    extra: Bindings = {}
 
     def note(attr: str, cls: str) -> None:
         seen.setdefault(attr, set()).add(cls or "?")
 
-    def walk(n: Node, params: dict[str, str]) -> None:
+    def walk(n: Node, params: dict[str, str], local: Bindings) -> None:
         if n.type == "class_definition":
             return
         if n.type == "assignment":
@@ -244,6 +271,10 @@ def _attr_types(body: Node, src: bytes) -> dict[str, str]:
                     name = _text(fn, src) if fn is not None else ""
                     last = name.rsplit(".", 1)[-1]
                     typed = _DOTTED.fullmatch(name) and last[:1].isupper()
+                    head, dot, rest = name.partition(".")
+                    if typed and dot and head in local:
+                        extra[head + _LOCAL_IMPORT_MARK] = local[head]
+                        name = f"{head}{_LOCAL_IMPORT_MARK}.{rest}"
                     note(attr, name if typed else "")
                 elif right.type == "identifier":
                     note(attr, params.get(_ident(right, src), ""))
@@ -254,7 +285,7 @@ def _attr_types(body: Node, src: bytes) -> dict[str, str]:
                     if _self_attr(item, src):
                         note(_self_attr(item, src), "")
         for child in n.children:
-            walk(child, params)
+            walk(child, params, local)
 
     for child in body.children:
         node = child
@@ -263,7 +294,7 @@ def _attr_types(body: Node, src: bytes) -> dict[str, str]:
         if node.type == "function_definition":
             fn_body = node.child_by_field_name("body")
             if fn_body is not None:
-                walk(fn_body, _param_types(node, src))
+                walk(fn_body, _param_types(node, src), _body_imports(fn_body, src))
         elif node.type == "expression_statement":
             for stmt in node.children:
                 if stmt.type != "assignment":
@@ -272,11 +303,119 @@ def _attr_types(body: Node, src: bytes) -> dict[str, str]:
                 ann = stmt.child_by_field_name("type")
                 if left is not None and left.type == "identifier" and ann is not None:
                     note(_ident(left, src), _type_name(ann, src))
-    return {
+    types = {
         attr: next(iter(classes))
         for attr, classes in seen.items()
         if len(classes) == 1 and "?" not in classes
     }
+    return types, extra
+
+
+def _identifiers(node: Node, src: bytes) -> list[str]:
+    """Every identifier in ``node``'s subtree (``node`` included)."""
+    if node.type == "identifier":
+        return [_ident(node, src)]
+    return [name for child in node.children for name in _identifiers(child, src)]
+
+
+def _local_types(fn_node: Node, src: bytes, returns: dict[str, str]) -> dict[str, str]:
+    """The class of each local variable a function types without doubt.
+
+    A name bound only by ``x = C(...)`` (a capitalised callee), ``x: C = ...``
+    or ``x = f(...)`` / ``x = await f(...)`` where ``f`` is a function of the
+    file annotated ``-> C`` (``returns``) has type C. A name bound any other
+    way too (a parameter, a loop or ``with`` target, a tuple unpacking, a
+    nested function's parameter, an import, a walrus, two different classes)
+    stays untyped: the call on it is resolved as before.
+    """
+    seen: dict[str, set[str]] = {}
+
+    def note(name: str, cls: str) -> None:
+        seen.setdefault(name, set()).add(cls or "?")
+
+    def unknown(node: Node | None) -> None:
+        if node is not None:
+            for name in _identifiers(node, src):
+                note(name, "")
+
+    def value_type(right: Node) -> str:
+        if right.type == "await":
+            inner = [c for c in right.children if c.is_named]
+            right = inner[0] if len(inner) == 1 else right
+        if right.type != "call":
+            return ""
+        fn = right.child_by_field_name("function")
+        name = _text(fn, src) if fn is not None else ""
+        if not _DOTTED.fullmatch(name):
+            return ""
+        if name.rsplit(".", 1)[-1][:1].isupper():
+            return name
+        return returns.get(name, "") if fn.type == "identifier" else ""
+
+    def walk(n: Node, top: bool) -> None:
+        kind = n.type
+        if kind == "assignment":
+            left = n.child_by_field_name("left")
+            right = n.child_by_field_name("right")
+            ann = n.child_by_field_name("type")
+            if left is not None and left.type == "identifier":
+                if ann is not None:
+                    note(_ident(left, src), _type_name(ann, src))
+                elif right is not None:
+                    note(_ident(left, src), value_type(right))
+            else:
+                unknown(left)
+        elif kind in ("augmented_assignment", "for_statement", "for_in_clause"):
+            unknown(n.child_by_field_name("left"))
+        elif kind == "as_pattern":
+            unknown(n.child_by_field_name("alias"))
+        elif kind == "named_expression":
+            unknown(n.child_by_field_name("name"))
+        elif kind in ("global_statement", "nonlocal_statement", "case_pattern"):
+            unknown(n)
+        elif kind in ("import_statement", "import_from_statement"):
+            for name in _import_bindings(n, src):
+                note(name, "")
+        elif kind == "class_definition":
+            # A nested class: its body binds class attributes, not locals.
+            unknown(n.child_by_field_name("name"))
+            return
+        elif kind == "function_definition" and not top:
+            unknown(n.child_by_field_name("name"))
+            unknown(n.child_by_field_name("parameters"))
+        elif kind == "lambda":
+            unknown(n.child_by_field_name("parameters"))
+        if kind == "function_definition" and top:
+            unknown(n.child_by_field_name("parameters"))
+            body = n.child_by_field_name("body")
+            if body is not None:
+                walk(body, False)
+            return
+        for child in n.children:
+            walk(child, False)
+
+    walk(fn_node, True)
+    return {
+        name: next(iter(classes))
+        for name, classes in seen.items()
+        if len(classes) == 1 and "?" not in classes and name not in ("self", "cls")
+    }
+
+
+def _local_receivers(
+    raw: list[tuple[str, str]], types: dict[str, str]
+) -> list[tuple[str, str]]:
+    """Rewrite a call on a typed local variable (``x.f()``, see _local_types)
+    as a call on its class, in the shapes typed_receivers uses."""
+    if not types:
+        return raw
+    out: list[tuple[str, str]] = []
+    for name, receiver in raw:
+        cls = types.get(receiver)
+        if cls:
+            receiver = cls if "." in cls else f"{cls}()"
+        out.append((name, receiver))
+    return out
 
 
 def _collect_calls(
@@ -350,9 +489,13 @@ class PythonParser(BaseParser):
         # the imports made in its body: calls are bound once the whole file
         # is read, since an import may follow the function that uses it.
         module_bindings: Bindings = {}
-        pending: list[tuple[SymbolDef, list[tuple[str, str]], Bindings]] = []
-        # Per class name, the classes of its typed instance attributes.
+        pending: list[tuple[SymbolDef, Node, list[tuple[str, str]], Bindings]] = []
+        # Per class name, the classes of its typed instance attributes and
+        # the bindings of the modules some of them come from.
         attr_types: dict[str, dict[str, str]] = {}
+        attr_bindings: dict[str, Bindings] = {}
+        # Per module-level function name, the class its return annotates.
+        returns: dict[str, str] = {}
 
         def _visit(node: Node, current_class: str | None = None) -> None:
             if node.type in ("import_statement", "import_from_statement"):
@@ -437,8 +580,9 @@ class PythonParser(BaseParser):
                 )
                 if body_node:
                     # Two classes of one name in a file: neither is typed.
-                    types = _attr_types(body_node, src)
+                    types, extra = _attr_types(body_node, src)
                     attr_types[name] = {} if name in attr_types else types
+                    attr_bindings[name] = {} if name in attr_bindings else extra
                 # Recurse into class body with class context
                 if body_node:
                     for child in body_node.children:
@@ -481,7 +625,11 @@ class PythonParser(BaseParser):
                     kind=kind,
                 )
                 index.functions.append(fn)
-                pending.append((fn, raw_calls, local_bindings))
+                pending.append((fn, fn_node, raw_calls, local_bindings))
+                if not current_class:
+                    ret = _type_name(fn_node.child_by_field_name("return_type"), src)
+                    # Two functions of one name: neither return is trusted.
+                    returns[name] = "" if name in returns else ret
                 return
 
             # Default: recurse
@@ -491,10 +639,16 @@ class PythonParser(BaseParser):
         for child in root.children:
             _visit(child)
 
-        for fn, raw_calls, local_bindings in pending:
+        returns_known = {k: v for k, v in returns.items() if v}
+        for fn, fn_node, raw_calls, local_bindings in pending:
+            bindings = {**module_bindings, **local_bindings}
             if fn.class_name:
                 raw_calls = typed_receivers(
                     raw_calls, attr_types.get(fn.class_name, {}), "self"
                 )
-            fn.call_refs = bind_calls(raw_calls, {**module_bindings, **local_bindings})
+                bindings.update(attr_bindings.get(fn.class_name, {}))
+            raw_calls = _local_receivers(
+                raw_calls, _local_types(fn_node, src, returns_known)
+            )
+            fn.call_refs = bind_calls(raw_calls, bindings)
         return index

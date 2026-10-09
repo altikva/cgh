@@ -101,7 +101,18 @@ def test_incremental_of_a_copied_store_without_meta_rebuilds(tmp_path, backend):
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        # No hooks: a machine-wide post-checkout hook running a cgh reindex
+        # would take the index lock this test needs.
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "core.hooksPath=/dev/null",
+            *args,
+        ],
         cwd=cwd,
         check=True,
         capture_output=True,
@@ -239,3 +250,69 @@ def test_seeded_worktree_is_not_flagged_as_copied(tmp_path, backend, capsys):
     assert ss["copied_from"] is None and ss["state"] != "copied"
     scan = json.loads(_status(ticket, capsys, as_json=True))["scan"]
     assert scan["copied_from"] is None and scan["state"] != "copied"
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_impact_refuses_a_copied_store(tmp_path, backend, capsys, as_json):
+    import argparse
+    import json
+
+    from codegraph.cli.commands_impact import cmd_impact
+
+    old, new = _copy(tmp_path)
+    args = argparse.Namespace(
+        root=str(new), since="HEAD", json=as_json, format="md", out=""
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_impact(args)
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    if as_json:
+        message = json.loads(captured.out)["error"]
+    else:
+        assert captured.out == ""
+        message = captured.err
+    # Rich wraps the markdown-mode line, so compare without whitespace.
+    flat = "".join(message.split())
+    assert str(old) in flat and "`cghindex`" in flat
+
+
+def test_path_lookups_refuse_a_copied_store(tmp_path, backend, capsys):
+    import argparse
+
+    from codegraph.cli.commands_files import cmd_files
+    from codegraph.cli.commands_query import cmd_outline
+
+    old, new = _copy(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        cmd_outline(argparse.Namespace(root=str(new), file="pkg/helpers.py"))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert str(old) in err and "cgh index" in err
+
+    files_args = argparse.Namespace(
+        root=str(new), check="pkg/helpers.py", pattern="", limit=50
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd_files(files_args)
+    assert exc.value.code == 1
+    assert str(old) in capsys.readouterr().err
+
+    # Listing still answers, with the warning.
+    files_args.check = ""
+    cmd_files(files_args)
+    captured = capsys.readouterr()
+    assert str(old) in captured.err and "indexed file(s)" in captured.out
+
+
+def test_path_lookups_answer_on_the_original_store(tmp_path, backend, capsys):
+    import argparse
+
+    from codegraph.cli.commands_files import cmd_files
+
+    old, _new = _copy(tmp_path)
+    cmd_files(
+        argparse.Namespace(root=str(old), check="pkg/helpers.py", pattern="", limit=50)
+    )
+    captured = capsys.readouterr()
+    assert "indexed" in captured.out and captured.err == ""

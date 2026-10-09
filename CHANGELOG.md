@@ -40,10 +40,25 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **Remote Terraform modules can be linked to a local checkout.** The
   opt-in `[terraform] module_sources` table in `.codegraph/config.toml`
   maps a git or registry source to a directory (the `//subdir` is
-  followed, `?ref=` ignored), so module arguments and `module.m.out` link
-  to that module's variables and outputs. A directory outside the index is
-  read on demand, read-only; nothing is fetched. See
-  docs/CONFIGURATION.md.
+  followed), so module arguments and `module.m.out` link to that module's
+  variables and outputs. A directory outside the index is read on demand,
+  read-only, resources included: `cgh lookup google_x.y` and
+  `module.kms.google_x.y` find a block inside the module. Nothing is
+  fetched. See docs/CONFIGURATION.md.
+- **A pinned `?ref=` is honoured when the mapped directory is a git
+  checkout.** Each ref is read from git at that tag, branch or commit (no
+  checkout, no fetch), so modules pinned at different refs link to their
+  own variables and outputs (`kms@v0.1.0`, `cloud_run@v1.0.1`). A ref the
+  checkout lacks falls back to its working tree with a notice in
+  `cgh status` and `cgh doctor`, which now list each mapping with the refs
+  found and missing (`module_sources` in `cgh status --json`).
+- **Callers through an interface.** `cgh callers` and `find_callers` accept
+  `Class.method` and `module.Class.method`. For a method implementing an
+  interface (a base class, an ABC, or a `typing.Protocol` whose methods
+  the class all defines) they also list the callers of the interface's
+  method, since a call on `self._kms: KmsClient` links there, each marked
+  `via` (`via KmsClient.destroy_crypto_key`). `impact_of` and `cgh impact`
+  count those callers too. The CALLS edges are unchanged.
 - The call log records who triggered each tool call: `agent` (an MCP
   client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
   plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
@@ -54,6 +69,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
+- **Editing `[terraform] module_sources` needed a deleted `.codegraph`.** A
+  changed mapping, or a pinned ref now resolving to another commit, makes
+  the next `cgh index`, incremental reindex or owner start parse the
+  Terraform files again; scan metadata keeps a fingerprint of both. The
+  first index after upgrading re-parses the repo once.
 - **Terraform module inputs were invisible to name search.** Each argument
   of a module call is now an entry, `module.kms.<argument>`, so `cgh search`
   and `search_symbols` on an input name land on the call, and

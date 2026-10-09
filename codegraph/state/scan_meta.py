@@ -44,7 +44,11 @@ _META_FILE = "scan_meta.json"
 #   8: Terraform module inputs are blocks of their own (module.m.<arg>),
 #      moved / import / removed blocks reference the addresses they name,
 #      and module sources mapped by [terraform] module_sources link.
-GRAPH_FORMAT = 8
+#   9: a mapped module source pinned with ?ref= is read from git at that ref
+#      into a directory of its own (<dir>@<ref>), and a mapped module's
+#      resources, data sources and locals are read too, not only its
+#      variables and outputs.
+GRAPH_FORMAT = 9
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.
@@ -147,6 +151,7 @@ def _kept_stats(repo_root: Path, stats: dict) -> dict:
 def write_meta(repo_root: str | Path, stats: dict) -> None:
     """Persist scan metadata after index_repo completes."""
     repo_root = Path(repo_root)
+    previous = read_meta(repo_root) or {}
     meta = {
         "indexed_at": datetime.now(UTC).isoformat(timespec="seconds"),
         # Absolute root the index was built at. Graph node paths are stored
@@ -161,12 +166,36 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "stats": _kept_stats(repo_root, stats),
         "graph_format": GRAPH_FORMAT,
     }
+    # Written by record_module_sources after the scan; kept until then.
+    if previous.get("module_sources"):
+        meta["module_sources"] = previous["module_sources"]
+    _write(repo_root, meta)
+
+
+def _write(repo_root: Path, meta: dict) -> None:
     try:
         path = _meta_path(repo_root)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     except Exception:
         pass
+
+
+def record_module_sources(repo_root: str | Path, state: dict) -> None:
+    """Store the [terraform] module_sources state of the last scan (see
+    analysis.terraform.module_sources_report): its fingerprint decides when
+    the Terraform files are parsed again, and `cgh status` / `cgh doctor`
+    show its mappings and missing refs. No-op without a scan record."""
+    meta = read_meta(repo_root)
+    if meta is None:
+        return
+    if meta.get("module_sources") == (state or None):
+        return
+    if state:
+        meta["module_sources"] = state
+    else:
+        meta.pop("module_sources", None)
+    _write(Path(repo_root), meta)
 
 
 def clear_meta(repo_root: str | Path) -> None:
@@ -372,6 +401,7 @@ def scan_status(repo_root: str | Path) -> dict:
         "format_outdated": outdated,
         "imports": (meta.get("stats") or {}).get("imports") or {},
         "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
+        "module_sources": meta.get("module_sources") or {},
         "indexed_sha": indexed_sha,
         "indexed_branch": indexed_branch,
         "indexed_at": indexed_at,

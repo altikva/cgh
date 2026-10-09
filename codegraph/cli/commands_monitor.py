@@ -721,6 +721,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "extra_dirs": extra_dirs,
         "subrepos": subrepos,
+        "module_sources": _module_sources_view(root),
         "notices": notices,
     }
 
@@ -775,6 +776,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         "Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]"
     )
     table.add_row("Subrepos", _format_subrepos_cell(subrepos))
+    if payload["module_sources"]:
+        table.add_row(
+            "Module sources",
+            "\n".join(_module_sources_lines(payload["module_sources"])),
+        )
     console.print(table)
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")
@@ -796,9 +802,70 @@ def _config_notices(root: str | Path) -> list[str]:
 
     suppress_legacy_mode_warning()
     try:
-        return [f"config.toml: {n}" for n in config_notices(load_config(root))]
+        out = [f"config.toml: {n}" for n in config_notices(load_config(root))]
     except Exception:
         return []
+    return out + _module_sources_notices(root)
+
+
+def _module_sources_notices(root: str | Path) -> list[str]:
+    """The pinned refs the last scan could not find, and a mapping or ref
+    changed since that scan."""
+    from codegraph.analysis.terraform import module_sources_notices
+    from codegraph.state.scan_meta import read_meta
+
+    try:
+        state = (read_meta(root) or {}).get("module_sources") or {}
+        out = [f"config.toml: {n}" for n in module_sources_notices(state)]
+        from codegraph.indexer import module_sources_changed
+
+        if module_sources_changed(root):
+            out.append(
+                "config.toml: terraform module_sources or a ref it pins changed "
+                "since the last index; run `cgh index` to re-parse the Terraform files"
+            )
+        return out
+    except Exception:
+        return []
+
+
+def _module_sources_view(root: str | Path) -> dict:
+    """[terraform] module_sources as the last scan resolved it, for status
+    and doctor: per mapping its path, whether it is a git checkout, the
+    pinned refs found (with their commit) and missing. {} when no mapping
+    is configured."""
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import read_meta
+
+    try:
+        mapping = dict(load_config(root).terraform_module_sources or {})
+    except Exception:
+        mapping = {}
+    if not mapping:
+        return {}
+    state = (read_meta(root) or {}).get("module_sources") or {}
+    return {"configured": mapping, "mappings": state.get("mappings") or []}
+
+
+def _module_sources_lines(view: dict) -> list[str]:
+    """One human line per mapping of a _module_sources_view."""
+    from rich.markup import escape
+
+    lines = []
+    for m in view.get("mappings") or []:
+        found = ", ".join(m.get("refs_found") or {}) or "none"
+        missing = ", ".join(m.get("refs_missing") or {})
+        kind = "git" if m.get("git") else ("dir" if m.get("exists") else "missing")
+        line = f"{escape(m['source'])} -> {escape(m['path'])} ({kind}); refs found: {found}"
+        if missing:
+            line += f"; [yellow]missing: {escape(missing)}[/yellow]"
+        lines.append(line)
+    if not lines:
+        lines = [
+            f"{escape(k)} -> {escape(str(v))} [dim](not indexed yet)[/dim]"
+            for k, v in sorted(view.get("configured", {}).items())
+        ]
+    return lines
 
 
 def _backend_info(root: str) -> dict:
@@ -1769,6 +1836,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             pass_count += 1
 
     console.print(table)
+    # Informational, not a check: where mapped Terraform modules resolve.
+    for line in _module_sources_lines(_module_sources_view(root)):
+        console.print(f"  [dim]module_sources:[/dim] {line}")
     # Informational, not a failed check: the config still loads.
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")

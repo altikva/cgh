@@ -12,17 +12,28 @@
 #              end so the edges never depend on file order. Module sources
 #              resolve locally or through the opt-in [terraform]
 #              module_sources mapping; a mapped directory outside the index
-#              has its variables and outputs read in on demand. At query
+#              has its blocks read in on demand, at the source's pinned
+#              `?ref=` when the mapped directory is a git checkout holding
+#              it (read with git, never checked out). At query
 #              time: the reference edges seen as callers / callees, and the
 #              block-precise blast radius of a change, for find_callers,
 #              find_callees, impact_of and cgh impact.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
+import re
+import subprocess
+from dataclasses import dataclass
 from typing import Any
 
 from codegraph.core.graph_model import TF_REF_EDGES
+from codegraph.core.utils import quiet_subprocess_kwargs
+
+_log = logging.getLogger(__name__)
 
 # Name references (see indexer.NameRef) the Terraform blocks record:
 #   tf_ref     block id -> "<module dir>::<address>" it uses. A module
@@ -64,6 +75,104 @@ def _split_source(source: str) -> tuple[str, str]:
     return source[:cut], source[cut + 2 :].strip("/")
 
 
+def _source_ref(source: str) -> str:
+    """The `ref` query parameter of a module source, "" when it has none."""
+    for part in source.partition("?")[2].split("&"):
+        key, _, value = part.partition("=")
+        if key == "ref":
+            return value.strip()
+    return ""
+
+
+# A ref as git names a tag, branch or commit; anything else (an option, a
+# revision expression) is never handed to git.
+_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]*$")
+_GIT_TIMEOUT = 10
+
+
+def _git(top: str, *args: str) -> bytes | None:
+    """stdout of a read-only `git -C top <args>`, None on any failure. No
+    prompt, no lazy fetch of a partial clone's missing objects: nothing
+    ever goes to the network."""
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+    }
+    try:
+        r = subprocess.run(
+            ["git", "-C", top, *args],
+            capture_output=True,
+            timeout=_GIT_TIMEOUT,
+            env=env,
+            **quiet_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+_TOPLEVELS: dict[str, str] = {}
+
+
+def git_toplevel(path: str) -> str:
+    """The real path of the git work tree holding ``path``, "" when none."""
+    if path not in _TOPLEVELS:
+        out = (
+            _git(path, "rev-parse", "--show-toplevel") if os.path.isdir(path) else None
+        )
+        text = out.decode("utf-8", "replace").strip() if out else ""
+        _TOPLEVELS[path] = os.path.realpath(text) if text else ""
+    return _TOPLEVELS[path]
+
+
+def resolve_ref(top: str, ref: str) -> str:
+    """The commit sha ``ref`` (tag, branch, remote-tracking branch of
+    origin, commit id) names in the repo at ``top``, "" when the repo does
+    not hold it. Never fetches."""
+    if not _REF_RE.match(ref) or ".." in ref:
+        return ""
+    for name in (ref, f"refs/remotes/origin/{ref}"):
+        out = _git(
+            top,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            f"{name}^{{commit}}",
+        )
+        if out:
+            return out.decode("ascii", "replace").strip()
+    return ""
+
+
+@dataclass(frozen=True)
+class PinnedModule:
+    """A module directory read from git at a pinned ref: the repo work tree,
+    the resolved commit, the directory inside the repo ("" for its root)."""
+
+    top: str
+    sha: str
+    rel: str
+    ref: str
+
+
+@dataclass(frozen=True)
+class SourceUse:
+    """One resolution of a mapped source with a ref, for the status report."""
+
+    prefix: str
+    target: str
+    top: str
+    ref: str
+    sha: str
+    module: str
+
+
+_WARNED: set[tuple[str, str]] = set()
+
+
 def _norm_package(package: str) -> str:
     """A remote package for prefix matching: no `git::` forcing prefix, no
     trailing slash, no `.git` suffix."""
@@ -82,9 +191,12 @@ class ModuleSources:
     A local source (./ or ../) is a directory next to the caller. A remote
     one (git, registry, http) points nowhere unless the opt-in
     ``[terraform] module_sources`` table maps its package to a local
-    checkout: the longest matching prefix wins, the `//subdir` is joined to
-    the mapped directory and the `?ref=` is ignored (the checkout may sit at
-    another ref than the one pinned). Nothing is ever fetched.
+    checkout: the longest matching prefix wins and the `//subdir` is joined
+    to the mapped directory. When that directory is not indexed and sits in
+    a git checkout holding the source's `?ref=`, the module resolves to a
+    directory of its own, ``<dir>@<ref>``, read from git at that ref
+    (``pinned``); a ref the checkout lacks falls back to the working tree
+    with a warning. Nothing is ever fetched.
     """
 
     def __init__(
@@ -104,6 +216,10 @@ class ModuleSources:
         self.mapping = sorted(pairs, key=lambda p: -len(p[0]))
         self.indexed = [os.path.normpath(d) for d in (indexed or [])]
         self.excluded = [os.path.normpath(d) for d in (excluded or [])]
+        # <dir>@<ref> -> where to read it; (dir, ref) -> resolved directory.
+        self.pinned: dict[str, PinnedModule] = {}
+        self.uses: list[SourceUse] = []
+        self._at: dict[tuple[str, str], str] = {}
 
     @classmethod
     def from_config(cls, cfg, root) -> ModuleSources:
@@ -140,8 +256,48 @@ class ModuleSources:
                 rest = package[len(prefix) + 1 :]
             else:
                 continue
-            return os.path.normpath(os.path.join(target, rest, subdir))
+            real = os.path.normpath(os.path.join(target, rest, subdir))
+            ref = _source_ref(source)
+            if ref and not self.is_indexed(real):
+                return self._at_ref(prefix, target, real, ref)
+            return real
         return ""
+
+    def _at_ref(self, prefix: str, target: str, real: str, ref: str) -> str:
+        """``real`` read at ``ref``: ``<real>@<ref>`` when the git checkout
+        holding it has that ref, else ``real`` itself (with a warning)."""
+        key = (real, ref)
+        if key in self._at:
+            return self._at[key]
+        out = real
+        top = git_toplevel(target)
+        if top:
+            rel = os.path.relpath(os.path.realpath(real), top)
+            if rel != ".." and not rel.startswith(".." + os.sep):
+                rel = "" if rel == "." else rel.replace(os.sep, "/")
+                sha = resolve_ref(top, ref)
+                self.uses.append(SourceUse(prefix, target, top, ref, sha, rel))
+                if sha:
+                    out = f"{real}@{ref}"
+                    self.pinned[out] = PinnedModule(top, sha, rel, ref)
+                elif (top, ref) not in _WARNED:
+                    _WARNED.add((top, ref))
+                    _log.warning(
+                        "terraform module_sources: ref %s of %s not found in %s, "
+                        "linked to its working tree instead",
+                        ref,
+                        rel or ".",
+                        top,
+                    )
+        self._at[key] = out
+        return out
+
+    def in_subrepo(self, directory: str) -> bool:
+        """True when ``directory`` lies in a federated subrepo."""
+        return any(
+            directory == d or directory.startswith(d.rstrip(os.sep) + os.sep)
+            for d in self.excluded
+        )
 
     def is_indexed(self, directory: str) -> bool:
         """True when ``directory`` is indexed into this graph (under the
@@ -316,46 +472,205 @@ def _dir_signature(directory: str) -> tuple:
     return tuple(out)
 
 
-def ingest_external_module(conn, directory: str) -> None:
-    """Read the variables and outputs of a module directory outside the
-    index into this graph, so the calls pointing at it link their inputs
-    and outputs. Read-only on that directory: nothing is written there and
-    nothing is fetched. Its resources stay out (their own module's graph
-    is canonical for them), and so do its files: no File node, no FTS.
-    Skipped when the directory is unchanged since it was last read into
-    this graph."""
+# Blocks read from a module outside the index. Module calls stay out: their
+# own sources would resolve against a directory that may not exist.
+_EXTERNAL_KINDS = ("resource", "data", "local", "variable", "output")
+
+
+def _pinned_files(mod: PinnedModule) -> list[tuple[str, str]]:
+    """(file name, blob sha) of the .tf files of a pinned module directory."""
+    args = ["ls-tree", "-z", mod.sha]
+    if mod.rel:
+        args += ["--", f"{mod.rel}/"]
+    out = _git(mod.top, *args)
+    if out is None:
+        return []
+    files = []
+    for entry in out.decode("utf-8", "replace").split("\0"):
+        meta, _, path = entry.partition("\t")
+        parts = meta.split()
+        if len(parts) >= 3 and parts[1] == "blob" and path.endswith(".tf"):
+            files.append((path.rsplit("/", 1)[-1], parts[2]))
+    return sorted(files)
+
+
+def _external_files(conn, directory: str) -> set[str]:
+    """Paths of the blocks this graph holds for ``directory``."""
+    return {
+        row["file_path"]
+        for label in ("TFVar", "TFResource")
+        for row in conn.find_nodes(
+            label, where={"module_dir": directory}, return_fields=["file_path"]
+        )
+    }
+
+
+def ingest_external_module(
+    conn, directory: str, sources: ModuleSources | None = None
+) -> None:
+    """Read the blocks of a module directory outside the index into this
+    graph (resources, data, locals, variables, outputs, linked among
+    themselves), so the calls pointing at it link their inputs, outputs
+    and `module.m.<resource>`, and its resources are searchable. A
+    directory pinned at a ref (``sources.pinned``) is read from git at that
+    commit; any other from disk. Read-only either way: nothing is written
+    there, nothing checked out or fetched, no File node or FTS row. A
+    directory inside a federated subrepo, whose own graph is canonical for
+    its resources, keeps only its variables and outputs. Skipped when the
+    directory is unchanged (same commit, same file stats) since it was last
+    read into this graph."""
     from codegraph.parsers.terraform import TerraformParser
 
-    sig = _dir_signature(directory)
+    mod = sources.pinned.get(directory) if sources is not None else None
+    sig: tuple = ("git", mod.sha) if mod else _dir_signature(directory)
     seen_key = (id(conn), directory)
-    if (
-        sig
-        and _EXTERNAL_SEEN.get(seen_key) == sig
-        and conn.find_nodes("TFVar", where={"module_dir": directory}, limit=1)
-    ):
+    if sig and _EXTERNAL_SEEN.get(seen_key) == sig and _external_files(conn, directory):
         return
+    if mod:
+        listed = _pinned_files(mod)
+        names = [name for name, _blob in listed]
+        blobs = dict(listed)
+    else:
+        names = [name for name, _m, _s in sig]
+        blobs = {}
+
+    def read(name: str) -> bytes | None:
+        if mod:
+            return _git(mod.top, "cat-file", "blob", blobs[name])
+        try:
+            with open(os.path.join(directory, name), "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    full = mod is not None or sources is None or not sources.in_subrepo(directory)
+    kinds = _EXTERNAL_KINDS if full else ("variable", "output")
     parser = TerraformParser()
-    current = {os.path.join(directory, name) for name, _m, _s in sig}
+    current = {os.path.join(directory, name) for name in names}
     # A file removed from that directory since the last read: drop its copy.
-    for row in conn.find_nodes(
-        "TFVar", where={"module_dir": directory}, return_fields=["file_path"]
-    ):
-        gone = row["file_path"]
-        if gone not in current and not conn.find_nodes(
-            "File", where={"path": gone}, limit=1
-        ):
+    for gone in sorted(_external_files(conn, directory) - current):
+        if not conn.find_nodes("File", where={"path": gone}, limit=1):
             conn.purge_file_data(gone)
-    for name, _mtime, _size in sig:
+    read_in: list[tuple[str, list]] = []
+    for name in names:
         path = os.path.join(directory, name)
         if conn.find_nodes("File", where={"path": path}, limit=1):
             continue  # indexed for real after all: never overwrite it
+        data = read(name)
+        if data is None:
+            continue
         blocks = [
-            r for r in parser.parse(path).resources if r.kind in ("variable", "output")
+            r for r in parser.parse_bytes(path, data).resources if r.kind in kinds
         ]
         conn.purge_file_data(path)
         ingest_blocks(conn, blocks, defines=False)
+        read_in.append((path, blocks))
+    # Link once every file is in: references inside the module, then the
+    # callers' references into it.
+    resolve_outbound(conn, ref_rows([b for _p, blocks in read_in for b in blocks]))
+    for path, blocks in read_in:
         resolve_inbound(conn, path, blocks)
     _EXTERNAL_SEEN[seen_key] = sig
+
+
+def purge_external_modules(conn) -> int:
+    """Drop every block read from outside the index (no File node behind
+    it), so the next parse of the calling files reads them again under the
+    current mapping and refs. Returns the number of files dropped."""
+    paths = sorted(
+        {
+            str(row["file_path"])
+            for label in ("TFVar", "TFResource")
+            for row in conn.find_nodes(label, return_fields=["file_path"])
+            if row.get("file_path")
+        }
+    )
+    indexed = {str(k) for k, _v in conn.node_keys_matching("File", "path", paths)}
+    gone = [p for p in paths if p not in indexed]
+    for path in gone:
+        conn.purge_file_data(path)
+    for key in [k for k in _EXTERNAL_SEEN if k[0] == id(conn)]:
+        del _EXTERNAL_SEEN[key]
+    return len(gone)
+
+
+# ---------------------------------------------------------------------------
+# module_sources state, for scan_meta and the status commands
+# ---------------------------------------------------------------------------
+
+
+def module_sources_fingerprint(cfg, root, pinned: list) -> str:
+    """Digest of the module_sources mapping and of the commit each pinned
+    (repo, ref) resolves to now; "" without a mapping or pins. A change
+    means the Terraform files must be parsed again."""
+    sources = ModuleSources.from_config(cfg, root)
+    if not sources.mapping and not pinned:
+        return ""
+    refs = sorted(
+        [str(top), str(ref), resolve_ref(str(top), str(ref))] for top, ref in pinned
+    )
+    payload = json.dumps({"mapping": sources.mapping, "refs": refs}, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def module_sources_report(conn, cfg, root) -> dict[str, Any]:
+    """What the module_sources mapping resolves to in this graph: per
+    mapping its path and the refs the module calls pin, found (with their
+    commit) or missing, plus the fingerprint scan_meta keeps. {} when no
+    mapping is configured."""
+    sources = ModuleSources.from_config(cfg, root)
+    if not sources.mapping:
+        return {}
+    for row in conn.find_nodes(
+        "TFResource", where={"kind": "module"}, return_fields=["type", "file_path"]
+    ):
+        if row.get("type") and row.get("file_path"):
+            sources.resolve(os.path.dirname(row["file_path"]), str(row["type"]))
+    mappings = []
+    pinned: set[tuple[str, str]] = set()
+    for prefix, target in sorted(sources.mapping):
+        uses = [u for u in sources.uses if u.prefix == prefix]
+        found: dict[str, dict[str, Any]] = {}
+        missing: dict[str, list[str]] = {}
+        for u in uses:
+            pinned.add((u.top, u.ref))
+            if u.sha:
+                entry = found.setdefault(u.ref, {"sha": u.sha, "modules": []})
+                if u.module not in entry["modules"]:
+                    entry["modules"].append(u.module)
+            elif u.module not in missing.setdefault(u.ref, []):
+                missing[u.ref].append(u.module)
+        mappings.append(
+            {
+                "source": prefix,
+                "path": target,
+                "exists": os.path.isdir(target),
+                "git": bool(git_toplevel(target)) if os.path.isdir(target) else False,
+                "refs_found": {
+                    ref: {"sha": v["sha"], "modules": sorted(v["modules"])}
+                    for ref, v in sorted(found.items())
+                },
+                "refs_missing": {ref: sorted(m) for ref, m in sorted(missing.items())},
+            }
+        )
+    pins = sorted([top, ref] for top, ref in pinned)
+    return {
+        "fingerprint": module_sources_fingerprint(cfg, root, pins),
+        "pinned": pins,
+        "mappings": mappings,
+    }
+
+
+def module_sources_notices(state: dict[str, Any]) -> list[str]:
+    """One line per pinned ref the mapped checkout lacks."""
+    out = []
+    for m in state.get("mappings") or []:
+        for ref, modules in (m.get("refs_missing") or {}).items():
+            out.append(
+                f"terraform module_sources: ref {ref} not found in {m['path']} "
+                f"({', '.join(modules) or '.'}), linked to its working tree"
+            )
+    return out
 
 
 class _Blocks:
@@ -527,18 +842,49 @@ def _hit(label: str, row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _module_dirs(conn, module: str) -> list[str]:
+    """The source directories of the module calls named ``module``."""
+    return sorted(
+        {
+            str(r["source_dir"])
+            for r in conn.find_nodes(
+                "TFResource",
+                where={"kind": "module", "address": module},
+                return_fields=["source_dir"],
+            )
+            if r.get("source_dir")
+        }
+    )
+
+
+def _inside_module(name: str) -> tuple[str, str] | None:
+    """("module.m", inner address) for `module.m.<address>` naming a block
+    inside module m (a resource, data source, local, variable or output),
+    None otherwise."""
+    parts = name.split(".")
+    if parts[0] != "module" or len(parts) < 4:
+        return None
+    return f"module.{parts[1]}", ".".join(parts[2:])
+
+
 def lookup(conn, name: str) -> list[dict[str, Any]]:
     """Terraform blocks matching ``name``: by address (var.region,
     google_x.y, module.m) or, as before addresses existed, by bare block
-    name (region). Rows: {kind, name (the address), type, file,
-    start_line, end_line}."""
+    name (region). `module.m.<address>` also finds that block inside the
+    directory module m's source points to. Rows: {kind, name (the
+    address), type, file, start_line, end_line}."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    inside = _inside_module(name)
     for label, fields in _LOOKUP_FIELDS.items():
-        for field in ("address", "name"):
-            for row in conn.find_nodes(
-                label, where={field: name}, return_fields=fields
-            ):
+        wheres = [{"address": name}, {"name": name}]
+        if inside:
+            wheres += [
+                {"module_dir": d, "address": inside[1]}
+                for d in _module_dirs(conn, inside[0])
+            ]
+        for where in wheres:
+            for row in conn.find_nodes(label, where=where, return_fields=fields):
                 if row["id"] in seen:
                     continue
                 seen.add(row["id"])
@@ -569,15 +915,24 @@ def search(
 
 
 def nodes_named(conn, name: str) -> list[dict[str, Any]]:
-    """TF blocks whose address is ``name``, any directory, both labels."""
+    """TF blocks whose address is ``name``, any directory, both labels;
+    for `module.m.<address>`, that block inside module m's source."""
     out: list[dict[str, Any]] = []
+    inside = _inside_module(name)
+    wheres = [{"address": name}]
+    if inside:
+        wheres += [
+            {"module_dir": d, "address": inside[1]}
+            for d in _module_dirs(conn, inside[0])
+        ]
     for label in ("TFResource", "TFVar"):
-        for row in conn.find_nodes(
-            label,
-            where={"address": name},
-            return_fields=["id", "file_path", "start_line"],
-        ):
-            out.append({**row, "label": label})
+        for where in wheres:
+            for row in conn.find_nodes(
+                label,
+                where=where,
+                return_fields=["id", "address", "file_path", "start_line"],
+            ):
+                out.append({**row, "label": label})
     return out
 
 
@@ -595,6 +950,20 @@ def users_of(conn, name: str) -> list[dict[str, Any]]:
                     return_dst=["file_path"],
                 )
             )
+    if _inside_module(name):
+        # module.m.<address>: the users of that block inside the module.
+        for node in nodes_named(conn, name):
+            if node.get("address", name) == name:
+                continue
+            for edge in _edge_types_into(node["label"]):
+                rows.extend(
+                    conn.find_neighbors(
+                        edge,
+                        dst_key=node["id"],
+                        return_src=["address", "file_path", "start_line"],
+                        return_dst=["file_path"],
+                    )
+                )
     return rows
 
 

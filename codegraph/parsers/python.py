@@ -20,7 +20,15 @@ import tree_sitter_python as tsp
 from tree_sitter import Language, Node, Parser
 
 from . import register_parser
-from .base import BaseParser, ClassDef, FileIndex, ImportRef, SymbolDef
+from .base import (
+    BaseParser,
+    Bindings,
+    ClassDef,
+    FileIndex,
+    ImportRef,
+    SymbolDef,
+    bind_calls,
+)
 
 PY_LANGUAGE = Language(tsp.language())
 _parser = Parser(PY_LANGUAGE)
@@ -68,16 +76,91 @@ def _extract_docstring(body_node: Node, src: bytes) -> str:
     return ""
 
 
-def _collect_calls(node: Node, src: bytes) -> list[str]:
-    """Recursively collect all called names within a function body."""
+def _import_bindings(node: Node, src: bytes) -> Bindings:
+    """The names an import statement binds, as {local: (module, symbol)}.
+
+    ``import a.b`` binds ``a`` to module "a"; ``import a.b as c`` binds ``c``
+    to module "a.b"; ``from m import s as t`` binds ``t`` to ("m", "s").
+    Relative modules keep their dots (".", "..pkg"). ``from m import *``
+    is kept under the key "*m" as ("m", "*"), see bind_calls.
+    """
+    out: Bindings = {}
+    if node.type == "import_statement":
+        for child in node.children:
+            if child.type == "dotted_name":
+                root = _text(child, src).split(".", 1)[0]
+                out[root] = (root, "")
+            elif child.type == "aliased_import":
+                name = child.child_by_field_name("name")
+                alias = child.child_by_field_name("alias")
+                if name is not None and alias is not None:
+                    out[_ident(alias, src)] = (_text(name, src), "")
+    elif node.type == "import_from_statement":
+        mod_node = node.child_by_field_name("module_name")
+        module = _text(mod_node, src).strip() if mod_node else ""
+        for child in node.children:
+            if mod_node is not None and child.start_byte == mod_node.start_byte:
+                continue
+            if child.type == "dotted_name":
+                sym = _ident(child, src)
+                out[sym] = (module, sym)
+            elif child.type == "aliased_import":
+                name = child.child_by_field_name("name")
+                alias = child.child_by_field_name("alias")
+                if name is not None and alias is not None:
+                    out[_ident(alias, src)] = (module, _ident(name, src))
+            elif child.type == "wildcard_import":
+                out[f"*{module}"] = (module, "*")
+    return out
+
+
+def _receiver(obj: Node, src: bytes) -> str:
+    """The receiver of an attribute call as CallRef.receiver describes it."""
+    if obj.type == "identifier":
+        text = _ident(obj, src)
+        return "self" if text in ("self", "cls") else text
+    if obj.type == "attribute":
+        parts: list[str] = []
+        cur: Node | None = obj
+        while cur is not None and cur.type == "attribute":
+            attr = cur.child_by_field_name("attribute")
+            if attr is None:
+                return "?"
+            parts.append(_ident(attr, src))
+            cur = cur.child_by_field_name("object")
+        if cur is None or cur.type != "identifier":
+            return "?"
+        parts.append(_ident(cur, src))
+        return ".".join(reversed(parts))
+    if obj.type == "call":
+        fn = obj.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier":
+            name = _ident(fn, src)
+            # super().f() calls the parent; Foo(...).f() an instance of Foo.
+            return "super" if name == "super" else f"{name}()"
+    return "?"
+
+
+def _collect_calls(
+    node: Node, src: bytes
+) -> tuple[list[str], list[tuple[str, str]], Bindings]:
+    """Recursively collect the calls within a function body.
+
+    Returns the called names (deduplicated, in order), the raw
+    (name, receiver) pairs, and the imports made inside the body.
+    """
     calls: list[str] = []
+    raw: list[tuple[str, str]] = []
+    local: Bindings = {}
     visited: set[int] = set()
 
     def walk(n: Node) -> None:
         if id(n) in visited:
             return
         visited.add(id(n))
-        if n.type == "call":
+        if n.type in ("import_statement", "import_from_statement"):
+            local.update(_import_bindings(n, src))
+        elif n.type == "call":
             func_node = n.child_by_field_name("function")
             if func_node:
                 name = _ident(func_node, src)
@@ -88,11 +171,18 @@ def _collect_calls(node: Node, src: bytes) -> list[str]:
                 # (CJK, accented Latin, Cyrillic) survive the filter.
                 if re.match(r"^\w+$", name, re.UNICODE):
                     calls.append(name)
+                    if func_node.type == "identifier":
+                        raw.append((name, ""))
+                    elif func_node.type == "attribute":
+                        obj = func_node.child_by_field_name("object")
+                        raw.append((name, _receiver(obj, src) if obj else "?"))
+                    else:
+                        raw.append((name, "?"))
         for child in n.children:
             walk(child)
 
     walk(node)
-    return list(dict.fromkeys(calls))  # deduplicate, preserve order
+    return list(dict.fromkeys(calls)), raw, local
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +208,15 @@ class PythonParser(BaseParser):
         root = tree.root_node
 
         index = FileIndex(path=path_str, lang=self.lang)
+        # Module-level import bindings, and per function its raw calls and
+        # the imports made in its body: calls are bound once the whole file
+        # is read, since an import may follow the function that uses it.
+        module_bindings: Bindings = {}
+        pending: list[tuple[SymbolDef, list[tuple[str, str]], Bindings]] = []
 
         def _visit(node: Node, current_class: str | None = None) -> None:
+            if node.type in ("import_statement", "import_from_statement"):
+                module_bindings.update(_import_bindings(node, src))
             # --- imports ---
             if node.type == "import_statement":
                 for child in node.children:
@@ -213,7 +310,7 @@ class PythonParser(BaseParser):
                 body_node = fn_node.child_by_field_name("body")
                 name = _ident(name_node, src) if name_node else "?"
                 doc = _extract_docstring(body_node, src) if body_node else ""
-                calls = _collect_calls(fn_node, src)
+                calls, raw_calls, local_bindings = _collect_calls(fn_node, src)
                 fn_id = (
                     f"{path_str}::{current_class}.{name}"
                     if current_class
@@ -221,19 +318,19 @@ class PythonParser(BaseParser):
                 )
                 kind = "method" if current_class else "function"
 
-                index.functions.append(
-                    SymbolDef(
-                        id=fn_id,
-                        name=name,
-                        file_path=path_str,
-                        start_line=fn_node.start_point[0] + 1,
-                        end_line=fn_node.end_point[0] + 1,
-                        docstring=doc,
-                        class_name=current_class,
-                        calls=calls,
-                        kind=kind,
-                    )
+                fn = SymbolDef(
+                    id=fn_id,
+                    name=name,
+                    file_path=path_str,
+                    start_line=fn_node.start_point[0] + 1,
+                    end_line=fn_node.end_point[0] + 1,
+                    docstring=doc,
+                    class_name=current_class,
+                    calls=calls,
+                    kind=kind,
                 )
+                index.functions.append(fn)
+                pending.append((fn, raw_calls, local_bindings))
                 return
 
             # Default: recurse
@@ -243,4 +340,6 @@ class PythonParser(BaseParser):
         for child in root.children:
             _visit(child)
 
+        for fn, raw_calls, local_bindings in pending:
+            fn.call_refs = bind_calls(raw_calls, {**module_bindings, **local_bindings})
         return index

@@ -145,6 +145,36 @@ def _import_bindings(node: Node, module: str, src: bytes) -> Bindings:
     return out
 
 
+def _class_bases(node: Node, src: bytes) -> list[str]:
+    """The names a class extends, then the ones it implements, in source order.
+
+    The grammar puts them in a positional ``class_heritage`` child, not a
+    field. Type arguments are dropped (``Base<T>`` gives ``Base``) and a
+    qualified base keeps its dots (``ns.Base``), as Python and Java store them.
+    An expression base such as ``mixin(Base)`` names no class and is skipped.
+    Implemented interfaces are recorded as bases, as Java and C# do.
+    """
+    bases: list[str] = []
+    for heritage in node.children:
+        if heritage.type != "class_heritage":
+            continue
+        for clause in heritage.children:
+            if clause.type == "extends_clause":
+                value = clause.child_by_field_name("value")
+                if value is not None and value.type in (
+                    "identifier",
+                    "member_expression",
+                ):
+                    bases.append(_ident(value, src))
+            elif clause.type == "implements_clause":
+                for t in clause.named_children:
+                    if t.type == "generic_type":
+                        t = t.child_by_field_name("name") or t
+                    if t.type in ("type_identifier", "nested_type_identifier"):
+                        bases.append(_ident(t, src))
+    return bases
+
+
 def _fn_name(node: Node, src: bytes) -> str:
     """Best-effort function name extraction across declaration styles."""
     # function foo() / function* foo()
@@ -218,12 +248,7 @@ class TypeScriptParser(BaseParser):
             elif node.type == "class_declaration":
                 name_node = node.child_by_field_name("name")
                 name = _ident(name_node, src) if name_node else "?"
-                bases: list[str] = []
-                heritage = node.child_by_field_name("heritage")
-                if heritage:
-                    for child in heritage.children:
-                        if child.type in ("identifier", "member_expression"):
-                            bases.append(_ident(child, src))
+                bases = _class_bases(node, src)
                 body = node.child_by_field_name("body")
                 index.classes.append(
                     ClassDef(

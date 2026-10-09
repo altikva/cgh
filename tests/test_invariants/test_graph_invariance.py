@@ -126,6 +126,31 @@ FIXTURE: dict[str, str] = {
         "  }\n"
         "}\n"
     ),
+    # TypeScript inheritance: a generic base defined in a file walked after
+    # its subclass, an implemented interface, and this / super calls that
+    # resolve through the base. Drawer.stash shares the method name, so only
+    # the base tells the two apart.
+    "web/src/aa_cart.ts": (
+        "import { Store } from './zz_store'\n\n"
+        "export interface Saveable {\n  persist(): string\n}\n\n"
+        "export class CartStore extends Store<number> implements Saveable {\n"
+        "  persist(): string {\n"
+        "    return this.stash(1) + super.stash(2)\n"
+        "  }\n"
+        "}\n"
+    ),
+    "web/src/zz_store.ts": (
+        "export class Store<T> {\n"
+        "  stash(item: T): string {\n"
+        "    return String(item)\n"
+        "  }\n"
+        "}\n\n"
+        "export class Drawer {\n"
+        "  stash(item: string): string {\n"
+        "    return item\n"
+        "  }\n"
+        "}\n"
+    ),
     "web/server/users.controller.ts": (
         "import { Controller, Get } from '@nestjs/common'\n"
         "import { renderTotal } from '../src/client'\n\n"
@@ -315,6 +340,19 @@ def test_edges_independent_of_ingestion_order(graphs, kind):
 def test_edges_survive_resaving_every_file(graphs, kind):
     problems = _diff(graphs, kind, ("C",))
     assert not problems, "\n".join(problems)
+
+
+def test_typescript_bases_are_linked(graphs):
+    a = graphs["A"]
+    assert ("web/src/aa_cart.ts::CartStore", "web/src/zz_store.ts::Store") in a[
+        "INHERITS"
+    ]
+    assert ("web/src/client.ts::TotalWidget", "web/src/widgets.ts::BaseWidget") in a[
+        "INHERITS"
+    ]
+    # this.stash() and super.stash() follow the base, not every stash.
+    stash = {t for f, t in a["CALLS"] if f == "web/src/aa_cart.ts::CartStore.persist"}
+    assert stash == {"web/src/zz_store.ts::Store.stash"}
 
 
 def test_cross_file_handler_is_linked(graphs):

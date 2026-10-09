@@ -84,3 +84,26 @@ class TestPythonParser:
         assert idx.lang == "python"
         assert len(idx.functions) == 0
         assert len(idx.classes) == 0
+
+    def test_subscripted_bases(self, tmp_path):
+        f = tmp_path / "generic.py"
+        f.write_text(
+            "class A(Base[T]): pass\n"
+            "class B(Generic[T]): pass\n"
+            "class C(Protocol[T], metaclass=M): pass\n"
+            "class D(mod.Base[T]): pass\n"
+            "class E(Base[int, str], Other): pass\n"
+            "class F(Base[T][U]): pass\n"
+            "class G(Generic): pass\n"
+        )
+        bases = {c.name: c.bases for c in get_parser(".py").parse(f).classes}
+        # Generic and Protocol are kept like any other base, as for plain names.
+        assert bases == {
+            "A": ["Base"],
+            "B": ["Generic"],
+            "C": ["Protocol"],
+            "D": ["mod.Base"],
+            "E": ["Base", "Other"],
+            "F": ["Base"],
+            "G": ["Generic"],
+        }

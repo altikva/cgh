@@ -34,7 +34,10 @@ _META_FILE = "scan_meta.json"
 #   5: call sites carry their shape (bare, self, module, attribute) and the
 #      import behind the name, and CALLS edges follow it instead of linking
 #      every function of the called name.
-GRAPH_FORMAT = 5
+#   6: class bases are read from TypeScript / JavaScript classes (extends and
+#      implements) and from subscripted Python bases (Base[T]), so INHERITS
+#      edges and the calls resolved through bases change.
+GRAPH_FORMAT = 6
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

@@ -41,7 +41,10 @@ _META_FILE = "scan_meta.json"
 #      built in __init__, this.x.f() on a TypeScript parameter property or
 #      typed field) is stored as a call on that class, resolved through its
 #      bases.
-GRAPH_FORMAT = 7
+#   8: Terraform module inputs are blocks of their own (module.m.<arg>),
+#      moved / import / removed blocks reference the addresses they name,
+#      and module sources mapped by [terraform] module_sources link.
+GRAPH_FORMAT = 8
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

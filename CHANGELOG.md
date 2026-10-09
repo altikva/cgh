@@ -37,6 +37,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   assignments are searchable and point at their variable, and YAML under a
   `contracts/` directory is indexed one entry per key, three levels deep.
   Existing indexes re-parse once on the next index.
+- **Remote Terraform modules can be linked to a local checkout.** The
+  opt-in `[terraform] module_sources` table in `.codegraph/config.toml`
+  maps a git or registry source to a directory (the `//subdir` is
+  followed, `?ref=` ignored), so module arguments and `module.m.out` link
+  to that module's variables and outputs. A directory outside the index is
+  read on demand, read-only; nothing is fetched. See
+  docs/CONFIGURATION.md.
 - The call log records who triggered each tool call: `agent` (an MCP
   client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
   plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
@@ -47,6 +54,21 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   include it.
 
 ### Fixed
+- **Terraform module inputs were invisible to name search.** Each argument
+  of a module call is now an entry, `module.kms.<argument>`, so `cgh search`
+  and `search_symbols` on an input name land on the call, and
+  `find_callees` on it reaches the module's variable. `cgh search` lists
+  Terraform blocks at all now, as `search_symbols` did. String values stay
+  in text search.
+- **`moved` blocks were not linked.** `moved`, `import` and `removed`
+  blocks now reference the addresses they name, so `find_callers` and
+  impact on a resource or module list them.
+- **`cgh impact` on one line of a `.tf` file reported every file of its
+  directory.** Terraform impact now starts from the blocks the diff
+  touches and follows only the blocks that reference them (one changed
+  line in ondonne-infra's staging `kms.tf`: 29 files before, 6 now), and
+  lists contracts entries that mention a changed address under `related`.
+  `impact_of` on a `.tf` path is block-precise too.
 - **A federated worktree could read another ticket's branch.** When a repo
   is a linked git worktree, federation replaced each configured child with a
   worktree of that child sitting in the same directory. In a layout where all

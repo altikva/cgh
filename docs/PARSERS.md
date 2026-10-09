@@ -419,12 +419,37 @@ string interpolations and heredocs included; comments, literals, `each`,
 directory, as Terraform does, and stores it as a name reference so the edge
 is found whatever order files are indexed in. `module.m.out` lands on output
 `out` of the directory a local `source` (`./`, `../`) points to, and each
-module argument on that directory's `var.<argument>`; a registry or git
-source links nothing. A `.tfvars` file yields one entry per assignment,
-linked to `var.<key>` in the same directory. The edges are `TF_DEPENDS`,
-`TF_REFS_VAR`, `TF_VAR_DEPENDS` and `TF_VAR_REFS` (variables, outputs and
-tfvars entries are `TFVar` nodes, every other block a `TFResource`), and
-`find_callers`, `find_callees`, `impact_of` and `cgh impact` read them.
+module argument on that directory's `var.<argument>`. A registry or git
+source links nothing unless `[terraform] module_sources` in
+`.codegraph/config.toml` maps it to a local checkout (see
+[CONFIGURATION.md](CONFIGURATION.md#terraform)): the source is then read as
+that directory. A mapped directory the graph already indexes (the repo, an
+`extra_dirs` entry) links like a local one; any other (outside every index,
+or inside a federated subrepo, whose graph the parent cannot link into) has
+its variables and outputs read into this graph on demand, read-only, without
+a File node or text-search entry, and read again when its `.tf` files change
+and a caller is re-indexed. Nothing is fetched over the network.
+
+Each module input is also an entry of its own, `module.<m>.<argument>`
+(kind `tf_module_arg`), on the argument's lines and pointing at the
+module's `var.<argument>`, so a name search for an input lands on the module
+call. String values stay out of name search: text search (`--text`,
+`fts_search`) finds them through each block's summary. `moved`, `import` and
+`removed` blocks are entries too (`moved.<to>`, `import.<to>`,
+`removed.<from>`) referencing the addresses they name: `random_id.x` in the
+same directory, `module.m` for `module.m.google_x.y`, and the resource
+`google_x.y` inside module `m` when its source resolves, so `find_callers`
+on a resource or a module lists its moved blocks.
+
+A `.tfvars` file yields one entry per assignment, linked to `var.<key>` in
+the same directory. The edges are `TF_DEPENDS`, `TF_REFS_VAR`,
+`TF_VAR_DEPENDS` and `TF_VAR_REFS` (variables, outputs and tfvars entries
+are `TFVar` nodes, every other block a `TFResource`), and `find_callers`,
+`find_callees`, `impact_of` and `cgh impact` read them. Impact is per
+block: `cgh impact` maps the changed lines of a `.tf` diff to the blocks
+they touch and reports only the files holding blocks that reference those,
+transitively (across module inputs and outputs), plus the non-Terraform
+entries (contracts YAML, docs) that mention a changed address as `related`.
 
 ---
 

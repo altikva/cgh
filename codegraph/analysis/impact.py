@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -350,13 +351,17 @@ def reverse_calls_bfs(
     return files, truncated
 
 
-def symbols_in_file(conn: Any, file_path: str) -> list[dict[str, str]]:
+def symbols_in_file(
+    conn: Any, file_path: str, ranges: list[tuple[int, int]] | None = None
+) -> list[dict[str, str]]:
     """Functions, classes and Terraform blocks defined in ``file_path``.
 
     Returns ``[{name, kind, lines}]`` ordered by start line. Used by the
     impact command to report which symbols actually changed in a diff.
+    ``ranges`` (changed line ranges) keeps only the Terraform blocks they
+    touch; functions and classes are listed whole either way.
     """
-    from codegraph.analysis.terraform import blocks_in_file, label_of, tool_kind
+    from codegraph.analysis.terraform import blocks_touching, label_of, tool_kind
 
     out: list[dict[str, str]] = []
     for label, kind in (("Function", "function"), ("Class", "class")):
@@ -374,7 +379,7 @@ def symbols_in_file(conn: Any, file_path: str) -> list[dict[str, str]]:
                 }
             )
     if file_path.endswith((".tf", ".tfvars")):
-        for b in blocks_in_file(conn, file_path):
+        for b in blocks_touching(conn, file_path, ranges):
             out.append(
                 {
                     "name": b.get("address") or "",
@@ -410,18 +415,112 @@ def endpoints_in_files(conn: Any, files: list[str]) -> list[dict[str, str]]:
 
 IMPACT_NOTE = (
     "Blast radius and tests are inferred from IMPORTS / CALLS edges "
-    "(Terraform: block references), "
+    "(Terraform: block references from the changed blocks), "
     "not a coverage run. Keep the index fresh with `cgh index` in CI."
 )
 
+_RE_LINES = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
+_RELATED_CAP = 50
 
-def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
+
+def split_changed_entry(entry: str) -> tuple[str, list[tuple[int, int]] | None]:
+    """``path#L12-14,30`` -> (path, [(12, 14), (30, 30)]); a plain path ->
+    (path, None), meaning the whole file changed. This is how the changed
+    lines of a diff travel through the impact_report tool's file list."""
+    path, sep, spec = entry.rpartition("#L")
+    if not sep or not path or not _RE_LINES.match(spec):
+        return entry, None
+    ranges = []
+    for part in spec.split(","):
+        lo, _, hi = part.partition("-")
+        first, last = int(lo), int(hi or lo)
+        ranges.append((min(first, last), max(first, last)))
+    return path, ranges
+
+
+def format_changed_entry(path: str, ranges: list[tuple[int, int]] | None) -> str:
+    """The inverse of split_changed_entry."""
+    if not ranges:
+        return path
+    spec = ",".join(f"{lo}-{hi}" if hi != lo else str(lo) for lo, hi in ranges)
+    return f"{path}#L{spec}"
+
+
+def related_mentions(
+    root: str | Path, terms: list[str], exclude: set[str]
+) -> list[dict[str, Any]]:
+    """Non-Terraform entries of the text index (contracts YAML entries,
+    docs, test docstrings) whose name or text mentions one of ``terms``:
+    [{file, line, name, kind, mentions}], absolute paths, capped. Empty
+    when the text index cannot be read."""
+    if not terms:
+        return []
+    try:
+        from codegraph.core.fts import _FTS_LOCK, get_fts_conn
+
+        fts = get_fts_conn(root)
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    try:
+        for term in terms:
+            with _FTS_LOCK:
+                rows = fts.execute(
+                    "SELECT kind, name, file_path, start_line FROM symbols "
+                    "WHERE kind NOT LIKE 'tf\\_%' ESCAPE '\\' "
+                    "AND (instr(docstring, ?) > 0 OR instr(name, ?) > 0) "
+                    "ORDER BY file_path, start_line LIMIT ?",
+                    [term, term, _RELATED_CAP],
+                ).fetchall()
+            for kind, name, file_path, line in rows:
+                if file_path in exclude or (file_path, line) in seen:
+                    continue
+                seen.add((file_path, line))
+                out.append(
+                    {
+                        "file": file_path,
+                        "line": line,
+                        "name": name,
+                        "kind": kind,
+                        "mentions": term.rstrip("."),
+                    }
+                )
+                if len(out) >= _RELATED_CAP:
+                    return out
+    except Exception:
+        return out
+    finally:
+        try:
+            fts.close()
+        except Exception:
+            pass
+    return out
+
+
+def build_impact_report(
+    conn: Any,
+    root: str,
+    changed_files: list[str],
+    changed_lines: dict[str, list[tuple[int, int]]] | None = None,
+) -> dict:
     """The `cgh impact` report for a set of repo-relative changed files.
 
     Shared by the CLI (local read-only open) and the ``impact_report`` MCP
     tool (the owner's connection), so both paths return the same payload.
     All paths in the result are repo-relative.
+
+    ``changed_lines`` maps a changed file to the line ranges its diff
+    touches; an entry of ``changed_files`` may carry them too, as
+    ``path#L12-14,30``. For a Terraform file they narrow the change to the
+    blocks those lines touch, and the blast radius to the blocks that
+    reference those (transitively); without them the whole file counts.
     """
+    from codegraph.analysis.terraform import (
+        impacted_files as tf_impacted_files,
+    )
+    from codegraph.analysis.terraform import mention_terms
+
     root_path = Path(root).resolve()
 
     def _rel(p: str) -> str:
@@ -430,23 +529,58 @@ def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
         except (ValueError, OSError):
             return p
 
+    lines_of: dict[str, list[tuple[int, int]] | None] = {}
+    plain: list[str] = []
+    for entry in changed_files:
+        path, ranges = split_changed_entry(entry)
+        if changed_lines and path in changed_lines:
+            ranges = list(changed_lines[path])
+        plain.append(path)
+        lines_of[path] = ranges
+    changed_files = plain
+
     # Changed files resolve to absolute File-node keys for graph lookups.
     abs_changed = [str(root_path / f) for f in changed_files]
 
     changed_symbols: list[dict] = []
     for abs_f, rel_f in zip(abs_changed, changed_files, strict=False):
-        for sym in symbols_in_file(conn, abs_f):
+        for sym in symbols_in_file(conn, abs_f, lines_of.get(rel_f)):
             changed_symbols.append({"file": rel_f, **sym})
 
     # Blast radius: files that transitively import any changed file, then
     # the files whose functions reach a changed file's functions over CALLS.
-    radius, radius_trunc = reverse_import_bfs(conn, abs_changed, max_depth=3)
-    callers, callers_trunc = reverse_calls_bfs(conn, abs_changed, max_depth=3)
+    # A Terraform change walks back from its changed blocks instead: the
+    # files holding blocks that reference them, not every file of the
+    # module directory.
+    tf_changes = {
+        abs_f: lines_of.get(rel_f)
+        for abs_f, rel_f in zip(abs_changed, changed_files, strict=False)
+        if abs_f.endswith((".tf", ".tfvars"))
+    }
+    code_changed = [f for f in abs_changed if f not in tf_changes]
+    radius, radius_trunc = reverse_import_bfs(conn, code_changed, max_depth=3)
+    callers, callers_trunc = reverse_calls_bfs(conn, code_changed, max_depth=3)
     in_radius = set(radius)
     radius += [p for p in callers if p not in in_radius]
-    if len(radius) > _REVERSE_CAP:
-        radius, callers_trunc = radius[:_REVERSE_CAP], True
     radius_trunc = radius_trunc or callers_trunc
+    related: list[dict] = []
+    if tf_changes:
+        tf_radius, tf_start, tf_trunc = tf_impacted_files(
+            conn, tf_changes, max_depth=3, cap=_REVERSE_CAP
+        )
+        seen_radius = set(radius) | set(abs_changed)
+        radius += [f for f in tf_radius if f not in seen_radius]
+        radius_trunc = radius_trunc or tf_trunc
+        related = [
+            {**m, "file": _rel(m["file"])}
+            for m in related_mentions(
+                root_path,
+                mention_terms(conn, tf_start),
+                set(abs_changed),
+            )
+        ]
+    if len(radius) > _REVERSE_CAP:
+        radius, radius_trunc = radius[:_REVERSE_CAP], True
 
     impacted: list[dict] = []
     by_role: dict[str, int] = {}
@@ -491,6 +625,7 @@ def build_impact_report(conn: Any, root: str, changed_files: list[str]) -> dict:
         "impacted_by_layer": by_layer,
         "endpoints": endpoints,
         "tests_to_run": tests,
+        "related": related,
         "truncated": radius_trunc,
         "note": IMPACT_NOTE,
     }

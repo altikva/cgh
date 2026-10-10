@@ -1,6 +1,6 @@
 {
   "name": "@altikva/cgh",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Local code graph + memory + plans + knowledge for AI coding agents. Downloads and runs the standalone cgh binary; no Python required.",
   "bin": {
     "cgh": "bin/cgh.js"

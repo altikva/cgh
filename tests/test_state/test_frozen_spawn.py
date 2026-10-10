@@ -41,7 +41,7 @@ def test_normal_install_spawns_via_dash_m(capture_spawn, tmp_path, monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     ipc.spawn_owner(tmp_path, watch=False, reindex=False)
     cmd = capture_spawn["cmd"]
-    assert cmd[:4] == ["/opt/cgh/bin/cgh", "-m", "codegraph", "_serve_owner"]
+    assert cmd[:5] == ["/opt/cgh/bin/cgh", "-P", "-m", "codegraph", "_serve_owner"]
 
 
 def test_frozen_binary_spawns_the_subcommand_directly(

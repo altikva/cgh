@@ -38,6 +38,100 @@ def register(mcp) -> None:
         (results_with_scope, warnings). See federation.federate_flat."""
         return federate_flat(_get_conn, _srv._root, query_fn)
 
+    def _search_repo_at_ref(
+        pattern, glob, max_results, regex, case_sensitive, repo, ref
+    ) -> str:
+        """pattern_search on one repo (this one or a declared sibling): its
+        tree at ``ref`` read from git, or its working tree when no ref."""
+        from codegraph.analysis.pattern import pattern_search as _search
+        from codegraph.analysis.refs import (
+            RefError,
+            grep_at_ref,
+            resolve_repo,
+            resolve_target,
+        )
+
+        try:
+            if ref:
+                target = resolve_target(_srv._root, repo, ref)
+                name, sha = target.name, target.sha
+                hits = grep_at_ref(
+                    target, pattern, glob, max_results, regex, case_sensitive
+                )
+                backend = "git-grep-ref"
+            else:
+                name, top = resolve_repo(_srv._root, repo)
+                sha = None
+                hits, backend = _search(
+                    top,
+                    pattern=pattern,
+                    glob=glob,
+                    max_results=max_results,
+                    regex=regex,
+                    case_sensitive=case_sensitive,
+                    include_extra_dirs=False,
+                )
+        except RefError as exc:
+            return json.dumps({"pattern": pattern, "error": str(exc)}, indent=2)
+        scope = name or "parent"
+        return json.dumps(
+            {
+                "pattern": pattern,
+                "glob": glob or None,
+                "repo": name or None,
+                "ref": ref or None,
+                "commit": sha,
+                "backend": backend,
+                "total": len(hits),
+                "hits": [
+                    {"scope": scope, "file": h.file, "line": h.line, "text": h.text}
+                    for h in hits
+                ],
+            },
+            indent=2,
+        )
+
+    @mcp.tool()
+    @_logged_tool
+    def file_at_ref(
+        path: str,
+        ref: str,
+        repo: str = "",
+        start_line: int = 1,
+        end_line: int = 0,
+    ) -> str:
+        """
+        Read a file as it is at a branch, tag or commit, straight from git:
+        no checkout, no index. Use it for code on another branch of this
+        repo, or in a sibling repo declared under [codegraph] siblings
+        (e.g. the API's origin/develop seen from a frontend worktree),
+        instead of `git show` in a shell.
+
+        Args:
+          path:       path inside the repo, as pattern_search(ref=...) returns
+          ref:        branch, tag, remote-tracking branch or commit id
+          repo:       a declared sibling repo (directory name); "" = this repo
+          start_line: first line, 1-based (default 1)
+          end_line:   last line, inclusive; 0 = to the end. At most 400
+                      lines per call (`truncated` says when it stopped)
+
+        Returns {repo, ref, commit, path, total_lines, start_line, end_line,
+        truncated, lines: [{line, text}]}, or {error} for an unknown repo,
+        ref or path. Never fetches: run `git fetch` there for a fresh
+        remote branch.
+        """
+        from codegraph.analysis.refs import RefError, read_at_ref, resolve_target
+
+        try:
+            target = resolve_target(_srv._root, repo, ref)
+            out = read_at_ref(target, path, start_line, end_line)
+        except RefError as exc:
+            return json.dumps({"path": path, "ref": ref, "error": str(exc)}, indent=2)
+        return json.dumps(
+            {"repo": target.name or None, "ref": ref, "commit": target.sha, **out},
+            indent=2,
+        )
+
     def _retry_children_via_fts(results, warnings, retry, to_row):
         """Re-answer children whose graph DB was unreachable from their FTS.
 
@@ -67,6 +161,8 @@ def register(mcp) -> None:
         max_results: int = 50,
         regex: bool = True,
         case_sensitive: bool = False,
+        repo: str = "",
+        ref: str = "",
     ) -> str:
         """
         Regex / substring pattern search across the indexed repo. Use this
@@ -83,15 +179,29 @@ def register(mcp) -> None:
           max_results:    hard cap (default 50)
           regex:          treat pattern as regex (default True)
           case_sensitive: default False
+          repo:           a sibling repo declared under [codegraph] siblings
+                          (by directory name), instead of this project
+          ref:            search the tree at this branch, tag or commit
+                          (e.g. "origin/develop") straight from git, no
+                          checkout needed; hit files are paths inside the
+                          repo, read them with file_at_ref
 
         Example: pattern_search(r"@router\\.(get|post)", glob="*.py")
                  → list of route declarations with line numbers.
+        Example: pattern_search("class Association", repo="my-api",
+                                ref="origin/develop")
 
         Federated: also scans federated subrepo trees. Each hit is tagged
-        with `scope` (parent / <subrepo-name>).
+        with `scope` (parent / <subrepo-name>). With repo or ref set, only
+        that one repo is searched.
         """
         from codegraph.analysis.federation import resolve_children
         from codegraph.analysis.pattern import pattern_search as _search
+
+        if repo or ref:
+            return _search_repo_at_ref(
+                pattern, glob, max_results, regex, case_sensitive, repo, ref
+            )
 
         all_hits: list[dict] = []
         backend = ""

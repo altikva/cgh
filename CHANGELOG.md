@@ -21,9 +21,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   file's lines at a ref. Both read straight from git. A frontend worktree
   can now search the API's develop branch without falling back to
   `git grep` / `git show` in a shell. Only this repo and the repos listed
-  under the new `[codegraph] siblings` key are reachable; nothing is
-  fetched. The key counts in `~/.codegraph/config.toml`, and in the
-  project's `config.toml` only when git doesn't track it, so a cloned repo
+  under the new `[codegraph] siblings` key of your global
+  `~/.codegraph/config.toml` are reachable; nothing is fetched. A
+  project's own `config.toml` can't declare siblings, so a cloned repo
   can't open your other repos.
 
 ### Fixed

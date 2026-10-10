@@ -50,7 +50,7 @@ class TestMcpCommand:
         command, args = _mcp_command()
 
         assert os.path.isabs(command)
-        assert args[:3] == ["-m", "codegraph", "serve"]
+        assert args[:4] == ["-P", "-m", "codegraph", "serve"]
 
 
 class TestSetupWritesTheBobMcpJson:

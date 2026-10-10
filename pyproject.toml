@@ -147,11 +147,6 @@ dev = [
     "pytest>=8",
 ]
 
-[tool.uv.sources]
-# 0.1.3 is not on PyPI yet: resolved from the workspace until this release
-# publishes it (the release workflow ships plugins before core).
-cgh-bugreport = { path = "plugins/cgh-bugreport" }
-
 [tool.ruff]
 target-version = "py311"
 

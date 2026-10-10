@@ -1265,6 +1265,7 @@ def _init_children(root: Path, assume_yes: bool) -> None:
                 proc = subprocess.run(
                     [
                         _sys.executable,
+                        "-P",
                         "-m",
                         "codegraph",
                         "init",
@@ -1512,7 +1513,10 @@ def _mcp_command() -> tuple[str, list[str]]:
             found = shutil.which(name)
             if found:
                 return found, ["serve", "--root", ".", "--watch", "--reindex"]
+    # -P: the client starts this from inside the repo, which must not be
+    # able to shadow the installed `codegraph` package.
     return sys.executable, [
+        "-P",
         "-m",
         "codegraph",
         "serve",
@@ -1922,7 +1926,16 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
     else:
         mcp_entry = {
             "command": sys.executable,
-            "args": ["-m", "codegraph", "serve", "--root", ".", "--watch", "--reindex"],
+            "args": [
+                "-P",
+                "-m",
+                "codegraph",
+                "serve",
+                "--root",
+                ".",
+                "--watch",
+                "--reindex",
+            ],
         }
 
     from codegraph.integrations.skill_installer import (
@@ -1973,7 +1986,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 
         cli = mcp_entry["command"]  # cgh / codegraph / python -m codegraph
         if cli == sys.executable:
-            cli_prefix = f"{_hook_exe_path(sys.executable)} -m codegraph"
+            cli_prefix = f"{_hook_exe_path(sys.executable)} -P -m codegraph"
         else:
             cli_prefix = _hook_exe_path(_hook_launcher(cli))
 
@@ -2099,7 +2112,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         if command == sys.executable:
-            bob_cli = f"{_hook_exe_path(sys.executable)} -m codegraph"
+            bob_cli = f"{_hook_exe_path(sys.executable)} -P -m codegraph"
         else:
             bob_cli = _hook_exe_path(_hook_launcher(command))
         hooks = _install_bob_hooks(root, bob_cli)

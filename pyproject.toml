@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.16.0"
+version = "0.16.1"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 54 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -146,11 +146,6 @@ codegraph = [
 dev = [
     "pytest>=8",
 ]
-
-[tool.uv.sources]
-# 0.1.3 is not on PyPI yet: resolved from the workspace until this release
-# publishes it (the release workflow ships plugins before core).
-cgh-bugreport = { path = "plugins/cgh-bugreport" }
 
 [tool.ruff]
 target-version = "py311"

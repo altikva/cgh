@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 55 tools, plus whatever installed plugins register.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -20,6 +20,8 @@ When running as an MCP server (`cgh serve`), codegraph exposes 54 tools, plus wh
 | `imports_of(file_path)` | List modules imported by a file |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
+| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning `{file, line, text}`, instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` |
+| `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
 | `graph_stats()` | Node and edge counts per type |
 

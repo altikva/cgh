@@ -157,6 +157,32 @@
       "url"
     ]
   },
+  "file_at_ref": {
+    "properties": {
+      "end_line": {
+        "default": 0,
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "repo": {
+        "default": "",
+        "type": "string"
+      },
+      "start_line": {
+        "default": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path",
+      "ref"
+    ]
+  },
   "file_summary": {
     "properties": {
       "file_path": {
@@ -517,9 +543,17 @@
       "pattern": {
         "type": "string"
       },
+      "ref": {
+        "default": "",
+        "type": "string"
+      },
       "regex": {
         "default": true,
         "type": "boolean"
+      },
+      "repo": {
+        "default": "",
+        "type": "string"
       }
     },
     "required": [

@@ -263,6 +263,11 @@ class CodegraphConfig:
     # here so Terraform module sources can tell an indexed directory from
     # one outside every index.
     extra_dirs: list[str] = field(default_factory=list)
+    # Sibling git repos that pattern_search(repo=, ref=) and file_at_ref may
+    # read at any branch or commit, straight from git (no checkout, no
+    # index). Nothing outside this list is ever read. Paths are absolute,
+    # ~-relative, or relative to project_root.
+    siblings: list[str] = field(default_factory=list)
     # [terraform] module_sources: opt-in map from a remote module source
     # package (git URL, registry address) to a local checkout, so a module
     # call with that source links to the module's variables and outputs.
@@ -377,6 +382,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.subrepos = list(cg["subrepos"])
     if "extra_dirs" in cg:
         config.extra_dirs = [str(d) for d in cg["extra_dirs"]]
+    if "siblings" in cg:
+        config.siblings = [str(d) for d in cg["siblings"]]
     if "federate_auto_up" in cg:
         config.federate_auto_up = bool(cg["federate_auto_up"])
     if "mode" in cg:
@@ -461,6 +468,11 @@ max_file_size_kb = 500
 # Sibling directories indexed into this repo's graph, managed by
 # `cgh add-dir add ../frontend` (kept here so it versions with the repo).
 # extra_dirs = ["../my-frontend"]
+# Sibling git repos an agent may read at any branch without a checkout:
+# pattern_search(pattern, repo="my-api", ref="origin/develop") and
+# file_at_ref(path, ref, repo="my-api"). Named by their directory name.
+# Read-only, never fetched, nothing outside this list is reachable.
+# siblings = ["~/code/my-api"]
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1

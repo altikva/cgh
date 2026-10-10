@@ -2278,6 +2278,36 @@ def _index_repo(
     return stats
 
 
+def _untracked_blob_shas(repo_root: Path) -> dict[str, str]:
+    """{relative path: blob sha of the disk content} for the parseable files
+    git does not track yet. The HEAD tree alone misses a file an agent just
+    created: incremental reindex never indexed it, and dropped it from the
+    graph when the watcher had already added it. Same filters as the full
+    scan's discovery (ignored dirs, dot dirs, .cghignore)."""
+    from codegraph.state.scan_meta import (
+        git_hash_object,
+        git_hash_objects,
+        git_untracked_files,
+    )
+
+    paths: list[Path] = []
+    for rel in git_untracked_files(repo_root):
+        parts = Path(rel).parts
+        if any(part in _IGNORE_DIRS or part.startswith(".") for part in parts):
+            continue
+        full = repo_root / rel
+        if not is_supported(full) or _is_cghignored(full, repo_root):
+            continue
+        paths.append(full)
+    shas = git_hash_objects(repo_root, paths)
+    out: dict[str, str] = {}
+    for full in paths:
+        sha = shas.get(str(full)) or git_hash_object(repo_root, full)
+        if sha:
+            out[str(full.relative_to(repo_root))] = sha
+    return out
+
+
 def incremental_reindex(
     repo_root: str | Path,
     on_file: Callable[[Path, str, dict], None] | None = None,
@@ -2376,6 +2406,8 @@ def _incremental_reindex(
             "mode": "fallback_full",
             **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
         }
+
+    head_shas.update(_untracked_blob_shas(repo_root))
 
     if subrepos:
         head_shas = {

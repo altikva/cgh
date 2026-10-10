@@ -103,8 +103,8 @@ def register(mcp) -> None:
         """
         Read a file as it is at a branch, tag or commit, straight from git:
         no checkout, no index. Use it for code on another branch of this
-        repo, or in a sibling repo declared under [codegraph] siblings
-        (e.g. the API's origin/develop seen from a frontend worktree),
+        repo, or in a sibling repo declared under [codegraph] siblings of
+        ~/.codegraph/config.toml (e.g. the API's origin/develop seen from a frontend worktree),
         instead of `git show` in a shell.
 
         Args:
@@ -180,7 +180,8 @@ def register(mcp) -> None:
           regex:          treat pattern as regex (default True)
           case_sensitive: default False
           repo:           a sibling repo declared under [codegraph] siblings
-                          (by directory name), instead of this project
+                          of ~/.codegraph/config.toml (by directory name),
+                          instead of this project
           ref:            search the tree at this branch, tag or commit
                           (e.g. "origin/develop") straight from git, no
                           checkout needed; hit files are paths inside the

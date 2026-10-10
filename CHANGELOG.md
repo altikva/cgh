@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **After an upgrade, the owner of an open session stopped every 30
+  seconds.** An owner that exits because cgh changed on disk deleted the
+  markers of the proxies still running, so each owner they started next
+  saw no client, stopped after 30 s and cut short the one-time index
+  upgrade. The exiting owner now keeps live markers, a proxy registers
+  again before starting a new owner, and an owner counts the live proxy
+  that started it. This last point also covers sessions still running a
+  proxy from before this fix, with no reconnect needed.
 - **A file not yet added to git was invisible.** Incremental reindex only
   looked at the files committed at HEAD, so a file an agent had just created
   was never indexed, and was dropped from the graph when the watcher had

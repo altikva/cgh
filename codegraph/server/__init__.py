@@ -581,18 +581,12 @@ def owner_main(
             from codegraph.state.pidfile import release as _pidfile_release
 
             _pidfile_release(_root)
-            # Clear the workers dir (entries + dir itself if empty).
-            wd = _root / ".codegraph" / "workers"
-            if wd.exists():
-                for f in wd.iterdir():
-                    try:
-                        f.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                try:
-                    wd.rmdir()
-                except OSError:
-                    pass
+            # Drop the keepalive and the dead markers only: the markers of
+            # proxies still running must survive, or the owner they respawn
+            # (after an upgrade exit, say) finds no worker and stops at 30s.
+            from codegraph.state.ipc import prune_workers_on_exit
+
+            prune_workers_on_exit(_root)
         except Exception:
             pass
 
@@ -633,8 +627,11 @@ def owner_main(
     import threading as _th
     import time as _time
 
-    from codegraph.state.ipc import live_workers
+    from codegraph.state.ipc import live_workers, spawner_alive
 
+    # The process that started this owner. A proxy from an older cgh whose
+    # marker an exiting owner deleted still counts while it is alive.
+    _spawner = os.getppid()
     _seen_worker = False
     _idle_since: float | None = None
 
@@ -684,7 +681,7 @@ def owner_main(
 
             workers = live_workers(_root)
 
-            if workers:
+            if workers or spawner_alive(_spawner):
                 _seen_worker = True
                 _idle_since = None
                 continue

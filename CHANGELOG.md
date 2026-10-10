@@ -8,6 +8,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-10
+
+**Upgrading from 0.15.** The first `cgh index` or owner start re-parses
+every file once (about two minutes on a 1,300-file repo). Until then the
+`cgh` query commands refuse the old index with `run cgh index`, and a
+federated parent warns about each child still on the old format. Expect
+far fewer CALLS edges and smaller `impact` results: guessed links and
+links into test code are gone, not real callers. To stay on 0.15, pin
+`cgh<0.16`. Details, seeds and rollback:
+[docs/UPGRADING-0.16.md](docs/UPGRADING-0.16.md).
+
 ### Removed
 - **cgh-summarize and cgh-classify left the repo.** Their final releases,
   0.3.0 and 0.2.0, stay on PyPI and cgh still loads them
@@ -87,6 +98,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `full_paths` too. Existing indexes re-parse once on the next index.
 
 ### Fixed
+- **A federated child on an older index format answered short and
+  silently.** The parent opens children read-only and cannot upgrade them,
+  so a child not yet re-indexed returned fewer results with no error. It is
+  now left out of graph answers with a warning naming the child and the
+  command to run, and `cgh federate verify` shows it as `outdated`.
 - **Two routers of one file declaring the same method and path kept only
   one route.** Endpoints were keyed by file, method and path, so a second
   `@images_router.get("")` replaced the first `@router.get("")`. They are now
@@ -2254,7 +2270,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/altikva/cgh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0
 [0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4

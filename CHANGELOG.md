@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-10
+
 ### Security
 - **A repo could run its own code as the cgh owner.** The owner, and the
   MCP server and hooks `cgh init` writes when no `cgh` binary is on PATH,
@@ -2282,7 +2284,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/altikva/cgh/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/altikva/cgh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0
 [0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5

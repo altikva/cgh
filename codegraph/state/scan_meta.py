@@ -359,6 +359,15 @@ def git_tree_blob_shas(repo_root: str | Path) -> dict[str, str] | None:
     return result
 
 
+def git_untracked_files(repo_root: str | Path) -> list[str]:
+    """Relative paths of the files git does not track and does not ignore
+    (a file an agent just created). [] when git fails."""
+    out = _git(repo_root, "ls-files", "--others", "--exclude-standard", "-z")
+    if not out:
+        return []
+    return [p for p in out.split("\0") if p]
+
+
 def git_hash_object(repo_root: str | Path, path: str | Path) -> str | None:
     """
     Compute git blob SHA for a file's current on-disk content (may differ

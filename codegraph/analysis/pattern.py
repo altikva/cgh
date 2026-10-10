@@ -221,7 +221,9 @@ def _run_git_grep(
 ) -> tuple[list[PatternHit], bool]:
     out: list[PatternHit] = []
     for root in roots:
-        args = ["git", "grep", "-n", "-I"]
+        # --untracked: a file just created and not yet added is searched too
+        # (ripgrep does that already); .gitignore still applies.
+        args = ["git", "grep", "-n", "-I", "--untracked"]
         if not case_sensitive:
             args.append("-i")
         if not regex:

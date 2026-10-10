@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **A file not yet added to git was invisible.** Incremental reindex only
+  looked at the files committed at HEAD, so a file an agent had just created
+  was never indexed, and was dropped from the graph when the watcher had
+  already added it. `pattern_search` missed it too when it ran on `git grep`
+  (no ripgrep installed). Both now include untracked files; gitignored
+  files stay out.
+
 ## [0.16.1] - 2026-10-10
 
 ### Security

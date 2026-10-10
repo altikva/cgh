@@ -11,13 +11,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path
 
 from rich import box
 from rich.console import Group
 from rich.live import Live
+from rich.markup import escape as _escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -69,43 +69,68 @@ def cmd_stats(args: argparse.Namespace) -> None:
     console.print(_stats_content(root))
 
 
-def _stats_content(root: str) -> Group:
-    """Produce the stats renderables for a repo as a Rich Group."""
-    conn = _get_conn(root, readonly=True)
+def _graph_counts(root: str, on_stuck) -> tuple[dict, dict, bool]:
+    """Node and edge counts for `cgh stats`: ``(nodes, edges, locked)``.
+
+    A live owner holds the graph DB for writing, so it is asked first
+    (live_graph_stats) and the graph is only opened here when no owner
+    answers. ``locked`` is True when neither could count. A timed-out owner
+    exits 1 after ``on_stuck`` got the remedy. An owner from an older cgh
+    reports no edges; its node counts still beat waiting on its lock.
+    """
+    from codegraph.cli.owner_client import route_owner_read
+    from codegraph.core.graph_model import STATS_EDGE_TYPES, STATS_NODE_LABELS
+
+    route, served = route_owner_read(root, "stats", "live_graph_stats", {}, on_stuck)
+    if route == "owner":
+        nodes = {
+            label: int(count)
+            for label, count in (served.get("nodes") or {}).items()
+            if label in STATS_NODE_LABELS
+        }
+        edges = {
+            edge: int(count)
+            for edge, count in (served.get("edges") or {}).items()
+            if count > 0
+        }
+        return nodes, edges, False
 
     graph: dict = {}
-    edges: dict = {}
-    graph_locked = conn is None
+    edges = {}
+    conn = _get_conn(root, readonly=True) if route == "local" else None
+    if conn is None:
+        return graph, edges, True
+    for label in STATS_NODE_LABELS:
+        try:
+            graph[label] = conn.count_nodes(label)
+        except Exception:
+            pass
+    for edge_type in STATS_EDGE_TYPES:
+        try:
+            c = conn.count_edges(edge_type)
+            if c > 0:
+                edges[edge_type] = c
+        except Exception:
+            pass
+    return graph, edges, False
 
-    if conn is not None:
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            try:
-                graph[label] = conn.count_nodes(label)
-            except Exception:
-                pass
 
-        for edge_type in (
-            "IMPORTS",
-            "DEFINES_FN",
-            "DEFINES_CLASS",
-            "CALLS",
-            "INHERITS",
-            "HAS_METHOD",
-            "DEFINES_SECTION",
-            "MD_REFS_SYMBOL",
-            "MD_REFS_CLASS",
-            "CONTAINS_SECTION",
-        ):
-            try:
-                c = conn.count_edges(edge_type)
-                if c > 0:
-                    edges[edge_type] = c
-            except Exception:
-                pass
+def _stats_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
 
+
+def _stats_stuck_json(msg: str) -> None:
+    print(json.dumps({"error": msg}, indent=2))
+
+
+def _stats_content(root: str) -> Group:
+    """Produce the stats renderables for a repo as a Rich Group."""
     from codegraph.state.call_log import get_stats
 
+    # Read the call log before asking the owner: the owner logs that call,
+    # and the counts must match what a local open shows.
     call_stats = get_stats(root)
+    graph, edges, graph_locked = _graph_counts(root, _stats_stuck)
 
     fts_count = 0
     try:
@@ -129,10 +154,20 @@ def _stats_content(root: str) -> Group:
 
     # Scan freshness banner
     try:
+        from codegraph.state.scan_meta import copied_notice, format_notice
         from codegraph.state.scan_meta import scan_status as _scan_status
 
         ss = _scan_status(root)
-        if ss.get("indexed_sha"):
+        outdated = format_notice(ss)
+        copied = copied_notice(ss)
+        if copied:
+            renderables.append(
+                Text.from_markup(f"[yellow]copied[/yellow], {_escape(copied)}")
+            )
+        elif outdated:
+            word = "reindexing" if ss.get("indexing") else "outdated"
+            renderables.append(Text.from_markup(f"[yellow]{word}[/yellow], {outdated}"))
+        elif ss.get("indexed_sha"):
             sha_short = (ss["indexed_sha"] or "")[:7]
             branch = ss.get("indexed_branch") or "?"
             dirty = ss.get("dirty")
@@ -245,6 +280,7 @@ def _stats_content(root: str) -> Group:
         )
         call_table.add_column("Tool", style="bold")
         call_table.add_column("Calls", justify="right")
+        call_table.add_column("Agent", justify="right")
         call_table.add_column("Avg ms", justify="right")
         call_table.add_column("Max ms", justify="right")
         call_table.add_column("Errors", justify="right")
@@ -257,6 +293,7 @@ def _stats_content(root: str) -> Group:
             call_table.add_row(
                 tool,
                 str(ts["calls"]),
+                str((ts.get("by_origin") or {}).get("agent", 0)),
                 f"{ts['avg_latency_ms']:.1f}",
                 f"{ts['max_latency_ms']:.1f}",
                 err_str,
@@ -265,11 +302,13 @@ def _stats_content(root: str) -> Group:
         call_table.add_row(
             "[bold]Total[/bold]",
             f"[bold]{call_stats['total_calls']}[/bold]",
+            f"[bold]{(call_stats.get('by_origin') or {}).get('agent', 0)}[/bold]",
             "",
             "",
             f"[bold]{call_stats.get('error_count', 0)}[/bold] ({call_stats.get('error_rate', '0%')})",
         )
         renderables.append(call_table)
+        renderables.append(_origin_table(call_stats.get("by_origin") or {}))
     else:
         renderables.append(
             Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
@@ -278,39 +317,34 @@ def _stats_content(root: str) -> Group:
     return Group(*renderables)
 
 
+_ORIGIN_LABELS = {
+    "agent": "agent (MCP client)",
+    "hook": "hook",
+    "cli": "cli (cgh commands)",
+    "internal": "internal",
+    "unknown": "unknown (logged before origins)",
+}
+
+
+def _origin_table(by_origin: dict) -> Table:
+    """Calls split by who triggered them, so hook traffic is not read as
+    agent choices."""
+    table = Table(title="Calls by origin", box=box.SIMPLE_HEAD, title_style="bold cyan")
+    table.add_column("Origin", style="bold")
+    table.add_column("Calls", justify="right")
+    for origin, label in _ORIGIN_LABELS.items():
+        count = by_origin.get(origin, 0)
+        if count:
+            table.add_row(label, f"{count:,}")
+    return table
+
+
 def _stats_json(root: str) -> str:
     """Produce the stats as a JSON string (for --json mode)."""
-    conn = _get_conn(root, readonly=True)
-    graph: dict = {}
-    edges: dict = {}
-    if conn is not None:
-        for label in ("File", "Function", "Class", "TFResource", "TFVar", "MdSection"):
-            try:
-                graph[label] = conn.count_nodes(label)
-            except Exception:
-                pass
-        for edge_type in (
-            "IMPORTS",
-            "DEFINES_FN",
-            "DEFINES_CLASS",
-            "CALLS",
-            "INHERITS",
-            "HAS_METHOD",
-            "DEFINES_SECTION",
-            "MD_REFS_SYMBOL",
-            "MD_REFS_CLASS",
-            "CONTAINS_SECTION",
-        ):
-            try:
-                c = conn.count_edges(edge_type)
-                if c > 0:
-                    edges[edge_type] = c
-            except Exception:
-                pass
-
     from codegraph.state.call_log import get_stats
 
     call_stats = get_stats(root)
+    graph, edges, _locked = _graph_counts(root, _stats_stuck_json)
 
     fts_count = 0
     try:
@@ -461,6 +495,21 @@ def _scan_line(scan: dict, ss: dict) -> str:
     """
     when = _format_indexed_at(scan.get("indexed_at"))
     when_suffix = f"  [dim]· {when}[/dim]" if when else ""
+    from codegraph.state.scan_meta import copied_notice, format_notice
+
+    copied = copied_notice(ss)
+    if copied:
+        return f"[yellow]copied[/yellow]  {_escape(copied)}{when_suffix}"
+    notice = format_notice(ss)
+    if notice:
+        word = "reindexing" if ss.get("indexing") else "outdated"
+        return f"[yellow]{word}[/yellow]  {notice}{when_suffix}"
+    running = ss.get("indexing")
+    if running:
+        return (
+            f"[yellow]indexing[/yellow]  pid {running['pid']} since "
+            f"{running['since']}, answers may be incomplete until it ends"
+        )
     if ss.get("fresh"):
         return (
             f"[green]fresh[/green]  indexed [bold]{scan['indexed_sha']}[/bold] "
@@ -532,9 +581,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     from codegraph.state.scan_meta import scan_status as _scan_status
 
     root = os.path.abspath(args.root)
-    # The legacy mode = "secure" notice is part of this command's own
-    # output (human and --json), so keep it off stderr here.
-    legacy_secure = _legacy_secure_mode(root)
+    # Config deprecation notices (legacy mode = "secure", dead keys) are
+    # part of this command's own output (human and --json), so keep them
+    # off stderr here.
+    notices = _config_notices(root)
 
     # Owner
     owner_pid = None
@@ -661,6 +711,12 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "scan": {
             "fresh": ss.get("fresh"),
+            "state": ss.get("state"),
+            "indexing": ss.get("indexing"),
+            "graph_format": ss.get("graph_format"),
+            "graph_format_current": ss.get("graph_format_current"),
+            "format_outdated": ss.get("format_outdated"),
+            "copied_from": ss.get("copied_from"),
             "indexed_sha": (ss.get("indexed_sha") or "")[:8] or None,
             "indexed_branch": ss.get("indexed_branch"),
             "indexed_at": ss.get("indexed_at"),
@@ -675,7 +731,8 @@ def cmd_status(args: argparse.Namespace) -> None:
         },
         "extra_dirs": extra_dirs,
         "subrepos": subrepos,
-        "notices": [_legacy_secure_notice()] if legacy_secure else [],
+        "module_sources": _module_sources_view(root),
+        "notices": notices,
     }
 
     if getattr(args, "json", False):
@@ -729,31 +786,130 @@ def cmd_status(args: argparse.Namespace) -> None:
         "Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]"
     )
     table.add_row("Subrepos", _format_subrepos_cell(subrepos))
+    if payload["module_sources"]:
+        table.add_row(
+            "Module sources",
+            "\n".join(_module_sources_lines(payload["module_sources"])),
+        )
     console.print(table)
-    if legacy_secure:
-        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    for notice in notices:
+        console.print(f"[yellow]!![/yellow] {notice}")
 
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
 
 
-def _legacy_secure_mode(root: str | Path) -> bool:
-    """Does this repo's config still say mode = "secure"? Silences the
-    stderr notice first: the caller shows it in its own output."""
-    from codegraph.core.config import load_config, suppress_legacy_mode_warning
+def _config_notices(root: str | Path) -> list[str]:
+    """This repo's config deprecation notices (legacy mode = "secure",
+    keys nothing reads), each prefixed with config.toml. Silences the
+    stderr notice first: the caller shows them in its own output."""
+    from codegraph.core.config import (
+        config_notices,
+        load_config,
+        suppress_legacy_mode_warning,
+    )
 
     suppress_legacy_mode_warning()
     try:
-        return load_config(root).legacy_secure_mode
+        out = [f"config.toml: {n}" for n in config_notices(load_config(root))]
     except Exception:
-        return False
+        return []
+    return out + _module_sources_notices(root)
 
 
-def _legacy_secure_notice() -> str:
-    from codegraph.core.config import LEGACY_SECURE_MODE_NOTICE
+def _module_sources_notices(root: str | Path) -> list[str]:
+    """The pinned refs the last scan could not find, and a mapping or ref
+    changed since that scan."""
+    from codegraph.analysis.terraform import module_sources_notices
+    from codegraph.state.scan_meta import read_meta
 
-    return f"config.toml: {LEGACY_SECURE_MODE_NOTICE}"
+    try:
+        state = (read_meta(root) or {}).get("module_sources") or {}
+        out = [f"config.toml: {n}" for n in module_sources_notices(state)]
+        from codegraph.indexer import module_sources_changed
+
+        if module_sources_changed(root):
+            out.append(
+                "config.toml: terraform module_sources or a ref it pins changed "
+                "since the last index; run `cgh index` to re-parse the Terraform files"
+            )
+        return out
+    except Exception:
+        return []
+
+
+def _module_sources_view(root: str | Path) -> dict:
+    """[terraform] module_sources for status and doctor: one entry per
+    mapping of the current config, with its path, whether it is a git
+    checkout, and the pinned refs the last scan found (with their commit)
+    and missing. A mapping the last scan did not index as configured now
+    (added, or its path edited) is marked ``pending`` (reindex needed), with
+    the path it was indexed under, if any. {} when no mapping is configured."""
+    from codegraph.analysis.terraform import ModuleSources, git_toplevel
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import read_meta
+
+    try:
+        cfg = load_config(root)
+        mapping = dict(cfg.terraform_module_sources or {})
+    except Exception:
+        return {}
+    if not mapping:
+        return {}
+    state = (read_meta(root) or {}).get("module_sources") or {}
+    indexed = {m.get("source"): m for m in state.get("mappings") or []}
+    mappings = []
+    for source, path in sorted(ModuleSources.from_config(cfg, root).mapping):
+        done = indexed.get(source)
+        if done is not None and done.get("path") == path:
+            mappings.append(done)
+            continue
+        exists = os.path.isdir(path)
+        entry = {
+            "source": source,
+            "path": path,
+            "exists": exists,
+            "git": bool(exists and git_toplevel(path)),
+            "refs_found": {},
+            "refs_missing": {},
+            "pending": True,
+        }
+        if done is not None:
+            entry["indexed_path"] = done.get("path")
+        mappings.append(entry)
+    return {"configured": mapping, "mappings": mappings}
+
+
+def _module_sources_lines(view: dict) -> list[str]:
+    """One human line per mapping of a _module_sources_view."""
+    from rich.markup import escape
+
+    lines = []
+    for m in view.get("mappings") or []:
+        found = ", ".join(m.get("refs_found") or {}) or "none"
+        missing = ", ".join(m.get("refs_missing") or {})
+        kind = "git" if m.get("git") else ("dir" if m.get("exists") else "missing")
+        line = f"{escape(m['source'])} -> {escape(m['path'])} ({kind})"
+        if m.get("pending"):
+            was = m.get("indexed_path")
+            line += (
+                f" [yellow]pending reindex[/yellow] (indexed: {escape(was)})"
+                if was
+                else " [yellow]pending reindex[/yellow]"
+            )
+            lines.append(line)
+            continue
+        line += f"; refs found: {found}"
+        if missing:
+            line += f"; [yellow]missing: {escape(missing)}[/yellow]"
+        lines.append(line)
+    if not lines:
+        lines = [
+            f"{escape(k)} -> {escape(str(v))} [dim](not indexed yet)[/dim]"
+            for k, v in sorted(view.get("configured", {}).items())
+        ]
+    return lines
 
 
 def _backend_info(root: str) -> dict:
@@ -1113,16 +1269,13 @@ def cmd_reset(args: argparse.Namespace) -> None:
     if args.drop_extra_dirs:
         config_path = cg_dir / "config.toml"
         if config_path.exists():
-            content = config_path.read_text(encoding="utf-8")
-            new_content = re.sub(
-                r"^\s*extra_dirs\s*=\s*\[.*?\]\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE | re.DOTALL,
-            )
-            if new_content != content:
-                config_path.write_text(new_content, encoding="utf-8")
-                console.print("[green]Dropped extra_dirs from config.toml[/green]")
+            from codegraph.core.config_edit import ConfigEditError, remove_key
+
+            try:
+                if remove_key(config_path, "codegraph", "extra_dirs"):
+                    console.print("[green]Dropped extra_dirs from config.toml[/green]")
+            except ConfigEditError as exc:
+                console.print(f"[red]Could not drop extra_dirs:[/red] {exc}")
 
     # 4. Re-index (unless --no-reindex)
     if not args.no_reindex:
@@ -1249,6 +1402,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
     table.add_column("Time", style="dim", width=19)
     table.add_column("", width=3)
     table.add_column("Tool", style="bold")
+    table.add_column("Origin", style="dim")
     table.add_column("Latency", justify="right")
     table.add_column("Size", justify="right")
     table.add_column("Args", max_width=40, overflow="ellipsis")
@@ -1277,6 +1431,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
             entry["timestamp"],
             status,
             entry["tool"],
+            entry.get("origin") or "[dim]?[/dim]",
             f"[{latency_style}]{entry['latency_ms']:.1f}ms[/{latency_style}]",
             f"{entry['result_size']:,}B",
             f"[dim]{args_str}[/dim]",
@@ -1567,7 +1722,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print(detail)
         raise SystemExit(0 if healthy else 1)
     codegraph_dir = root / ".codegraph"
-    legacy_secure = _legacy_secure_mode(root)
+    notices = _config_notices(root)
 
     console.print(LOGO)
     console.print(f"  [dim]Project:[/dim] [bold]{root}[/bold]\n")
@@ -1725,9 +1880,32 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             pass_count += 1
 
     console.print(table)
-    if legacy_secure:
-        # Informational, not a failed check: the config still loads.
-        console.print(f"[yellow]!![/yellow] {_legacy_secure_notice()}")
+    # Informational, not a check: where mapped Terraform modules resolve.
+    for line in _module_sources_lines(_module_sources_view(root)):
+        console.print(f"  [dim]module_sources:[/dim] {line}")
+    # Informational, not a failed check: the config still loads.
+    for notice in notices:
+        console.print(f"[yellow]!![/yellow] {notice}")
+    # Informational too: an index from an older graph format still answers,
+    # with fewer edges, until its one-time re-parse; never blocks --strict.
+    # So is a store copied from another checkout: its answers point at that
+    # tree until `cgh index` rebuilds it here.
+    try:
+        from codegraph.state.scan_meta import (
+            copied_notice,
+            format_notice,
+            scan_status,
+        )
+
+        ss = scan_status(root)
+        outdated = format_notice(ss)
+        copied = copied_notice(ss)
+    except Exception:
+        outdated = copied = None
+    if copied:
+        console.print(f"[yellow]!![/yellow] {_escape(copied)}")
+    if outdated:
+        console.print(f"[yellow]!![/yellow] {outdated}")
     # Informational, not a check: a stale plugin is skipped, cgh still works.
     for reason in _too_old_plugin_reasons(root):
         from rich.markup import escape

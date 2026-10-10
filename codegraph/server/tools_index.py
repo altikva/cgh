@@ -345,7 +345,17 @@ def register(mcp) -> None:
         already_configured = rel in extra_dirs
         if not already_configured:
             extra_dirs.append(rel)
-            _write_extra_dirs(config_path, data, extra_dirs)
+            from codegraph.core.config_edit import ConfigEditError
+
+            try:
+                _write_extra_dirs(config_path, data, extra_dirs)
+            except (ConfigEditError, OSError) as exc:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"could not record {rel} in extra_dirs: {exc}",
+                    }
+                )
 
         # Hot-index the directory
         indexed: list[str] = []

@@ -5,7 +5,7 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP query tools: symbol_lookup, callers, callees, imports_of,
-#              search_symbols, subgraph.
+#              indexed_files, search_symbols, subgraph.
 
 from __future__ import annotations
 
@@ -28,6 +28,9 @@ def register(mcp) -> None:
         child_fts_symbol_search,
         federate_flat,
     )
+    from codegraph.analysis.terraform import lookup as tf_lookup
+    from codegraph.analysis.terraform import search as tf_search
+    from codegraph.analysis.terraform import used_by as tf_used_by
     from codegraph.server import _get_conn, _logged_tool
 
     def _federate(query_fn):
@@ -156,6 +159,12 @@ def register(mcp) -> None:
 
         Optional `role` / `layer` filters keep only definitions whose File
         node carries that exact role / layer (empty = no filter).
+
+        Each definition carries its `name` (the section title for a
+        markdown section, which matches on a title substring).
+
+        Terraform blocks are found by address too (var.region,
+        google_x.y, module.m, local.l, data.t.n, output.o).
         """
 
         def query(conn):
@@ -163,11 +172,18 @@ def register(mcp) -> None:
             for row in conn.find_nodes(
                 "Function",
                 where={"name": name},
-                return_fields=["file_path", "start_line", "end_line", "docstring"],
+                return_fields=[
+                    "name",
+                    "file_path",
+                    "start_line",
+                    "end_line",
+                    "docstring",
+                ],
             ):
                 out.append(
                     {
                         "kind": "function",
+                        "name": row["name"],
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
@@ -176,48 +192,40 @@ def register(mcp) -> None:
             for row in conn.find_nodes(
                 "Class",
                 where={"name": name},
-                return_fields=["file_path", "start_line", "end_line", "docstring"],
+                return_fields=[
+                    "name",
+                    "file_path",
+                    "start_line",
+                    "end_line",
+                    "docstring",
+                ],
             ):
                 out.append(
                     {
                         "kind": "class",
+                        "name": row["name"],
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
                     }
                 )
-            for row in conn.find_nodes(
-                "TFResource",
-                where={"name": name},
-                return_fields=["file_path", "type", "start_line", "end_line"],
-            ):
+            # Terraform blocks, by address (var.region, google_x.y) or by
+            # bare block name.
+            for hit in tf_lookup(conn, name):
                 out.append(
                     {
-                        "kind": "tf_resource",
-                        "type": row["type"],
-                        "file": row["file_path"],
-                        "lines": f"{row['start_line']}-{row['end_line']}",
-                    }
-                )
-            # TFVar (terraform variable/output) has no end_line column, so it
-            # gets its own block anchored on start_line.
-            for row in conn.find_nodes(
-                "TFVar",
-                where={"name": name},
-                return_fields=["file_path", "kind", "start_line"],
-            ):
-                out.append(
-                    {
-                        "kind": "tf_var",
-                        "type": row["kind"],
-                        "file": row["file_path"],
-                        "lines": str(row["start_line"]),
+                        "kind": hit["kind"],
+                        "name": hit["name"],
+                        "type": hit["type"],
+                        "file": hit["file"],
+                        "lines": f"{hit['start_line']}-{hit['end_line']}",
                     }
                 )
             for row in conn.find_nodes(
                 "MdSection",
                 contains={"title": name},
                 return_fields=[
+                    "title",
                     "file_path",
                     "start_line",
                     "end_line",
@@ -228,6 +236,7 @@ def register(mcp) -> None:
                 out.append(
                     {
                         "kind": "md_section",
+                        "name": row["title"],
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["body_preview"] or "")[:120],
@@ -262,6 +271,7 @@ def register(mcp) -> None:
                 lambda scopes: child_fts_symbol_lookup(_srv._root, name, scopes),
                 lambda hit, scope: {
                     "kind": hit.kind,
+                    "name": hit.name,
                     "file": hit.file_path,
                     "lines": f"{hit.start_line}-{hit.end_line}",
                     "doc": hit.docstring[:120],
@@ -290,6 +300,14 @@ def register(mcp) -> None:
         Calls are matched by name: when several functions share `fn_name`
         (a method and its test double), each caller lists the matched
         definitions' files in `targets`.
+
+        A `Class.method` name also lists the callers of the interface
+        methods it implements (a base class, an ABC, a Protocol the class
+        conforms to), since a call through the interface links to the
+        interface's method; those rows carry `via` ("KmsClient.encrypt").
+
+        For a Terraform address (var.region, google_x.y, module.m) it
+        returns each block that uses it.
         """
 
         from codegraph.analysis.callers import callers_of
@@ -317,6 +335,8 @@ def register(mcp) -> None:
         name-matched CALLS reach it can over-count: a listed callee may
         belong to a same-named function elsewhere. `truncated` is set when
         the fan-out or total cap was hit.
+
+        For a Terraform address it returns the blocks that block references.
         """
         depth_cap = max(1, min(int(max_depth), _CALLEE_DEPTH_CAP))
         state = {"truncated": False}
@@ -336,6 +356,12 @@ def register(mcp) -> None:
                         return_dst=["name", "file_path", "start_line"],
                         limit=_CALLEE_FANOUT_CAP,
                     )
+                    if "." in name:
+                        # A Terraform address: the blocks it references.
+                        rows = rows + [
+                            {**r, "dst_name": r["dst_address"]}
+                            for r in tf_used_by(conn, name, limit=_CALLEE_FANOUT_CAP)
+                        ]
                     if len(rows) >= _CALLEE_FANOUT_CAP:
                         state["truncated"] = True
                     for row in rows:
@@ -395,6 +421,37 @@ def register(mcp) -> None:
             out["warnings"] = warnings
         return json.dumps(out, indent=2)
 
+    @mcp.tool()
+    @_logged_tool
+    def indexed_files(pattern: str = "", limit: int = 200, path: str = "") -> str:
+        """
+        List the files in this repo's graph index, or check one file.
+
+        Without `path`: every indexed File path containing `pattern` (all
+        when empty), sorted, as `files` (the first `limit`) plus `total`.
+        With `path` (relative to the repo root, or absolute): `indexed` is
+        true when that exact file is in the index. Parent scope only, like
+        `cgh files`; a subrepo answers from its own index. Unlike the FTS
+        index, this also sees files that define no symbol.
+        """
+        conn = _get_conn()
+        if path:
+            if not os.path.isabs(path) and _srv._root:
+                path = str(_srv._root / path)
+            hit = conn.query_node_field("File", "path", path, "path")
+            return json.dumps({"path": path, "indexed": hit is not None})
+        found = conn.find_nodes(
+            "File",
+            contains={"path": pattern} if pattern else None,
+            return_fields=["path"],
+            order_by=["path"],
+        )
+        paths = [r["path"] for r in found]
+        return json.dumps(
+            {"pattern": pattern, "total": len(paths), "files": paths[: max(limit, 0)]},
+            indent=2,
+        )
+
     def _file_role_layer(conn, file_path: str) -> tuple[str, str]:
         """Return (role, layer) for a File node, ('', '') when unknown."""
         nodes = conn.find_nodes(
@@ -410,7 +467,12 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def search_symbols(
-        query: str, limit: int = 20, role: str = "", layer: str = ""
+        query: str,
+        limit: int = 20,
+        role: str = "",
+        layer: str = "",
+        kinds: str = "",
+        name_only: bool = False,
     ) -> str:
         """
         Find symbols (functions, classes, TF resources) whose NAME contains
@@ -421,11 +483,27 @@ def register(mcp) -> None:
         Optional `role` / `layer` filters keep only symbols whose File node
         carries that exact role / layer (empty = no filter). Useful to scope
         a search to e.g. role="router" or layer="domain".
+
+        Optional `kinds` (comma list of function, class, tf_resource,
+        tf_var, md_section; empty = all) limits the graph match to those
+        kinds. `name_only=True` matches the name or section title only,
+        not a TF type / kind or a section's body preview. Both are echoed
+        back when set.
+
+        Terraform kinds for `kinds`: tf_resource, tf_data, tf_module,
+        tf_module_arg (a module call's input, module.m.<arg>), tf_local,
+        tf_provider, tf_moved, tf_import, tf_removed, tf_var.
         """
+        wanted = {k.strip() for k in kinds.split(",") if k.strip()}
+
+        def _want(kind: str) -> bool:
+            return not wanted or kind in wanted
 
         def run(conn):
             out = []
             for label, kind in [("Function", "function"), ("Class", "class")]:
+                if not _want(kind):
+                    continue
                 for row in conn.find_nodes(
                     label,
                     contains={"name": query},
@@ -440,52 +518,44 @@ def register(mcp) -> None:
                             "line": row["start_line"],
                         }
                     )
-            for row in conn.find_nodes(
-                "TFResource",
-                contains={"name": query, "type": query},
-                return_fields=["name", "type", "file_path", "start_line"],
-                limit=limit,
-            ):
+            for hit in tf_search(conn, query, limit, name_only, wanted):
                 out.append(
                     {
-                        "kind": "tf_resource",
-                        "name": row["name"],
-                        "type": row["type"],
-                        "file": row["file_path"],
-                        "line": row["start_line"],
+                        "kind": hit["kind"],
+                        "name": hit["name"],
+                        "type": hit["type"],
+                        "file": hit["file"],
+                        "line": hit["start_line"],
                     }
                 )
-            for row in conn.find_nodes(
-                "TFVar",
-                contains={"name": query, "kind": query},
-                return_fields=["name", "kind", "file_path", "start_line"],
-                limit=limit,
-            ):
-                out.append(
-                    {
-                        "kind": "tf_var",
-                        "name": row["name"],
-                        "type": row["kind"],
-                        "file": row["file_path"],
-                        "line": row["start_line"],
-                    }
+            if _want("md_section"):
+                match = (
+                    {"title": query}
+                    if name_only
+                    else {"title": query, "body_preview": query}
                 )
-            for row in conn.find_nodes(
-                "MdSection",
-                contains={"title": query, "body_preview": query},
-                return_fields=["title", "file_path", "start_line", "level", "anchor"],
-                limit=limit,
-            ):
-                out.append(
-                    {
-                        "kind": "md_section",
-                        "name": row["title"],
-                        "file": row["file_path"],
-                        "line": row["start_line"],
-                        "level": row["level"],
-                        "anchor": row["anchor"],
-                    }
-                )
+                for row in conn.find_nodes(
+                    "MdSection",
+                    contains=match,
+                    return_fields=[
+                        "title",
+                        "file_path",
+                        "start_line",
+                        "level",
+                        "anchor",
+                    ],
+                    limit=limit,
+                ):
+                    out.append(
+                        {
+                            "kind": "md_section",
+                            "name": row["title"],
+                            "file": row["file_path"],
+                            "line": row["start_line"],
+                            "level": row["level"],
+                            "anchor": row["anchor"],
+                        }
+                    )
             if role or layer:
                 # Filter each hit by its File node's role / layer. Cache
                 # per-file lookups so repeated hits in the same file cost one
@@ -529,6 +599,10 @@ def register(mcp) -> None:
                 },
             )
         payload = {"query": query, "results": results}
+        if kinds:
+            payload["kinds"] = kinds
+        if name_only:
+            payload["name_only"] = True
         if role:
             payload["role"] = role
         if layer:

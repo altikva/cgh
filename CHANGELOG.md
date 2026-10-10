@@ -8,6 +8,321 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-10
+
+**Upgrading from 0.15.** The first `cgh index` or owner start re-parses
+every file once (about two minutes on a 1,300-file repo). Until then the
+`cgh` query commands refuse the old index with `run cgh index`, and a
+federated parent warns about each child still on the old format. Expect
+far fewer CALLS edges and smaller `impact` results: guessed links and
+links into test code are gone, not real callers. To stay on 0.15, pin
+`cgh<0.16`. Details, seeds and rollback:
+[docs/UPGRADING-0.16.md](docs/UPGRADING-0.16.md).
+
+### Removed
+- **cgh-summarize and cgh-classify left the repo.** Their final releases,
+  0.3.0 and 0.2.0, stay on PyPI and cgh still loads them
+  (`--with cgh-summarize`); older releases are still refused. The
+  `summarize-local` example went with them.
+
+### Changed
+- **Config keys nothing reads any more load with one notice.** Besides
+  `mode = "secure"`, the cgh-summarize keys its 0.3.0 release dropped
+  (`allow_pii`, `egress`, `claude_model`, `gemini_model` under
+  `[plugin.summarize]`) are named in a single stderr line per process
+  (never in hook output) and in `cgh status` and `cgh doctor`. They are
+  never rejected; delete the lines. The `cgh init` template no longer
+  lists the summarize and classify tables.
+
+### Added
+- **Terraform is a real graph now.** `.tf` files are parsed with
+  tree-sitter-hcl (new dependency, abi3 wheels) into resource, data,
+  module, variable, output, provider and per-entry locals blocks, each
+  found by its Terraform address (`cgh lookup var.region`,
+  `symbol_lookup("module.iam")`). Every `var.x`, `local.x`, `data.t.n`,
+  `t.n` and `module.m.out` an expression uses, nested blocks, strings and
+  heredocs included, becomes an edge to the block that defines it in the
+  same module directory, and a local `module` source links the block to
+  that directory's variables and outputs. `find_callers`, `find_callees`,
+  `impact_of` and `cgh impact` answer from these edges. `.tfvars`
+  assignments are searchable and point at their variable, and YAML under a
+  `contracts/` directory is indexed one entry per key, three levels deep.
+  Existing indexes re-parse once on the next index.
+- **Remote Terraform modules can be linked to a local checkout.** The
+  opt-in `[terraform] module_sources` table in `.codegraph/config.toml`
+  maps a git or registry source to a directory (the `//subdir` is
+  followed), so module arguments and `module.m.out` link to that module's
+  variables and outputs. A directory outside the index is read on demand,
+  read-only, resources included: `cgh lookup google_x.y` and
+  `module.kms.google_x.y` find a block inside the module. Nothing is
+  fetched. See docs/CONFIGURATION.md.
+- **A pinned `?ref=` is honoured when the mapped directory is a git
+  checkout.** Each ref is read from git at that tag, branch or commit (no
+  checkout, no fetch), so modules pinned at different refs link to their
+  own variables and outputs (`kms@v0.1.0`, `cloud_run@v1.0.1`). A ref the
+  checkout lacks falls back to its working tree with a notice in
+  `cgh status` and `cgh doctor`, which now list each mapping with the refs
+  found and missing (`module_sources` in `cgh status --json`).
+- **Callers through an interface.** `cgh callers` and `find_callers` accept
+  `Class.method` and `module.Class.method`. For a method implementing an
+  interface (a base class, an ABC, or a `typing.Protocol` whose methods
+  the class all defines) they also list the callers of the interface's
+  method, since a call on `self._kms: KmsClient` links there, each marked
+  `via` (`via KmsClient.destroy_crypto_key`). `impact_of` and `cgh impact`
+  count those callers too. The CALLS edges are unchanged.
+- The call log records who triggered each tool call: `agent` (an MCP
+  client), `cli` (a `cgh` command asking the owner), `hook` or `internal`,
+  plus the repo root. `cgh stats`, `cgh logs` and `call_stats` show the
+  split (new `by_origin` fields; existing fields unchanged), so hook traffic
+  no longer reads as agent choices. Existing logs are migrated in place;
+  their older rows show as `unknown`. The log stays in
+  `.codegraph/call_log.db`: cgh sends it nowhere, and crash reports do not
+  include it.
+- **`cgh endpoints` lists HTTP routes from the shell**, with method, full
+  path, handler and `file:line` (`--method`, `--include-tests`, `--limit`,
+  `--json`), through the same query as the MCP `endpoints` tool and federated
+  the same way. On an index copied from another checkout it refuses with the
+  `cgh index` remedy, like `cgh impact`.
+- **Endpoints carry their full paths.** A FastAPI or Flask route's router
+  prefix and the `include_router` / `register_blueprint` prefixes reaching it
+  are composed across files into `full_paths` (one per mount), so
+  `endpoints("/v1/donations/{id}/cancel")` or the concrete URL
+  `/v1/donations/123/cancel` finds the route agents would otherwise look up
+  in openapi.json. Parameter names are ignored, a `{p:path}` catch-all takes
+  the rest of the path on an exact match only (ranked after any more specific route), and an `ANY`
+  route answers every method filter. A path that matches no full path
+  exactly falls back to the routes it is a suffix of
+  (`/donations/{id}/cancel`), flagged `match: "suffix"`. A prefix that is not
+  a string literal leaves the route without a full path
+  (`full_path_partial`). The endpoints of `cgh impact` and `impact_of` carry
+  `full_paths` too. Existing indexes re-parse once on the next index.
+
+### Fixed
+- **A federated child on an older index format answered short and
+  silently.** The parent opens children read-only and cannot upgrade them,
+  so a child not yet re-indexed returned fewer results with no error. It is
+  now left out of graph answers with a warning naming the child and the
+  command to run, and `cgh federate verify` shows it as `outdated`.
+- **Two routers of one file declaring the same method and path kept only
+  one route.** Endpoints were keyed by file, method and path, so a second
+  `@images_router.get("")` replaced the first `@router.get("")`. They are now
+  keyed by file, line, method and path (ondonne-api: 704 to 706 routes).
+- **Routes declared in test files mixed with the real ones.** They are now
+  tagged as test routes and left out of `endpoints`, `cgh endpoints` (opt in
+  with `include_tests` / `--include-tests`) and the endpoints of `impact_of`
+  and `cgh impact`, which list the tests to run on their own.
+- **A query on an index from an older cgh crashed or answered short before
+  the first reindex.** `cgh lookup` or `cgh search` right after upgrading
+  printed a database error (a missing `tf_resource` column), and `cgh
+  callers`, `callees` and `impact` silently answered from the old graph
+  (8 callers instead of 11). Every graph query answering without an owner
+  now checks the recorded graph format first and, on an older one, says
+  to run `cgh index` once and exits 1; an MCP owner already upgrades the
+  index when it starts.
+- **`cgh callers Class.method` listed calls on other classes.** A call on
+  a local built from a sibling implementation (`kms = InMemoryKmsClient()`),
+  on an object a typed factory returns (`fernet = _get_fernet()`, a
+  `MultiFernet`), or on an attribute built from a library class imported
+  inside `__init__` was linked to every method of the name. Python calls
+  on such locals and attributes now resolve to their class (no edge for a
+  library class), and a `Class.method` query drops a caller only when its
+  receiver's class is known and unrelated (not the class, a base, a
+  subclass, an interface it implements, or a mixin composed with it in
+  some class). Calls through an interface, on a call result whose return
+  type is not annotated, and on receivers of unknown type are still
+  listed; `get_event_bus().publish()` is typed by the factory's `-> EventBus`
+  annotation, imported or not. The first index after upgrading re-parses
+  the repo once.
+- **`cgh status` called a copied `.codegraph` fresh.** Until the next
+  index, a store copied from another checkout answered with the old tree's
+  paths while status said `fresh`. `cgh status` (state `copied`,
+  `scan.copied_from` in `--json`), `cgh stats` and `cgh doctor` now say
+  where it was built and to run `cgh index`; query commands print a
+  one-line warning on stderr. A store seeded by `cgh init --from` is not
+  flagged.
+- **`cgh impact` on a copied `.codegraph` answered empty with exit 0.** Its
+  diff maps to this checkout's paths while the store holds the old tree's,
+  so nothing matched. `cgh impact`, `cgh outline` and `cgh files --check`
+  now refuse such a store with exit 1 and say to run `cgh index` (`{"error":
+  ...}` on stdout with `--json`); `cgh files` warns like the query commands.
+- **Route decorators written over several lines were not endpoints.**
+  `@router.post(` with the path on the next line, a `path="..."` argument,
+  an empty path (`@router.get("")`) and `@router.api_route(..., methods=[...])`
+  are now extracted with their handler, so `endpoints` lists them and
+  `cgh impact` reaches them from an edited function (540 to 704 endpoints
+  on a FastAPI app). The first index after upgrading re-parses the repo once.
+- **A test under a `handlers/` or `services/` directory was classed by that
+  directory.** `tests/unit/handlers/test_x.py` counted as an impacted
+  handler and was missing from `tests_to_run`. A file under a test
+  directory or named like a test (`test_*.py`, `*_test.py`, `*.test.ts`,
+  `*.spec.ts`, `__tests__/`) now always gets the test role; custom
+  `[roles]` rules still come first.
+- **The `cgh status` "Module sources" row showed the indexed mapping after
+  an edit.** It now shows the mapping from the current config and marks a
+  changed or new entry `pending reindex`, with the path it was indexed
+  under.
+- **`cgh add-dir <path>` failed.** A path in place of the action now adds
+  it, as `cgh add-dir add <path>` does; `add`, `remove` and `list` work as
+  before.
+- **Editing `[terraform] module_sources` needed a deleted `.codegraph`.** A
+  changed mapping, or a pinned ref now resolving to another commit, makes
+  the next `cgh index`, incremental reindex or owner start parse the
+  Terraform files again; scan metadata keeps a fingerprint of both. The
+  first index after upgrading re-parses the repo once.
+- **Terraform module inputs were invisible to name search.** Each argument
+  of a module call is now an entry, `module.kms.<argument>`, so `cgh search`
+  and `search_symbols` on an input name land on the call, and
+  `find_callees` on it reaches the module's variable. `cgh search` lists
+  Terraform blocks at all now, as `search_symbols` did. String values stay
+  in text search.
+- **`moved` blocks were not linked.** `moved`, `import` and `removed`
+  blocks now reference the addresses they name, so `find_callers` and
+  impact on a resource or module list them.
+- **`cgh impact` on one line of a `.tf` file reported every file of its
+  directory.** Terraform impact now starts from the blocks the diff
+  touches and follows only the blocks that reference them (one changed
+  line in ondonne-infra's staging `kms.tf`: 29 files before, 6 now), and
+  lists contracts entries that mention a changed address under `related`.
+  `impact_of` on a `.tf` path is block-precise too.
+- **`cgh add-dir` printed success and wrote nothing** when config.toml had
+  no `[codegraph]` table, or only the commented `extra_dirs` line of the
+  default template. `add-dir`, `add_directory`, `federate add/remove` and
+  `clean --drop-extra-dirs` now edit the key in place: the table is created
+  when missing, comments and other tables are kept, and a write that does
+  not read back fails with an error instead of a success line. `federate`
+  no longer rewrites the whole file, which used to drop comments and break
+  nested tables such as `[plugin.codegen]`.
+- **A copied `.codegraph` kept the old root's nodes.** `cgh index` on a
+  store built in another directory upserted the new paths beside the old
+  ones, so every caller showed up twice. Every index entry point now
+  rebuilds from scratch when the recorded root differs, or when a store
+  without one holds files outside the root and its extra dirs.
+- **`cgh impact` marked every symbol of a changed code file.** The diff
+  hunks now select the innermost functions and classes they touch: an edit
+  inside a method marks that method only, and its class counts as changed
+  only when a hunk touches the class's own lines (an attribute, the bases).
+  The blast radius is the callers of the changed symbols, plus the file's
+  direct importers when a class changed (a one-line edit of a method in
+  ondonne-api's `donation_manager.py` marked 37 symbols and 210 impacted
+  files before). The tests to run and the endpoints follow the same walk:
+  the tests and route handlers that reach a changed symbol, not every test
+  importing the file or every route of a router file holding a caller
+  (that edit: 14 tests and 11 endpoints before, 3 and 1 now). A change
+  outside any symbol keeps the whole-file radius. Changed lines are read
+  from the same diff as the file list, so uncommitted edits are precise
+  too; a `.tf` edit not yet committed used to count as a whole-file change
+  (one module argument of ondonne-infra's `module.kms`: 8 entries marked
+  changed before, the call and that argument now).
+- **A full index hashed untracked and extra-dir files one subprocess at a
+  time, and searched the text index without an index on the file path.**
+  Both are batched or indexed now, with the same graph: ondonne-api
+  indexes in 117 s instead of 130 s, ondonne-infra with gcp-modules in
+  4.7 s instead of 6.3 s.
+- **A federated worktree could read another ticket's branch.** When a repo
+  is a linked git worktree, federation replaced each configured child with a
+  worktree of that child sitting in the same directory. In a layout where all
+  ticket worktrees share one directory, it picked an arbitrary ticket of the
+  other repo instead of the configured seed. Only a child configured by its
+  main checkout is now replaced, and only when exactly one sibling worktree
+  qualifies; otherwise the configured path is used.
+- **TypeScript and JavaScript classes had no bases.** `extends` and
+  `implements` were never read, so INHERITS was empty for TS, JS and TSX,
+  and `this.f()` / `super.f()` could not follow the base class. Type
+  arguments are dropped (`extends Store<T>` links to `Store`). Classes in
+  `.vue` files and `abstract class` declarations are still not indexed.
+  The first index after upgrading re-parses the whole repo once.
+- **Python generic bases were dropped.** `class A(Base[T])`,
+  `Generic[T]`, `mod.Base[T]` and `Base[int, str]` now record `Base`,
+  `Generic` and `mod.Base` like their plain forms.
+- **Indexing on the DuckDB backend was slow without pandas.** DuckDB
+  searched the whole import path for pandas twice per query parameter;
+  cgh now makes that lookup fail at once when pandas is not installed. A
+  full index of a 1,300 file repo takes about a third less time.
+- **cgh-bugreport refused about one crash report in 50,000** (0.1.3). Its
+  random report id could look like an international phone number, which
+  its own PII tripwire then rejected, with a message blaming cgh-bugreport.
+  The id now starts with a letter.
+- **`find_callers` and every tool built on CALLS edges silently missed
+  callers in other files.** A call into a file indexed after the caller was
+  never linked, and saving the callee's file erased all its callers in other
+  files until the next full index. Call sites are now stored, so edges are
+  resolved from both ends whatever the order. No action needed: the first
+  index after upgrading (`cgh index`, or the owner's start) re-parses the
+  whole repo once.
+- **CALLS edges linked a call to every function of the same name.**
+  `data.get(...)` landed on any `get` in the repo, `atexit.register` on
+  every `register`, production code on test doubles, and an imported name
+  on its look-alikes in other modules, so `find_callers` and `impact_of`
+  were mostly noise on common names. Python and TS/JS calls now follow
+  their shape and imports: `f()` goes to the definition the file imports
+  (aliases included), `self.f()` to the class and its bases, `module.f()`
+  to that module, `obj.f()` only to methods, and calls into third-party or
+  standard library modules get no edge. Code outside tests never links
+  into test files. Calls the old rule hid behind a same-named local
+  function (a router calling the handler method of the same name) are now
+  linked. The first index after upgrading re-parses the repo once.
+- **A call on a typed attribute went to the wrong class.**
+  `self.manager.get_by_id()` with `manager` a `ReceiptManager` landed on
+  the `get_by_id` of whatever other manager the file imported. An
+  attribute typed in its class (annotation, `self.x = C(...)`, annotated
+  `__init__` parameter; in TypeScript a typed field or a constructor
+  parameter property) now resolves to that class's method or the nearest
+  base defining it, and a call on a library type gets no edge. The first
+  index after upgrading re-parses the repo once.
+- **`cgh impact` and `impact_report` ignored CALLS.** The blast radius and
+  the tests to run came from module-level imports only, so a test importing
+  the changed module inside a test function was not listed. Both now also
+  follow imports made in function bodies and the callers of the changed
+  files' functions over CALLS (up to three calls away). The report keeps
+  its shape.
+- **`cgh impact --since <ref>` ignored uncommitted work.** It compared
+  commits only, so `--since HEAD` reported nothing on a dirty tree. It now
+  compares the working tree, as its help says: staged, unstaged and
+  untracked files count.
+- **Inheritance, docs references and route handlers had the same blind
+  spot.** A base class, a function or class mentioned in a Markdown doc, or
+  a file a doc links to was missed when defined in a file indexed later, and
+  saving that file dropped the links from other files. These now hold
+  whatever the order and after saves. An endpoint whose handler lives in
+  another file (a Django `urls.py` pointing at `views.user_detail`) is now
+  linked to it when the route file imports that module. Existing indexes
+  re-parse once automatically, as above.
+- **Coming back from a rollback to 0.15 no longer leaves stale edges.**
+  cgh 0.15 can read and update a 0.16 index, but files it saves or deletes
+  lose the edges other files had into them and keep their old stored
+  references. Each file is now stamped when indexed, and the next index or
+  owner start parses again the files an older cgh touched. Interrupting
+  the one-time re-parse is safe: it starts over on the next run. See
+  `docs/UPGRADING-0.16.md` for the rollback steps.
+- **`cgh status` said "fresh" for an index that still needed its
+  one-time re-parse**, and kept saying it while the re-parse ran. It now
+  reads `outdated` (with the command to run) or `reindexing`; `--json`
+  gains `scan.state`, `scan.indexing`, `scan.graph_format`,
+  `scan.graph_format_current` and `scan.format_outdated`, and
+  `scan.fresh` is false until the re-parse is done. `cgh stats` and the
+  `scan_status` tool follow. `cgh doctor` shows an outdated index as a
+  `!!` line that never fails `--strict`.
+- `cgh init --from` now says up front when the source index is in an
+  older graph format: the seed is then followed by a full re-parse, slower
+  than a fresh index, and reindexing the source first makes seeds cheap
+  again.
+- `cgh callers` on a name with several definitions repeated the list of
+  candidate files on every row (one repo went from 710 to 3,794 lines).
+  Callers are now grouped under each distinct list, printed once. The
+  `find_callers` tool output is unchanged.
+- `cgh graph` waited 15 seconds or more on a stuck owner, ignoring
+  `CGH_OWNER_TIMEOUT`, then tried the locked graph. It now uses that
+  timeout and exits with the same hint as `cgh lookup`.
+- `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` no longer stall
+  for about 12 seconds while an agent session runs. They now ask the running
+  owner, like `cgh callers` does since 0.15.0, and answer from the graph:
+  `stats` shows its node and edge counts again instead of a lock notice, and
+  `files` lists files that define no symbol. Without an owner nothing
+  changes. MCP side: a new read-only `indexed_files` tool, a `name` on each
+  `symbol_lookup` definition, `edges` in `live_graph_stats`, and optional
+  `kinds` / `name_only` arguments on `search_symbols`; existing fields are
+  unchanged.
+
 ## [0.15.0] - 2026-10-08
 
 ### Removed
@@ -1955,7 +2270,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/altikva/cgh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0
 [0.14.5]: https://github.com/altikva/cgh/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/altikva/cgh/compare/v0.14.3...v0.14.4

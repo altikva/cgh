@@ -6,8 +6,8 @@ Gemini CLI supports MCP servers via configuration.
 
 ```bash
 # Initialize codegraph
-codegraph init
-codegraph index
+cgh init
+cgh index
 ```
 
 Add to `.gemini/settings.json` or project MCP config:

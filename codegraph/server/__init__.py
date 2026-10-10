@@ -89,6 +89,28 @@ def _start_graph_rebuild(exc: BaseException) -> bool:
     return True
 
 
+def _call_origin() -> str | None:
+    """Who triggered the current tool call, read from the HTTP request.
+
+    The stdio proxy and the CLI client both reach the owner over HTTP and
+    announce themselves in the X-Cgh-Origin header; a request without it is
+    an MCP client talking to the owner directly, so it counts as "agent". A
+    call outside any HTTP request is an in-process call ("internal").
+    """
+    from codegraph.state.call_log import ORIGIN_HEADER, normalize_origin
+
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+    except Exception:
+        return "internal"
+    raw = request.headers.get(ORIGIN_HEADER)
+    if raw is None or not raw.strip():
+        return "agent"
+    return normalize_origin(raw)
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
@@ -97,6 +119,10 @@ def _logged_tool(fn):
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
+        try:
+            origin = _call_origin()
+        except Exception:
+            origin = None
         t0 = _time.perf_counter()
         success = True
         error = None
@@ -126,6 +152,7 @@ def _logged_tool(fn):
                     success=success,
                     error=error,
                     repo_root=_root,
+                    origin=origin,
                 )
             except Exception:
                 pass  # never let logging break the tool
@@ -374,16 +401,39 @@ def main() -> None:
 
 
 def _startup_index_needed(root, reindex: bool) -> bool:
-    """Whether the owner indexes on start: on --reindex, and also whenever the
-    store records no completed scan. An index killed halfway (a stopped owner,
-    a killed hook) writes no scan record, and an owner started without the
-    flag would otherwise serve that partial graph indefinitely."""
+    """Whether the owner indexes on start: on --reindex, whenever the store
+    records no completed scan, and when that scan used an older graph format.
+    An index killed halfway (a stopped owner, a killed hook) writes no scan
+    record, and an owner started without the flag would otherwise serve that
+    partial graph indefinitely."""
     if reindex:
         return True
-    from codegraph.state.scan_meta import read_meta
+    from codegraph.state.scan_meta import graph_format_outdated, read_meta
 
     if read_meta(root) is None:
         _log.info("no completed scan recorded for %s, indexing it", root)
+        return True
+    if graph_format_outdated(root):
+        # An upgrade changed what the graph stores; the incremental reindex
+        # this triggers falls back to one full re-parse.
+        _log.info("graph format of %s is outdated, re-indexing it", root)
+        return True
+    from codegraph.indexer import module_sources_changed, older_writer_pending
+
+    try:
+        tf_changed = module_sources_changed(root)
+    except Exception:
+        tf_changed = False
+    if tf_changed:
+        # [terraform] module_sources or a ref it pins changed: the
+        # incremental reindex falls back to a walk that re-parses the .tf
+        # files.
+        _log.info("module_sources of %s changed, re-indexing Terraform", root)
+        return True
+    if older_writer_pending(root):
+        # An older cgh (a rollback) rewrote files without their references;
+        # the incremental reindex parses those files again.
+        _log.info("files of %s were written by an older cgh, re-indexing them", root)
         return True
     return False
 

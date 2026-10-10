@@ -6,8 +6,8 @@ Codex CLI supports MCP servers. Add to your project config:
 
 ```bash
 # Initialize codegraph in your project
-codegraph init
-codegraph index
+cgh init
+cgh index
 ```
 
 Then configure Codex to use codegraph as MCP server:

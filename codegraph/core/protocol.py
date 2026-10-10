@@ -82,13 +82,123 @@ class GraphDB(Protocol):
         IMPORTS with a symbol field) include them via ``edge_props``.
         """
 
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, ...]]) -> None:
+        """Batched ``ensure_edge`` of (src_key, dst_key, *props) rows, the
+        props in the edge's prop_columns order (none for an edge without
+        properties). Duplicates are ignored."""
+
     def purge_file_data(self, file_path: str) -> None:
         """Delete every node + edge associated with ``file_path``.
 
         Deletes across all node labels keyed on file_path, plus the
-        File-keyed IMPORTS edges. Used by the indexer before re-indexing
-        a changed file.
+        File-keyed IMPORTS edges, the file's call sites and its name
+        references. Used by the indexer before re-indexing a changed file.
         """
+
+    # --- Writer stamps ------------------------------------------------------
+    # An indexer that predates the call_site / name_ref tables (cgh 0.15
+    # after a rollback) rewrites a file's nodes but not its references. The
+    # stamp records the File mtime each file had when this format indexed it,
+    # so a later run can tell which files an older writer touched since.
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        """Record that ``file_path`` was fully indexed at ``mtime``.
+        purge_file_data drops the stamp too."""
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        """(stale, orphans): indexed files whose stamp is missing or taken at
+        another mtime, and paths holding references or a stamp but no
+        indexed File node any more."""
+
+    # --- Name references ----------------------------------------------------
+    # INHERITS, MD_REFS_*, MD_LINKS_TO and cross-file IMPLEMENTED_BY edges
+    # are resolved by name. Keeping the references lets the indexer link them
+    # from the target's side when the target is indexed later or reindexed.
+
+    def replace_name_refs(
+        self, file_path: str, rows: list[tuple[str, str, str, str]]
+    ) -> None:
+        """Replace the name references recorded for ``file_path`` with
+        ``rows`` of (kind, from_id, name, extra)."""
+
+    def name_refs_into(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        """Name references outside ``exclude_file`` whose name is in
+        ``names``, as (kind, from_id, file_path, name, extra) rows."""
+
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        """Every name reference of ``kind`` in the graph, as (from_id, name,
+        extra) rows. Read by the endpoints query for the router prefixes."""
+
+    def node_keys_matching(
+        self, label: str, field: str, values: list[Any]
+    ) -> list[tuple[Any, Any]]:
+        """(key, field value) of every ``label`` node whose ``field`` is in
+        ``values``. Batched counterpart of ``find_node_keys``."""
+
+    # --- Call sites ---------------------------------------------------------
+    # CALLS edges are derived from call sites. Keeping the sites lets the
+    # indexer relink callers in other files whenever a callee's file is
+    # (re)indexed, independent of the order files are indexed in.
+
+    def replace_call_sites(self, file_path: str, rows: list[tuple[str, ...]]) -> None:
+        """Replace the call sites recorded for ``file_path`` with ``rows`` of
+        (from_id, name, to_id, kind, hint, ctx); missing trailing values are
+        "". ``to_id`` is "" for a site resolved by callee name, or the target
+        Function id for a precisely resolved one. kind, hint and ctx carry
+        the call's shape (see indexer._call_site_rows). purge_file_data drops
+        a file's call sites too.
+        """
+
+    def call_sites_into(
+        self, names: list[str], ids: list[str], exclude_file: str
+    ) -> list[tuple[str, ...]]:
+        """Call sites outside ``exclude_file`` that can target it: by-name
+        sites whose name is in ``names`` plus resolved sites whose to_id is
+        in ``ids``. Rows are (from_id, file_path, name, to_id, kind, hint,
+        ctx).
+        """
+
+    def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
+        """Every Function whose name is in ``names``, as (id, name, file_path)."""
+
+    def call_targets_named(
+        self, names: list[str]
+    ) -> list[tuple[str, str, str, str, tuple[str, ...]]]:
+        """Every Function whose name is in ``names``, as (id, name, file_path,
+        class id, base names): the class id is "" for a function that is no
+        method, the base names are its class's recorded "inherits" names."""
+
+    def class_bases_named(self, names: list[str]) -> list[tuple[str, str]]:
+        """(class name, base name as written) for every recorded base of the
+        Classes whose name is in ``names``."""
+
+    def class_children_named(self, names: list[str]) -> list[tuple[str, str]]:
+        """(class name, base name as written) of the Classes recording a
+        base named in ``names``, bare or dotted (``m.Base`` for "Base");
+        the caller drops a dotted base whose last segment differs."""
+
+    def call_site_names_on(self, classes: list[str]) -> list[str]:
+        """The distinct called names of the by-name call sites on a known
+        class (kind "cls") whose class is in ``classes``."""
+
+    def function_names_in(self, file_path: str) -> list[str]:
+        """The distinct names of the Functions ``file_path`` defines."""
+
+    def calls_by_name(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str]]:
+        """CALLS edges (from_id, to_id) into a function named in ``names``,
+        from a function with a by-name call site outside ``exclude_file``
+        calling one of ``names``."""
+
+    def delete_calls(self, pairs: list[tuple[str, str]]) -> None:
+        """Delete the CALLS edges ``pairs`` of (from_id, to_id)."""
+
+    def name_refs_from(self, kind: str, paths: list[str]) -> list[tuple[str, str]]:
+        """(file_path, name) of the ``kind`` name references recorded for
+        the files ``paths``."""
 
     def find_node_keys(
         self,

@@ -5,7 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh impact --since <ref>` CI command for PR bots. Diffs the
-#              working tree against a git ref, then reads the graph read-only
+#              working tree (commits, staged and unstaged changes, untracked
+#              files) against a git ref, then reads the graph read-only
 #              to report changed symbols, the IMPORTS blast radius grouped by
 #              role / layer, endpoints touched, and tests to run. Emits JSON
 #              (machine-parseable on stdout) or a markdown PR-comment summary.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,23 +34,104 @@ from codegraph.core.utils import quiet_subprocess_kwargs
 _err = Console(stderr=True)
 
 
+def _git(root: str, *args: str) -> tuple[str, str | None]:
+    """(stdout, error) of one git command run in ``root``."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=root,
+            timeout=30,
+            **quiet_subprocess_kwargs(),
+        )
+    except Exception as exc:
+        return "", f"git {args[0]} failed: {exc}"
+    if result.returncode != 0:
+        msg = (
+            result.stderr or ""
+        ).strip() or f"git {args[0]} exited {result.returncode}"
+        return "", f"git {args[0]} failed: {msg}"
+    return result.stdout, None
+
+
+def _diff_base(root: str, since: str) -> str:
+    """The merge base of ``since`` and HEAD, or ``since`` itself when there
+    is no common ancestor (or an unborn HEAD)."""
+    base, err = _git(root, "merge-base", since, "HEAD")
+    base = base.strip() if err is None else ""
+    return base or since
+
+
 def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
     """Return (changed_files, error). Diffs the working tree against ``since``.
 
-    Mirrors the validation in tools_index.index_changed_files: a leading dash
-    is rejected so a value like "--output=/x" cannot be read as a git flag,
-    and the trailing "--" keeps the ref from being parsed as a pathspec.
+    The base is the merge base of ``since`` and HEAD (a PR's diff against
+    its target branch), and the comparison is with the working tree, so
+    committed, staged and unstaged changes all count, plus untracked files
+    git does not ignore. A leading dash is rejected so a value like
+    "--output=/x" cannot be read as a git flag, and the trailing "--" keeps
+    the ref from being parsed as a pathspec.
     """
     if since.startswith("-"):
         return [], f"invalid git ref: {since!r}"
-    cmd = [
-        "git",
-        "diff",
-        "--name-only",
-        "--diff-filter=ACMR",
-        f"{since}...",
-        "--",
+    base = _diff_base(root, since)
+    out, err = _git(root, "diff", "--name-only", "--diff-filter=ACMR", base, "--")
+    if err is not None:
+        return [], err
+    untracked, err = _git(
+        root, "ls-files", "--others", "--exclude-standard", "--full-name"
+    )
+    if err is not None:
+        return [], err
+    files = [
+        f.strip()
+        for f in [*out.splitlines(), *untracked.splitlines()]
+        if f.strip() and not f.strip().startswith(".codegraph/")
     ]
+    return list(dict.fromkeys(files)), None
+
+
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def _changed_ranges(diff_text: str) -> dict[str, list[tuple[int, int]]]:
+    """{path: [(first, last)]} of the new-side lines a `git diff -U0`
+    touches. A pure deletion marks the lines around the cut, so the block
+    it happened in still counts as changed."""
+    out: dict[str, list[tuple[int, int]]] = {}
+    current = ""
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            name = line[4:].strip()
+            current = name[2:] if name.startswith("b/") else ""
+            continue
+        m = _HUNK.match(line)
+        if not m or not current:
+            continue
+        start, count = int(m.group(1)), int(m.group(2) or "1")
+        if count == 0:
+            out.setdefault(current, []).append((max(1, start), start + 1))
+        else:
+            out.setdefault(current, []).append((start, start + count - 1))
+    return out
+
+
+def _git_changed_lines(
+    root: str, since: str, files: list[str]
+) -> dict[str, list[tuple[int, int]]]:
+    """Changed line ranges of ``files``, from the same diff as
+    _git_changed_files: the merge base of ``since`` against the working
+    tree, so uncommitted edits count too. The impact of a code file starts
+    from the functions and classes those lines touch, the impact of a .tf
+    file from its blocks. A file without ranges (untracked, or any git
+    error, which returns {}) counts as changed as a whole."""
+    if not files or since.startswith("-"):
+        return {}
+    base = _diff_base(root, since)
+    cmd = ["git", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--"]
     try:
         result = subprocess.run(
             cmd,
@@ -60,17 +143,12 @@ def _git_changed_files(root: str, since: str) -> tuple[list[str], str | None]:
             timeout=30,
             **quiet_subprocess_kwargs(),
         )
-    except Exception as exc:
-        return [], f"git diff failed: {exc}"
+    except Exception:
+        return {}
     if result.returncode != 0:
-        msg = (result.stderr or "").strip() or f"git diff exited {result.returncode}"
-        return [], f"git diff failed: {msg}"
-    files = [
-        f.strip()
-        for f in result.stdout.strip().splitlines()
-        if f.strip() and not f.strip().startswith(".codegraph/")
-    ]
-    return files, None
+        return {}
+    wanted = set(files)
+    return {f: r for f, r in _changed_ranges(result.stdout).items() if f in wanted}
 
 
 def _build_report(conn, root: str, changed_files: list[str]) -> dict:
@@ -124,7 +202,15 @@ def _render_markdown(report: dict, since: str) -> str:
     if endpoints:
         for e in endpoints:
             method = e.get("method") or "?"
-            lines.append(f"- `{method} {e.get('path', '')}` ({e['file']})")
+            where = f"{e['file']}:{e['line']}" if e.get("line") else e["file"]
+            full = e.get("full_paths") or []
+            if len(full) == 1:
+                lines.append(f"- `{method} {full[0]}` ({where})")
+                continue
+            line = f"- `{method} {e.get('path', '')}` ({where})"
+            if full:
+                line += " under " + ", ".join(f"`{p}`" for p in full)
+            lines.append(line)
     else:
         lines.append("- _none_")
     lines.append("")
@@ -137,6 +223,17 @@ def _render_markdown(report: dict, since: str) -> str:
     else:
         lines.append("- _no importing tests found_")
     lines.append("")
+
+    related = report.get("related") or []
+    if related:
+        lines.append(f"**Related mentions ({len(related)})**")
+        for r in related[:25]:
+            lines.append(
+                f"- `{r['file']}:{r['line']}` {r['name']} (mentions `{r['mentions']}`)"
+            )
+        if len(related) > 25:
+            lines.append(f"- _... {len(related) - 25} more_")
+        lines.append("")
 
     if report.get("truncated"):
         lines.append("> Note: blast radius was truncated (large graph).")
@@ -173,6 +270,16 @@ def cmd_impact(args: argparse.Namespace) -> None:
         )
         return
 
+    # The report maps this checkout's diff onto stored paths: on a store
+    # copied from another checkout nothing matches and the report would come
+    # back empty, which reads as "no impact". Refuse instead.
+    from codegraph.state.scan_meta import copied_store_message
+
+    copied = copied_store_message(root)
+    if copied:
+        _fail(want_json, copied)
+        return
+
     changed, err = _git_changed_files(root, since)
     if err is not None:
         _fail(want_json, err)
@@ -181,12 +288,18 @@ def cmd_impact(args: argparse.Namespace) -> None:
     # A live owner holds the graph DB for writing, which blocks our own
     # read-only open, so ask it first. No owner (CI) -> open read-only here.
     # Never start an owner from this command.
+    from codegraph.analysis.impact import format_changed_entry
     from codegraph.cli.owner_client import (
         call_owner_tool,
         note_route,
         older_owner_hint,
         stuck_owner_hint,
     )
+
+    # The changed lines of a file ride along as path#L<ranges>, so its
+    # impact starts from the symbols (or Terraform blocks) the diff touches.
+    ranges = _git_changed_lines(root, since, changed)
+    changed = [format_changed_entry(f, ranges.get(f)) for f in changed]
 
     reply = call_owner_tool(root, "impact_report", {"changed_files": changed})
     if reply.ok and isinstance(reply.data, dict) and "error" not in reply.data:
@@ -225,7 +338,15 @@ def _report_via_local_open(
     error is folded into the failure message. Returns None after _fail."""
     from codegraph.cli.owner_client import stuck_owner_hint
     from codegraph.core.db import get_readonly_connection
+    from codegraph.state.scan_meta import outdated_store_message
 
+    # A store from an older graph format lacks edges a re-parse adds: its
+    # report would be silently incomplete, so refuse it (an owner re-parses
+    # on start, so only this local path checks).
+    outdated = outdated_store_message(root)
+    if outdated:
+        _fail(want_json, outdated)
+        return None
     try:
         conn = get_readonly_connection(root)
     except Exception as exc:

@@ -77,6 +77,11 @@ log_backup_count = 3
 # disabled = ["terraform"]
 
 
+[terraform]
+# Map a remote module source to a local checkout (opt-in, read-only).
+# module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modules" }
+
+
 [mcp]
 # Auto-start file watcher when the MCP server starts.
 auto_watch = true
@@ -109,8 +114,19 @@ checkpoint_gate = 0
 
 | Key | Plugin | Default | Description |
 |-----|--------|---------|-------------|
-| `scan_on_index` | pii, vision, classify | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`, `cgh classify`). |
+| `scan_on_index` | pii, vision | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`). |
 | `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `codegraph.sdk.scan_text` keeps them on unless this is set to `false`. |
+
+#### Ignored keys
+
+These keys still load without error but nothing reads them. A config
+that carries one gets a single notice per process on stderr (never in
+hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
+
+| Key | Since | Why |
+|-----|-------|-----|
+| `[codegraph] mode = "secure"` | 0.15.0 | Secure mode was removed. `mode = "assist"` stays silent. |
+| `[plugin.summarize] allow_pii`, `egress`, `claude_model`, `gemini_model` | 0.15.0 | cgh-summarize 0.3.0 dropped its cloud backends and egress gate, and cgh refuses older releases. |
 
 #### `[codegraph]`
 
@@ -153,6 +169,57 @@ package-lock.json, yarn.lock, pnpm-lock.yaml
 Parser language names correspond to the `lang` attribute on each parser class: `python`, `typescript`, `terraform`, `markdown`, `vue`.
 
 If `enabled` is set, only those parsers are active. `disabled` is then applied on top to further exclude.
+
+#### `[terraform]`
+
+`module_sources` maps a remote Terraform module source (git URL, registry
+address) to a local directory, so a `module` block with that source links
+to the module's variables and outputs like a local `./` source does: its
+arguments to the module's `var.<name>`, `module.m.out` to the module's
+output. Without it a remote module is opaque.
+
+```toml
+[terraform]
+module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modules" }
+```
+
+- The key is matched as a prefix of the source's package, the part before
+  its `//subdir`, on a path boundary: `git::` and a trailing `.git` are
+  ignored on both sides, and the longest matching key wins. So the key
+  above maps
+  `git::https://github.com/altikva/gcp-modules.git//modules/kms?ref=v0.1.0`
+  to `../gcp-modules/modules/kms`. A registry address works the same way
+  (`"acme/kms/google" = "../modules/kms"`).
+- The `//subdir` is joined to the mapped directory.
+- When the mapped directory is not indexed by this graph and sits in a git
+  checkout, the `?ref=` is honoured: the module's `.tf` files are read from
+  git at that tag, branch (local, or `origin/<branch>`) or commit, with
+  `git ls-tree` and `git cat-file`. Nothing is checked out, no worktree is
+  made and nothing is fetched, so the ref must already be in the checkout
+  (`git fetch --tags` there yourself). Each ref gets its own copy, shown as
+  `<dir>@<ref>` (`../gcp-modules/modules/kms@v0.1.0/main.tf`), so modules
+  pinned at different refs link to their own variables and outputs. A ref
+  the checkout lacks falls back to the working tree, with a warning in the
+  index log and a notice in `cgh status` and `cgh doctor` naming the ref and
+  the module. Without a ref, or when the directory is no git checkout or is
+  indexed here, the working tree is read as is.
+- Paths are relative to the project root, or absolute.
+- When the mapped directory is indexed by this graph (inside the repo or an
+  `extra_dirs` entry) the links are ordinary edges. Otherwise (outside every
+  index, or inside a federated subrepo) cgh reads that directory's blocks
+  into this graph when a calling file is indexed: resources, data sources,
+  locals, variables and outputs (variables and outputs only inside a
+  federated subrepo), read-only, nothing written there, nothing fetched
+  over the network. `cgh lookup google_x.y` finds a resource of the module,
+  and `module.kms.google_x.y` the one inside the module `kms` calls.
+- A change to the mapping, or a pinned ref that now resolves to another
+  commit (a moved branch, a tag fetched since), is noticed by the next
+  `cgh index`, incremental reindex or owner start, which parses the
+  Terraform files again. `cgh status` (human and `--json`, key
+  `module_sources`) and `cgh doctor` list each mapping of the current
+  config with its path and the refs found and missing; a mapping edited
+  since the last index is marked `pending reindex` (`pending` and
+  `indexed_path` in `--json`).
 
 #### `[mcp]`
 

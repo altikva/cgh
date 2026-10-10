@@ -153,8 +153,6 @@ jobs:
         plugin:
           - cgh-docs
           - cgh-pii
-          - cgh-summarize
-          - cgh-classify
           - cgh-bugreport
           - cgh-vision
           - cgh-codegen
@@ -219,8 +217,8 @@ jobs:
     #   egress -> cgh-egress-<target>  : adds the egress-capable default
     #             plugins (codegen, bugreport), inert until configured. The
     #             name is the honest capability, not a state.
-    # pii, vision, summarize and classify are not in the default install and
-    # stay pip-only in both.
+    # pii and vision are not in the default install and stay pip-only in
+    # both.
     needs: [validate, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

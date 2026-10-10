@@ -69,9 +69,15 @@ def test_owner_indexes_a_store_with_no_completed_scan(tmp_path):
 
     (tmp_path / ".codegraph").mkdir()
     assert _startup_index_needed(tmp_path, reindex=False)
-    (tmp_path / ".codegraph" / "scan_meta.json").write_text('{"git_head": "abc"}')
+    from codegraph.state.scan_meta import GRAPH_FORMAT
+
+    meta = tmp_path / ".codegraph" / "scan_meta.json"
+    meta.write_text(f'{{"git_head": "abc", "graph_format": {GRAPH_FORMAT}}}')
     assert not _startup_index_needed(tmp_path, reindex=False)
     assert _startup_index_needed(tmp_path, reindex=True)
+    # A scan from an older graph format needs one full re-parse.
+    meta.write_text('{"git_head": "abc"}')
+    assert _startup_index_needed(tmp_path, reindex=False)
 
 
 def test_seed_refuses_while_an_index_runs_on_the_target(tmp_path):

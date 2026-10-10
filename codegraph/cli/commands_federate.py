@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from codegraph.analysis.federation import (
+    _outdated_child,
     add_subrepo,
     child_owner_status,
     remove_subrepo,
@@ -86,7 +87,12 @@ def _cmd_remove(args: argparse.Namespace) -> None:
         return
     root = Path(os.path.abspath(args.root))
     for raw in paths:
-        if remove_subrepo(root, raw):
+        try:
+            removed = remove_subrepo(root, raw)
+        except ValueError as exc:
+            console.print(f"[red]✗ {raw}:[/red] {exc}")
+            continue
+        if removed:
             console.print(f"[green]✓ removed[/green] {raw}")
         else:
             console.print(f"[dim]not federated: {raw}[/dim]")
@@ -234,6 +240,8 @@ def _render_status_table(
             badge = "[yellow]not initialized[/yellow]"
         elif not status.has_graphdb:
             badge = "[yellow]no graph DB[/yellow]"
+        elif _outdated_child(child):
+            badge = "[yellow]outdated[/yellow] [dim](run cgh index there)[/dim]"
         else:
             backend = "duckdb" if status.has_duckdb else "sqlite"
             badge = f"[green]ok[/green] [dim]({backend})[/dim]"

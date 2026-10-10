@@ -19,6 +19,28 @@ from pathlib import Path
 
 
 @dataclass(slots=True)
+class CallRef:
+    """One call a function makes, with the shape the call resolver needs.
+
+    ``receiver`` is "" for a bare call ``f()``, "self" for a call on the
+    instance or class (self, cls, this), "super" for a call on the parent
+    class, the dotted receiver text for ``a.b.f()`` ("a.b"), "C()" for a
+    call on what a plain call returns (``C(x).f()``, ``new C().f()``), or
+    "?" for any other receiver (a subscript, a literal, a chained call).
+    ``module`` and ``symbol`` describe the import binding the bare name, or
+    the receiver's first segment: ``from m import s`` gives ("m", "s") and
+    ``import m`` gives ("m", ""); both stay "" when nothing imports it.
+    ``name`` is the callee's defined name: an aliased import
+    (``from m import s as t; t()``) records "s".
+    """
+
+    name: str
+    receiver: str = ""
+    module: str = ""
+    symbol: str = ""
+
+
+@dataclass(slots=True)
 class SymbolDef:
     """A function, method, or callable."""
 
@@ -31,6 +53,63 @@ class SymbolDef:
     class_name: str | None = None  # set when it's a method
     calls: list[str] = field(default_factory=list)
     kind: str = "function"  # "function", "method", "arrow", "handler", etc.
+    # Filled by the parsers that know call shapes and imports (Python and
+    # TS/JS). Empty for the others, whose calls are linked by name alone.
+    call_refs: list[CallRef] = field(default_factory=list)
+
+
+# An import binding: local name -> (module, symbol), symbol "" for a module.
+Bindings = dict[str, tuple[str, str]]
+
+
+def bind_calls(raw: list[tuple[str, str]], bindings: Bindings) -> list[CallRef]:
+    """Attach import bindings to raw (name, receiver) calls, deduplicated.
+
+    A bare call takes the binding of its own name (and the imported name when
+    it was aliased); an attribute call takes the binding of its receiver's
+    first segment. ``self``, ``super`` and ``?`` receivers are never bound.
+    Star imports sit in ``bindings`` under "*<module>" as (module, "*"); a
+    bare call nothing else binds gets them all, as ("m1|m2", "*").
+    """
+    stars = "|".join(sorted(m for k, (m, s) in bindings.items() if s == "*"))
+    out: dict[tuple[str, str, str, str], CallRef] = {}
+    for name, receiver in raw:
+        module = symbol = ""
+        if not receiver:
+            bound = bindings.get(name)
+            if bound is not None:
+                module, symbol = bound
+                if symbol and symbol != "default":
+                    name = symbol.rsplit(".", 1)[-1]
+            elif stars:
+                module, symbol = stars, "*"
+        elif receiver not in ("self", "super", "?"):
+            bound = bindings.get(receiver.split(".", 1)[0].removesuffix("()"))
+            if bound is not None:
+                module, symbol = bound
+        ref = CallRef(name=name, receiver=receiver, module=module, symbol=symbol)
+        out.setdefault((name, receiver, module, symbol), ref)
+    return list(out.values())
+
+
+def typed_receivers(
+    raw: list[tuple[str, str]], types: dict[str, str], instance: str
+) -> list[tuple[str, str]]:
+    """Rewrite a call on a typed instance attribute (``self.x.f()``,
+    ``this.x.f()``, ``instance`` naming the receiver) as a call on its
+    class, ``types`` mapping the attribute to the class name: ``T()`` for a
+    plain name (an instance of T), the dotted name itself for ``m.T``, the
+    shapes the call resolver already reads as a call on a class."""
+    if not types:
+        return raw
+    out: list[tuple[str, str]] = []
+    for name, receiver in raw:
+        head, dot, attr = receiver.partition(".")
+        cls = types.get(attr) if head == instance and dot and "." not in attr else None
+        if cls:
+            receiver = cls if "." in cls else f"{cls}()"
+        out.append((name, receiver))
+    return out
 
 
 @dataclass(slots=True)
@@ -66,6 +145,16 @@ class ResourceDef:
     start_line: int
     end_line: int = 0
     kind: str = "resource"  # "resource", "variable", "output", "service"
+    # Terraform: the in-module address ("google_x.y", "data.t.n", "var.v",
+    # "local.l", "module.m", "output.o"), the addresses the block's
+    # expressions reference (as written: "module.m.out" keeps the output),
+    # a module block's raw `source` and its input argument names, and a
+    # one-line summary for text search.
+    address: str = ""
+    refs: list[str] = field(default_factory=list)
+    source: str = ""
+    inputs: list[str] = field(default_factory=list)
+    docstring: str = ""
 
 
 @dataclass(slots=True)

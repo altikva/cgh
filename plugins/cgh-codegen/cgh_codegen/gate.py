@@ -11,12 +11,9 @@
 #              egress_decision, so there is a single place to audit and, later,
 #              a single call site to swap for a shared core decision.
 #
-#              Consolidation note: this mirrors the egress logic the
-#              cgh-summarize plugin also carries. Two copies of a security
-#              verdict drift toward the leak, so the intended end state is one
-#              shared decision in cgh core that every model-backed plugin
-#              calls. Until that lands, keep this a single function, never
-#              re-derive the verdict inline elsewhere in the plugin.
+#              Keep this a single function, never re-derive the verdict
+#              inline elsewhere in the plugin: two copies of a security
+#              verdict drift toward the leak.
 
 from __future__ import annotations
 

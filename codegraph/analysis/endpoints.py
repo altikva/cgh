@@ -5,13 +5,18 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Extract HTTP endpoint definitions from source files.
-#              Supports FastAPI / Flask / Starlette decorators and Django
+#              Supports FastAPI / Flask / Starlette decorators (on one line or
+#              several, path given by position or as path=) and Django
 #              urlpatterns (Python), Nuxt server/api file-based routes plus
 #              Express/Fastify and NestJS decorators (JS/TS), Spring
 #              @*Mapping decorators (Java), and Gin/Echo router calls (Go).
+#              Also reads the router prefixes and include calls of a Python
+#              file, from which a route's full path is composed.
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,57 +24,112 @@ from pathlib import Path
 
 @dataclass
 class EndpointDef:
-    id: str  # "<file>::<method>::<path>"
+    id: str  # see endpoint_id
     method: str  # GET, POST, PUT, PATCH, DELETE
     path: str  # URL path, "/donations/{id}"
     framework: str  # "fastapi", "nuxt", "express", "flask", ...
     file_path: str
     start_line: int
     handler_name: str | None = None
+    # The object a Python route decorator is called on ("router",
+    # "images_router", "app"), which names the router whose prefixes the
+    # full path is composed from. Empty for the other frameworks.
+    router: str = ""
+
+
+def endpoint_id(path: str | Path, line: int, method: str, url: str) -> str:
+    """The Endpoint node key: file, declaring line, method and local path.
+
+    The line keeps apart two routers of one file that declare the same method
+    and path (two ``@x.get("")``); it changes only when the file does, and a
+    changed file has its endpoints purged and written again anyway.
+    """
+    return f"{path}::{line}::{method}::{url}"
 
 
 # ---------------------------------------------------------------------------
 # Python, FastAPI / Flask / Starlette decorators
 # ---------------------------------------------------------------------------
 
-# Captures @router.get("/path") / @app.post("/path", ...) / @bp.route(...)
+# Finds the start of @router.get(...) / @app.post(...) / @bp.route(...) /
+# @router.api_route(...). The arguments are read with the ast module from the
+# whole decorator, which may span several lines.
 _PY_DECORATOR = re.compile(
-    r"""@\s*(?P<obj>[a-zA-Z_][\w.]*)       # router object or attribute access
-         \.(?P<method>get|post|put|patch|delete|head|options|route)
+    r"""^\s*@\s*(?P<obj>[a-zA-Z_][\w.]*)    # router object or attribute access
+         \.(?P<method>get|post|put|patch|delete|head|options|route|api_route)
          \s*\(
-           \s*['"](?P<path>[^'"]+)['"]     # the path string
     """,
     re.VERBOSE,
 )
 
-# If @bp.route("/x", methods=["POST"]) is used, extract the methods list
-_PY_ROUTE_METHODS = re.compile(r"methods\s*=\s*\[([^\]]+)\]")
+# A decorator call longer than this many lines is not read.
+_PY_DECORATOR_MAX_LINES = 40
+
+
+def _py_decorator_call(lines: list[str], start: int) -> tuple[ast.Call, int] | None:
+    """Parse the decorator call opening at ``lines[start]`` (0-based).
+
+    Returns the call and the 0-based index of its last line, or None when no
+    complete call parses within the line budget.
+    """
+    first = lines[start].lstrip()[1:]  # drop the "@"
+    text = first
+    for end in range(start, min(start + _PY_DECORATOR_MAX_LINES, len(lines))):
+        if end > start:
+            text += "\n" + lines[end]
+        try:
+            node = ast.parse(text.strip(), mode="eval").body
+        except SyntaxError:
+            continue
+        return (node, end) if isinstance(node, ast.Call) else None
+    return None
+
+
+def _py_str(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
 def extract_python(path: str | Path, src: str) -> list[EndpointDef]:
     out: list[EndpointDef] = []
     lines = src.splitlines()
-    for i, line in enumerate(lines, start=1):
-        m = _PY_DECORATOR.search(line)
+    for i, line in enumerate(lines):
+        m = _PY_DECORATOR.match(line)
         if not m:
             continue
+        parsed = _py_decorator_call(lines, i)
+        if parsed is None:
+            continue
+        call, end = parsed
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        url = _py_str(call.args[0]) if call.args else _py_str(kwargs.get("path"))
+        if url is None:
+            continue
         method = m.group("method").upper()
-        url = m.group("path")
+        router = m.group("obj")
 
-        if method == "ROUTE":
-            # Flask-style: infer methods from methods=[...]
-            mm = _PY_ROUTE_METHODS.search(line)
-            if mm:
-                for raw in mm.group(1).split(","):
-                    mth = raw.strip().strip("\"'").upper()
-                    if not mth:
-                        continue
-                    out.append(_build_py_endpoint(path, i, mth, url, lines))
+        if method in ("ROUTE", "API_ROUTE"):
+            # Methods come from methods=[...]. A methods value that is not a
+            # literal list (a module constant) is not known here: ANY.
+            methods_node = kwargs.get("methods")
+            if methods_node is None:
+                methods = ["GET"]
+            elif isinstance(methods_node, (ast.List, ast.Tuple, ast.Set)):
+                methods = [
+                    s.upper()
+                    for s in map(_py_str, methods_node.elts)
+                    if s and s.strip()
+                ]
             else:
-                out.append(_build_py_endpoint(path, i, "GET", url, lines))
+                methods = ["ANY"]
+            for mth in methods:
+                out.append(
+                    _build_py_endpoint(path, i + 1, mth, url, lines, end + 1, router)
+                )
             continue
 
-        out.append(_build_py_endpoint(path, i, method, url, lines))
+        out.append(_build_py_endpoint(path, i + 1, method, url, lines, end + 1, router))
     return out
 
 
@@ -79,10 +139,15 @@ def _build_py_endpoint(
     method: str,
     url: str,
     lines: list[str],
+    after: int | None = None,
+    router: str = "",
 ) -> EndpointDef:
-    """Build an EndpointDef + sniff the handler function name on the next non-decorator line."""
+    """Build an EndpointDef + sniff the handler function name on the next
+    non-decorator line. ``after`` is the 0-based index of the first line past
+    the decorator (a decorator may span several lines)."""
     handler = None
-    for j in range(line_no, min(line_no + 15, len(lines))):
+    begin = line_no if after is None else after
+    for j in range(begin, min(begin + 15, len(lines))):
         ln = lines[j].lstrip()
         if ln.startswith("@"):
             continue  # other decorators stacked
@@ -91,14 +156,169 @@ def _build_py_endpoint(
             handler = m.group(1)
             break
     return EndpointDef(
-        id=f"{path}::{method}::{url}",
+        id=endpoint_id(path, line_no, method, url),
         method=method,
         path=url,
         framework="fastapi",
         file_path=str(path),
         start_line=line_no,
         handler_name=handler,
+        router=router,
     )
+
+
+# ---------------------------------------------------------------------------
+# Python router prefixes: APIRouter(prefix=...), Blueprint(url_prefix=...),
+# include_router(..., prefix=...), register_blueprint(..., url_prefix=...)
+# ---------------------------------------------------------------------------
+
+# Name references the indexer keeps per file, read back at query time to
+# compose the full path of a route (see codegraph/analysis/endpoint_query.py).
+#   router_def      from_id "<file>::<var>", name = kind (router, blueprint
+#                   or app), extra = JSON {"prefix": str | null}, null when
+#                   the prefix is not a string literal
+#   router_include  from_id "<file>::<parent var>", name "<file>::<var>" of
+#                   the router included, extra = JSON {} when no prefix is
+#                   given, else {"prefix": str | null}
+ROUTER_DEF = "router_def"
+ROUTER_INCLUDE = "router_include"
+
+# Constructor name -> (router kind, prefix keyword).
+_ROUTER_CTORS = {
+    "APIRouter": ("router", "prefix"),
+    "Blueprint": ("blueprint", "url_prefix"),
+    "FastAPI": ("app", ""),
+    "Flask": ("app", ""),
+    "Starlette": ("app", ""),
+}
+# Include call name -> prefix keyword.
+_INCLUDE_CALLS = {"include_router": "prefix", "register_blueprint": "url_prefix"}
+_ROUTING_HINTS = (*_ROUTER_CTORS, *_INCLUDE_CALLS)
+
+
+def _dotted(node: ast.expr) -> str | None:
+    """``a.b.c`` for a Name / Attribute chain, None for anything else."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _prefix_arg(call: ast.Call, keyword: str) -> dict:
+    """{} when ``keyword`` is not passed, else {"prefix": literal or None}."""
+    for kw in call.keywords:
+        if kw.arg == keyword:
+            return {"prefix": _py_str(kw.value)}
+    return {}
+
+
+def _import_aliases(tree: ast.Module) -> dict[str, tuple[str, str]]:
+    """Local name -> (module, imported name or "") for the file's imports, at
+    any depth (an app factory importing its routers in its body is common)."""
+    out: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = "." * node.level + (node.module or "")
+            for a in node.names:
+                if a.name != "*":
+                    out[a.asname or a.name] = (module, a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    out[a.asname] = (a.name, "")
+                else:
+                    head = a.name.split(".")[0]
+                    out[head] = (head, "")
+    return out
+
+
+def _join_module(module: str, *parts: str) -> str:
+    rest = ".".join(p for p in parts if p)
+    if not rest:
+        return module
+    return module + rest if module.endswith(".") else f"{module}.{rest}"
+
+
+def python_router_refs(
+    path: str | Path, src: str, resolve_module
+) -> list[tuple[str, str, str, str]]:
+    """The router definitions and include calls of a Python file, as name
+    references (see ROUTER_DEF and ROUTER_INCLUDE).
+
+    ``resolve_module(dotted)`` returns the repo file a module resolves to, or
+    None. An included router is named by the file and variable it resolves
+    to: a local variable, ``from m import router as x``, or ``mod.router``
+    with ``mod`` an imported module. Anything else is left out.
+    """
+    if not any(h in src for h in _ROUTING_HINTS):
+        return []
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return []
+    file_key = str(path)
+    aliases = _import_aliases(tree)
+    refs: list[tuple[str, str, str, str]] = []
+
+    def resolve(dotted: str) -> str | None:
+        parts = dotted.split(".")
+        head, attr = parts[0], parts[-1]
+        if head not in aliases:
+            return f"{file_key}::{dotted}" if len(parts) == 1 else None
+        module, name = aliases[head]
+        if len(parts) == 1:
+            if not name:
+                return None
+            target = resolve_module(module)
+            return f"{target}::{name}" if target else None
+        target = resolve_module(_join_module(module, name, *parts[1:-1]))
+        return f"{target}::{attr}" if target else None
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+            node.value, ast.Call
+        ):
+            ctor = _dotted(node.value.func) or ""
+            spec = _ROUTER_CTORS.get(ctor.split(".")[-1])
+            if spec is None:
+                continue
+            kind, keyword = spec
+            prefix = (
+                _prefix_arg(node.value, keyword).get("prefix", "") if keyword else ""
+            )
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            refs.extend(
+                (
+                    ROUTER_DEF,
+                    f"{file_key}::{t.id}",
+                    kind,
+                    json.dumps({"prefix": prefix}),
+                )
+                for t in targets
+                if isinstance(t, ast.Name)
+            )
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            keyword = _INCLUDE_CALLS.get(node.func.attr)
+            if keyword is None or not node.args:
+                continue
+            parent = _dotted(node.func.value)
+            child = _dotted(node.args[0])
+            child_key = resolve(child) if child else None
+            if parent is None or child_key is None:
+                continue
+            refs.append(
+                (
+                    ROUTER_INCLUDE,
+                    f"{file_key}::{parent}",
+                    child_key,
+                    json.dumps(_prefix_arg(node, keyword)),
+                )
+            )
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +365,7 @@ def extract_django(path: str | Path, src: str) -> list[EndpointDef]:
 
         out.append(
             EndpointDef(
-                id=f"{path}::ANY::{norm}",
+                id=endpoint_id(path, i, "ANY", norm),
                 method="ANY",
                 path=norm,
                 framework="django",
@@ -199,7 +419,7 @@ def extract_nuxt(path: str | Path, src: str) -> list[EndpointDef]:
 
     return [
         EndpointDef(
-            id=f"{path}::{method}::{route_path}",
+            id=endpoint_id(path, 1, method, route_path),
             method=method,
             path=route_path,
             framework="nuxt",
@@ -236,7 +456,7 @@ def extract_express(path: str | Path, src: str) -> list[EndpointDef]:
             continue
         out.append(
             EndpointDef(
-                id=f"{path}::{m.group('method').upper()}::{m.group('path')}",
+                id=endpoint_id(path, i, m.group("method").upper(), m.group("path")),
                 method=m.group("method").upper(),
                 path=m.group("path"),
                 framework="express",
@@ -294,7 +514,7 @@ def extract_nest(path: str | Path, src: str) -> list[EndpointDef]:
 
         out.append(
             EndpointDef(
-                id=f"{path}::{method.upper()}::{route}",
+                id=endpoint_id(path, i, method.upper(), route),
                 method=method.upper(),
                 path=route,
                 framework="nestjs",
@@ -356,7 +576,7 @@ def extract_spring(path: str | Path, src: str) -> list[EndpointDef]:
 
         out.append(
             EndpointDef(
-                id=f"{path}::{method}::{route}",
+                id=endpoint_id(path, i, method, route),
                 method=method,
                 path=route,
                 framework="spring",
@@ -396,7 +616,7 @@ def extract_go(path: str | Path, src: str) -> list[EndpointDef]:
         handler = m.group("handler").split(".")[-1]
         out.append(
             EndpointDef(
-                id=f"{path}::{method}::{m.group('path')}",
+                id=endpoint_id(path, i, method, m.group("path")),
                 method=method,
                 path=m.group("path"),
                 framework="gin",

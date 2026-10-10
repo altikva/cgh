@@ -76,6 +76,7 @@ from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
+    cmd_endpoints,
     cmd_grep,
     cmd_lookup,
     cmd_outline,
@@ -127,6 +128,7 @@ def _print_help():
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
+                ("endpoints", "HTTP routes with full paths, handler and location"),
                 (
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
@@ -386,7 +388,8 @@ def _register_setup_and_serve(sub) -> None:
 
 
 def _register_inspect(sub) -> None:
-    """Register stats, logs, search, lookup, callers, callees, outline, doctor."""
+    """Register stats, logs, search, lookup, callers, callees, outline,
+    endpoints, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -530,6 +533,29 @@ def _register_inspect(sub) -> None:
     # --- outline ---
     p = sub.add_parser("outline", help="Show heading outline of a Markdown file (tree)")
     p.add_argument("file", help="Markdown file path")
+    _add_root(p)
+
+    # --- endpoints ---
+    p = sub.add_parser(
+        "endpoints", help="List HTTP routes: method, full path, handler, file:line"
+    )
+    p.add_argument(
+        "pattern",
+        nargs="?",
+        default="",
+        help="Path or glob, matched on full paths then local paths "
+        '(e.g. "/v1/donations/{id}/cancel", "*/donations*")',
+    )
+    p.add_argument("--method", "-m", default="", help="GET, POST, ... (any case)")
+    p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Also list routes declared in test files",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=0, help="Max routes to show (default: all)"
+    )
+    p.add_argument("--json", action="store_true")
     _add_root(p)
 
     # --- doctor ---
@@ -738,12 +764,20 @@ def main() -> None:
     if len(sys.argv) > 2 and sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES):
         del sys.argv[2:]
     if len(sys.argv) > 1 and (
+        sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES) or sys.argv[1] == "_reindex_hook"
+    ):
+        # Owner calls made from a hook are logged as "hook", not "cli", so
+        # usage data separates hook traffic from what agents and people ask.
+        from codegraph.state.call_log import ORIGIN_ENV
+
+        os.environ[ORIGIN_ENV] = "hook"
+    if len(sys.argv) > 1 and (
         sys.argv[1].startswith(_HOOK_COMMAND_PREFIXES)
         or sys.argv[1] in ("status", "doctor")
     ):
-        # Agents parse hook output: the legacy mode = "secure" notice must
-        # not ride along with a hook, not even on stderr. status and
-        # doctor print it in their own output instead.
+        # Agents parse hook output: the config deprecation notice (legacy
+        # mode = "secure", dead keys) must not ride along with a hook, not
+        # even on stderr. status and doctor print it in their own output.
         from codegraph.core.config import suppress_legacy_mode_warning
 
         suppress_legacy_mode_warning()
@@ -851,6 +885,7 @@ def main() -> None:
         "callers": cmd_callers,
         "callees": cmd_callees,
         "outline": cmd_outline,
+        "endpoints": cmd_endpoints,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,
@@ -884,7 +919,35 @@ def main() -> None:
         _print_help()
         return
 
-    handler(args)
+    try:
+        handler(args)
+    except Exception as exc:
+        hint = _outdated_store_hint(args, exc)
+        if not hint:
+            raise
+        print(hint, file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _outdated_store_hint(args: argparse.Namespace, exc: Exception) -> str:
+    """The remedy when a query hit a store written in an older graph format.
+
+    Upgrading cgh does not touch an existing index until the next index run or
+    owner start, and a query opening it read-only in between finds tables
+    without the columns this version expects. That is a missing reindex, not
+    a bug, so say so instead of printing the database error."""
+    text = str(exc)
+    schema_error = type(exc).__name__ in {
+        "BinderException",
+        "CatalogException",
+        "OperationalError",
+    } and any(k in text for k in ("column", "Column", "table", "Table"))
+    if not schema_error:
+        return ""
+    from codegraph.state.scan_meta import outdated_store_message
+
+    root = os.path.abspath(getattr(args, "root", None) or os.getcwd())
+    return outdated_store_message(root)
 
 
 if __name__ == "__main__":

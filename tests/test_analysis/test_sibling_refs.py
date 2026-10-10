@@ -141,6 +141,19 @@ def test_paths_stay_inside_the_repo(setup, path):
     assert "error" in out
 
 
+def test_siblings_of_a_committed_config_are_ignored(setup):
+    """A config.toml shipped with the repo must not open other repos: a
+    cloned repo could otherwise point the agent at any git repo on disk."""
+    proj, _api, t = setup
+    _git(proj, "add", "-f", ".codegraph/config.toml")
+    _git(proj, "commit", "-qm", "ship config")
+    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
+    assert "tracked by git" in out["error"]
+    assert refs.sibling_repos(proj) == {}
+    # This repo itself stays readable at a ref.
+    assert "error" not in json.loads(t["file_at_ref"]("page.ts", "main"))
+
+
 def test_missing_file_at_ref(setup):
     _proj, _api, t = setup
     out = json.loads(t["file_at_ref"]("app/none.py", "develop", repo="api"))

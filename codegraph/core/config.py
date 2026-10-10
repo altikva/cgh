@@ -472,6 +472,8 @@ max_file_size_kb = 500
 # pattern_search(pattern, repo="my-api", ref="origin/develop") and
 # file_at_ref(path, ref, repo="my-api"). Named by their directory name.
 # Read-only, never fetched, nothing outside this list is reachable.
+# Ignored when this config.toml is tracked by git (a cloned repo cannot
+# open your other repos).
 # siblings = ["~/code/my-api"]
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are

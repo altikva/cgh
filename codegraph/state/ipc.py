@@ -108,6 +108,29 @@ def live_workers(repo_root: str | Path) -> list[int]:
     return alive
 
 
+def prune_workers_on_exit(repo_root: str | Path) -> None:
+    """Owner exit: drop the keepalive and the markers of dead processes,
+    then the directory if it is empty. Markers of live proxies stay: the
+    proxy keeps running and respawns an owner on its next call, and that
+    owner must see it as a worker."""
+    unregister_keepalive(repo_root)
+    live_workers(repo_root)  # prunes the dead entries
+    try:
+        workers_dir(repo_root).rmdir()
+    except OSError:
+        pass
+
+
+def spawner_alive(spawner_pid: int) -> bool:
+    """Whether the process that spawned this owner is still its parent and
+    alive. A proxy from an older cgh registers its marker once, at start;
+    when an exiting owner of that version deleted it, the owner it respawns
+    would otherwise see no worker. An owner whose spawner exited (a CLI
+    that started it in the background) is reparented, so this turns
+    false."""
+    return spawner_pid > 1 and os.getppid() == spawner_pid and is_pid_alive(spawner_pid)
+
+
 def register_parent_marker(repo_root: str | Path) -> Path:
     """Drop a `parent-<pid>` marker: a federated parent owner keeping this
     child alive. Counts as a live worker for the owner's shutdown logic
@@ -537,6 +560,9 @@ def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
     # The owner is gone. If it was our child it may be a zombie in the table;
     # reap it so a defunct process does not linger, then spawn a fresh one.
     _reap_child(read_owner_pid(repo_root))
+    # Our marker may be gone (an owner of an older cgh deleted every marker
+    # on exit): put it back so the new owner sees this proxy.
+    register_worker(repo_root)
     return spawn_owner(repo_root, watch=watch, reindex=False)
 
 

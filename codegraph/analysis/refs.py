@@ -7,8 +7,8 @@
 # Description: Read a git repo at a named ref without checking it out:
 #              grep_at_ref (git grep on a commit) and read_at_ref (one file,
 #              a line range). The repo is this project or one of the sibling
-#              repos declared under [codegraph] siblings; resolve_repo refuses
-#              anything else. Refs go through the same validation as pinned
+#              repos declared under [codegraph] siblings of the user's global
+#              ~/.codegraph/config.toml; resolve_repo refuses anything else. Refs go through the same validation as pinned
 #              Terraform module refs, and nothing ever reaches the network.
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codegraph.analysis.pattern import _MAX_LINE_LEN, PatternHit, _expand_braces
-from codegraph.analysis.terraform import git_toplevel, resolve_ref
+from codegraph.analysis.terraform import git_env, git_toplevel, resolve_ref
 from codegraph.core.utils import quiet_subprocess_kwargs
 
 _log = logging.getLogger(__name__)
@@ -45,58 +45,7 @@ class RefTarget:
     sha: str
 
 
-# Git variables that would point the tracked-file check at another
-# repository or index than the project's own: never inherited by it.
-_GIT_REDIRECT_VARS = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-)
-
-
-def _project_config_is_local(root: Path) -> bool:
-    """Whether the project's .codegraph/config.toml was written on this
-    machine rather than shipped with the repo. A committed config is the
-    repo authors' word, not the user's: honoring its siblings would let a
-    cloned repo point an agent at any other git repo on disk.
-
-    Fails closed: a symlinked .codegraph or config.toml, a config that
-    resolves outside the project, any git error or timeout, all count as
-    shipped. The tracked check matches the path case-insensitively, so a
-    `.CodeGraph/Config.toml` committed for a case-insensitive filesystem
-    is not mistaken for a local file."""
-    cg_dir = root / ".codegraph"
-    cfg = cg_dir / "config.toml"
-    try:
-        if cg_dir.is_symlink() or cfg.is_symlink() or not cfg.is_file():
-            return False
-        if cfg.resolve().parent != root.resolve() / ".codegraph":
-            return False
-    except OSError:
-        return False
-    env = {k: v for k, v in os.environ.items() if k not in _GIT_REDIRECT_VARS}
-    try:
-        r = _run_git(
-            root,
-            [
-                "ls-files",
-                "--error-unmatch",
-                "--",
-                ":(icase,literal).codegraph/config.toml",
-            ],
-            env=env,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    # Exit 1 with git's "did not match" is the only "untracked" answer;
-    # 0 is tracked, anything else (not a repo, broken git) is no answer.
-    return r.returncode == 1 and "did not match" in r.stderr
+_WHERE = "~/.codegraph/config.toml"
 
 
 def _siblings_from(path: Path) -> list[str]:
@@ -107,42 +56,33 @@ def _siblings_from(path: Path) -> list[str]:
     return [str(x) for x in raw] if isinstance(raw, list) else []
 
 
-def declared_siblings(repo_root: str | Path) -> tuple[list[str], bool]:
-    """(entries, refused): the sibling entries this project may use, and
-    whether the project config's own list was refused. The global config
-    (~/.codegraph/config.toml) is the user's own and always counts; the
-    project config counts only when it is local (see
-    _project_config_is_local). Each file is read here directly, not through
-    the merged config, so what is trusted is exactly what is read."""
-    from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE, GLOBAL_DIR
+def declared_siblings() -> list[str]:
+    """The sibling entries of the user's global config. Granting read access
+    to other repos is the machine owner's decision, so it lives outside
+    every repo: a project's own .codegraph/config.toml can come with a
+    cloned repo, a copied store or a seeded worktree, and no check on it
+    (tracked or not, case, links) says reliably who wrote it."""
+    from codegraph.core.config import CONFIG_FILE, GLOBAL_DIR
 
-    root = Path(repo_root).resolve()
-    entries = _siblings_from(GLOBAL_DIR / CONFIG_FILE)
-    project = _siblings_from(root / CODEGRAPH_DIR / CONFIG_FILE)
-    refused = False
-    if project:
-        if _project_config_is_local(root):
-            entries += project
-        else:
-            refused = True
-            _log.warning(
-                "ignoring [codegraph] siblings of %s: its config.toml is "
-                "tracked by git (or not a plain local file), and only a local "
-                "config may grant read access to other repos",
-                root,
-            )
-    return entries, refused
+    return _siblings_from(GLOBAL_DIR / CONFIG_FILE)
 
 
-def sibling_repos(repo_root: str | Path) -> dict[str, Path]:
+def _project_declares_siblings(root: Path) -> bool:
+    from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
+
+    return bool(_siblings_from(root / CODEGRAPH_DIR / CONFIG_FILE))
+
+
+def sibling_repos() -> dict[str, Path]:
     """{name: work tree} of the declared sibling git repos, named by their
-    directory. An entry that is not a git work tree is left out."""
-    root = Path(repo_root).resolve()
+    directory. Entries must be absolute (or ~): a relative one would mean a
+    different repo for every project. A non-git entry is left out."""
     out: dict[str, Path] = {}
-    for raw in declared_siblings(root)[0]:
+    for raw in declared_siblings():
         p = Path(os.path.expanduser(raw))
         if not p.is_absolute():
-            p = root / p
+            _log.warning("ignoring relative sibling %r in %s", raw, _WHERE)
+            continue
         top = git_toplevel(str(p.resolve()))
         if top:
             out.setdefault(Path(top).name, Path(top))
@@ -152,13 +92,13 @@ def sibling_repos(repo_root: str | Path) -> dict[str, Path]:
 def resolve_repo(repo_root: str | Path, repo: str) -> tuple[str, Path]:
     """(name, work tree) of the repo a ref query targets: this project for
     "", else a declared sibling, by name or by path."""
-    root = Path(repo_root)
+    root = Path(repo_root).resolve()
     if not repo:
-        top = git_toplevel(str(root.resolve()))
+        top = git_toplevel(str(root))
         if not top:
             raise RefError(f"{root} is not a git repository")
         return "", Path(top)
-    siblings = sibling_repos(root)
+    siblings = sibling_repos()
     if repo in siblings:
         return repo, siblings[repo]
     try:
@@ -168,17 +108,17 @@ def resolve_repo(repo_root: str | Path, repo: str) -> tuple[str, Path]:
     for name, top in siblings.items():
         if wanted == top:
             return name, top
-    if repo not in siblings and declared_siblings(root)[1]:
-        raise RefError(
-            "[codegraph] siblings of this project is ignored: "
-            ".codegraph/config.toml is tracked by git, and only a local "
-            "(untracked) config, or ~/.codegraph/config.toml, may grant "
-            "read access to other repos"
-        )
     known = ", ".join(sorted(siblings)) or "none declared"
+    hint = (
+        " ([codegraph] siblings in this project's .codegraph/config.toml is "
+        "ignored: only the user's global config may grant access to other "
+        "repos)"
+        if _project_declares_siblings(root)
+        else ""
+    )
     raise RefError(
-        f"repo {repo!r} is not a declared sibling ({known}); add it under "
-        "[codegraph] siblings in .codegraph/config.toml"
+        f"repo {repo!r} is not a declared sibling ({known}); add its absolute "
+        f"path under [codegraph] siblings in {_WHERE}{hint}"
     )
 
 
@@ -197,16 +137,8 @@ def resolve_target(repo_root: str | Path, repo: str, ref: str) -> RefTarget:
     return RefTarget(name=name, top=top, ref=ref, sha=sha)
 
 
-def _run_git(
-    top: Path, args: list[str], env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess:
-    env = {
-        **(os.environ if env is None else env),
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_NO_LAZY_FETCH": "1",
-        "GIT_OPTIONAL_LOCKS": "0",
-        "LC_ALL": "C",  # stable messages: _project_config_is_local reads one
-    }
+def _run_git(top: Path, args: list[str]) -> subprocess.CompletedProcess:
+    env = git_env()
     return subprocess.run(
         ["git", "-C", str(top), *args],
         capture_output=True,

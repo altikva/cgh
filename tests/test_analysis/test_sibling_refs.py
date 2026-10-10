@@ -6,8 +6,10 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: pattern_search(repo=, ref=) and file_at_ref read a declared
 #              sibling repo (or this one) at a branch it does not have checked
-#              out, straight from git. Undeclared repos, unknown refs, option-
-#              shaped refs and paths leaving the repo are refused.
+#              out, straight from git. Siblings are granted by the user's
+#              global config only: a project's own config, committed or not,
+#              never opens another repo. Undeclared repos, unknown refs,
+#              option-shaped refs and paths leaving the repo are refused.
 
 from __future__ import annotations
 
@@ -48,14 +50,12 @@ class _FakeMcp:
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
-    """A project and a sibling "api" repo. The api's `develop` branch holds
-    a class its checked-out `main` does not. The global config is an empty
-    directory, not the user's."""
+    """A project, a sibling "api" repo whose `develop` branch holds a class
+    its checked-out `main` does not, and a global config (in a temp home)
+    that declares the api."""
     if shutil.which("git") is None:
         pytest.skip("git not on PATH")
     base = tmp_path.resolve()
-    (base / "home").mkdir()
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", base / "home")
     api = base / "api"
     (api / "app").mkdir(parents=True)
     (api / "app" / "models.py").write_text("class Donor:\n    pass\n")
@@ -69,12 +69,14 @@ def setup(tmp_path, monkeypatch):
     _git(api, "commit", "-qam", "develop")
     _git(api, "checkout", "-q", "main")
 
+    home = base / "home"
+    home.mkdir()
+    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", home)
+    (home / "config.toml").write_text(f'[codegraph]\nsiblings = ["{api}"]\n')
+
     proj = base / "front"
-    (proj / ".codegraph").mkdir(parents=True)
+    proj.mkdir()
     (proj / "page.ts").write_text("export const x = 1\n")
-    (proj / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nsiblings = ["../api"]\n'
-    )
     _git(proj, "init", "-q", "-b", "main")
     _git(proj, "add", "page.ts")
     _git(proj, "commit", "-qm", "init")
@@ -83,12 +85,12 @@ def setup(tmp_path, monkeypatch):
     _srv._root = proj
     m = _FakeMcp()
     register_query(m)
-    yield proj, api, m.tools
+    yield proj, api, home, m.tools
     _srv._root = None
 
 
 def test_search_sibling_at_a_branch_not_checked_out(setup):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(
         t["pattern_search"]("class Association", repo="api", ref="develop")
     )
@@ -101,7 +103,7 @@ def test_search_sibling_at_a_branch_not_checked_out(setup):
 
 
 def test_file_at_ref_reads_a_line_range(setup):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(
         t["file_at_ref"](
             "app/models.py", "develop", repo="api", start_line=5, end_line=6
@@ -115,7 +117,7 @@ def test_file_at_ref_reads_a_line_range(setup):
 
 
 def test_own_repo_at_a_ref(setup):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(t["file_at_ref"]("page.ts", "main"))
     assert out["repo"] is None
     assert out["lines"][0]["text"] == "export const x = 1"
@@ -131,7 +133,7 @@ def test_own_repo_at_a_ref(setup):
     ],
 )
 def test_refusals(setup, kwargs, needle):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(t["pattern_search"]("x", **kwargs))
     assert needle in out["error"]
     assert "hits" not in out
@@ -139,83 +141,58 @@ def test_refusals(setup, kwargs, needle):
 
 @pytest.mark.parametrize("path", ["../front/page.ts", "/etc/passwd", "app/../../x", ""])
 def test_paths_stay_inside_the_repo(setup, path):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(t["file_at_ref"](path, "develop", repo="api"))
     assert "error" in out
 
 
-def test_siblings_of_a_committed_config_are_ignored(setup):
-    """A config.toml shipped with the repo must not open other repos: a
-    cloned repo could otherwise point the agent at any git repo on disk."""
-    proj, _api, t = setup
-    _git(proj, "add", "-f", ".codegraph/config.toml")
-    _git(proj, "commit", "-qm", "ship config")
-    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
-    assert "tracked by git" in out["error"]
-    assert refs.sibling_repos(proj) == {}
-    # This repo itself stays readable at a ref.
-    assert "error" not in json.loads(t["file_at_ref"]("page.ts", "main"))
-
-
-def test_differently_cased_committed_config_is_not_local(setup):
-    """On a case-insensitive filesystem a committed `.CodeGraph/Config.toml`
-    is the file cgh reads; the tracked check must match it too."""
-    proj, _api, _t = setup
-    (proj / ".codegraph" / "config.toml").unlink()
-    (proj / ".codegraph").rmdir()
-    (proj / ".CodeGraph").mkdir()
-    (proj / ".CodeGraph" / "Config.toml").write_text(
-        '[codegraph]\nsiblings = ["../api"]\n'
-    )
-    _git(proj, "-c", "core.ignorecase=false", "add", "-f", ".CodeGraph/Config.toml")
-    _git(proj, "commit", "-qm", "ship")
-    (proj / ".CodeGraph").rename(proj / ".tmp")
-    (proj / ".tmp").rename(proj / ".codegraph")
-    (proj / ".codegraph" / "Config.toml").rename(proj / ".codegraph" / "config.toml")
-    assert not refs._project_config_is_local(proj)
-    assert refs.sibling_repos(proj) == {}
-
-
-def test_symlinked_codegraph_dir_is_not_local(setup, tmp_path):
-    proj, _api, _t = setup
-    elsewhere = tmp_path / "elsewhere"
-    (proj / ".codegraph").rename(elsewhere)
-    (proj / ".codegraph").symlink_to(elsewhere)
-    assert not refs._project_config_is_local(proj)
-    assert refs.sibling_repos(proj) == {}
-
-
-def test_git_redirect_env_cannot_hide_a_tracked_config(setup, monkeypatch):
-    proj, _api, _t = setup
-    _git(proj, "add", "-f", ".codegraph/config.toml")
-    _git(proj, "commit", "-qm", "ship config")
-    # An index without the file, handed in through the environment.
-    monkeypatch.setenv("GIT_INDEX_FILE", str(proj / "empty.index"))
-    assert not refs._project_config_is_local(proj)
-
-
-def test_global_config_siblings_always_count(setup):
-    """~/.codegraph/config.toml is the user's own: its siblings count even
-    when the project's config is committed."""
-    proj, api, t = setup
-    _git(proj, "add", "-f", ".codegraph/config.toml")
-    _git(proj, "commit", "-qm", "ship config")
-    from codegraph.core import config as cfg
-
-    (cfg.GLOBAL_DIR / "config.toml").write_text(f'[codegraph]\nsiblings = ["{api}"]\n')
-    out = json.loads(
-        t["pattern_search"]("class Association", repo="api", ref="develop")
-    )
-    assert [h["file"] for h in out["hits"]] == ["app/models.py"]
-
-
 def test_missing_file_at_ref(setup):
-    _proj, _api, t = setup
+    *_, t = setup
     out = json.loads(t["file_at_ref"]("app/none.py", "develop", repo="api"))
     assert "does not exist" in out["error"]
 
 
 def test_sibling_named_by_path_too(setup):
-    _proj, api, _t = setup
-    name, top = refs.resolve_repo(_srv._root, str(api))
-    assert (name, top) == ("api", api)
+    proj, api, _home, _t = setup
+    assert refs.resolve_repo(proj, str(api)) == ("api", api)
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_a_project_config_never_grants_access(setup, tracked):
+    """Whatever its git status, a project's .codegraph/config.toml can come
+    with a clone, a copied store or a seeded worktree: its siblings are
+    ignored, and the error says where they belong."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    (proj / ".codegraph").mkdir()
+    (proj / ".codegraph" / "config.toml").write_text(
+        f'[codegraph]\nsiblings = ["{api}"]\n'
+    )
+    if tracked:
+        _git(proj, "add", "-f", ".codegraph/config.toml")
+        _git(proj, "commit", "-qm", "ship config")
+    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
+    assert "not a declared sibling" in out["error"]
+    assert "~/.codegraph/config.toml" in out["error"]
+    assert "is ignored" in out["error"]
+    assert refs.sibling_repos() == {}
+
+
+def test_relative_global_entry_is_ignored(setup):
+    """A relative entry would name a different repo from every project."""
+    _proj, _api, home, _t = setup
+    (home / "config.toml").write_text('[codegraph]\nsiblings = ["../api"]\n')
+    assert refs.sibling_repos() == {}
+
+
+def test_git_redirect_env_is_not_inherited(setup, monkeypatch, tmp_path):
+    """GIT_DIR in the owner's environment must not swap the repo read."""
+    other = tmp_path / "other"
+    other.mkdir()
+    _git(other, "init", "-q")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    *_, t = setup
+    out = json.loads(
+        t["pattern_search"]("class Association", repo="api", ref="develop")
+    )
+    assert [h["file"] for h in out["hits"]] == ["app/models.py"]

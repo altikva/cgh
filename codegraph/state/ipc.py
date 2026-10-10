@@ -451,8 +451,12 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "_serve_owner", "--root", str(repo_root)]
     else:
+        # -P keeps the repo (the cwd below) off sys.path: a repo with its own
+        # top-level `codegraph/` directory would otherwise be imported in
+        # place of the installed cgh, and its code would run as the owner.
         cmd = [
             sys.executable,
+            "-P",
             "-m",
             "codegraph",
             "_serve_owner",

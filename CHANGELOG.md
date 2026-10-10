@@ -15,6 +15,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   (`find_callers`, `symbol_lookup`, `impact_of`, `endpoints`...) add
   `stale: true` and a `stale_reason` to their response. Before, an empty
   answer from such an index looked exactly like "no callers".
+- **Read another branch, or a sibling repo, without a checkout.**
+  `pattern_search` takes `ref` (a branch, tag or commit, e.g.
+  `origin/develop`) and `repo`, and a new `file_at_ref` tool returns a
+  file's lines at a ref. Both read straight from git. A frontend worktree
+  can now search the API's develop branch without falling back to
+  `git grep` / `git show` in a shell. Only this repo and the repos listed
+  under the new `[codegraph] siblings` key are reachable; nothing is
+  fetched. The key counts in `~/.codegraph/config.toml`, and in the
+  project's `config.toml` only when git doesn't track it, so a cloned repo
+  can't open your other repos.
 
 ### Fixed
 - **After an upgrade, the owner of an open session stopped every 30

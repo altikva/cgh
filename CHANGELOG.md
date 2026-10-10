@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Graph answers say when the index can't be trusted.** On an index written
+  in an older graph format (until the one-time re-parse after an upgrade
+  has finished) or copied from another checkout, the graph MCP tools
+  (`find_callers`, `symbol_lookup`, `impact_of`, `endpoints`...) add
+  `stale: true` and a `stale_reason` to their response. Before, an empty
+  answer from such an index looked exactly like "no callers".
+
 ### Fixed
 - **After an upgrade, the owner of an open session stopped every 30
   seconds.** An owner that exits because cgh changed on disk deleted the

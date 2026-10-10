@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import json
 import os
 import sys
 import threading
@@ -111,6 +112,64 @@ def _call_origin() -> str | None:
     return normalize_origin(raw)
 
 
+# Tools whose answer comes from the graph edges or nodes. On an index the
+# current cgh cannot fully trust (older graph format, a store copied from
+# another checkout), "no callers" and "no callers this index can see" look
+# the same; these responses then carry `stale: true` and the reason, so a
+# caller knows to fall back to pattern_search.
+_GRAPH_TOOLS = frozenset(
+    {
+        "architecture_overview",
+        "context_for_task",
+        "doc_refs",
+        "domain_map",
+        "endpoints",
+        "file_summary",
+        "find_callees",
+        "find_callers",
+        "find_dead_code",
+        "hotspots",
+        "impact_of",
+        "import_cycles",
+        "imports_of",
+        "path_between",
+        "search_symbols",
+        "subgraph",
+        "symbol_lookup",
+        "tests_for",
+        "untested",
+    }
+)
+
+
+def _stale_reason(root) -> str:
+    """Why the graph under ``root`` may answer short, else ""."""
+    if root is None:
+        return ""
+    from codegraph.state.scan_meta import (
+        copied_store_message,
+        outdated_store_message,
+    )
+
+    return outdated_store_message(root) or copied_store_message(root)
+
+
+def _mark_stale(result, reason: str):
+    """Add ``stale`` and ``stale_reason`` to a JSON-object tool result.
+    Anything else (plain text, a JSON list) is returned unchanged."""
+    if not reason or not isinstance(result, str) or not result.startswith("{"):
+        return result
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return result
+    if not isinstance(payload, dict) or "stale" in payload:
+        return result
+    payload["stale"] = True
+    payload["stale_reason"] = reason
+    return json.dumps(payload, indent=2)
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
@@ -129,6 +188,11 @@ def _logged_tool(fn):
         result = ""
         try:
             result = fn(*args, **kwargs)
+            if tool_name in _GRAPH_TOOLS:
+                try:
+                    result = _mark_stale(result, _stale_reason(_root))
+                except Exception:
+                    pass  # best-effort note: never fail the answer on it
             return result
         except Exception as exc:
             success = False
@@ -242,6 +306,11 @@ mcp = FastMCP(
         "          Also instead of git grep / grep -r / rg / sed -n in Bash.\n"
         "  • After git pull / checkout / rebase:\n"
         "       1. scan_status, then incremental_reindex if stale\n"
+        "  • A graph answer carrying `stale: true` comes from an index this\n"
+        "    cgh cannot fully trust (older graph format, e.g. during the\n"
+        "    one-time re-parse after an upgrade, or a copied store; see\n"
+        "    `stale_reason`). An empty result there proves nothing: confirm\n"
+        "    with pattern_search.\n"
         "  • Adding an external dir: add_directory(path)\n"
         "\n"
         "FEDERATION (parent + subrepos):\n"

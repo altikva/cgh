@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -99,6 +100,7 @@ def call_owner_tool(
         timeout = owner_timeout()
 
     from codegraph.state.auth import ensure_auth_key
+    from codegraph.state.call_log import ORIGIN_HEADER, client_origin
 
     try:
         token = ensure_auth_key(root)
@@ -123,6 +125,9 @@ def call_owner_tool(
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
                 "Authorization": f"Bearer {token}",
+                # Tags the call "cli" (or "hook" under a hook entry point)
+                # in the owner's call log, apart from agent calls.
+                ORIGIN_HEADER: client_origin(),
             },
         )
         resp = conn.getresponse()
@@ -210,6 +215,39 @@ def note_route(command: str, route: str) -> None:
         print(f"[cgh] {command}: served by {route}", file=sys.stderr)
 
 
+Route = Literal["owner", "older", "local"]
+
+
+def route_owner_read(
+    root: str,
+    command: str,
+    tool: str,
+    arguments: dict | None,
+    on_stuck: Callable[[str], None],
+) -> tuple[Route, dict | None]:
+    """Decide who serves a read-only CLI query, asking the live owner first.
+
+    Returns ``("owner", data)`` when the owner answered with a JSON object,
+    ``("older", None)`` when an owner is alive but has no ``tool`` (an older
+    cgh: it still holds the graph lock, so the caller must not try a local
+    graph open) and ``("local", None)`` when no owner answered, in which case
+    the caller opens the graph itself. A timed-out owner holds the lock and
+    cannot serve: ``on_stuck`` gets the remedy text, then this exits 1.
+    Never starts an owner.
+    """
+    reply = call_owner_tool(root, tool, arguments)
+    if reply.status == "timeout":
+        on_stuck(stuck_owner_hint(root, reply))
+        raise SystemExit(1)
+    if reply.status == "unknown_tool":
+        return "older", None
+    if reply.ok and isinstance(reply.data, dict):
+        note_route(command, "owner")
+        return "owner", reply.data
+    note_route(command, "local read-only open")
+    return "local", None
+
+
 __all__ = [
     "OwnerReply",
     "call_owner_tool",
@@ -217,5 +255,6 @@ __all__ = [
     "note_route",
     "older_owner_hint",
     "owner_timeout",
+    "route_owner_read",
     "stuck_owner_hint",
 ]

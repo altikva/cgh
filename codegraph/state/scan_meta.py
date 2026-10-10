@@ -19,6 +19,54 @@ from codegraph.core.utils import quiet_subprocess_kwargs
 
 _META_FILE = "scan_meta.json"
 
+# Version of what a completed scan leaves in the graph. Bump it when a release
+# changes what indexing stores so an existing index is only correct after
+# every file is parsed again: the next index (CLI, owner start, incremental)
+# then re-parses the whole repo once. A meta file without the key predates
+# versioning and counts as 1.
+#   2: call sites are persisted (call_site table) to resolve CALLS edges
+#      independently of file order and across reindexes of the callee file.
+#   3: the other by-name references (class bases, markdown mentions and
+#      links, cross-file endpoint handlers) are persisted (name_ref table)
+#      for the same reason.
+#   4: Terraform is parsed into addressed blocks (data, module, locals,
+#      providers and .tfvars entries too) with reference edges between them.
+#   5: call sites carry their shape (bare, self, module, attribute) and the
+#      import behind the name, and CALLS edges follow it instead of linking
+#      every function of the called name.
+#   6: class bases are read from TypeScript / JavaScript classes (extends and
+#      implements) and from subscripted Python bases (Base[T]), so INHERITS
+#      edges and the calls resolved through bases change.
+#   7: a call on a typed instance attribute (self.x.f() with x annotated or
+#      built in __init__, this.x.f() on a TypeScript parameter property or
+#      typed field) is stored as a call on that class, resolved through its
+#      bases.
+#   8: Terraform module inputs are blocks of their own (module.m.<arg>),
+#      moved / import / removed blocks reference the addresses they name,
+#      and module sources mapped by [terraform] module_sources link.
+#   9: a mapped module source pinned with ?ref= is read from git at that ref
+#      into a directory of its own (<dir>@<ref>), and a mapped module's
+#      resources, data sources and locals are read too, not only its
+#      variables and outputs.
+#  10: a call on a Python local variable whose class is known (x = C(...),
+#      x: C = ..., x = f() with f annotated -> C) is stored as a call on that
+#      class, and an attribute typed with a class whose module a method
+#      imports in its body keeps that import: such calls no longer link to
+#      every method of the name.
+#  11: Python route decorators spanning several lines, giving the path as
+#      path=, with an empty path, or written as api_route(...) are stored as
+#      endpoints (with their handler), so endpoints and impact see them, and
+#      a file under a test directory or named like a test gets the test role
+#      even inside a handlers/ or services/ directory.
+#  12: an endpoint is keyed by its file, line, method and path (two routers of
+#      one file declaring the same method and path no longer merge), records
+#      its router variable and whether its file is a test file, and Python
+#      files keep their router prefixes and include calls for the full path.
+GRAPH_FORMAT = 12
+# Files written by an indexer that predates the per-file stamps (file_stamp
+# table) are found and parsed again one by one; the stamps needed no bump of
+# their own.
+
 
 def _meta_path(repo_root: str | Path) -> Path:
     return Path(repo_root) / ".codegraph" / _META_FILE
@@ -117,6 +165,7 @@ def _kept_stats(repo_root: Path, stats: dict) -> dict:
 def write_meta(repo_root: str | Path, stats: dict) -> None:
     """Persist scan metadata after index_repo completes."""
     repo_root = Path(repo_root)
+    previous = read_meta(repo_root) or {}
     meta = {
         "indexed_at": datetime.now(UTC).isoformat(timespec="seconds"),
         # Absolute root the index was built at. Graph node paths are stored
@@ -129,13 +178,38 @@ def write_meta(repo_root: str | Path, stats: dict) -> None:
         "git_head": current_git_head(repo_root),
         "git_branch": current_git_branch(repo_root),
         "stats": _kept_stats(repo_root, stats),
+        "graph_format": GRAPH_FORMAT,
     }
+    # Written by record_module_sources after the scan; kept until then.
+    if previous.get("module_sources"):
+        meta["module_sources"] = previous["module_sources"]
+    _write(repo_root, meta)
+
+
+def _write(repo_root: Path, meta: dict) -> None:
     try:
         path = _meta_path(repo_root)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     except Exception:
         pass
+
+
+def record_module_sources(repo_root: str | Path, state: dict) -> None:
+    """Store the [terraform] module_sources state of the last scan (see
+    analysis.terraform.module_sources_report): its fingerprint decides when
+    the Terraform files are parsed again, and `cgh status` / `cgh doctor`
+    show its mappings and missing refs. No-op without a scan record."""
+    meta = read_meta(repo_root)
+    if meta is None:
+        return
+    if meta.get("module_sources") == (state or None):
+        return
+    if state:
+        meta["module_sources"] = state
+    else:
+        meta.pop("module_sources", None)
+    _write(Path(repo_root), meta)
 
 
 def clear_meta(repo_root: str | Path) -> None:
@@ -156,6 +230,112 @@ def read_meta(repo_root: str | Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def graph_format_outdated(repo_root: str | Path) -> bool:
+    """True when the last completed scan was written by an older graph
+    format and the graph needs one full re-parse. No scan record at all is
+    not outdated: that is a fresh or interrupted index, which the caller
+    already handles as a full scan."""
+    meta = read_meta(repo_root)
+    if meta is None:
+        return False
+    try:
+        return int(meta.get("graph_format", 1)) < GRAPH_FORMAT
+    except (TypeError, ValueError):
+        return True
+
+
+def recorded_graph_format(meta: dict | None) -> int | None:
+    """The graph format a scan record was written in: None without a record,
+    1 for a record that predates versioning, 0 when unreadable (outdated)."""
+    if meta is None:
+        return None
+    try:
+        return int(meta.get("graph_format", 1))
+    except (TypeError, ValueError):
+        return 0
+
+
+def outdated_store_message(repo_root: str | Path) -> str:
+    """The remedy to print when the store under ``repo_root`` was written in
+    an older graph format, else "". Reads the scan record only: a query on
+    such a store either fails on a missing column or, worse, answers from
+    a graph that lacks the edges only a re-parse adds."""
+    try:
+        fmt = recorded_graph_format(read_meta(repo_root))
+    except Exception:  # best-effort probe: never block a query on it
+        return ""
+    if fmt is None or fmt >= GRAPH_FORMAT:
+        return ""
+    return (
+        f"cgh: this index was written in graph format {fmt}, this cgh needs "
+        f"{GRAPH_FORMAT}. Run `cgh index` once to upgrade it (an MCP owner "
+        "does it on its own when it starts)."
+    )
+
+
+def foreign_root(meta: dict | None, repo_root: str | Path) -> str:
+    """The root a scan record was written at when it is not ``repo_root``
+    (a .codegraph copied from another checkout), else "". Only reads the
+    record: an older writer recorded no root, and that case is left to the
+    indexer, which checks the stored paths."""
+    recorded = (meta or {}).get("root")
+    if not recorded:
+        return ""
+    try:
+        current = str(Path(repo_root).resolve())
+    except OSError:
+        return ""
+    return str(recorded) if str(recorded) != current else ""
+
+
+def copied_store_message(repo_root: str | Path) -> str:
+    """The refusal to print when the store under ``repo_root`` was copied
+    from another checkout, else "". For commands that look a file up by its
+    path (impact, outline, files --check) or answers with one (endpoints):
+    the store holds the old tree's paths, so every lookup misses and the
+    answer would be silently empty or point at the other tree."""
+    try:
+        old = foreign_root(read_meta(repo_root), repo_root)
+    except Exception:  # best-effort probe: never block a command on it
+        return ""
+    if not old:
+        return ""
+    return (
+        f"cgh: this .codegraph was built at {old}. It holds that tree's paths, "
+        "so a path here matches nothing. Run `cgh index` here to rebuild it."
+    )
+
+
+def copied_notice(ss: dict) -> str | None:
+    """One line on a store copied from another root, from a scan_status()
+    result, or None when the store was built here."""
+    old = ss.get("copied_from")
+    if not old:
+        return None
+    return (
+        f"this .codegraph was built at {old}: results point at that tree until "
+        "it is rebuilt here. Run `cgh index`"
+    )
+
+
+def format_notice(ss: dict) -> str | None:
+    """One line on an index older than this cgh's graph format, from a
+    scan_status() result, or None when the format is current."""
+    if not ss.get("format_outdated"):
+        return None
+    old, cur = ss.get("graph_format"), ss.get("graph_format_current")
+    if ss.get("indexing"):
+        return (
+            f"one-time re-parse running (index format {old}, this cgh writes "
+            f"{cur}): answers may be incomplete until it ends"
+        )
+    return (
+        f"index written in graph format {old}, this cgh needs {cur}: answers "
+        "miss cross-file edges until the one-time re-parse. Run `cgh index` "
+        "or start the owner"
+    )
 
 
 def git_tree_blob_shas(repo_root: str | Path) -> dict[str, str] | None:
@@ -188,6 +368,33 @@ def git_hash_object(repo_root: str | Path, path: str | Path) -> str | None:
     return out if out else None
 
 
+def git_hash_objects(repo_root: str | Path, paths: list[Path]) -> dict[str, str]:
+    """Blob SHAs of many files in one ``git hash-object --stdin-paths`` run,
+    as {str(path): sha}: the values git_hash_object gives one by one,
+    without a subprocess per file. {} when git fails (a path vanished, no
+    git), so callers fall back to the per-file call."""
+    if not paths:
+        return {}
+    try:
+        r = subprocess.run(
+            ["git", "hash-object", "--stdin-paths"],
+            input="".join(f"{p}\n" for p in paths),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(repo_root),
+            timeout=max(5, len(paths) // 50),
+            **quiet_subprocess_kwargs(),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return {}
+    shas = r.stdout.split()
+    if r.returncode != 0 or len(shas) != len(paths):
+        return {}
+    return {str(p): sha for p, sha in zip(paths, shas, strict=True)}
+
+
 def scan_status(repo_root: str | Path) -> dict:
     """
     Compute the freshness of the graph vs the working tree.
@@ -197,8 +404,16 @@ def scan_status(repo_root: str | Path) -> dict:
       dirty                                      (bool | None, working tree)
       behind_by                                  (int | None, commits)
       changed_files                              (list[str], since indexed_sha)
-      fresh                                      (bool, no drift)
+      fresh                                      (bool, no drift, the graph
+                                                  format is current and the
+                                                  store was built here)
+      copied_from                                (root the store was built
+                                                  at, when not this one)
       indexing                                   ({pid, since} | None)
+      graph_format, graph_format_current,
+      format_outdated                            (index older than this cgh)
+      state      fresh | stale | outdated | copied | reindexing |
+                 indexing | indexed | none
 
     ``indexing`` is set while an index of this repo is running. The metadata
     is only written when an index completes, so during a first index
@@ -238,15 +453,43 @@ def scan_status(repo_root: str | Path) -> dict:
     # NOT stale, the watcher keeps the index in sync on each file save.
     # If the watcher is down, a separate check would be needed, but the
     # git-vs-index sha comparison alone is the right coarse signal.
+    # An index written by an older graph format lacks edges only a re-parse
+    # adds, so it is not fresh whatever its git HEAD says.
+    recorded = recorded_graph_format(meta or None)
+    outdated = recorded is not None and recorded < GRAPH_FORMAT
+    # A store copied from another checkout holds that checkout's absolute
+    # paths: not fresh, whatever its git HEAD says, until `cgh index`
+    # rebuilds it here.
+    copied_from = foreign_root(meta, root)
     fresh = (
         indexed_sha is not None
         and current_sha is not None
         and indexed_sha == current_sha
+        and not outdated
+        and not copied_from
     )
+    if copied_from:
+        state = "reindexing" if indexing else "copied"
+    elif outdated:
+        state = "reindexing" if indexing else "outdated"
+    elif indexing:
+        state = "indexing"
+    elif fresh:
+        state = "fresh"
+    elif indexed_sha:
+        state = "stale"
+    else:
+        state = "indexed" if meta.get("indexed_at") else "none"
 
     return {
+        "state": state,
+        "graph_format": recorded,
+        "graph_format_current": GRAPH_FORMAT,
+        "format_outdated": outdated,
+        "copied_from": copied_from or None,
         "imports": (meta.get("stats") or {}).get("imports") or {},
         "imports_partial": bool((meta.get("stats") or {}).get("imports_partial")),
+        "module_sources": meta.get("module_sources") or {},
         "indexed_sha": indexed_sha,
         "indexed_branch": indexed_branch,
         "indexed_at": indexed_at,

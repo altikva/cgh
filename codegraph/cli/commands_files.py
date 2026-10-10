@@ -10,7 +10,9 @@
 #              decision the indexer makes (no parser for the suffix, over the
 #              size cap, or excluded by an ignore rule). The why-skipped
 #              answer is a pure function of the file and config, so it works
-#              even while an owner holds the graph write lock.
+#              even while an owner holds the graph write lock. The index
+#              itself is read through a live owner's indexed_files tool when
+#              one runs, and through a local read-only open otherwise.
 
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ import argparse
 import os
 from pathlib import Path
 
-from codegraph.cli import _get_conn, _short_path, console
+from codegraph.cli import _query_conn, _short_path, console
 
 
 def register_files_parser(sub) -> None:
@@ -78,10 +80,34 @@ def _index_decision(path: Path, root: Path) -> tuple[bool, str]:
     return True, "it is indexable (run `cgh index` if it is still missing)"
 
 
+def _say_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
+
+
+def _ask_owner(root: Path, arguments: dict) -> tuple[str, dict | None]:
+    """Ask the live owner's indexed_files tool first: it holds the graph DB
+    for writing, which blocks our own read-only open. Returns the route
+    ("owner", "older" or "local") and the owner's answer. Never starts an
+    owner; a timed-out owner exits 1 with the remedy."""
+    from codegraph.cli.owner_client import note_route, route_owner_read
+
+    route, data = route_owner_read(
+        str(root), "files", "indexed_files", arguments, _say_stuck
+    )
+    if route == "older":
+        # An owner from an older cgh has no indexed_files tool but holds the
+        # graph lock: answer from the FTS at once instead of waiting on it.
+        note_route("files", "FTS (older owner)")
+    return route, data
+
+
 def _is_indexed(root: Path, abspath: str) -> bool | None:
     """True/False if we can read the index, None if the graph is locked by
     a running owner and the FTS has no record either."""
-    conn = _get_conn(str(root), readonly=True)
+    route, served = _ask_owner(root, {"path": abspath})
+    if route == "owner" and "indexed" in served:
+        return bool(served["indexed"])
+    conn = _query_conn(str(root)) if route == "local" else None
     if conn is not None:
         try:
             return conn.query_node_field("File", "path", abspath, "path") is not None
@@ -122,9 +148,13 @@ def _check(root: Path, target: str) -> None:
 
 
 def _list(root: Path, pattern: str, limit: int) -> None:
-    conn = _get_conn(str(root), readonly=True)
     rows: list[str] = []
     source = "graph"
+    route, served = _ask_owner(root, {"pattern": pattern, "limit": limit})
+    if route == "owner" and "total" in served:
+        _print_list(root, served.get("files") or [], served["total"], limit, source)
+        return
+    conn = _query_conn(str(root)) if route == "local" else None
     if conn is not None:
         try:
             contains = {"path": pattern} if pattern else None
@@ -150,8 +180,13 @@ def _list(root: Path, pattern: str, limit: int) -> None:
         except Exception as exc:
             console.print(f"[yellow]could not read the index: {exc}[/yellow]")
             return
-    total = len(rows)
-    for p in rows[:limit]:
+    _print_list(root, rows[:limit], len(rows), limit, source)
+
+
+def _print_list(
+    root: Path, page: list[str], total: int, limit: int, source: str
+) -> None:
+    for p in page:
         console.print(_short_path(p, str(root)))
     shown = min(total, limit)
     tail = f" (showing {shown}, pass --limit to see more)" if total > limit else ""
@@ -159,8 +194,14 @@ def _list(root: Path, pattern: str, limit: int) -> None:
 
 
 def cmd_files(args: argparse.Namespace) -> None:
+    from codegraph.cli.commands_query import _refuse_if_copied, _warn_if_copied
+
     root = Path(os.path.abspath(args.root))
     if args.check:
+        # A path check on a copied store always answers "not indexed".
+        _refuse_if_copied(str(root))
         _check(root, args.check)
     else:
+        # The listing still says what was indexed, under the old tree's paths.
+        _warn_if_copied(str(root))
         _list(root, args.pattern, args.limit)

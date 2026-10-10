@@ -96,19 +96,31 @@ def worktree_sibling(current_root: str | Path, subrepo: str | Path) -> Path | No
     worktree in the same parent directory as the current one (the sprint layout
     ``<root>/<chantier>/{api,front}``) and that worktree is cgh-indexed, return
     it so federation reads the matching branch. Returns None outside a worktree,
-    or when no cgh-indexed sibling exists, so the caller keeps the configured
-    path."""
+    when the configured child is itself a linked worktree, when no cgh-indexed
+    sibling exists, or when several do (a flat layout where every ticket's
+    worktrees share one directory), so the caller keeps the configured path."""
     current_root = Path(current_root).resolve()
     subrepo = Path(subrepo).resolve()
     if not in_git_worktree(current_root):
         return None
+    # Only the child's MAIN checkout is replaced. A child configured as a
+    # linked worktree (a seed checkout, another chantier) was chosen on
+    # purpose: keep it.
+    if in_git_worktree(subrepo):
+        return None
     parent = current_root.parent
-    for wt in _list_worktrees(subrepo):
-        if wt in (subrepo, current_root):
-            continue
-        if wt.parent == parent and (wt / ".codegraph").is_dir():
-            return wt
-    return None
+    candidates = [
+        wt
+        for wt in _list_worktrees(subrepo)
+        if wt not in (subrepo, current_root)
+        and wt.parent == parent
+        and (wt / ".codegraph").is_dir()
+    ]
+    # Exactly one sibling, or none: in a flat layout where every ticket
+    # worktree of every repo shares one directory, several candidates sit
+    # beside the current one and any pick would read another ticket's
+    # branch. Keep the configured path then.
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _exclude_file(root: Path) -> Path | None:

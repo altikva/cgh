@@ -49,7 +49,7 @@ def test_int_node_id_is_coerced_and_skipped(tmp_path):
     n = _ingest_endpoints(conn, p)
 
     assert n == 1
-    assert ("IMPLEMENTED_BY", f"{p}::GET::/items", matching) in conn.edges
+    assert ("IMPLEMENTED_BY", f"{p}::4::GET::/items", matching) in conn.edges
 
     # Verify no edge has 12345 or '12345' as dst (third item)
     dsts = {dst for rel, src, dst in conn.edges}

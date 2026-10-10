@@ -116,3 +116,70 @@ class TestExistingStillWorks:
         assert eps[0].method == "GET"
         assert eps[0].framework == "fastapi"
         assert eps[0].handler_name == "health"
+
+
+class TestFastapiDecoratorShapes:
+    def test_multi_line_decorator_with_its_handler(self):
+        src = (
+            "@router.post(\n"
+            '    "/{donation_id}/documents",\n'
+            "    response_model=DocumentRead,  # trailing comment\n"
+            "    status_code=201,\n"
+            ")\n"
+            "@limiter.limit(\n"
+            '    "5/minute"\n'
+            ")\n"
+            "async def upload_document(donation_id):\n"
+            "    return None\n"
+        )
+        (ep,) = extract("app/routers/docs.py", src)
+        assert (ep.method, ep.path) == ("POST", "/{donation_id}/documents")
+        assert ep.start_line == 1
+        assert ep.handler_name == "upload_document"
+
+    def test_keyword_path(self):
+        src = '@router.get(path="/items", response_model=list)\ndef items():\n    ...\n'
+        (ep,) = extract("api.py", src)
+        assert (ep.method, ep.path, ep.handler_name) == ("GET", "/items", "items")
+
+    def test_empty_path_is_the_router_prefix_route(self):
+        src = '@router.get("")\ndef list_tags():\n    ...\n'
+        (ep,) = extract("api.py", src)
+        assert (ep.path, ep.handler_name) == ("", "list_tags")
+
+    def test_api_route_methods(self):
+        src = (
+            "@router.api_route(\n"
+            '    "/m", methods=["GET", "post"]\n'
+            ")\n"
+            "def m():\n"
+            "    ...\n\n"
+            '@router.api_route("/{path:path}", methods=_METHODS)\n'
+            "async def proxy():\n"
+            "    ...\n\n"
+            '@router.api_route("/plain")\n'
+            "def plain():\n"
+            "    ...\n"
+        )
+        got = {(e.method, e.path, e.handler_name) for e in extract("api.py", src)}
+        assert got == {
+            ("GET", "/m", "m"),
+            ("POST", "/m", "m"),
+            ("ANY", "/{path:path}", "proxy"),
+            ("GET", "/plain", "plain"),
+        }
+
+    def test_flask_route_methods_on_several_lines(self):
+        src = (
+            "@bp.route(\n"
+            '    "/login",\n'
+            '    methods=["GET", "POST"],\n'
+            ")\n"
+            "def login():\n"
+            "    ...\n"
+        )
+        assert {e.method for e in extract("views.py", src)} == {"GET", "POST"}
+
+    def test_commented_or_quoted_decorator_is_not_a_route(self):
+        src = '# @router.get("/old")\nx = \'@router.get("/s")\'\n'
+        assert extract("api.py", src) == []

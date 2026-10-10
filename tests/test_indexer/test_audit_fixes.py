@@ -78,7 +78,10 @@ def test_reindex_purges_stale_inbound_calls(tmp_path):
     helper = tmp_path / "helper.py"
     helper.write_text("def helper():\n    return 1\n", encoding="utf-8")
     caller = tmp_path / "caller.py"
-    caller.write_text("def go():\n    return helper()\n", encoding="utf-8")
+    caller.write_text(
+        "from helper import helper\n\n\ndef go():\n    return helper()\n",
+        encoding="utf-8",
+    )
     index_file(helper, tmp_path)
     index_file(caller, tmp_path)
 

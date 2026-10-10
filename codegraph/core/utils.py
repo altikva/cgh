@@ -177,3 +177,9 @@ def checked_identifier(name: str) -> str:
 
         raise BackendError(f"invalid identifier in query: {name!r}")
     return name
+
+
+def chunks(items: list, size: int = 500) -> list[list]:
+    """Split ``items`` into lists of at most ``size``, so an IN (...) or a
+    multi-row VALUES stays under the backend's bound-parameter limit."""
+    return [items[i : i + size] for i in range(0, len(items), size)]

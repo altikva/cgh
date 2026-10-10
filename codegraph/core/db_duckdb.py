@@ -15,16 +15,28 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 import os
+import sys
 import threading
 import time
 from typing import Any
+
+# DuckDB (1.5) tries `import pandas` twice while converting each bound
+# parameter value and does not remember the failure: with pandas absent, each
+# try searches every sys.path entry again, over a third of a full index. A None entry in sys.modules makes that import fail at once with
+# the same ModuleNotFoundError. Set only when pandas is not installed, so an
+# installed pandas is never hidden; optional users (duckdb's .df() and its
+# spark shim) already handle the ImportError, and find_spec still returns None.
+if "pandas" not in sys.modules and importlib.util.find_spec("pandas") is None:
+    sys.modules["pandas"] = None  # type: ignore[assignment]
 
 import duckdb
 
 from codegraph.core.protocol import QueryResult
 from codegraph.core.schema_duckdb import init_schema
 from codegraph.core.utils import checked_identifier as _ident
+from codegraph.core.utils import chunks as _chunks
 
 # A concurrent writer (a git post-checkout `cgh _reindex_hook`, another
 # `cgh index`, or a running owner) holds DuckDB's exclusive file lock, and a
@@ -186,6 +198,29 @@ class DuckDBGraphDB:
         )
         self._conn.execute(sql, values)
 
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, ...]]) -> None:
+        """Batched ensure_edge: (src, dst, *props) rows, props in the edge's
+        prop_columns order."""
+        from codegraph.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = EDGES[edge_type]
+        cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
+        width = len(cols)
+        rows = [(*row[:2], *("" if v is None else v for v in row[2:])) for row in pairs]
+        if any(len(row) != width for row in rows):
+            raise ValueError(f"Edge {edge_type!r} rows need {width} values")
+        unique = list(dict.fromkeys(rows))
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        for chunk in _chunks(unique, 400 // width * 2):
+            values = ", ".join(row_ph for _ in chunk)
+            self._conn.execute(
+                f"INSERT INTO {spec.table} ({', '.join(cols)}) "
+                f"VALUES {values} ON CONFLICT DO NOTHING",
+                [v for row in chunk for v in row],
+            )
+
     def purge_file_data(self, file_path: str) -> None:
         """Delete all data tied to file_path. Edges first, then nodes."""
         from codegraph.core.graph_model import NODES, edges_touching
@@ -257,6 +292,226 @@ class DuckDBGraphDB:
         # Step 3: drop File-level outbound IMPORTS edges. The File node
         # itself stays, the indexer reuses its primary key when re-upserting.
         self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+
+    # --- Writer stamps --------------------------------------------------
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute(
+            "INSERT INTO file_stamp (path, mtime) VALUES (?, ?)", [file_path, mtime]
+        )
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        from codegraph.core.graph_model import ORPHAN_REFS_SQL, STALE_FILES_SQL
+
+        stale = self._conn.execute(STALE_FILES_SQL).fetchall()
+        orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
+        return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
+
+    # --- Name references ------------------------------------------------
+
+    def replace_name_refs(
+        self, file_path: str, rows: list[tuple[str, str, str, str]]
+    ) -> None:
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 150):
+            values = ", ".join("(?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for k, f, n, e in chunk for v in (k, f, file_path, n, e)]
+            self._conn.execute(
+                "INSERT INTO name_ref (kind, from_id, file_path, name, extra) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def name_refs_into(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        out: list[tuple[str, str, str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT kind, from_id, file_path, name, extra FROM name_ref "
+                f"WHERE name IN ({ph}) AND file_path <> ?",
+                [*chunk, exclude_file],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        rows = self._conn.execute(
+            "SELECT from_id, name, extra FROM name_ref WHERE kind = ? "
+            "ORDER BY from_id, name, extra",
+            [kind],
+        ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def node_keys_matching(
+        self, label: str, field: str, values: list[Any]
+    ) -> list[tuple[Any, Any]]:
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        col = _ident(field)
+        out: list[tuple[Any, Any]] = []
+        for chunk in _chunks(sorted(set(values))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT {spec.key_field}, {col} FROM {spec.table} "
+                f"WHERE {col} IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    # --- Call sites -----------------------------------------------------
+
+    def replace_call_sites(self, file_path: str, rows: list[tuple[str, ...]]) -> None:
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        full = [(*row, "", "", "")[:6] for row in rows]
+        for chunk in _chunks(full, 120):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [
+                v for f, n, t, k, h, c in chunk for v in (f, file_path, n, t, k, h, c)
+            ]
+            self._conn.execute(
+                "INSERT INTO call_site (from_id, file_path, name, to_id, kind, hint, ctx) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def call_sites_into(
+        self, names: list[str], ids: list[str], exclude_file: str
+    ) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for column, guard, keys in (
+            ("name", "to_id = '' AND ", names),
+            ("to_id", "", ids),
+        ):
+            for chunk in _chunks(sorted(set(keys))):
+                ph = ", ".join("?" for _ in chunk)
+                rows = self._conn.execute(
+                    "SELECT from_id, file_path, name, to_id, kind, hint, ctx "
+                    f"FROM call_site WHERE {guard}{column} IN ({ph}) AND file_path <> ?",
+                    [*chunk, exclude_file],
+                ).fetchall()
+                out.extend(tuple("" if v is None else v for v in r) for r in rows)
+        return out
+
+    def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT id, name, file_path FROM function WHERE name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def call_targets_named(
+        self, names: list[str]
+    ) -> list[tuple[str, str, str, str, tuple[str, ...]]]:
+        found: dict[str, tuple[str, str, str, str]] = {}
+        bases: dict[str, set[str]] = {}
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT f.id, f.name, f.file_path, h.from_id, r.name FROM function f "
+                "LEFT JOIN edge_has_method h ON h.to_id = f.id "
+                "LEFT JOIN name_ref r ON r.from_id = h.from_id AND r.kind = 'inherits' "
+                f"WHERE f.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            for fn_id, name, file_path, class_id, base in rows:
+                found.setdefault(fn_id, (fn_id, name, file_path, class_id or ""))
+                if base:
+                    bases.setdefault(fn_id, set()).add(base)
+        return [(*row, tuple(sorted(bases.get(row[0], ())))) for row in found.values()]
+
+    def class_bases_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM "class" c '
+                "JOIN name_ref r ON r.from_id = c.id AND r.kind = 'inherits' "
+                f"WHERE c.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def class_children_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 100):
+            ph = ", ".join("?" for _ in chunk)
+            like = " OR ".join("r.name LIKE ?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM name_ref r JOIN "class" c '
+                "ON c.id = r.from_id WHERE r.kind = 'inherits' "
+                f"AND (r.name IN ({ph}) OR {like})",
+                [*chunk, *(f"%.{n}" for n in chunk)],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def call_site_names_on(self, classes: list[str]) -> list[str]:
+        out: set[str] = set()
+        for chunk in _chunks(sorted(set(classes))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT name FROM call_site "
+                f"WHERE to_id = '' AND kind = 'cls' AND ctx IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.update(r[0] for r in rows)
+        return sorted(out)
+
+    def function_names_in(self, file_path: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT name FROM function WHERE file_path = ?", [file_path]
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def calls_by_name(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 250):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT e.from_id, e.to_id FROM edge_calls e "
+                "WHERE e.from_id IN (SELECT from_id FROM call_site "
+                f"  WHERE to_id = '' AND file_path <> ? AND name IN ({ph})) "
+                f"AND e.to_id IN (SELECT id FROM function WHERE name IN ({ph}))",
+                [exclude_file, *chunk, *chunk],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def delete_calls(self, pairs: list[tuple[str, str]]) -> None:
+        for chunk in _chunks(sorted(set(pairs)), 200):
+            cond = " OR ".join("(from_id = ? AND to_id = ?)" for _ in chunk)
+            self._conn.execute(
+                f"DELETE FROM edge_calls WHERE {cond}", [v for p in chunk for v in p]
+            )
+
+    def name_refs_from(self, kind: str, paths: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(paths))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT file_path, name FROM name_ref "
+                f"WHERE kind = ? AND file_path IN ({ph})",
+                [kind, *chunk],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
 
     def find_node_keys(
         self,
@@ -311,6 +566,11 @@ class DuckDBGraphDB:
         self.purge_file_data(file_path)
         # Also drop inbound IMPORTS edges (purge only handles outbound).
         self._conn.execute("DELETE FROM edge_imports WHERE to_path = ?", [file_path])
+        # Markdown links that pointed at this file: purge only drops a doc's own
+        # outbound links. The stored link references relink them if it returns.
+        self._conn.execute(
+            "DELETE FROM edge_md_links_to WHERE to_path = ?", [file_path]
+        )
         self._conn.execute("DELETE FROM file WHERE path = ?", [file_path])
 
     def find_nodes(

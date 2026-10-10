@@ -201,6 +201,9 @@ def register(mcp) -> None:
         we resolve it as a function name and walk CALLS backward to find
         every transitive caller.
 
+        Terraform: a .tf path or an address (var.region) walks back the
+        blocks that reference it.
+
         Args:
           symbol_or_file: a function name, or a repo-relative / absolute path.
           max_depth:      how many hops of reverse reach (default 3).
@@ -235,12 +238,28 @@ def register(mcp) -> None:
         direction = "importers" if as_path else "callers"
         edge = "IMPORTS" if as_path else "CALLS"
 
-        def reverse_bfs(conn, start_keys: list[str]) -> tuple[list[str], bool]:
+        from codegraph.analysis.terraform import dependent_files as tf_dependents
+        from codegraph.analysis.terraform import impacted_files as tf_impacted_files
+        from codegraph.analysis.terraform import nodes_named as tf_nodes_named
+        from codegraph.analysis.terraform import referrers as tf_referrers
+
+        tf_ids: set[str] = set()
+
+        def reverse_bfs(
+            conn, start_keys: list[str], first_hop: list[str] | None = None
+        ) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
-            start keys within max_depth hops. Returns (keys, truncated)."""
-            seen: set[str] = set(start_keys)
-            frontier = list(start_keys)
-            ordered: list[str] = []
+            start keys within max_depth hops. Returns (keys, truncated).
+            ``first_hop`` keys count as reached in the first hop (the files
+            calling a file's methods through an interface).
+
+            Terraform has no imports or calls: a .tf file's dependents are
+            the files whose blocks reference its blocks, and a block's are
+            the blocks referencing it (the TF reference edges)."""
+            extra = [k for k in first_hop or () if k not in start_keys]
+            seen: set[str] = set(start_keys) | set(extra)
+            frontier = list(start_keys) + extra
+            ordered: list[str] = list(extra)
             truncated = False
             depth = 0
             while frontier and depth < max(1, int(max_depth)):
@@ -252,6 +271,10 @@ def register(mcp) -> None:
                             edge, dst_key=key, return_src=["path"], limit=_FANOUT_CAP
                         )
                         srcs = [r["src_path"] for r in rows]
+                        srcs += tf_dependents(conn, key, limit=_FANOUT_CAP)
+                    elif key in tf_ids:
+                        rows = srcs = tf_referrers(conn, key, limit=_FANOUT_CAP)
+                        tf_ids.update(srcs)
                     else:
                         rows = conn.find_neighbors(
                             edge, dst_key=key, return_src=["id"], limit=_FANOUT_CAP
@@ -271,9 +294,20 @@ def register(mcp) -> None:
             return ordered, truncated
 
         def query(conn):
+            from codegraph.analysis.interfaces import (
+                InterfaceResolver,
+                interface_caller_files,
+                qualified_methods,
+            )
+
             # Resolve the starting key(s) within this scope.
+            first_hop: list[str] = []
             if as_path:
                 start_keys = [_abs(arg)]
+                if not start_keys[0].endswith((".tf", ".tfvars")):
+                    # Callers through an interface the file implements do
+                    # not import it.
+                    first_hop = interface_caller_files(conn, start_keys[0])
             else:
                 start_keys = [
                     r["id"]
@@ -281,9 +315,32 @@ def register(mcp) -> None:
                         "Function", where={"name": arg}, return_fields=["id"]
                     )
                 ]
+                if "." in arg:
+                    # Class.method: that method and the interface methods it
+                    # implements (their callers reach it through them).
+                    resolver = InterfaceResolver(conn)
+                    for fid in qualified_methods(conn, arg):
+                        for key in (fid, *resolver.interfaces_of(fid)):
+                            if key not in start_keys:
+                                start_keys.append(key)
+                    # A Terraform address (var.region, google_x.y).
+                    found = [str(r["id"]) for r in tf_nodes_named(conn, arg)]
+                    tf_ids.update(found)
+                    start_keys += found
             if not start_keys:
                 return []
-            keys, trunc = reverse_bfs(conn, start_keys)
+            if as_path and start_keys[0].endswith((".tf", ".tfvars")):
+                # Terraform: walk back from the file's blocks, so only the
+                # files holding blocks that reference them count, not every
+                # file of the module directory.
+                keys, _changed, trunc = tf_impacted_files(
+                    conn,
+                    {start_keys[0]: None},
+                    max_depth=max_depth,
+                    cap=_IMPACT_CAP,
+                )
+            else:
+                keys, trunc = reverse_bfs(conn, start_keys, first_hop)
 
             out: list[dict] = []
             if as_path:
@@ -328,7 +385,7 @@ def register(mcp) -> None:
                     out.append(
                         {
                             "node": fid,
-                            "node_kind": "function",
+                            "node_kind": "tf_block" if fid in tf_ids else "function",
                             "file": file_path,
                             "role": role,
                             "layer": layer,
@@ -381,30 +438,30 @@ def register(mcp) -> None:
             )
             truncated = True
 
-        # Endpoints declared in any impacted file (DEFINES_ENDPOINT).
+        # Endpoints declared in any impacted file (DEFINES_ENDPOINT), not
+        # the throwaway routes of test files.
         def endpoint_query(conn):
-            rows: list[dict] = []
-            for _scope, fp in files_for_endpoints:
-                for e in conn.find_neighbors(
-                    "DEFINES_ENDPOINT",
-                    src_key=fp,
-                    return_dst=["method", "path"],
-                ):
-                    rows.append(
-                        {
-                            "file": fp,
-                            "method": e.get("dst_method", ""),
-                            "path": e.get("dst_path", ""),
-                        }
-                    )
-            return rows
+            from codegraph.analysis.impact import endpoints_in_files
+
+            return endpoints_in_files(
+                conn, sorted({fp for _s, fp in files_for_endpoints})
+            )
 
         if files_for_endpoints:
             ep_rows, ep_warnings = _federate(endpoint_query)
             warnings = warnings + ep_warnings
-            seen_ep = {(e["file"], e.get("path", "")) for e in endpoints}
+
+            def _ep_key(e: dict) -> tuple:
+                return (
+                    e["file"],
+                    e.get("method", ""),
+                    e.get("path", ""),
+                    e.get("line"),
+                )
+
+            seen_ep = {_ep_key(e) for e in endpoints}
             for e in ep_rows:
-                key = (e["file"], e.get("path", ""))
+                key = _ep_key(e)
                 if key in seen_ep:
                     continue
                 seen_ep.add(key)

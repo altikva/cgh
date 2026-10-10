@@ -88,7 +88,7 @@ def build_report(exc_type: type, exc_value, tb, command: str = "") -> dict:
     """The whole payload. Add a field here or it cannot exist."""
     frames = normalized_frames(tb)
     payload = {
-        "report_id": uuid.uuid4().hex[:12],
+        "report_id": _report_id(),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "cgh_version": _cgh_version(),
         "python_version": platform.python_version(),
@@ -102,6 +102,16 @@ def build_report(exc_type: type, exc_value, tb, command: str = "") -> dict:
     }
     _tripwire(payload)
     return payload
+
+
+def _report_id() -> str:
+    """12 characters, random, and never shaped like PII. A bare hex id is
+    all digits once in a while, and one that reads 00 followed by ten
+    digits is an international phone number to the tripwire, which then
+    refused the whole report (about 1 build in 50,000). The leading letter
+    is a word character, so no phone, card or IBAN pattern can match
+    inside the id."""
+    return "r" + uuid.uuid4().hex[:11]
 
 
 def _tripwire(payload: dict) -> None:

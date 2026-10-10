@@ -40,7 +40,7 @@ Add to `.claude/settings.json` for auto-indexing on commit:
         "hooks": [
           {
             "type": "command",
-            "command": "codegraph index --root . 2>/dev/null || true",
+            "command": "cgh index --root . 2>/dev/null || true",
             "async": true,
             "statusMessage": "codegraph: indexing changes"
           }

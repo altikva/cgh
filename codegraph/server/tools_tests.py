@@ -118,6 +118,9 @@ def register(mcp) -> None:
 
         Args:
           changed_files: repo-relative paths, e.g. from `git diff --name-only`.
+            A path may carry its changed lines as `path#L12-14,30`: for a
+            Terraform file the impact then starts from the blocks those
+            lines touch instead of the whole file.
 
         Parent scope only, like the CLI. Inferred from IMPORTS / CALLS
         edges, not coverage (see `note`).

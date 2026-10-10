@@ -8,8 +8,9 @@
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
 #              SQLite alike, and federate across subrepos with a scope tag.
-#              callers / callees / outline ask a live owner first (it holds
-#              the graph DB lock), search / lookup fall back to the FTS.
+#              Every query asks a live owner first (it holds the graph DB
+#              lock); search / lookup fall back to the FTS when an older
+#              owner cannot serve them.
 
 from __future__ import annotations
 
@@ -29,7 +30,9 @@ from codegraph.analysis.federation import (
     for_each_child_graphdb,
     has_subrepos,
 )
-from codegraph.cli import _get_conn, _short_path, console
+from codegraph.analysis.terraform import TF_RESOURCE_KINDS
+from codegraph.cli import _query_conn, _short_path, console
+from codegraph.cli.owner_client import note_route
 
 # ---------------------------------------------------------------------------
 # cmd_grep
@@ -149,6 +152,51 @@ def _print_scope_warnings(warnings: list[str]) -> None:
         console.print(f"[yellow]⚠ subrepo {w}[/yellow]")
 
 
+def _say_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
+
+
+def _route(root: str, command: str, tool: str, arguments: dict):
+    """``route_owner_read`` with the remedy printed on this module's console."""
+    from codegraph.cli.owner_client import route_owner_read
+
+    _warn_if_copied(root)
+    return route_owner_read(root, command, tool, arguments, _say_stuck)
+
+
+def _warn_if_copied(root: str) -> None:
+    """One stderr line when the store was copied from another checkout: the
+    answers still come, but their paths point at that tree."""
+    import sys
+
+    from codegraph.state.scan_meta import foreign_root, read_meta
+
+    try:
+        old = foreign_root(read_meta(root), root)
+    except Exception:
+        return
+    if old:
+        print(
+            f"cgh: this .codegraph was built at {old}; results point at that "
+            "tree until `cgh index` rebuilds it here",
+            file=sys.stderr,
+        )
+
+
+def _refuse_if_copied(root: str) -> None:
+    """Exit 1 with the remedy on stderr when the store was copied from another
+    checkout, for commands that look a file up by its path: every such lookup
+    misses there, and an empty answer would read as a real one."""
+    import sys
+
+    from codegraph.state.scan_meta import copied_store_message
+
+    message = copied_store_message(root)
+    if message:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+
+
 def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:
     """Run ``tool`` on this repo's live owner, which holds the graph DB for
     writing and so blocks our own read-only open while it runs.
@@ -159,25 +207,22 @@ def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | No
     remedy and exit 1 instead. Same for an owner from an older cgh that
     lacks ``tool``: it holds the lock all the same.
     """
-    from codegraph.cli.owner_client import (
-        call_owner_tool,
-        note_route,
-        older_owner_hint,
-        stuck_owner_hint,
-    )
+    from codegraph.cli.owner_client import older_owner_hint
 
-    reply = call_owner_tool(root, tool, arguments)
-    if reply.status == "timeout":
-        console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
-        raise SystemExit(1)
-    if reply.status == "unknown_tool":
+    route, data = _route(root, command, tool, arguments)
+    if route == "older":
         console.print(f"[yellow]{older_owner_hint(root, tool)}[/yellow]")
         raise SystemExit(1)
-    if reply.ok and isinstance(reply.data, dict):
-        note_route(command, "owner")
-        return reply.data
-    note_route(command, "local read-only open")
-    return None
+    return data
+
+
+def _group_by_scope(rows: list[dict], to_row) -> list[tuple[str, list]]:
+    """Owner rows (each tagged with ``scope``) as ``[(scope, [row, ...])]``
+    buckets in first-seen scope order, the shape the local path builds."""
+    buckets: dict[str, list] = {}
+    for r in rows:
+        buckets.setdefault(r.get("scope", "parent"), []).append(to_row(r))
+    return list(buckets.items())
 
 
 def _owner_warnings(data: dict) -> list[str]:
@@ -196,6 +241,13 @@ def _owner_warnings(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# The kinds `cgh search` matches by name, so the owner's search_symbols tool
+# returns exactly the rows _search_symbols_conn gives on a local open.
+_SEARCH_KINDS = ",".join(
+    ["function", "class", *TF_RESOURCE_KINDS, "tf_var", "md_section"]
+)
+
+
 def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
     """(kind, name, file_path, start_line) rows for one graph DB."""
     out: list[tuple] = []
@@ -207,6 +259,12 @@ def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
             limit=fetch,
         ):
             out.append((kind, row["name"], row["file_path"], row["start_line"]))
+    # Terraform blocks by address or name, module inputs included
+    # (module.kms.<argument>), in the order search_symbols gives them.
+    from codegraph.analysis.terraform import search as tf_search
+
+    for hit in tf_search(conn, query, fetch, True, set()):
+        out.append((hit["kind"], hit["name"], hit["file"], hit["start_line"]))
     for row in conn.find_nodes(
         "MdSection",
         contains={"title": query},
@@ -328,35 +386,57 @@ def cmd_search(args: argparse.Namespace) -> None:
     # Buckets are (scope, [(kind, name, file_path, start_line), …]).
     buckets: list[tuple[str, list]] = []
 
-    conn = _get_conn(root, readonly=True)
-    if conn is None:
-        # Graph DB locked (MCP server is running). Fall back to FTS, SQLite
-        # supports concurrent readers, so this always works.
-        try:
-            from codegraph.core.fts import fts_search, get_fts_conn
-
-            fts_conn = get_fts_conn(root)
-            buckets.append(
-                ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
-            )
-        except Exception as exc:
-            console.print(
-                f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
-            )
-            return
-    else:
-        buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
-
-    child_buckets, child_failures = _query_children_scoped(
-        root, lambda c: _search_symbols_conn(c, query, fetch)
+    route, served = _route(
+        root,
+        "search",
+        "search_symbols",
+        {"query": query, "limit": fetch, "kinds": _SEARCH_KINDS, "name_only": True},
     )
-    buckets.extend(child_buckets)
-    if child_failures:
-        fts_buckets, child_failures = _child_fts_fallback(
-            root, query, fetch, {scope for scope, _ in child_failures}
+    if route == "owner" and not served.get("name_only"):
+        # An owner from an older cgh ignored the name-only match: its rows
+        # would differ from ours, so answer from the FTS like before.
+        route = "older"
+    if route == "owner":
+        # The owner already federates, every row carries its scope.
+        buckets = _group_by_scope(
+            served.get("results") or [],
+            lambda r: (r["kind"], r["name"], r["file"], r["line"]),
         )
-        buckets.extend(fts_buckets)
-    warnings = _fmt_scope_errors(child_failures)
+        warnings = _owner_warnings(served)
+    else:
+        # No owner: open the graph read-only. An older owner holds the graph
+        # lock, so go straight to the FTS instead of waiting on it.
+        conn = _query_conn(root) if route == "local" else None
+        if conn is None:
+            # Graph DB locked (MCP server is running). Fall back to FTS,
+            # SQLite supports concurrent readers, so this always works.
+            if route == "older":
+                note_route("search", "FTS (older owner)")
+            try:
+                from codegraph.core.fts import fts_search, get_fts_conn
+
+                fts_conn = get_fts_conn(root)
+                buckets.append(
+                    ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
+                )
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+                )
+                return
+        else:
+            buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
+
+        child_buckets, child_failures = _query_children_scoped(
+            root, lambda c: _search_symbols_conn(c, query, fetch)
+        )
+        buckets.extend(child_buckets)
+        if child_failures:
+            fts_buckets, child_failures = _child_fts_fallback(
+                root, query, fetch, {scope for scope, _ in child_failures}
+            )
+            buckets.extend(fts_buckets)
+        warnings = _fmt_scope_errors(child_failures)
     federated = has_subrepos(root)
 
     # Round-robin across scopes: parent-first concatenation would push every
@@ -435,11 +515,9 @@ def cmd_search(args: argparse.Namespace) -> None:
 def _lookup_conn(conn, name: str) -> list[tuple]:
     """(kind, name, file_path, start_line, end_line) rows for one graph DB."""
     out: list[tuple] = []
-    for label, kind in [
-        ("Function", "function"),
-        ("Class", "class"),
-        ("TFResource", "tf_resource"),
-    ]:
+    from codegraph.analysis.terraform import lookup as tf_lookup
+
+    for label, kind in [("Function", "function"), ("Class", "class")]:
         for row in conn.find_nodes(
             label,
             where={"name": name},
@@ -454,20 +532,15 @@ def _lookup_conn(conn, name: str) -> list[tuple]:
                     row["end_line"],
                 )
             )
-    # TFVar has no end_line column (a variable/output block is anchored by its
-    # start), so it needs its own loop; reuse start_line for the end slot.
-    for row in conn.find_nodes(
-        "TFVar",
-        where={"name": name},
-        return_fields=["name", "file_path", "start_line"],
-    ):
+    # Terraform blocks, by address (var.region, google_x.y) or bare name.
+    for hit in tf_lookup(conn, name):
         out.append(
             (
-                "tf_var",
-                row["name"],
-                row["file_path"],
-                row["start_line"],
-                row["start_line"],
+                hit["kind"],
+                hit["name"],
+                hit["file"],
+                hit["start_line"],
+                hit["end_line"],
             )
         )
     for row in conn.find_nodes(
@@ -487,6 +560,30 @@ def _lookup_conn(conn, name: str) -> list[tuple]:
     return out
 
 
+def _owner_lookup_rows(data: dict) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) rows from symbol_lookup.
+
+    ``lines`` is "start-end", or "start" for a terraform variable, which the
+    local path prints as start-start. None when a definition carries no
+    ``name`` (an owner from an older cgh)."""
+    rows: list[tuple] = []
+    for d in data.get("definitions") or []:
+        if "name" not in d:
+            return None
+        start, _, end = str(d.get("lines", "")).partition("-")
+        rows.append(
+            (
+                d.get("scope", "parent"),
+                d["kind"],
+                d["name"],
+                d["file"],
+                start,
+                end or start,
+            )
+        )
+    return rows
+
+
 def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
@@ -496,6 +593,14 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         "function": "[green]fn[/green]",
         "class": "[yellow]cls[/yellow]",
         "tf_resource": "[magenta]tf[/magenta]",
+        "tf_data": "[magenta]data[/magenta]",
+        "tf_module": "[magenta]mod[/magenta]",
+        "tf_module_arg": "[magenta]arg[/magenta]",
+        "tf_moved": "[magenta]moved[/magenta]",
+        "tf_import": "[magenta]import[/magenta]",
+        "tf_removed": "[magenta]removed[/magenta]",
+        "tf_local": "[magenta]local[/magenta]",
+        "tf_provider": "[magenta]prov[/magenta]",
         "tf_var": "[magenta]var[/magenta]",
         "md_section": "[cyan]doc[/cyan]",
     }
@@ -509,9 +614,31 @@ def cmd_lookup(args: argparse.Namespace) -> None:
             f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]{scope_tag}"
         )
 
-    conn = _get_conn(root, readonly=True)
+    route, served = _route(root, "lookup", "symbol_lookup", {"name": name})
+    if route == "owner":
+        rows = _owner_lookup_rows(served)
+        if rows is None:
+            # An owner from an older cgh does not name its definitions
+            # (markdown section titles would be missing): use the FTS.
+            route = "older"
+        else:
+            for scope, kind, n, fp, sl, el in rows:
+                found = True
+                _print_hit(scope, kind, n, fp, sl, el)
+            _print_scope_warnings(_owner_warnings(served))
+            if not found:
+                console.print(
+                    f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
+                )
+            return
+
+    # No owner: open the graph read-only. An older owner holds the graph
+    # lock, so go straight to the FTS instead of waiting on it.
+    conn = _query_conn(root) if route == "local" else None
     if conn is None:
         # Fallback to FTS when the graph DB is locked by the MCP server
+        if route == "older":
+            note_route("lookup", "FTS (older owner)")
         try:
             from codegraph.core.fts import fts_search, get_fts_conn
 
@@ -566,6 +693,136 @@ def cmd_lookup(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_endpoints
+# ---------------------------------------------------------------------------
+
+
+def _endpoints_payload(root: str, arguments: dict) -> dict:
+    """The endpoints tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.endpoint_query import list_endpoints, select_endpoints
+
+    route, served = _route(root, "endpoints", "endpoints", arguments)
+    if route == "owner" and "tests_excluded" not in served:
+        # An owner from an older cgh ignores the new filters and fields; it
+        # still holds the graph lock, so no local open either.
+        route = "older"
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'endpoints')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", list_endpoints(conn)))
+    buckets, failures = _query_children_scoped(root, list_endpoints)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = select_endpoints(
+        per_scope,
+        path_pattern=arguments["path_pattern"],
+        method=arguments["method"],
+        include_tests=arguments["include_tests"],
+        short_path=lambda p: _short_path(p, root),
+    )
+    if warnings:
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_endpoints(args: argparse.Namespace) -> None:
+    """HTTP routes with their full paths, handler and location."""
+    root = os.path.abspath(args.root)
+    # A store copied from another checkout would answer with that tree's
+    # files and lines: refuse, as impact and outline do.
+    import sys
+
+    from codegraph.state.scan_meta import copied_store_message
+
+    copied = copied_store_message(root)
+    if copied:
+        if args.json:
+            print(json.dumps({"error": copied}, indent=2))
+        else:
+            print(copied, file=sys.stderr)
+        raise SystemExit(1)
+    arguments = {
+        "path_pattern": args.pattern or "",
+        "method": args.method or "",
+        "include_tests": bool(args.include_tests),
+    }
+    payload = _endpoints_payload(root, arguments)
+    rows = [
+        {**row, "framework": framework}
+        for framework, items in (payload.get("by_framework") or {}).items()
+        for row in items
+    ]
+    limit = args.limit if args.limit and args.limit > 0 else None
+    shown = rows[:limit] if limit else rows
+    truncated = len(shown) < len(rows)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "pattern": arguments["path_pattern"] or None,
+                    "total": len(rows),
+                    "tests_excluded": payload.get("tests_excluded", 0),
+                    "truncated": truncated,
+                    "endpoints": shown,
+                    "warnings": payload.get("warnings") or [],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    if not rows:
+        what = (
+            f" matching '{arguments['path_pattern']}'"
+            if arguments["path_pattern"]
+            else ""
+        )
+        console.print(f"[dim]No endpoints{escape(what)}[/dim]")
+    for row in shown:
+        full = row.get("full_paths") or []
+        main = full[0] if full else row["path"]
+        tags = []
+        if main != row["path"]:
+            tags.append("local " + (row["path"] or '""'))
+        if row.get("full_path_partial"):
+            tags.append("prefix not literal")
+        if row.get("match") == "suffix":
+            tags.append("suffix match")
+        if row.get("test"):
+            tags.append("test")
+        if federated and row.get("scope", "parent") != "parent":
+            tags.append(row["scope"])
+        tag = f"  [dim]({escape(', '.join(tags))})[/dim]" if tags else ""
+        console.print(
+            f"  [bold]{row['method']:<6}[/bold] [cyan]{escape(main or '/')}[/cyan]"
+            f"  [green]{escape(row.get('handler') or '?')}[/green]"
+            f"  [dim]{escape(row['file'])}:{row.get('line')}[/dim]{tag}"
+        )
+        for other in full[1:]:
+            console.print(f"         [cyan]{escape(other)}[/cyan]  [dim](also)[/dim]")
+    more = f", showing {len(shown)}" if truncated else ""
+    excluded = payload.get("tests_excluded", 0)
+    note = f", {excluded} test route(s) left out (--include-tests)" if excluded else ""
+    if rows or excluded:
+        console.print(f"[dim]{len(rows)} endpoint(s){more}{note}[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # cmd_callers
 # ---------------------------------------------------------------------------
 
@@ -574,7 +831,7 @@ def _callers_conn(conn, fn_name: str) -> list[tuple]:
     from codegraph.analysis.callers import callers_of
 
     return [
-        (c["caller"], c["file"], c["line"], c.get("targets", []))
+        (c["caller"], c["file"], c["line"], c.get("targets", []), c.get("via", ""))
         for c in callers_of(conn, fn_name)
     ]
 
@@ -594,12 +851,13 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 c["file"],
                 c["line"],
                 c.get("targets", []),
+                c.get("via", ""),
             )
             for c in served.get("callers") or []
         ]
         warnings = _owner_warnings(served)
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
@@ -622,15 +880,31 @@ def cmd_callers(args: argparse.Namespace) -> None:
         return
 
     tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
-    for scope, name, fp, line, targets in rows:
-        short = _short_path(fp, root)
-        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
-        via = (
-            "  [dim]-> " + ", ".join(_short_path(t, root) for t in targets) + "[/dim]"
-            if targets
-            else ""
-        )
-        tree.add(f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via}{scope_tag}")
+    # When the name matches several definitions, each caller lists the files
+    # it may reach. Repeating that list on every row made a common name
+    # unreadable (thousands of lines), so callers are grouped under each
+    # distinct list instead, printed once.
+    groups: dict[tuple, list[tuple]] = {}
+    for scope, name, fp, line, targets, via in rows:
+        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line, via))
+    for targets, members in groups.items():
+        branch = tree
+        if targets:
+            branch = tree.add(
+                "[dim]-> "
+                + ", ".join(_short_path(t, root) for t in targets)
+                + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
+            )
+        for scope, name, fp, line, via in members:
+            short = _short_path(fp, root)
+            scope_tag = (
+                f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+            )
+            # Reached through an interface method the queried one implements.
+            via_tag = f"  [dim]via {via}[/dim]" if via else ""
+            branch.add(
+                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via_tag}{scope_tag}"
+            )
     console.print(tree)
 
 
@@ -640,7 +914,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
 
 
 def _callees_conn(conn, fn_name: str) -> list[tuple]:
-    return [
+    rows = [
         (row["dst_name"], row["dst_file_path"], row["dst_start_line"])
         for row in conn.find_neighbors(
             "CALLS",
@@ -648,6 +922,15 @@ def _callees_conn(conn, fn_name: str) -> list[tuple]:
             return_dst=["name", "file_path", "start_line"],
         )
     ]
+    if "." in fn_name:
+        # A Terraform address: the blocks it references.
+        from codegraph.analysis.terraform import used_by
+
+        rows += [
+            (r["dst_address"], r["dst_file_path"], r["dst_start_line"])
+            for r in used_by(conn, fn_name)
+        ]
+    return rows
 
 
 def cmd_callees(args: argparse.Namespace) -> None:
@@ -666,7 +949,7 @@ def cmd_callees(args: argparse.Namespace) -> None:
         ]
         warnings = _owner_warnings(served)
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
@@ -727,6 +1010,7 @@ def _outline_conn(conn, abs_path: str, rel_arg: str) -> list[dict]:
 
 def cmd_outline(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
+    _refuse_if_copied(root)
 
     file_path = args.file
     if not os.path.isabs(file_path):
@@ -750,7 +1034,7 @@ def cmd_outline(args: argparse.Namespace) -> None:
             if r.get("scope", "parent") == "parent"
         ]
     else:
-        conn = _get_conn(root, readonly=True)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"

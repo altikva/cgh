@@ -105,8 +105,10 @@ def _incremental_via_owner(
 
     from codegraph.state.activity import tail as _act_tail
     from codegraph.state.auth import ensure_auth_key
+    from codegraph.state.call_log import ORIGIN_HEADER, client_origin
 
     token = ensure_auth_key(root)
+    origin = client_origin()
     body = _json.dumps(
         {
             "jsonrpc": "2.0",
@@ -130,6 +132,7 @@ def _incremental_via_owner(
                     "Content-Type": "application/json",
                     "Accept": "application/json, text/event-stream",
                     "Authorization": f"Bearer {token}",
+                    ORIGIN_HEADER: origin,
                 },
             )
             resp = c.getresponse()
@@ -1135,6 +1138,24 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
             "  [dim]Wait for it to finish ([/dim]cgh tail -f[dim]) and re-run.[/dim]"
         )
         raise SystemExit(1)
+
+    from codegraph.state.scan_meta import (
+        GRAPH_FORMAT,
+        read_meta,
+        recorded_graph_format,
+    )
+
+    source_format = recorded_graph_format(read_meta(from_root))
+    if source_format is not None and source_format < GRAPH_FORMAT:
+        # The copy keeps the source's knowledge and call log, but its graph
+        # gets the one-time full re-parse right after, which takes longer than
+        # a fresh index. Reindexing the source once makes every later seed cheap.
+        console.print(
+            f"  [yellow]![/yellow] --from: the source index is in graph format "
+            f"{source_format}, this cgh needs {GRAPH_FORMAT}, so the seed is "
+            "followed by a full re-parse. Run [cyan]cgh index --root "
+            f"{from_root}[/cyan] first to make seeds from it cheap again."
+        )
 
     with phase_status("[bold cyan]Seeding the index from the source checkout..."):
         try:

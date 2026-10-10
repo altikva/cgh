@@ -14,7 +14,7 @@ from pathlib import Path
 
 from rich.panel import Panel
 
-from codegraph.cli import console
+from codegraph.cli import _query_conn, console
 
 # "explore" is the interactive whole-graph view; the others render a
 # Mermaid diagram, which stays readable only at a few dozen nodes.
@@ -62,13 +62,21 @@ def _fetch_mermaid_via_owner(
 def _call_owner_visualize(root: str, args_payload: dict):
     """POST one visualize_graph call to the owner, return its parsed JSON
     result (a dict), the raw text when it is not JSON, or None."""
-    from codegraph.cli.owner_client import call_owner_tool, older_owner_hint
+    from codegraph.cli.owner_client import (
+        call_owner_tool,
+        older_owner_hint,
+        stuck_owner_hint,
+    )
 
     # The tool returns a JSON blob {scope, format, diagram|payload}.
-    reply = call_owner_tool(root, "visualize_graph", args_payload, timeout=15)
+    reply = call_owner_tool(root, "visualize_graph", args_payload)
     if reply.status == "unknown_tool":
         # An owner from an older cgh holds the lock: a local open would fail.
         console.print(f"[yellow]{older_owner_hint(root, 'visualize_graph')}[/yellow]")
+        raise SystemExit(1)
+    if reply.status == "timeout":
+        # A silent owner still holds the lock: a local open would fail too.
+        console.print(f"[yellow]{stuck_owner_hint(root, reply)}[/yellow]")
         raise SystemExit(1)
     if not reply.ok:
         return None
@@ -92,7 +100,6 @@ def _fetch_payload_via_owner(root: str, max_symbols: int) -> dict | None:
 
 def cmd_graph(args: argparse.Namespace) -> None:
     """Generate and display a graph visualization."""
-    from codegraph.core.db import get_readonly_connection
     from codegraph.viz import generate_html, open_in_browser
     from codegraph.viz.graphviews import (
         viz_call_graph,
@@ -122,7 +129,7 @@ def cmd_graph(args: argparse.Namespace) -> None:
 
     if mermaid_code is None:
         # Owner not running, open the graph DB directly.
-        conn = get_readonly_connection(root)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"
@@ -191,7 +198,6 @@ def cmd_graph(args: argparse.Namespace) -> None:
 
 def _graph_explore(args: argparse.Namespace, root: str) -> None:
     """The interactive view: whole graph, canvas force layout, in a browser."""
-    from codegraph.core.db import get_readonly_connection
     from codegraph.viz import generate_graph_view_html, open_in_browser
     from codegraph.viz.graphdata import build_graph_payload
 
@@ -205,7 +211,7 @@ def _graph_explore(args: argparse.Namespace, root: str) -> None:
 
     payload = _fetch_payload_via_owner(root, max_symbols)
     if payload is None:
-        conn = get_readonly_connection(root)
+        conn = _query_conn(root)
         if conn is None:
             console.print(
                 "[yellow]Graph DB is locked and no MCP owner is running.[/yellow]\n"
@@ -241,6 +247,9 @@ def _graph_explore(args: argparse.Namespace, root: str) -> None:
     )
 
 
+_ADD_DIR_ACTIONS = ("add", "remove", "list")
+
+
 def cmd_add_dir(args: argparse.Namespace) -> None:
     """Add or manage extra directories in the graph."""
     from codegraph.core.config import CODEGRAPH_DIR, CONFIG_FILE
@@ -260,11 +269,17 @@ def cmd_add_dir(args: argparse.Namespace) -> None:
 
     extra_dirs = data.get("codegraph", {}).get("extra_dirs", [])
 
+    # `cgh add-dir ../frontend`: a first argument that is not an action is
+    # the first path to add.
+    if args.action is not None and args.action not in _ADD_DIR_ACTIONS:
+        args.paths = [args.action, *(args.paths or [])]
+        args.action = "add"
+
     # List mode
     if args.action == "list" or (args.action is None and not args.paths):
         if not extra_dirs:
             console.print("[dim]No extra directories configured.[/dim]")
-            console.print("[dim]Add with: cgh add-dir add ../frontend[/dim]")
+            console.print("[dim]Add with: cgh add-dir ../frontend[/dim]")
         else:
             console.print("[bold]Extra directories:[/bold]\n")
             for d in extra_dirs:
@@ -289,7 +304,8 @@ def cmd_add_dir(args: argparse.Namespace) -> None:
             added.append(rel)
 
         if added:
-            _write_extra_dirs(config_path, data, extra_dirs)
+            if not _save_extra_dirs(config_path, data, extra_dirs):
+                raise SystemExit(1)
             for d in added:
                 console.print(f"  [green]+[/green] {d}")
             console.print("\n[dim]Run 'cgh index' to include these directories.[/dim]")
@@ -308,7 +324,8 @@ def cmd_add_dir(args: argparse.Namespace) -> None:
                 console.print(f"  [dim]Not found:[/dim] {rel}")
 
         if removed:
-            _write_extra_dirs(config_path, data, extra_dirs)
+            if not _save_extra_dirs(config_path, data, extra_dirs):
+                raise SystemExit(1)
             for d in removed:
                 console.print(f"  [red]-[/red] {d}")
         return
@@ -318,33 +335,28 @@ def cmd_add_dir(args: argparse.Namespace) -> None:
     )
 
 
+def _save_extra_dirs(config_path: Path, data: dict, extra_dirs: list[str]) -> bool:
+    """CLI wrapper of _write_extra_dirs: prints the failure, returns success."""
+    from codegraph.core.config_edit import ConfigEditError
+
+    try:
+        _write_extra_dirs(config_path, data, extra_dirs)
+    except (ConfigEditError, OSError) as exc:
+        console.print(f"[red]Could not update extra_dirs:[/red] {exc}")
+        return False
+    return True
+
+
 def _write_extra_dirs(config_path: Path, data: dict, extra_dirs: list[str]) -> None:
-    """Update extra_dirs in config.toml (preserves other settings)."""
-    content = config_path.read_text(encoding="utf-8")
+    """Set ``[codegraph] extra_dirs`` in config.toml, in place.
 
-    # Check if extra_dirs already exists in file
-    if "extra_dirs" in content:
-        import re
+    Comments and other tables are preserved and a missing ``[codegraph]``
+    table is created. Raises ConfigEditError when the write cannot be
+    verified, so a caller never reports a directory it did not record."""
+    from codegraph.core.config_edit import set_key
 
-        # Replace existing extra_dirs line
-        dirs_str = ", ".join(f'"{d}"' for d in extra_dirs)
-        content = re.sub(
-            r"extra_dirs\s*=\s*\[.*?\]",
-            f"extra_dirs = [{dirs_str}]",
-            content,
-            flags=re.DOTALL,
-        )
-    else:
-        # Add after [codegraph] section
-        insert_after = "[codegraph]"
-        if insert_after in content:
-            dirs_str = ", ".join(f'"{d}"' for d in extra_dirs)
-            content = content.replace(
-                insert_after,
-                f"{insert_after}\n# Additional directories to include in the graph\nextra_dirs = [{dirs_str}]",
-            )
-
-    config_path.write_text(content, encoding="utf-8")
+    del data  # kept for call compatibility; the file is the source of truth
+    set_key(config_path, "codegraph", "extra_dirs", list(extra_dirs))
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +400,10 @@ def register_graph_parser(sub) -> None:
     p.add_argument(
         "action",
         nargs="?",
-        choices=["add", "remove", "list"],
-        help="Action (default: list)",
+        help=(
+            "add, remove or list (default: list); a path in its place adds it: "
+            "`cgh add-dir ../frontend` is `cgh add-dir add ../frontend`"
+        ),
     )
     p.add_argument("paths", nargs="*", help="Directory paths")
     p.add_argument("--root", default=os.getcwd())

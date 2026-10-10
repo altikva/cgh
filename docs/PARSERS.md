@@ -103,8 +103,18 @@ class ResourceDef:
     file_path: str
     start_line: int
     end_line: int = 0
-    kind: str = "resource"    # "resource", "variable", "output", "service"
+    kind: str = "resource"    # "resource", "data", "module", "variable",
+                              # "output", "local", "provider", "tfvars", ...
+    address: str = ""         # Terraform address: google_x.y, data.t.n,
+                              # module.m, var.v, output.o, local.l
+    refs: list[str] = []      # addresses the block's expressions use
+    source: str = ""          # a module block's raw `source`
+    inputs: list[str] = []    # a module block's input argument names
+    docstring: str = ""       # one-line summary for text search
 ```
+
+The Terraform fields are optional: a parser that only fills the first seven
+keeps working as before.
 
 ### `SectionDef`
 
@@ -388,7 +398,7 @@ No config changes, no registry edits. The `@register_parser` decorator and auto-
 | `golang.py` | Go | tree-sitter (`tree-sitter-go`) |
 | `rust.py` | Rust | tree-sitter (`tree-sitter-rust`) |
 | `java.py` | Java | tree-sitter (`tree-sitter-java`) |
-| `terraform.py` | Terraform HCL | regex + brace tracking |
+| `terraform.py` | Terraform HCL (.tf, .tfvars) | tree-sitter (`tree-sitter-hcl`), regex fallback without it |
 | `markdown.py` | Markdown | regex (headings, links, code refs) |
 | `plaintext.py` | Plain text fallback | line-based |
 
@@ -399,11 +409,67 @@ Python, TypeScript and JavaScript, Vue, Java, Go and Rust have one. A
 language without a resolver still reports what it parsed, and `cgh status`
 says so rather than showing an empty import graph.
 
+**Terraform.** Terraform has no import statement: its blocks reference each
+other by address. The parser emits one `ResourceDef` per resource, data,
+module, variable, output and provider block and per `locals` entry, with the
+in-module address and the addresses its expressions use (nested blocks,
+string interpolations and heredocs included; comments, literals, `each`,
+`count`, `self`, `path` and for or dynamic iterators left out). The indexer
+(`codegraph/analysis/terraform.py`) scopes each reference to the file's
+directory, as Terraform does, and stores it as a name reference so the edge
+is found whatever order files are indexed in. `module.m.out` lands on output
+`out` of the directory a local `source` (`./`, `../`) points to, and each
+module argument on that directory's `var.<argument>`. A registry or git
+source links nothing unless `[terraform] module_sources` in
+`.codegraph/config.toml` maps it to a local checkout (see
+[CONFIGURATION.md](CONFIGURATION.md#terraform)): the source is then read as
+that directory. A mapped directory the graph already indexes (the repo, an
+`extra_dirs` entry) links like a local one; any other (outside every index,
+or inside a federated subrepo, whose graph the parent cannot link into) has
+its blocks read into this graph on demand, read-only, without a File node or
+text-search entry: resources, data sources, locals, variables and outputs,
+linked among themselves (variables and outputs only for a directory in a
+federated subrepo, whose own graph holds its resources). It is read again
+when its `.tf` files change and a caller is re-indexed.
+
+When the mapped directory sits in a git checkout and the source pins a
+`?ref=` (tag, branch or commit), the module is read from git at that ref
+(`git ls-tree` and `git cat-file`, no checkout, no worktree, no fetch) into a
+directory of its own, `<dir>@<ref>` (for example
+`gcp-modules/modules/kms@v0.1.0/main.tf`), so two calls pinning different
+refs each link to their own version. Within one process a copy is read
+again only when the ref resolves to another commit. A ref the checkout lacks falls back to the
+working tree, logs a warning and shows in `cgh status` and `cgh doctor`.
+`module.m.<address>` (`module.kms.google_kms_key_ring.r`) finds the block
+inside module `m` for `cgh lookup`, `symbol_lookup`, `find_callers` and
+`impact_of`. Nothing is fetched over the network.
+
+Each module input is also an entry of its own, `module.<m>.<argument>`
+(kind `tf_module_arg`), on the argument's lines and pointing at the
+module's `var.<argument>`, so a name search for an input lands on the module
+call. String values stay out of name search: text search (`--text`,
+`fts_search`) finds them through each block's summary. `moved`, `import` and
+`removed` blocks are entries too (`moved.<to>`, `import.<to>`,
+`removed.<from>`) referencing the addresses they name: `random_id.x` in the
+same directory, `module.m` for `module.m.google_x.y`, and the resource
+`google_x.y` inside module `m` when its source resolves, so `find_callers`
+on a resource or a module lists its moved blocks.
+
+A `.tfvars` file yields one entry per assignment, linked to `var.<key>` in
+the same directory. The edges are `TF_DEPENDS`, `TF_REFS_VAR`,
+`TF_VAR_DEPENDS` and `TF_VAR_REFS` (variables, outputs and tfvars entries
+are `TFVar` nodes, every other block a `TFResource`), and `find_callers`,
+`find_callees`, `impact_of` and `cgh impact` read them. Impact is per
+block: `cgh impact` maps the changed lines of a `.tf` diff to the blocks
+they touch and reports only the files holding blocks that reference those,
+transitively (across module inputs and outputs), plus the non-Terraform
+entries (contracts YAML, docs) that mention a changed address as `related`.
+
 ---
 
 ## Dependencies
 
-As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java) is a core dependency in `pyproject.toml`: no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
+As of v0.4, every supported tree-sitter grammar (Python, TypeScript, Go, Rust, Java, and HCL since 0.16) is a core dependency in `pyproject.toml`: no optional extras to install. The wheels are small enough that bundling them keeps the install story simple.
 
 ```toml
 dependencies = [
@@ -413,6 +479,7 @@ dependencies = [
     "tree-sitter-go>=0.23",
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
+    "tree-sitter-hcl>=1.2",
     # ...
 ]
 ```

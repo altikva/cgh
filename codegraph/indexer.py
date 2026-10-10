@@ -300,16 +300,19 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
             docstring=cls.docstring,
         )
     for res in idx.resources:
+        # Terraform blocks are found by address (var.region, module.iam,
+        # google_x.y): the address is the searchable name, the summary
+        # (arguments, nested blocks, a tfvars value) the text.
         kind = f"tf_{res.kind}"
         upsert_symbol(
             fts_conn,
             sym_id=res.id,
             kind=kind,
-            name=res.name,
+            name=res.address or res.name,
             file_path=res.file_path,
             start_line=res.start_line,
             end_line=res.end_line,
-            docstring=res.type,
+            docstring=res.docstring or res.type,
         )
     for sec in idx.sections:
         upsert_symbol(
@@ -325,45 +328,299 @@ def _fts_ingest(fts_conn, idx: FileIndex) -> None:
     fts_commit(fts_conn)
 
 
-def _resolve_calls(conn: GraphDB, functions: list, lang: str = "") -> None:
+def _call_site_rows(
+    idx: FileIndex, root: Path | None
+) -> tuple[list[tuple[str, ...]], frozenset[str]]:
+    """The by-name call sites of a parsed file as call_site rows
+    (from_id, name, "", kind, hint, ctx), and the repo files it imports;
+    see analysis/call_rules.py."""
+    from codegraph.analysis.call_rules import site_rows
+
+    return site_rows(idx, root)
+
+
+def _link_call_sites(
+    conn: GraphDB,
+    sites: list,
+    root: Path | None,
+    imported: dict[str, frozenset[str]],
+    replace: str | None,
+) -> None:
+    """Create the CALLS edges of by-name ``sites`` (call_rules.Site).
+
+    ``imported`` maps a caller file to the repo files it imports. With
+    ``replace`` (a file path), ``sites`` must be every by-name site outside
+    that file calling one of their names: edges from those sites into
+    functions of the names that the rules no longer pick are dropped. A
+    rule can depend on every function of a name (how many methods carry it,
+    which file of an import defines it), so a definition appearing or
+    vanishing elsewhere can take an edge away as well as add one.
     """
-    After all Function nodes exist, create CALLS edges by matching call
-    names to known function names. Best-effort: unresolved names are skipped.
+    if not sites:
+        return
+    from codegraph.analysis.call_rules import (
+        CLS,
+        Candidates,
+        Target,
+        class_bases,
+        needs_imports,
+        targets_for,
+    )
 
-    Names matching a language built-in callable are filtered first (see
-    parsers/builtins.py) so callees like isinstance / println / parseInt
-    don't accumulate spurious edges. The actual edge-link work goes
-    through find_node_keys + ensure_edge so it stays backend-neutral.
+    by_name: dict[str, list] = {}
+    for fn_id, name, file_path, class_id, bases in conn.call_targets_named(
+        sorted({s.name for s in sites})
+    ):
+        by_name.setdefault(name, []).append(
+            Target(
+                fn_id,
+                name,
+                file_path,
+                class_id.rsplit("::", 1)[-1] if class_id else "",
+                tuple(b.rsplit(".", 1)[-1] for b in bases),
+            )
+        )
+    root_s = str(root) if root is not None else None
+    pools = {name: Candidates(targets, root_s) for name, targets in by_name.items()}
+    typed = {s.ctx for s in sites if s.kind == CLS and s.ctx and s.name in pools}
+    hierarchy = class_bases(conn, typed) if typed else {}
+    no_imports: frozenset[str] = frozenset()
+    desired: set[tuple[str, str]] = set()
+    for site in sites:
+        candidates = pools.get(site.name)
+        if candidates is None:
+            continue
+        imp = imported.get(site.file_path, no_imports)
+        if not needs_imports(site.kind):
+            imp = no_imports
+        desired.update(
+            (site.from_id, t.id)
+            for t in targets_for(site, candidates, root_s, imp, hierarchy)
+        )
+    if replace is not None:
+        existing = set(conn.calls_by_name(sorted(by_name), replace))
+        stale = existing - desired
+        if stale:
+            conn.delete_calls(sorted(stale))
+        desired -= existing
+    if desired:
+        conn.ensure_edges("CALLS", sorted(desired))
+
+
+def _resolve_calls(
+    conn: GraphDB,
+    idx: FileIndex,
+    root: Path | None,
+    rows: list[tuple[str, ...]],
+    imported: frozenset[str],
+) -> None:
     """
-    from codegraph.parsers.builtins import is_builtin
+    Create the CALLS edges of ``idx``'s call sites ``rows`` (see
+    analysis/call_rules.py for the rules). Unresolved names are skipped.
 
-    # Memoize name -> candidate ids for this file's resolution pass: many
-    # functions in a file call the same names, and the Function node set is
-    # stable while we only add edges.
-    name_cache: dict[str, list[str]] = {}
-    for fn in functions:
-        same_file_prefix = f"{fn.file_path}::"
-        for called_name in fn.calls:
-            if lang and is_builtin(lang, called_name):
-                continue
-            candidates = name_cache.get(called_name)
-            if candidates is None:
-                candidates = list(conn.find_node_keys("Function", "name", called_name))
-                name_cache[called_name] = candidates
-            # Prefer a definition in the same file. A local call like run()
-            # almost never means "every function named run in the repo"; only
-            # fan out across files when there is no same-file match.
-            same_file = [c for c in candidates if c.startswith(same_file_prefix)]
-            for callee_id in same_file or candidates:
-                conn.ensure_edge("CALLS", fn.id, callee_id)
+    Only links to functions already in the graph: calls into a file indexed
+    later are linked by that file's _resolve_inbound_calls, from the call
+    sites this file recorded.
+    """
+    from codegraph.analysis.call_rules import Site
+
+    if not rows:
+        return
+    file_of = {fn.id: fn.file_path for fn in idx.functions}
+    sites = [Site(r[0], file_of[r[0]], r[1], r[3], r[4], r[5]) for r in rows]
+    _link_call_sites(conn, sites, root, {str(idx.path): imported}, replace=None)
 
 
-def _resolve_inherits(conn: GraphDB, classes: list) -> None:
-    """Create INHERITS edges between Class nodes using base class names."""
-    for cls in classes:
-        for base_name in cls.bases:
-            for parent_id in conn.find_node_keys("Class", "name", base_name):
-                conn.ensure_edge("INHERITS", cls.id, parent_id)
+def _resolve_inbound_calls(
+    conn: GraphDB,
+    file_path: str,
+    functions: list,
+    old_names: list[str] | tuple[str, ...] = (),
+    root: Path | None = None,
+    classes: set[str] | frozenset[str] = frozenset(),
+) -> None:
+    """Link call sites in OTHER files to the functions ``file_path`` defines.
+
+    purge_file_data drops every CALLS edge into a file's symbols, and a
+    caller indexed before this file could not see its functions at all, so
+    without this pass a cross-file call depends on indexing order and is
+    erased by every reindex of the callee's file. Every by-name site calling
+    a name the file defines now or defined before (``old_names``) is
+    resolved again with the same rules as from the caller's side, so a
+    definition appearing or vanishing here also updates edges to other
+    files. Precisely resolved sites (to_id set) relink only to their exact
+    target, never by name. A call on a known class climbs its bases, so the
+    calls on ``classes`` (the classes the file defines now or defined
+    before) and on their subclasses are resolved again too.
+    """
+    from codegraph.analysis.call_rules import Site, needs_imports, real, subclasses
+
+    names = {fn.name for fn in functions} | set(old_names)
+    if classes:
+        names.update(conn.call_site_names_on(sorted(subclasses(conn, set(classes)))))
+    ids = {fn.id for fn in functions}
+    if not names and not ids:
+        return
+    rows = conn.call_sites_into(sorted(names), sorted(ids), file_path)
+    if not rows:
+        return
+    exact = [(r[0], r[3]) for r in rows if r[3] and r[3] in ids]
+    sites = [Site(r[0], r[1], r[2], r[4], r[5], r[6]) for r in rows if not r[3]]
+    callers = sorted({s.file_path for s in sites if needs_imports(s.kind)})
+    imported: dict[str, set[str]] = {}
+    for src, dst in conn.name_refs_from(CALLS_IMPORT, callers) if callers else ():
+        imported.setdefault(src, set()).add(real(dst))
+    _link_call_sites(
+        conn,
+        sites,
+        root,
+        {k: frozenset(v) for k, v in imported.items()},
+        replace=file_path,
+    )
+    if exact:
+        conn.ensure_edges("CALLS", exact)
+
+
+def _delete_file_relinking(conn: GraphDB, path: str, repo_root) -> None:
+    """Delete a file from the graph, then resolve again the calls elsewhere
+    to the names it defined."""
+    names = conn.function_names_in(path)
+    classes = _class_names_in(conn, path)
+    conn.delete_file_completely(path)
+    _relink_calls_named(
+        conn, path, names, Path(repo_root) if repo_root else None, classes
+    )
+
+
+def _class_names_in(conn: GraphDB, file_path: str) -> set[str]:
+    """The names of the Classes ``file_path`` defines."""
+    rows = conn.find_nodes(
+        "Class", where={"file_path": file_path}, return_fields=["name"]
+    )
+    return {r["name"] for r in rows if r.get("name")}
+
+
+def _relink_calls_named(
+    conn: GraphDB,
+    file_path: str,
+    names: list[str],
+    root: Path | None,
+    classes: set[str] | frozenset[str] = frozenset(),
+) -> None:
+    """Resolve again the call sites of ``names``, and the calls on
+    ``classes``, after ``file_path`` lost its functions and classes
+    (deleted, or no longer parseable)."""
+    if names or classes:
+        _resolve_inbound_calls(conn, file_path, [], names, root, classes)
+
+
+# A name reference is (kind, from_id, name, extra), kept in the name_ref table
+# by file so its edge can also be built from the target's side (see
+# _resolve_inbound_refs). Kinds and what name / extra hold:
+#   inherits  Class id -> base class name
+#   md_ref    MdSection id -> code symbol name, extra = mention context
+#   md_link   MdSection id -> resolved target path, extra = link label
+#   handler   Endpoint id -> handler function name, extra = a file the route
+#             file imports (one row per imported file)
+#   tf_ref    Terraform block id -> "<module dir>::<address>" it uses
+#   tf_modout Terraform block id -> "<module dir>::module.<m>", extra = the
+#             output name (see codegraph/analysis/terraform.py)
+#   tf_modres Terraform moved / import / removed block id ->
+#             "<module dir>::module.<m>", extra = a resource address inside
+#             that module
+#   calls_import  file path -> a repo file it imports (at module level or in
+#             a function body), read by the call rules of its call sites
+NameRef = tuple[str, str, str, str]
+CALLS_IMPORT = "calls_import"
+
+
+def _keys_by_value(conn: GraphDB, label: str, field: str, values) -> dict:
+    """{field value: [node keys]} for the ``label`` nodes matching ``values``."""
+    out: dict[str, list[str]] = {}
+    if not values:
+        return out
+    for key, value in conn.node_keys_matching(label, field, sorted(set(values))):
+        out.setdefault(value, []).append(str(key))
+    return out
+
+
+def _resolve_inherits(conn: GraphDB, classes: list) -> list[NameRef]:
+    """Create INHERITS edges between Class nodes using base class names.
+
+    Links every class of the base's name already in the graph; bases defined
+    in a file indexed later are linked by that file's _resolve_inbound_refs.
+    Returns the references to record.
+    """
+    refs = sorted(
+        {("inherits", cls.id, base, "") for cls in classes for base in cls.bases}
+    )
+    parents = _keys_by_value(conn, "Class", "name", [r[2] for r in refs])
+    conn.ensure_edges(
+        "INHERITS",
+        [(cls_id, pid) for _, cls_id, base, _ in refs for pid in parents.get(base, ())],
+    )
+    return refs
+
+
+def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None:
+    """Link the name references of OTHER files to what ``file_path`` defines.
+
+    purge_file_data drops every edge into a file's symbols, and a reference
+    ingested before its target existed found nothing, so without this pass
+    those edges depend on indexing order and vanish when the target's file is
+    reindexed. Each kind applies the same rule as its outbound resolution.
+    """
+    if idx.resources:
+        from codegraph.analysis.terraform import resolve_inbound
+
+        resolve_inbound(conn, file_path, idx.resources)
+    fns: dict[str, list[str]] = {}
+    for fn in idx.functions:
+        fns.setdefault(fn.name, []).append(fn.id)
+    classes: dict[str, list[str]] = {}
+    for cls in idx.classes:
+        classes.setdefault(cls.name, []).append(cls.id)
+    refs = conn.name_refs_into(sorted({*fns, *classes, file_path}), file_path)
+    if not refs:
+        return
+    edges: dict[str, list[tuple]] = {}
+    for kind, from_id, _ref_file, name, extra in refs:
+        if kind == "inherits":
+            edges.setdefault("INHERITS", []).extend(
+                (from_id, c) for c in classes.get(name, ())
+            )
+        elif kind == "md_ref":
+            edges.setdefault("MD_REFS_SYMBOL", []).extend(
+                (from_id, f, extra) for f in fns.get(name, ())
+            )
+            edges.setdefault("MD_REFS_CLASS", []).extend(
+                (from_id, c, extra) for c in classes.get(name, ())
+            )
+        elif kind == "md_link" and name == file_path:
+            edges.setdefault("MD_LINKS_TO", []).append((from_id, file_path, extra))
+        elif kind == "handler" and extra == file_path:
+            edges.setdefault("IMPLEMENTED_BY", []).extend(
+                (from_id, f) for f in fns.get(name, ())
+            )
+    for edge_type, rows in edges.items():
+        if rows:
+            conn.ensure_edges(edge_type, rows)
+
+
+def _resolve_inbound_links(conn: GraphDB, paths: list[str], exclude_file: str) -> None:
+    """Land the markdown links of other files on File nodes just created."""
+    if not paths:
+        return
+    wanted = set(paths)
+    rows = [
+        (from_id, name, extra)
+        for kind, from_id, _f, name, extra in conn.name_refs_into(
+            sorted(wanted), exclude_file
+        )
+        if kind == "md_link" and name in wanted
+    ]
+    if rows:
+        conn.ensure_edges("MD_LINKS_TO", rows)
 
 
 def _precise_calls_enabled(cfg, lang: str) -> bool:
@@ -380,19 +637,22 @@ def _precise_calls_enabled(cfg, lang: str) -> bool:
     return jedi_available()
 
 
-def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bool:
+def _resolve_calls_precise(
+    conn: GraphDB, idx: FileIndex, repo_root: Path
+) -> list[tuple[str, str]] | None:
     """Create CALLS edges for one Python file using the jedi-backed resolver.
 
-    Returns True when it ran (even with zero edges), False when it could not
-    run and the caller should fall back to the name-matched resolver. Never
-    raises: any error returns False so resolution degrades to the old path.
+    Returns the (caller_id, callee_id) pairs it resolved (possibly none) when
+    it ran, None when it could not run and the caller should fall back to the
+    name-matched resolver. Never raises: any error returns None so resolution
+    degrades to the old path.
     """
     try:
         from codegraph.analysis.precise_calls import resolve_calls_for_file
 
         edges = resolve_calls_for_file(idx.path, repo_root)
     except Exception:
-        return False
+        return None
 
     dropped = 0
     for caller_id, _target_file, callee_id in edges:
@@ -409,13 +669,22 @@ def _resolve_calls_precise(conn: GraphDB, idx: FileIndex, repo_root: Path) -> bo
         _act_log(
             repo_root, "scan_error", f"{dropped} CALLS edge(s) dropped for {idx.path}"
         )
-    return True
+    return [(caller_id, callee_id) for caller_id, _t, callee_id in edges]
 
 
 def _ingest_code(
-    conn: GraphDB, idx: FileIndex, cfg=None, repo_root: Path | None = None
-) -> None:
-    """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.)."""
+    conn: GraphDB,
+    idx: FileIndex,
+    cfg=None,
+    repo_root: Path | None = None,
+    pending_calls: list | None = None,
+) -> list[NameRef]:
+    """Ingest functions, classes, and their edges (Python, TypeScript, Vue, etc.).
+
+    Returns the file's name references to record. The by-name call sites are
+    stored here and appended to ``pending_calls`` as (rows, imported): their
+    edges are created once the file's references are recorded, since the
+    call rules read the base classes of the methods they may link to."""
     for fn in idx.functions:
         conn.upsert_node(
             "Function",
@@ -452,14 +721,25 @@ def _ingest_code(
             conn.ensure_edge("HAS_METHOD", class_id, fn.id)
 
     # Precise CALLS (opt-in, Python only, jedi installed). When it runs we
-    # skip the name-matched resolver for this file so edges aren't doubled.
-    # Any failure or the flag being off falls straight back to the old path.
-    used_precise = False
+    # skip the name-matched resolver for this file so edges aren't doubled,
+    # and record its sites by exact target so a reindex of the callee file
+    # relinks them without name fan-out. Any failure or the flag being off
+    # falls straight back to the old path.
+    precise = None
     if repo_root is not None and _precise_calls_enabled(cfg, idx.lang):
-        used_precise = _resolve_calls_precise(conn, idx, repo_root)
-    if not used_precise:
-        _resolve_calls(conn, idx.functions, idx.lang)
-    _resolve_inherits(conn, idx.classes)
+        precise = _resolve_calls_precise(conn, idx, repo_root)
+    refs = _resolve_inherits(conn, idx.classes)
+    if precise is None:
+        rows, imported = _call_site_rows(idx, repo_root)
+        conn.replace_call_sites(str(idx.path), rows)
+        refs += [(CALLS_IMPORT, str(idx.path), f, "") for f in sorted(imported)]
+        if pending_calls is not None:
+            pending_calls.append((rows, imported))
+        else:
+            _resolve_calls(conn, idx, repo_root, rows, imported)
+    else:
+        conn.replace_call_sites(str(idx.path), sorted({(c, "", t) for c, t in precise}))
+    return refs
 
 
 # Import resolution coverage for the current scan, keyed by language. Without
@@ -517,6 +797,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
     from codegraph.imports.resolver import resolve_import
 
     seen_targets: set[str] = set()
+    stubbed: set[str] = set()
     for imp in idx.imports:
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
         _count_import(idx.lang, target is not None)
@@ -532,6 +813,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
         # creates a stub node carrying just the path. Once the target's
         # own index_file runs, the same key gets upserted with full metadata.
         conn.upsert_node("File", "path", target_str, {})
+        stubbed.add(target_str)
 
         # Symbol annotation on the edge. If the import named multiple
         # symbols, write one edge per symbol so MCP tools can answer
@@ -548,42 +830,76 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
                 continue
             seen_targets.add(edge_key)
             conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
+    # A stub can be the only File node a path ever gets (a target cgh does not
+    # parse), so markdown links waiting for it must land now, as they would
+    # had the doc been ingested after this file.
+    _resolve_inbound_links(conn, sorted(stubbed), str(idx.path))
 
 
-def _ingest_terraform(conn: GraphDB, idx: FileIndex) -> None:
-    """Ingest terraform resources and variables from unified FileIndex."""
-    for res in idx.resources:
-        if res.kind in ("variable", "output"):
-            conn.upsert_node(
-                "TFVar",
-                "id",
-                res.id,
-                {
-                    "name": res.name,
-                    "kind": res.kind,
-                    "file_path": res.file_path,
-                    "start_line": res.start_line,
-                },
-            )
-            conn.ensure_edge("DEFINES_TFVAR", res.file_path, res.id)
-        else:
-            conn.upsert_node(
-                "TFResource",
-                "id",
-                res.id,
-                {
-                    "name": res.name,
-                    "type": res.type,
-                    "file_path": res.file_path,
-                    "start_line": res.start_line,
-                    "end_line": res.end_line,
-                },
-            )
-            conn.ensure_edge("DEFINES_RESOURCE", res.file_path, res.id)
+def _handler_candidate_files(idx: FileIndex, repo_root: Path | None) -> list[str]:
+    """Files a route file imports, where a handler it names may live.
+
+    Every resolvable import target, plus for Python each imported name tried
+    as a submodule (``from pkg import views`` resolves to pkg/__init__.py,
+    while ``views.user_detail`` lives in pkg/views.py).
+    """
+    if not idx.imports or repo_root is None:
+        return []
+    from codegraph.imports.resolver import resolve_import
+
+    targets: set[str] = set()
+    for imp in idx.imports:
+        modules = [imp.source_module]
+        if idx.lang == "python":
+            sep = "" if imp.source_module.endswith(".") else "."
+            modules += [f"{imp.source_module}{sep}{sym}" for sym in imp.symbols]
+        for module in modules:
+            target = resolve_import(idx.lang, module, idx.path, repo_root)
+            if target is not None:
+                targets.add(str(target))
+    targets.discard(str(idx.path))
+    return sorted(targets)
 
 
-def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
-    """Extract and persist HTTP endpoints from a file. Returns count."""
+def _ingest_terraform(
+    conn: GraphDB, idx: FileIndex, cfg=None, root: Path | None = None
+) -> list[NameRef]:
+    """Ingest a file's Terraform blocks and link the addresses they use.
+
+    Module sources resolve through the opt-in [terraform] module_sources
+    mapping; a mapped module directory no index covers has its variables
+    and outputs read (read-only) into this graph first, so the call links.
+    Returns the name references to record, so a block defined in a file
+    indexed later, or reindexed, links itself back (_resolve_inbound_refs).
+    """
+    from codegraph.analysis import terraform as _tf
+
+    sources = _tf.ModuleSources.from_config(cfg, root)
+    _tf.ingest_blocks(conn, idx.resources, sources)
+    for directory in _tf.external_module_dirs(idx.resources, sources):
+        _tf.ingest_external_module(conn, directory, sources)
+    refs = _tf.ref_rows(idx.resources, sources)
+    _tf.resolve_outbound(conn, refs)
+    return refs
+
+
+def _ingest_endpoints(
+    conn: GraphDB,
+    path: Path,
+    idx: FileIndex | None = None,
+    repo_root: Path | None = None,
+    refs: list[NameRef] | None = None,
+) -> int:
+    """Extract and persist HTTP endpoints from a file. Returns count.
+
+    A handler is linked in the route's own file first. Only when that file
+    defines no function of the handler's name (a Django urls.py naming
+    views.user_detail), it is looked up in the files the route file imports
+    (``idx`` given), never across the whole repo: a bare name like ``detail``
+    or ``index`` is defined in many unrelated modules. Those lookups are
+    appended to ``refs`` so a handler file indexed later, or reindexed, links
+    itself back.
+    """
     from codegraph.analysis.endpoints import extract as _extract_endpoints
 
     try:
@@ -591,13 +907,21 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
     except OSError:
         return 0
 
+    from codegraph.analysis.call_rules import is_test_path
+
+    is_test = is_test_path(str(path), str(repo_root) if repo_root else None)
+    # A test mounting a real router under a prefix of its own must not give
+    # that router's routes a full path the app never serves.
+    if refs is not None and path.suffix == ".py" and repo_root and not is_test:
+        refs.extend(_router_refs(path, src, repo_root))
+
     eps = _extract_endpoints(path, src)
     if not eps:
         return 0
 
     # purge_file_data already cleaned old endpoints for this path during
     # the upstream _purge_file call, so no separate purge needed here.
-
+    local: set[str] = set()
     for ep in eps:
         conn.upsert_node(
             "Endpoint",
@@ -609,6 +933,8 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
                 "framework": ep.framework,
                 "file_path": ep.file_path,
                 "start_line": ep.start_line,
+                "router": ep.router,
+                "is_test": is_test,
             },
         )
         conn.ensure_edge("DEFINES_ENDPOINT", str(path), ep.id)
@@ -626,10 +952,52 @@ def _ingest_endpoints(conn: GraphDB, path: Path) -> int:
                 fn_id = str(fn_id)
                 if fn_id.startswith(f"{path}::") or f"::{path}::" in fn_id:
                     conn.ensure_edge("IMPLEMENTED_BY", ep.id, fn_id)
+                    local.add(ep.id)
+    if idx is not None and refs is not None:
+        remote = [ep for ep in eps if ep.handler_name and ep.id not in local]
+        _link_remote_handlers(
+            conn, remote, _handler_candidate_files(idx, repo_root), refs
+        )
     return len(eps)
 
 
-def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
+def _router_refs(path: Path, src: str, repo_root: Path) -> list[NameRef]:
+    """The router prefixes and include calls of a Python file, kept as name
+    references so the endpoints query composes full paths across files."""
+    from codegraph.analysis.endpoints import python_router_refs
+    from codegraph.imports.resolver import resolve_import
+
+    def resolve_module(module: str) -> str | None:
+        target = resolve_import("python", module, path, repo_root)
+        return str(target) if target is not None else None
+
+    return python_router_refs(path, src, resolve_module)
+
+
+def _link_remote_handlers(
+    conn: GraphDB, eps: list, candidates: list[str], refs: list[NameRef]
+) -> None:
+    """Link endpoints to handlers defined in ``candidates`` (the files the
+    route file imports) and record one reference per endpoint and file."""
+    if not eps or not candidates:
+        return
+    wanted = set(candidates)
+    defs: dict[str, list[str]] = {}
+    for fn_id, name, file_path in conn.function_defs_named(
+        sorted({ep.handler_name for ep in eps})
+    ):
+        if file_path in wanted:
+            defs.setdefault(name, []).append(str(fn_id))
+    edges: list[tuple[str, str]] = []
+    for ep in eps:
+        edges.extend((ep.id, fn_id) for fn_id in defs.get(ep.handler_name, ()))
+        refs.extend(("handler", ep.id, ep.handler_name, f) for f in candidates)
+    conn.ensure_edges("IMPLEMENTED_BY", edges)
+
+
+def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
+    """Ingest a doc's sections and its links / code mentions. Returns the
+    name references to record."""
     # Sections
     for sec in idx.sections:
         conn.upsert_node(
@@ -664,7 +1032,10 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
     # resolve each target against this file's directory before matching the
     # (absolute) File node path. This makes ./foo.md and ../api.md resolve,
     # where the old raw exact-match on "./foo.md" never did.
+    # A link to a file indexed later lands from that file's side, through
+    # the md_link reference recorded here (_resolve_inbound_refs).
     md_dir = os.path.dirname(idx.path)
+    refs: set[NameRef] = set()
     for link in idx.links:
         target = link.target
         if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -676,22 +1047,43 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> None:
         section = _find_section_for_line(idx.sections, link.line)
         if not section:
             continue
-        for file_key in conn.find_node_keys("File", "path", resolved_target):
-            conn.ensure_edge("MD_LINKS_TO", section.id, file_key, {"label": link.label})
+        refs.add(("md_link", section.id, resolved_target, link.label or ""))
 
-    # Code references: link sections to code symbols they mention
+    # Code references: link sections to the functions and classes they
+    # mention, by name; a symbol defined in a file indexed later links back
+    # through the md_ref reference.
     for ref in idx.code_refs:
         section = _find_section_for_line(idx.sections, ref.line)
         if not section:
             continue
-        for fn_id in conn.find_node_keys("Function", "name", ref.symbol):
-            conn.ensure_edge(
-                "MD_REFS_SYMBOL", section.id, fn_id, {"context": ref.context}
-            )
-        for cls_id in conn.find_node_keys("Class", "name", ref.symbol):
-            conn.ensure_edge(
-                "MD_REFS_CLASS", section.id, cls_id, {"context": ref.context}
-            )
+        refs.add(("md_ref", section.id, ref.symbol, ref.context or ""))
+
+    links = [r for r in refs if r[0] == "md_link"]
+    files = _keys_by_value(conn, "File", "path", [r[2] for r in links])
+    conn.ensure_edges(
+        "MD_LINKS_TO",
+        [
+            (sec, key, label)
+            for _, sec, target, label in links
+            for key in files.get(target, ())
+        ],
+    )
+    mentions = [r for r in refs if r[0] == "md_ref"]
+    names = [r[2] for r in mentions]
+    for edge_type, label in (
+        ("MD_REFS_SYMBOL", "Function"),
+        ("MD_REFS_CLASS", "Class"),
+    ):
+        found = _keys_by_value(conn, label, "name", names)
+        conn.ensure_edges(
+            edge_type,
+            [
+                (sec, key, ctx)
+                for _, sec, name, ctx in mentions
+                for key in found.get(name, ())
+            ],
+        )
+    return sorted(refs)
 
 
 def _find_section_for_line(sections: list, line: int):
@@ -716,6 +1108,7 @@ def index_file(
     force: bool = False,
     git_blob_sha: str | None = None,
     cfg=None,
+    reparse: bool = False,
 ) -> bool:
     """
     Parse and ingest a single file into the graph.
@@ -729,11 +1122,14 @@ def index_file(
         cfg: Pre-loaded CodegraphConfig. index_repo passes one so the size /
              ignore-pattern gate doesn't re-read config.toml per file. When
              None (standalone callers) it is loaded once for this call.
+        reparse: Skip only the mtime cache check (unlike force, the ignore
+             rules still apply). Used by a full index after a graph format
+             upgrade, when unchanged files still need their new data.
     """
     from codegraph.state.index_lock import write_lock
 
     with write_lock(repo_root or Path.cwd()):
-        return _index_file(path, repo_root, force, git_blob_sha, cfg)
+        return _index_file(path, repo_root, force, git_blob_sha, cfg, reparse)
 
 
 def _index_file(
@@ -742,6 +1138,7 @@ def _index_file(
     force: bool,
     git_blob_sha: str | None,
     cfg,
+    reparse: bool = False,
 ) -> bool:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -778,8 +1175,8 @@ def _index_file(
     conn = get_connection(repo_root)
     mtime = path.stat().st_mtime
 
-    # Check if already indexed and unchanged (skip if force)
-    if not force:
+    # Check if already indexed and unchanged (skip if force or reparse)
+    if not force and not reparse:
         try:
             stored_mtime = conn.query_node_field("File", "path", str(path), "mtime")
             if stored_mtime is not None and abs(float(stored_mtime) - mtime) < 0.01:
@@ -789,6 +1186,10 @@ def _index_file(
             pass
 
     fts_conn = _get_fts(repo_root) if repo_root else None
+    # The names this file defined: callers of those names elsewhere are
+    # resolved again once the file is back in (or gone).
+    old_names = conn.function_names_in(str(path))
+    old_classes = _class_names_in(conn, str(path))
     _purge_file(conn, str(path), fts_conn)
 
     try:
@@ -801,6 +1202,7 @@ def _index_file(
         msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
         print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
+        _relink_calls_named(conn, str(path), old_names, root, old_classes)
         return False
     except Exception as exc:
         # Catch-all: any other parse failure (decoding error, malformed source,
@@ -811,6 +1213,7 @@ def _index_file(
         msg = f"{path}: {type(exc).__name__}: {exc}"
         print(f"[codegraph] parse error: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
+        _relink_calls_named(conn, str(path), old_names, root, old_classes)
         return False
 
     lang = idx.lang
@@ -856,12 +1259,16 @@ def _index_file(
         eff_cfg = _load_config_for_ingest(root)
 
     # Ingest into graph
+    refs: list[NameRef] = []
+    pending_calls: list = []
     if idx.functions or idx.classes:
-        _ingest_code(conn, idx, cfg=eff_cfg, repo_root=root)
+        refs += _ingest_code(
+            conn, idx, cfg=eff_cfg, repo_root=root, pending_calls=pending_calls
+        )
     if idx.resources:
-        _ingest_terraform(conn, idx)
+        refs += _ingest_terraform(conn, idx, eff_cfg, root)
     if idx.sections:
-        _ingest_markdown(conn, idx)
+        refs += _ingest_markdown(conn, idx)
 
     # IMPORTS edges, wire them up after the File node exists, regardless
     # of whether the file defines functions/classes (pure __init__.py
@@ -870,7 +1277,27 @@ def _index_file(
         _ingest_imports(conn, idx, root)
 
     # HTTP endpoints (after functions are in place so IMPLEMENTED_BY can link)
-    _ingest_endpoints(conn, path)
+    _ingest_endpoints(conn, path, idx=idx, repo_root=root, refs=refs)
+
+    # Keep this file's by-name references, then link the references other
+    # files hold to what this one defines (purge_file_data cleared both).
+    if refs:
+        conn.replace_name_refs(str(path), refs)
+    _resolve_inbound_refs(conn, str(path), idx)
+
+    # CALLS last: the call rules read the recorded base classes and imports.
+    # Then the calls of other files to the names this file defines now or
+    # defined before.
+    for rows, imported in pending_calls:
+        _resolve_calls(conn, idx, root, rows, imported)
+    _resolve_inbound_calls(
+        conn,
+        str(path),
+        idx.functions,
+        old_names,
+        root,
+        old_classes | {c.name for c in idx.classes},
+    )
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)
@@ -878,7 +1305,69 @@ def _index_file(
     # Plugin scanners: inline tier runs now, deferred tier gets queued
     _run_scanners(root, path, idx, blob_sha, fts_conn)
 
+    # Last, so a run killed halfway leaves the file unstamped and the next
+    # index parses it again (see _reparse_unstamped).
+    conn.stamp_file(str(path), mtime)
     return True
+
+
+def _reparse_unstamped(repo_root: Path, activity_log) -> list[str]:
+    """Parse again the files an older indexer wrote since this one last ran.
+
+    cgh 0.15 (after a rollback) rewrites a file's nodes and edges but keeps
+    no call sites, name references or stamp, and its purge leaves the ones
+    this format recorded. Without this pass the next run trusts the mtime and
+    blob sha 0.15 stored and serves the stale references: edges into the file
+    stay lost and its old call sites relink removed calls. Re-indexing the
+    file rebuilds both directions; references of files 0.15 deleted are
+    dropped. Returns the paths parsed again.
+    """
+    conn = get_connection(repo_root)
+    try:
+        stale, orphans = conn.unstamped_files()
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"stamp check failed: {exc}")
+        return []
+    for path in orphans:
+        conn.purge_file_data(path)
+    fts_conn = _get_fts(repo_root)
+    done: list[str] = []
+    for path in stale:
+        p = Path(path)
+        try:
+            if not p.exists():
+                _delete_file_relinking(conn, path, repo_root)
+                if fts_conn is not None:
+                    delete_file_symbols(fts_conn, path)
+                continue
+            if index_file(p, repo_root, force=True):
+                done.append(path)
+                continue
+            # Not indexable by this version: keep what is there, and stamp it
+            # so it is not retried on every run.
+            mtime = conn.query_node_field("File", "path", path, "mtime")
+            if mtime is not None:
+                conn.stamp_file(path, float(mtime))
+        except Exception as exc:
+            activity_log(repo_root, "scan_error", f"re-parse failed for {path}: {exc}")
+    if stale or orphans:
+        activity_log(
+            repo_root,
+            "older_writer_repair",
+            f"reparsed={len(done)} stale={len(stale)} orphans={len(orphans)}",
+        )
+    return done
+
+
+def older_writer_pending(repo_root: str | Path) -> bool:
+    """True when files written by an older indexer are waiting for
+    _reparse_unstamped. Errors count as False: this only decides whether an
+    owner indexes on start."""
+    try:
+        stale, orphans = get_connection(repo_root).unstamped_files()
+    except Exception:
+        return False
+    return bool(stale or orphans)
 
 
 def _git_tracked_files(repo_root: Path) -> list[Path] | None:
@@ -1194,7 +1683,7 @@ def _delete_gone(repo_root: Path, deletions: list[Path], activity_log) -> None:
     conn = get_connection(repo_root)
     for gone in deletions:
         try:
-            conn.delete_file_completely(str(gone))
+            _delete_file_relinking(conn, str(gone), repo_root)
             if fts_conn is not None:
                 delete_file_symbols(fts_conn, str(gone))
             from codegraph.state.findings import purge_file_findings
@@ -1247,7 +1736,13 @@ def _purge_fts_orphans(repo_root: Path, activity_log) -> int:
     return len(orphans)
 
 
-def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
+def _index_extra_dirs(
+    repo_root: Path,
+    stats: dict,
+    activity_log,
+    reparse: bool = False,
+    tf_reparse: bool = False,
+) -> list[str]:
     """Index the sibling directories declared in config.toml. A
     malformed config must not silently shrink coverage."""
     extra_dirs: list[str] = []
@@ -1272,23 +1767,101 @@ def _index_extra_dirs(repo_root: Path, stats: dict, activity_log) -> list[str]:
         if not extra_root.exists() or not extra_root.is_dir():
             continue
         activity_log(repo_root, "extra_dir_scan", str(extra_root))
+        files: list[Path] = []
         for dirpath, dirnames, filenames in os.walk(extra_root):
             dirnames[:] = [
                 d for d in dirnames if d not in _IGNORE_DIRS and not d.startswith(".")
             ]
             for filename in filenames:
                 full_path = Path(dirpath) / filename
-                if not is_supported(full_path):
-                    continue
-                try:
-                    ok = index_file(full_path, repo_root)
-                    if ok:
-                        stats["indexed"] += 1
-                    else:
-                        stats["skipped"] += 1
-                except Exception:
-                    stats["errors"] += 1
+                if is_supported(full_path):
+                    files.append(full_path)
+        # One git run hashes them all; index_file would spawn one per file.
+        from codegraph.state.scan_meta import git_hash_objects
+
+        shas = git_hash_objects(repo_root, files)
+        for full_path in files:
+            try:
+                ok = index_file(
+                    full_path,
+                    repo_root,
+                    git_blob_sha=shas.get(str(full_path)),
+                    reparse=reparse or (tf_reparse and _is_terraform(full_path)),
+                )
+                if ok:
+                    stats["indexed"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception:
+                stats["errors"] += 1
     return extra_dirs
+
+
+def _is_terraform(path: Path | str) -> bool:
+    return str(path).endswith((".tf", ".tfvars"))
+
+
+def _module_sources_reparse(repo_root: Path, cfg, reparse: bool, activity_log) -> bool:
+    """Whether this run parses the Terraform files again because the
+    [terraform] module_sources mapping, or a commit one of its pinned refs
+    resolves to, changed since the last scan (scan_meta keeps the
+    fingerprint). Then, and on a full re-parse, the module blocks read from
+    outside the index are dropped first so they are read again under the
+    current mapping. Errors count as no change."""
+    from codegraph.analysis import terraform as _tf
+
+    try:
+        changed = not reparse and module_sources_changed(repo_root, cfg)
+        if changed or reparse:
+            dropped = _tf.purge_external_modules(get_connection(repo_root))
+            if changed:
+                activity_log(
+                    repo_root,
+                    "module_sources_changed",
+                    f"re-parsing Terraform files, dropped {dropped} module files",
+                )
+        return changed
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"module_sources check failed: {exc}")
+        return False
+
+
+def module_sources_changed(repo_root: str | Path, cfg=None) -> bool:
+    """True when the module_sources fingerprint scan_meta recorded differs
+    from the current one (mapping edited, a pinned ref moved, appeared or
+    vanished). No scan record counts as unchanged: a first index parses
+    everything anyway."""
+    from codegraph.analysis.terraform import module_sources_fingerprint
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import read_meta
+
+    meta = read_meta(repo_root)
+    if meta is None:
+        return False
+    stored = meta.get("module_sources") or {}
+    if cfg is None:
+        cfg = load_config(repo_root)
+    current = module_sources_fingerprint(cfg, repo_root, stored.get("pinned") or [])
+    return current != (stored.get("fingerprint") or "")
+
+
+def _record_module_sources(repo_root: Path, activity_log) -> None:
+    """Store what module_sources resolves to now in scan_meta (fingerprint,
+    pinned refs, per mapping the refs found and missing), and log a
+    warning per missing ref."""
+    from codegraph.analysis import terraform as _tf
+    from codegraph.core.config import load_config
+    from codegraph.state.scan_meta import record_module_sources
+
+    try:
+        state = _tf.module_sources_report(
+            get_connection(repo_root), load_config(repo_root), repo_root
+        )
+        record_module_sources(repo_root, state)
+        for notice in _tf.module_sources_notices(state):
+            activity_log(repo_root, "module_sources_ref_missing", notice)
+    except Exception as exc:
+        activity_log(repo_root, "scan_error", f"module_sources report failed: {exc}")
 
 
 def _is_graph_corrupt(exc: BaseException) -> bool:
@@ -1398,6 +1971,63 @@ def rebuild_corrupt_graph(repo_root: str | Path, exc: BaseException) -> dict | N
         return None
 
 
+def _rel_or_abs(path: Path, root: Path) -> str:
+    """``path`` relative to ``root``, or absolute when outside it: the key
+    the index loop looks a blob SHA up by."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _foreign_root(repo_root: Path) -> str:
+    """Describe why the stored graph belongs to another root, or return "".
+
+    The scan metadata records the root it was written at. Metadata from an
+    older writer has no root, so the File nodes are checked instead: an
+    absolute path outside the root and outside every declared extra dir can
+    only come from a store built elsewhere."""
+    from codegraph.state.scan_meta import foreign_root, read_meta
+
+    current = repo_root.resolve()
+    meta = read_meta(repo_root) or {}
+    if meta.get("root"):
+        old = foreign_root(meta, repo_root)
+        return f"{old} -> {current}" if old else ""
+    if not meta:
+        try:
+            from codegraph.core.db import get_db_path
+
+            if not get_db_path(repo_root).exists():
+                return ""
+        except Exception:
+            return ""
+    try:
+        paths = [
+            p for (p,) in get_connection(repo_root).list_node_fields("File", ["path"])
+        ]
+    except Exception:
+        return ""
+    if not paths:
+        return ""
+    allowed = {str(repo_root), str(current)}
+    try:
+        from codegraph.core.config import load_config
+
+        cfg = load_config(repo_root)
+        for entry in list(cfg.extra_dirs) + list(cfg.include_dirs):
+            p = Path(entry)
+            p = p if p.is_absolute() else repo_root / p
+            allowed.update({str(p), str(p.resolve())})
+    except Exception:
+        return ""
+    prefixes = tuple(a.rstrip(os.sep) + os.sep for a in allowed)
+    for p in paths:
+        if os.path.isabs(p) and not p.startswith(prefixes):
+            return f"file outside the root: {p}"
+    return ""
+
+
 def index_repo(
     repo_root: str | Path,
     verbose: bool = False,
@@ -1504,6 +2134,34 @@ def _index_repo(
             repo_root, on_file=on_file, on_discovery=on_discovery
         )
 
+    method_requested = method
+
+    # A store built at another root (a copied .codegraph, a moved checkout)
+    # holds absolute paths of that root. A plain walk would upsert the new
+    # paths beside the old ones, leaving every symbol and caller twice. Wipe
+    # the graph and index from scratch; the FTS rows of the old paths are
+    # dropped by the orphan purge at the end of the scan.
+    moved = _foreign_root(repo_root)
+    if moved:
+        from codegraph.state.scan_meta import clear_meta
+
+        _activity_log(repo_root, "root_moved_rebuild", moved)
+        _recover_corrupt_graph(repo_root)
+        clear_meta(repo_root)
+        if method == "git_diff":
+            method = "auto"
+
+    # An index written by an older graph format lacks data that only a parse
+    # produces (call sites, for format 2), so every file is parsed again once,
+    # mtime cache or not. git_diff would only see changed files: widen it.
+    from codegraph.state.scan_meta import graph_format_outdated
+
+    reparse = graph_format_outdated(repo_root)
+    if reparse:
+        _activity_log(repo_root, "graph_format_upgrade", "full re-parse")
+        if method == "git_diff":
+            method = "auto"
+
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     take_import_coverage()  # drop anything a watcher left behind
     take_import_coverage_partial()
@@ -1530,6 +2188,7 @@ def _index_repo(
 
     scan_cfg = _load_config(repo_root)
     parseable = _filter_parseable(candidates, scan_cfg, stats)
+    tf_reparse = _module_sources_reparse(repo_root, scan_cfg, reparse, _activity_log)
 
     if on_discovery:
         on_discovery(len(parseable), actual_method)
@@ -1540,6 +2199,15 @@ def _index_repo(
     if deletions:
         _delete_gone(repo_root, deletions, _activity_log)
 
+    # Files git does not track at HEAD (untracked, new) are hashed in one git
+    # run instead of one subprocess each.
+    from codegraph.state.scan_meta import git_hash_objects
+
+    unstaged_shas = git_hash_objects(
+        repo_root,
+        [p for p in parseable if _rel_or_abs(p, repo_root) not in blob_shas],
+    )
+
     # ------------------------------------------------------------------
     # Index loop (shared across all methods)
     # ------------------------------------------------------------------
@@ -1548,10 +2216,16 @@ def _index_repo(
             rel = str(full_path.relative_to(repo_root))
         except ValueError:
             rel = str(full_path)
-        sha = blob_shas.get(rel)
+        sha = blob_shas.get(rel) or unstaged_shas.get(str(full_path))
         if sha is None:
             sha = _git_hash(repo_root, full_path)
-        ok = index_file(full_path, repo_root, git_blob_sha=sha, cfg=scan_cfg)
+        ok = index_file(
+            full_path,
+            repo_root,
+            git_blob_sha=sha,
+            cfg=scan_cfg,
+            reparse=reparse or (tf_reparse and _is_terraform(full_path)),
+        )
         status = "indexed" if ok else "error"
         if ok:
             stats["indexed"] += 1
@@ -1570,7 +2244,10 @@ def _index_repo(
         elif verbose:
             print(f"  + {rel}")
 
-    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log)
+    extra_dirs = _index_extra_dirs(repo_root, stats, _activity_log, reparse, tf_reparse)
+    repaired = _reparse_unstamped(repo_root, _activity_log)
+    if repaired:
+        stats["older_writer_reparsed"] = len(repaired)
     purged = _purge_fts_orphans(repo_root, _activity_log)
     if purged:
         stats["fts_orphans_purged"] = purged
@@ -1579,7 +2256,7 @@ def _index_repo(
     stats["imports"] = take_import_coverage()
     stats["imports_partial"] = take_import_coverage_partial()
     stats["method"] = actual_method
-    stats["method_requested"] = method
+    stats["method_requested"] = method_requested
     stats["extra_dirs"] = extra_dirs
     if deletions:
         stats["deleted"] = len(deletions)
@@ -1591,6 +2268,7 @@ def _index_repo(
         write_meta(repo_root, stats)
     except Exception:
         pass
+    _record_module_sources(repo_root, _activity_log)
 
     _activity_log(
         repo_root,
@@ -1635,7 +2313,11 @@ def _incremental_reindex(
     Returns a dict with: mode, reindexed, deleted, unchanged, elapsed_s.
     """
     from codegraph.state.activity import log as _activity_log
-    from codegraph.state.scan_meta import git_tree_blob_shas, read_meta, write_meta
+    from codegraph.state.scan_meta import (
+        clear_meta,
+        git_tree_blob_shas,
+        write_meta,
+    )
 
     repo_root = Path(repo_root)
     t0 = time.time()
@@ -1648,10 +2330,10 @@ def _incremental_reindex(
     # which recomputes every path from the current root. A plain full walk is
     # not enough: it upserts the new paths but leaves the old-root File nodes
     # orphaned in the graph.
-    recorded_root = (read_meta(repo_root) or {}).get("root")
-    if recorded_root and recorded_root != str(repo_root.resolve()):
+    if _foreign_root(repo_root):
         _activity_log(repo_root, "incremental_fallback", "root moved")
         _recover_corrupt_graph(repo_root)
+        clear_meta(repo_root)
         return {
             "mode": "fallback_full",
             **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
@@ -1672,6 +2354,29 @@ def _incremental_reindex(
 
     # Drop any path that lives under a federated subrepo. The subrepo
     # owns its own index; the parent acts as a passe-plat.
+    # An index from an older graph format needs one full re-parse; the blob
+    # diff below would leave every unchanged file without the new data.
+    from codegraph.state.scan_meta import graph_format_outdated
+
+    if graph_format_outdated(repo_root):
+        _activity_log(repo_root, "incremental_fallback", "graph format upgrade")
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
+    # A changed module_sources mapping or pinned ref: the full walk parses
+    # the Terraform files again (the others stay skipped by mtime).
+    try:
+        tf_changed = module_sources_changed(repo_root)
+    except Exception:
+        tf_changed = False
+    if tf_changed:
+        _activity_log(repo_root, "incremental_fallback", "module_sources changed")
+        return {
+            "mode": "fallback_full",
+            **index_repo(repo_root, on_file=on_file, on_discovery=on_discovery),
+        }
+
     if subrepos:
         head_shas = {
             rel: sha
@@ -1761,7 +2466,7 @@ def _incremental_reindex(
     delete_errors = 0
     for path in to_delete:
         try:
-            conn.delete_file_completely(path)
+            _delete_file_relinking(conn, path, repo_root)
             if fts_conn is not None:
                 delete_file_symbols(fts_conn, path)
             from codegraph.state.findings import purge_file_findings
@@ -1814,6 +2519,14 @@ def _incremental_reindex(
             errors += 1
         _progress(full, ok)
 
+    # Files an older cgh rewrote (a watcher save, a single-file index) keep
+    # the blob sha it stored, so the diff above sees nothing to do for them.
+    for path in _reparse_unstamped(repo_root, _act_log):
+        try:
+            reindexed.append(str(Path(path).relative_to(repo_root)))
+        except ValueError:
+            reindexed.append(path)
+
     purged = _purge_fts_orphans(repo_root, _act_log)
 
     elapsed = round(time.time() - t0, 2)
@@ -1843,6 +2556,7 @@ def _incremental_reindex(
         )
     except Exception:
         pass
+    _record_module_sources(repo_root, _activity_log)
 
     _activity_log(
         repo_root,

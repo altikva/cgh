@@ -1,8 +1,8 @@
 # cgh CLI Reference
 
 Reference for the core CLI verbs. The single entry point is `cgh`;
-plugin verbs (`vision`, `summarize`, `insights`, `classify`, `pii`,
-`bug`) are documented in their plugin's README.
+plugin verbs (`vision`, `pii`, `bug`, `codegen`, ...) are documented in
+their plugin's README.
 
 Global flag available on all commands:
 
@@ -168,7 +168,7 @@ cgh setup all        # writes configs for all tools
 
 Build or rebuild the full code graph. Discovers files via `git ls-files` (falls back to `os.walk` in non-git dirs). Parses every supported file and stores nodes/edges in the graph DB (DuckDB by default, SQLite via `CGH_DB=sqlite`) and BM25 FTS index.
 
-A CLI index builds the graph and search index only: plugins that call an LLM per file (summaries) are skipped, so the command never waits on a model. Run `cgh summarize` to backfill summaries.
+A CLI index builds the graph and search index only: plugin scanners that call an LLM per file are skipped, so the command never waits on a model. A running owner still runs them on the files it indexes.
 
 ```
 cgh index [--verbose | -v] [--root DIR]
@@ -245,11 +245,18 @@ cgh stop [--root DIR]
 
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
-`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline` and `cgh graph` first
-ask the repo's running owner over its local HTTP port, and open the graph
-read-only themselves only when no owner answers (in CI, say). They never start
-an owner, and the output and `--json` shape are the same either way.
-`cgh search` and `cgh lookup` fall back to the full-text index instead.
+`cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
+`cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+running owner over its local HTTP port, and open the graph read-only
+themselves only when no owner answers (in CI, say). They never start an owner,
+and the output and `--json` shape are the same either way.
+
+An owner started by an older cgh may lack the tool a command needs. It still
+holds the graph, so `cgh lookup`, `cgh search` and `cgh files` then answer at
+once from the full-text index (which misses files that define no symbol),
+`cgh stats` shows its full-text and call-log counts only, and the other
+commands exit 1 with the fix: `cgh stop`, and the next agent call starts a
+current owner.
 
 A call to the owner gives up after 30 seconds (`CGH_OWNER_TIMEOUT` changes
 that) and prints how to recover: `cgh doctor --owner` to probe it, `cgh stop`
@@ -342,7 +349,18 @@ cgh callers <fn_name> [--root DIR]
 
 ```bash
 cgh callers verify_token
+cgh callers GoogleKmsClient.destroy_crypto_key
+cgh callers app.services.envelope_encryption.GoogleKmsClient.destroy_crypto_key
 ```
+
+`Class.method` (optionally prefixed by its module path) selects that
+method. It also lists the callers of the interface methods it implements:
+a class it inherits (an ABC, a class named in TypeScript `extends` or
+`implements`) or a
+`typing.Protocol` it conforms to (it defines every method the Protocol
+declares). A call through `self._kms: KmsClient` links to
+`KmsClient.destroy_crypto_key`; those callers are shown with
+`via KmsClient.destroy_crypto_key`.
 
 ---
 
@@ -377,6 +395,44 @@ Accepts relative or absolute paths. The file must be indexed.
 ```bash
 cgh outline CLAUDE.md
 cgh outline docs/ARCHITECTURE.md
+```
+
+---
+
+### `endpoints`
+
+List HTTP routes with their method, full path, handler and `file:line`. Same
+query as the MCP `endpoints` tool, federated across subrepos (a non-parent
+scope is shown next to the route).
+
+```
+cgh endpoints [PATTERN] [--method M] [--include-tests] [--limit N] [--json] [--root DIR]
+```
+
+- **Full paths**: a FastAPI or Flask route's full path joins its router's
+  `APIRouter(prefix=...)` / `Blueprint(url_prefix=...)` with the prefixes of
+  the `include_router` / `register_blueprint` calls that reach it, across
+  files and through nested routers. A router included under several prefixes
+  has several full paths. Only string literals compose: a prefix taken from a
+  constant or an f-string leaves the route without a full path, marked
+  `prefix not literal` (`full_path_partial` in JSON).
+- **PATTERN**: a path or a glob, matched against the full paths, then the
+  local path. Parameter names are ignored (`{id}` matches `{donation_id}`).
+  A path starting with `/` that matches nothing falls back to routes whose
+  local path is a suffix of it, marked `suffix match`: several routers can
+  declare the same local path, so check the file.
+- `--method`: keep one method (any case).
+- `--include-tests`: also list the routes declared in test files, left out by
+  default (the summary line counts them).
+- `--limit N`: show the first N routes (default: all).
+- `--json`: `{pattern, total, tests_excluded, truncated, endpoints, warnings}`.
+
+**Example:**
+
+```bash
+cgh endpoints "/v1/donations/{id}/cancel"
+cgh endpoints "*/donations*" --method POST
+cgh endpoints --include-tests --json
 ```
 
 ---
@@ -608,12 +664,13 @@ cgh add-dir [action] [paths...] [--root DIR]
 | `list` (default) | Show configured extra directories |
 | `add <paths...>` | Add directory paths to the config |
 | `remove <paths...>` | Remove directory paths from the config |
+| `<paths...>` | Same as `add <paths...>`: a first argument that is not an action is a path to add |
 
 **Example:**
 
 ```bash
 cgh add-dir list
-cgh add-dir add ../ondonne-frontend ../ondonne-infra
+cgh add-dir ../ondonne-frontend ../ondonne-infra   # same as: cgh add-dir add ...
 cgh add-dir remove ../ondonne-infra
 ```
 

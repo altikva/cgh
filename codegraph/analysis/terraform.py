@@ -89,13 +89,42 @@ def _source_ref(source: str) -> str:
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]*$")
 _GIT_TIMEOUT = 10
 
+# Git variables that would point a command at another repository or index
+# than the work tree it runs in (`-C top`): never inherited.
+GIT_REDIRECT_VARS = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    }
+)
+
+
+def git_env() -> dict[str, str]:
+    """Environment for a read-only git run on a given work tree: no
+    redirection to another repo, no prompt, no lazy fetch of a partial
+    clone's missing objects (nothing goes to the network), no optional
+    locks."""
+    return {
+        **{k: v for k, v in os.environ.items() if k not in GIT_REDIRECT_VARS},
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+    }
+
 
 def _git(top: str, *args: str) -> bytes | None:
     """stdout of a read-only `git -C top <args>`, None on any failure. No
     prompt, no lazy fetch of a partial clone's missing objects: nothing
     ever goes to the network."""
     env = {
-        **os.environ,
+        **git_env(),
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_NO_LAZY_FETCH": "1",
         "GIT_OPTIONAL_LOCKS": "0",

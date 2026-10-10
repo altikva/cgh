@@ -301,12 +301,40 @@ def for_each_child_graphdb(
     return [_run_one_graphdb(root, parent, fn) for root in iter_db_roots(parent)[1:]]
 
 
+def _outdated_child(root: Path) -> str:
+    """Why a child's graph cannot be queried as is, or "" when it can: its
+    index was written in an older graph format and needs `cgh index` (or its
+    own owner starting) to be upgraded."""
+    from codegraph.state.scan_meta import (
+        GRAPH_FORMAT,
+        read_meta,
+        recorded_graph_format,
+    )
+
+    try:
+        fmt = recorded_graph_format(read_meta(root))
+    except Exception:  # best-effort probe: never fail a fan-out on it
+        return ""
+    if fmt is None or fmt >= GRAPH_FORMAT:
+        return ""
+    return (
+        f"index in graph format {fmt}, this cgh needs {GRAPH_FORMAT}: "
+        f"run `cgh index --root {root}` (or start its owner) to upgrade it"
+    )
+
+
 def _run_one_graphdb(
     root: Path,
     parent: Path,
     fn: Callable[[GraphDB, Path], Any],
 ) -> ScopedResult:
     scope = _scope_name(root, parent)
+    outdated = _outdated_child(root) if root != parent else ""
+    if outdated:
+        # A read-only open cannot re-parse, and an older-format graph answers
+        # short (missing tables, missing edges) without any error. Leave the
+        # child out with a warning, so the answer is flagged partial.
+        return ScopedResult(scope=scope, scope_path=root, payload=None, error=outdated)
     with open_graphdb_ro(root) as conn:
         if conn is None:
             return ScopedResult(
@@ -443,6 +471,11 @@ def _child_fts_fallback(
             )
             continue
         buckets.append((scoped.scope, list(scoped.payload or [])))
+        outdated = _outdated_child(scoped.scope_path)
+        if outdated:
+            # Names still answer from FTS, but blocks only the newer format
+            # indexes (Terraform, endpoints) are missing: say so.
+            failures.append((scoped.scope, f"answered from FTS only; {outdated}"))
     return buckets, failures
 
 

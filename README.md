@@ -166,7 +166,7 @@ searchable and reachable from the graph.
 |---|---|
 | [Install](docs/INSTALL.md) | one-line installers, extras, corporate mirrors, PATH |
 | [Upgrading to 0.15](docs/UPGRADING-0.15.md) | what changed for your agent, the upgrade command, old findings, rollback |
-| [Upgrading to 0.16](docs/UPGRADING-0.16.md) | the one-time re-parse, local call-origin logging, rollback |
+| [Upgrading to 0.16](docs/UPGRADING-0.16.md) | the one-time re-parse, what refuses until then, federation and seeds, removed plugins, rollback |
 | [CLI reference](docs/CLI_REFERENCE.md) | every verb and flag |
 | [Configuration](docs/CONFIGURATION.md) | `config.toml`, environment variables, `.cghignore` |
 | [MCP tools](docs/MCP_TOOLS.md) | the tools your agent calls, by category |
@@ -183,8 +183,8 @@ searchable and reachable from the graph.
 
 ## Limitations
 
-- **CALLS resolution is name-based by default, guided by imports.** For Python and TS/JS a call follows its shape: a same-file definition wins, then the file an import names (`from lib import f`, `import * as m`), `self.f()` the class and its bases, and `obj.f()` on an object of unknown type only the few methods of that name (or one in a file the caller imports). Calls into third-party modules and from production code into test files get no edge. Other languages link to a same-file function of that name, else to every function with that name outside test files. Cross-file edges stay best-effort: without types, `obj.f()` can miss its target or pick a look-alike. For Python you can opt into precise resolution with `pip install cgh[lsp]` and `precise_calls = true` (jedi-backed).
-- **Terraform HCL uses regex, not a full grammar.** Complex meta-arguments may be missed.
+- **CALLS resolution is name-based by default, guided by imports.** For Python and TS/JS a call follows its shape: a same-file definition wins, then the file an import names (`from lib import f`, `import * as m`), `self.f()` the class and its bases, `obj.f()` on a local or attribute whose class is known (built, annotated or returned by an annotated factory) that class, and `obj.f()` on an object of unknown type only the few methods of that name (or one in a file the caller imports). Calls into third-party modules and from production code into test files get no edge. Other languages link to a same-file function of that name, else to every function with that name outside test files. Cross-file edges stay best-effort: without types, `obj.f()` can miss its target or pick a look-alike. For Python you can opt into precise resolution with `pip install cgh[lsp]` and `precise_calls = true` (jedi-backed).
+- **Terraform is read file by file, not evaluated.** Blocks, references, module inputs and `moved`/`import`/`removed` are parsed with a real HCL grammar, but nothing is planned: `count`/`for_each` instances, dynamic blocks and computed addresses stay unexpanded, and a remote module is only read when `[terraform] module_sources` maps it to a local checkout.
 - **Imports resolve to files in your repo, never to dependencies.** Python, JS/TS, Vue, Java, Go and Rust each map an import onto the file it names, following that language's own layout rules. Anything outside the repo stays unresolved on purpose: the standard library, a Go module you do not own, an external crate or npm package gets no node and no edge, because inventing one would be a lie about your code. Cross-repo edges are not inferred either, each federated scope is canonical for its own files.
 - **Markdown code refs are heuristic.** PascalCase and snake_case patterns are matched, so a ref can be a false positive.
 - **Large repos take minutes to index.** Incremental updates stay fast (well under a second per changed file), and a pull or merge reindexes only the changed files via the git hooks.

@@ -67,6 +67,42 @@ While it runs:
 Nothing to do by hand. Subrepos of a federated workspace each re-parse
 when their own index runs.
 
+## Until the first index: what refuses, what warns
+
+- **The `cgh` query commands refuse an index from 0.15.** `lookup`,
+  `search`, `callers`, `callees`, `outline`, `files`, `graph`, `impact`
+  and `endpoints` read the graph directly when no owner runs, and a 0.15
+  graph lacks the tables and edges 0.16 answers from. They print
+  `this index was written in graph format N, this cgh needs 12. Run cgh
+  index once` and exit 1. Run `cgh index` once, or start the owner, which
+  upgrades the index on its own.
+- **A federated parent warns about each child still on the old format.**
+  A parent cannot upgrade its children (it opens them read-only), so a
+  child left on 0.15 is left out of graph answers with a warning naming
+  it, and `cgh federate verify` shows it as `outdated`. Run `cgh index` in
+  each child, or start its owner.
+- **Seeds for `cgh init --from`.** A seed indexed by 0.15 makes every
+  seeded worktree pay the re-parse. Run `cgh index` once in the seed with
+  0.16 before seeding from it.
+- **A `.codegraph` copied from another directory** is detected: status
+  says `copied`, path-based commands (`impact`, `outline`, `files --check`,
+  `endpoints`) refuse, and `cgh index` rebuilds it. A seed made with
+  `cgh init --from` is not a copy and stays incremental.
+- **Pick one version per index.** 0.15 can read a 0.16 index (see
+  rollback below), but switching back and forth makes 0.16 re-parse each
+  time it comes back. To stay on 0.15 for now, pin it:
+  `uv tool install --force "cgh[plugins]==0.15.0"` or `pip install "cgh<0.16"`.
+
+## Plugins that left
+
+cgh-summarize and cgh-classify are no longer part of cgh and get no new
+releases. Their last versions stay on PyPI. An existing install keeps
+them: cgh 0.16 starts with them installed and still loads them through
+the plugin interface, which did not change. `cgh[plugins]` now installs
+cgh-docs, cgh-codegen and cgh-bugreport only; to drop the other two,
+reinstall without them:
+`uv tool install --force --reinstall "cgh[plugins]==0.16.0"`.
+
 ## Call origins stay on your machine
 
 The call log now records who triggered each tool call (agent, cli, hook,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.15.0"
+version = "0.16.0"
 description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 54 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -70,7 +70,7 @@ dependencies = [
 # PyPI, they left this repo and are in no extra.
 plugins = [
     "cgh-docs>=0.2",
-    "cgh-bugreport>=0.1.2",
+    "cgh-bugreport>=0.1.3",
     "cgh-codegen>=0.1.2",
 ]
 # Everything: the plugins above plus the langs and lsp extras. The
@@ -80,7 +80,7 @@ plugins = [
 #   pip install "cgh[full]"
 full = [
     "cgh-docs>=0.2",
-    "cgh-bugreport>=0.1.2",
+    "cgh-bugreport>=0.1.3",
     "cgh-codegen>=0.1.2",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
@@ -146,6 +146,11 @@ codegraph = [
 dev = [
     "pytest>=8",
 ]
+
+[tool.uv.sources]
+# 0.1.3 is not on PyPI yet: resolved from the workspace until this release
+# publishes it (the release workflow ships plugins before core).
+cgh-bugreport = { path = "plugins/cgh-bugreport" }
 
 [tool.ruff]
 target-version = "py311"

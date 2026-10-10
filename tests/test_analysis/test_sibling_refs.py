@@ -47,12 +47,15 @@ class _FakeMcp:
 
 
 @pytest.fixture
-def setup(tmp_path):
+def setup(tmp_path, monkeypatch):
     """A project and a sibling "api" repo. The api's `develop` branch holds
-    a class its checked-out `main` does not."""
+    a class its checked-out `main` does not. The global config is an empty
+    directory, not the user's."""
     if shutil.which("git") is None:
         pytest.skip("git not on PATH")
     base = tmp_path.resolve()
+    (base / "home").mkdir()
+    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", base / "home")
     api = base / "api"
     (api / "app").mkdir(parents=True)
     (api / "app" / "models.py").write_text("class Donor:\n    pass\n")
@@ -152,6 +155,58 @@ def test_siblings_of_a_committed_config_are_ignored(setup):
     assert refs.sibling_repos(proj) == {}
     # This repo itself stays readable at a ref.
     assert "error" not in json.loads(t["file_at_ref"]("page.ts", "main"))
+
+
+def test_differently_cased_committed_config_is_not_local(setup):
+    """On a case-insensitive filesystem a committed `.CodeGraph/Config.toml`
+    is the file cgh reads; the tracked check must match it too."""
+    proj, _api, _t = setup
+    (proj / ".codegraph" / "config.toml").unlink()
+    (proj / ".codegraph").rmdir()
+    (proj / ".CodeGraph").mkdir()
+    (proj / ".CodeGraph" / "Config.toml").write_text(
+        '[codegraph]\nsiblings = ["../api"]\n'
+    )
+    _git(proj, "-c", "core.ignorecase=false", "add", "-f", ".CodeGraph/Config.toml")
+    _git(proj, "commit", "-qm", "ship")
+    (proj / ".CodeGraph").rename(proj / ".tmp")
+    (proj / ".tmp").rename(proj / ".codegraph")
+    (proj / ".codegraph" / "Config.toml").rename(proj / ".codegraph" / "config.toml")
+    assert not refs._project_config_is_local(proj)
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_symlinked_codegraph_dir_is_not_local(setup, tmp_path):
+    proj, _api, _t = setup
+    elsewhere = tmp_path / "elsewhere"
+    (proj / ".codegraph").rename(elsewhere)
+    (proj / ".codegraph").symlink_to(elsewhere)
+    assert not refs._project_config_is_local(proj)
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_git_redirect_env_cannot_hide_a_tracked_config(setup, monkeypatch):
+    proj, _api, _t = setup
+    _git(proj, "add", "-f", ".codegraph/config.toml")
+    _git(proj, "commit", "-qm", "ship config")
+    # An index without the file, handed in through the environment.
+    monkeypatch.setenv("GIT_INDEX_FILE", str(proj / "empty.index"))
+    assert not refs._project_config_is_local(proj)
+
+
+def test_global_config_siblings_always_count(setup):
+    """~/.codegraph/config.toml is the user's own: its siblings count even
+    when the project's config is committed."""
+    proj, api, t = setup
+    _git(proj, "add", "-f", ".codegraph/config.toml")
+    _git(proj, "commit", "-qm", "ship config")
+    from codegraph.core import config as cfg
+
+    (cfg.GLOBAL_DIR / "config.toml").write_text(f'[codegraph]\nsiblings = ["{api}"]\n')
+    out = json.loads(
+        t["pattern_search"]("class Association", repo="api", ref="develop")
+    )
+    assert [h["file"] for h in out["hits"]] == ["app/models.py"]
 
 
 def test_missing_file_at_ref(setup):

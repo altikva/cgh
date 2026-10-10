@@ -22,8 +22,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   can now search the API's develop branch without falling back to
   `git grep` / `git show` in a shell. Only this repo and the repos listed
   under the new `[codegraph] siblings` key are reachable; nothing is
-  fetched. The key only counts in a `config.toml` that git doesn't track,
-  so a cloned repo can't open your other repos.
+  fetched. The key counts in `~/.codegraph/config.toml`, and in the
+  project's `config.toml` only when git doesn't track it, so a cloned repo
+  can't open your other repos.
 
 ### Fixed
 - **After an upgrade, the owner of an open session stopped every 30

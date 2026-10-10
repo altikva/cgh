@@ -266,7 +266,9 @@ class CodegraphConfig:
     # Sibling git repos that pattern_search(repo=, ref=) and file_at_ref may
     # read at any branch or commit, straight from git (no checkout, no
     # index). Nothing outside this list is ever read. Paths are absolute,
-    # ~-relative, or relative to project_root.
+    # ~-relative, or relative to project_root. Parsed for display only:
+    # access is granted by analysis.refs.declared_siblings, which trusts the
+    # project file only when git does not track it.
     siblings: list[str] = field(default_factory=list)
     # [terraform] module_sources: opt-in map from a remote module source
     # package (git URL, registry address) to a local checkout, so a module

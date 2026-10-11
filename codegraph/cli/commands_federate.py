@@ -25,6 +25,7 @@ from codegraph.analysis.federation import (
     child_owner_status,
     remove_subrepo,
     resolve_children,
+    scope_commit,
     verify_child,
 )
 
@@ -213,6 +214,24 @@ def _cmd_down(args: argparse.Namespace) -> None:
             port_file(child).unlink(missing_ok=True)
 
 
+def _commit_cell(child: Path) -> str:
+    """The commit a child is read at: its checked-out HEAD and branch, plus
+    the commit its index was built at when the two differ."""
+    if not child.is_dir():
+        return "[dim], [/dim]"
+    info = scope_commit(child)
+    head = info["head"]
+    if not head:
+        return "[dim]not a git repo[/dim]"
+    cell = f"{head[:8]} [dim]{info['branch'] or ''}[/dim]"
+    indexed = info["indexed_commit"]
+    if indexed and indexed != head:
+        cell += f" [yellow](index at {indexed[:8]})[/yellow]"
+    elif not indexed:
+        cell += " [yellow](never indexed)[/yellow]"
+    return cell
+
+
 def _render_status_table(
     root: Path,
     children: list[Path],
@@ -225,7 +244,7 @@ def _render_status_table(
     table.add_column("subrepo")
     table.add_column("status")
     table.add_column("owner")
-    table.add_column("git")
+    table.add_column("commit")
     table.add_column("path")
 
     for child, status in zip(children, statuses, strict=False):
@@ -255,6 +274,5 @@ def _render_status_table(
         else:
             owner_cell = "[dim], [/dim]"
 
-        git = "[dim]yes[/dim]" if status.is_git_repo else "[dim]no[/dim]"
-        table.add_row(child.name, badge, owner_cell, git, display)
+        table.add_row(child.name, badge, owner_cell, _commit_cell(child), display)
     console.print(table)

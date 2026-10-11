@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Federated answers name the commit they were read at.** In a project
+  with subrepos, the federated MCP tools add a `scopes` map: for each
+  scope, the commit and branch checked out, the commit its index was built
+  at, and whether the two agree. `cgh federate list` shows the same in a
+  `commit` column (in place of the yes/no `git` column), flagging a child
+  whose index is behind its checkout. An agent can cite the exact commit
+  of a sibling repo it relied on.
+
 ## [0.17.0] - 2026-10-11
 
 ### Added

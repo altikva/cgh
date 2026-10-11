@@ -272,6 +272,60 @@ def _scope_name(repo_root: Path, parent: Path) -> str:
     return repo_root.name
 
 
+# Commit lookups are a git run per scope; tool calls come in bursts, so a
+# short-lived cache keeps them off the hot path without serving a commit
+# that is out of date for longer than a few seconds.
+_COMMIT_TTL_S = 5.0
+_commit_cache: dict[str, tuple[float, dict]] = {}
+
+
+def scope_commit(repo_path: Path) -> dict:
+    """What a scope's answers are read from: ``head`` (the commit checked
+    out now) and ``branch``, ``indexed_commit`` (the commit the index was
+    last brought to) and ``index_at_head`` (whether the two agree; the
+    graph tools answer from the index, pattern_search from the files on
+    disk). Values are None when the repo is not a git work tree or was
+    never indexed."""
+    import time
+
+    from codegraph.state.scan_meta import (
+        current_git_branch,
+        current_git_head,
+        read_meta,
+    )
+
+    key = str(repo_path)
+    now = time.monotonic()
+    hit = _commit_cache.get(key)
+    if hit and now - hit[0] < _COMMIT_TTL_S:
+        return hit[1]
+    head = current_git_head(repo_path)
+    indexed = (read_meta(repo_path) or {}).get("git_head")
+    info = {
+        "head": head,
+        "branch": current_git_branch(repo_path) if head else None,
+        "indexed_commit": indexed,
+        "index_at_head": bool(head) and head == indexed,
+    }
+    _commit_cache[key] = (now, info)
+    return info
+
+
+def scope_commits(repo_root: str | Path) -> dict[str, dict]:
+    """{scope: scope_commit} for the parent and each existing child, keyed
+    like the `scope` field of federated results."""
+    root = Path(repo_root).resolve()
+    out = {"parent": scope_commit(root)}
+    for child in resolve_children(root):
+        if child.is_dir():
+            out[_scope_name(child, root)] = scope_commit(child)
+    return out
+
+
+def reset_for_tests() -> None:
+    _commit_cache.clear()
+
+
 def for_each_graphdb(
     repo_root: str | Path,
     fn: Callable[[GraphDB, Path], Any],

@@ -8,6 +8,42 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-11
+
+### Added
+- **Graph answers say when the index can't be trusted.** On an index written
+  in an older graph format (until the one-time re-parse after an upgrade
+  has finished) or copied from another checkout, the graph MCP tools
+  (`find_callers`, `symbol_lookup`, `impact_of`, `endpoints`...) add
+  `stale: true` and a `stale_reason` to their response. Before, an empty
+  answer from such an index looked exactly like "no callers".
+- **Read another branch, or a sibling repo, without a checkout.**
+  `pattern_search` takes `ref` (a branch, tag or commit, e.g.
+  `origin/develop`) and `repo`, and a new `file_at_ref` tool returns a
+  file's lines at a ref. Both read straight from git. A frontend worktree
+  can now search the API's develop branch without falling back to
+  `git grep` / `git show` in a shell. Only this repo and the repos listed
+  under the new `[codegraph] siblings` key of your global
+  `~/.codegraph/config.toml` are reachable; nothing is fetched. A
+  project's own `config.toml` can't declare siblings, so a cloned repo
+  can't open your other repos.
+
+### Fixed
+- **After an upgrade, the owner of an open session stopped every 30
+  seconds.** An owner that exits because cgh changed on disk deleted the
+  markers of the proxies still running, so each owner they started next
+  saw no client, stopped after 30 s and cut short the one-time index
+  upgrade. The exiting owner now keeps live markers, a proxy registers
+  again before starting a new owner, and an owner counts the live proxy
+  that started it. This last point also covers sessions still running a
+  proxy from before this fix, with no reconnect needed.
+- **A file not yet added to git was invisible.** Incremental reindex only
+  looked at the files committed at HEAD, so a file an agent had just created
+  was never indexed, and was dropped from the graph when the watcher had
+  already added it. `pattern_search` missed it too when it ran on `git grep`
+  (no ripgrep installed). Both now include untracked files; gitignored
+  files stay out.
+
 ## [0.16.1] - 2026-10-10
 
 ### Security
@@ -2284,7 +2320,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/altikva/cgh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/altikva/cgh/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/altikva/cgh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/altikva/cgh/compare/v0.14.5...v0.15.0

@@ -461,6 +461,11 @@ max_file_size_kb = 500
 # Sibling directories indexed into this repo's graph, managed by
 # `cgh add-dir add ../frontend` (kept here so it versions with the repo).
 # extra_dirs = ["../my-frontend"]
+# Sibling git repos an agent may read at any branch without a checkout
+# (pattern_search(repo=, ref=), file_at_ref) are declared in the user's
+# global ~/.codegraph/config.toml only, as [codegraph] siblings = ["~/code/
+# my-api"]: a project config can come with a cloned repo, so it cannot
+# grant access to other repos.
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1

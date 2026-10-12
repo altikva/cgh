@@ -206,14 +206,28 @@ def _skills_source_dir() -> Path:
     return Path(__file__).parent.parent / "skills"
 
 
+# A skill directory name: lowercase letters, digits and dashes. On Windows,
+# pip and uv stash a directory they are replacing under "~" plus the name
+# minus its first letter ("cgh-x" becomes "~gh-x") and can leave it behind
+# when a file in it was locked; such a leftover is no skill.
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def _is_skill_dir(path: Path) -> bool:
+    """A bundled skill: a directory with a valid skill name and a SKILL.md."""
+    return (
+        bool(_SKILL_NAME_RE.match(path.name))
+        and path.is_dir()
+        and (path / "SKILL.md").exists()
+    )
+
+
 def list_bundled_skills() -> list[str]:
     """Return names of all skills shipped with codegraph."""
     src = _skills_source_dir()
     if not src.exists():
         return []
-    return sorted(
-        [d.name for d in src.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
-    )
+    return sorted(d.name for d in src.iterdir() if _is_skill_dir(d))
 
 
 def _parse_skill(path: Path) -> tuple[dict, str]:
@@ -241,12 +255,9 @@ def _iter_skills() -> list[tuple[str, dict, str, Path]]:
         return []
     out: list[tuple[str, dict, str, Path]] = []
     for skill_dir in sorted(src.iterdir()):
-        if not skill_dir.is_dir():
+        if not _is_skill_dir(skill_dir):
             continue
-        skill_file = skill_dir / "SKILL.md"
-        if not skill_file.exists():
-            continue
-        fm, body = _parse_skill(skill_file)
+        fm, body = _parse_skill(skill_dir / "SKILL.md")
         out.append((skill_dir.name, fm, body, skill_dir))
     return out
 
@@ -273,6 +284,7 @@ def install_claude(
 
     installed: list[str] = []
     for name, _fm, _body, skill_dir in _iter_skills():
+        _remove_stash_copy(dest_root, name)
         target_dir = dest_root / name
         _ensure_dir(target_dir)
         for f in skill_dir.rglob("*"):
@@ -291,6 +303,19 @@ def install_claude(
             shutil.copy2(f, dest)
         installed.append(name)
     return installed
+
+
+def _remove_stash_copy(dest_root: Path, name: str) -> None:
+    """Drop the copy an older cgh installed from a Windows stash leftover:
+    "~gh-x" next to "cgh-x", holding that same skill. Anything else under a
+    "~" name is left alone."""
+    stash = dest_root / ("~" + name[1:])
+    skill_file = stash / "SKILL.md"
+    if not skill_file.is_file():
+        return
+    fm, _body = _parse_skill(skill_file)
+    if fm.get("name") == name:
+        shutil.rmtree(stash)
 
 
 def detect_modified_skills(project_root: str | Path) -> list[str]:
@@ -332,6 +357,8 @@ def install_cursor(project_root: Path) -> list[str]:
 
     installed: list[str] = []
     for name, fm, body, _skill_dir in _iter_skills():
+        # A rule an older cgh wrote from a Windows stash leftover.
+        (rules_dir / f"~{name[1:]}.mdc").unlink(missing_ok=True)
         mdc = _format_mdc(fm, body)
         (rules_dir / f"{name}.mdc").write_text(mdc, encoding="utf-8")
         installed.append(name)
@@ -362,6 +389,7 @@ def install_bob(project_root: Path) -> list[str]:
 
     installed: list[str] = []
     for name, _fm, _body, skill_dir in _iter_skills():
+        _remove_stash_copy(dest_root, name)
         target_dir = dest_root / name
         _ensure_dir(target_dir)
         for f in skill_dir.rglob("*"):

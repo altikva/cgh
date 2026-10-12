@@ -17,8 +17,27 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   through an implemented interface method. An agent can tell the certain
   callers from the guesses. `cgh callers` and `cgh callees` mark the
   guessed rows with `?` / `??`. Works on existing indexes, no reindex.
+- **Traversals follow a single interface implementation.** `find_callees`,
+  `impact_of` and `path_between` no longer stop at a Protocol or ABC
+  method that has exactly one implementation in the scope: they continue
+  into it, the step marked `interface`. With several implementations they
+  still stop (`find_callees` gives their count). `find_callees` and
+  `cgh callees` accept `Class.method` / `module.function`.
+- **Token budget for `subgraph` and `impact_of`.** An optional
+  `max_tokens` trims the farthest rows first and reports `truncated` and
+  `dropped`. Without it the answers are unchanged.
+- **Exact doc mentions.** An inline code span naming one identifier
+  (`` `verify_token` ``) links the doc section to the symbol of that very
+  name; `doc_refs` marks each reference `match: exact` or `heuristic`.
+  Existing indexes pick it up as Markdown files are reindexed
+  (`cgh force-index` for all at once).
 
 ### Changed
+- **Lookup verbs exit non-zero when the name is missing or ambiguous.**
+  `cgh lookup`, `cgh callers` and `cgh callees` exit 3 when nothing defines
+  the name, and `cgh callees` exits 4, listing the candidates on stderr,
+  when several functions share it. Scripts that read exit 0 as "nothing
+  found" must check for 3.
 - **Built-in filter rebuilt from the language references.** The Python list
   is now the full built-in functions table of the Python docs, and the
   JS/TS list the callable and namespace properties of the ECMAScript global

@@ -180,7 +180,7 @@ class CodeRef:
 
     symbol: str
     line: int
-    context: str = "inline"  # "inline", "fenced", "link"
+    context: str = "inline"  # "inline", "inline_exact", "fenced", "link"
 
 
 @dataclass(slots=True)

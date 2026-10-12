@@ -9,6 +9,8 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Regex-based parser for Markdown files (plugin architecture).
 #              Extracts headings (sections), internal links, and code block references.
+#              An inline code span naming one identifier is an exact mention;
+#              the rest are pattern matches (PascalCase, snake_case, dotted).
 #              No tree-sitter dependency: pure Python regex.
 
 from __future__ import annotations
@@ -35,6 +37,28 @@ _SYMBOL_RE = re.compile(
     r"|(?:[a-z_][a-z0-9_]*(?:_[a-z0-9]+)+)"  # snake_case (2+ parts)
     r"|(?:[a-z_]\w+\.\w+)"  # dotted.path
 )
+
+# An inline code span holding exactly one identifier, optionally called.
+_IDENT_SPAN_RE = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?\s*")
+# The mention context of an exact inline mention (CodeRef.context), as the
+# MD_REFS_* edges and doc_refs read it.
+EXACT_CONTEXT = "inline_exact"
+_MIN_EXACT_LEN = 3
+
+
+def _exact_mention(code: str) -> str:
+    """The identifier an inline code span names exactly, "" when the span
+    is anything else, too short, or a method name every library uses
+    (`get`, `run`): those say nothing about which symbol is meant."""
+    from codegraph.analysis.call_rules import COMMON_METHODS
+
+    m = _IDENT_SPAN_RE.fullmatch(code)
+    if not m:
+        return ""
+    name = m.group(1)
+    if len(name) < _MIN_EXACT_LEN or name in COMMON_METHODS:
+        return ""
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +137,18 @@ class MarkdownParser(BaseParser):
                     )
                 )
 
-            # Inline code symbols
+            # Inline code symbols. A span that is one identifier (`helper`,
+            # `Repo`, `run_all()`) is an exact mention: it links to the code
+            # only when a symbol carries that very name, resolved once every
+            # file is indexed. Other spans keep the pattern match.
             for cm in _INLINE_CODE_RE.finditer(line):
                 code = cm.group(1)
+                exact = _exact_mention(code)
+                if exact:
+                    index.code_refs.append(
+                        CodeRef(symbol=exact, line=line_no, context=EXACT_CONTEXT)
+                    )
+                    continue
                 for sm in _SYMBOL_RE.finditer(code):
                     index.code_refs.append(
                         CodeRef(

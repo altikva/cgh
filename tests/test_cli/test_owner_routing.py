@@ -337,7 +337,12 @@ class TestQueryRouting:
         monkeypatch.setattr(oc, "call_owner_tool", _fake)
         _forbid_local_open(monkeypatch)
         cq.cmd_callees(argparse.Namespace(root=str(tmp_path), fn_name="run"))
-        assert seen == [("find_callees", {"fn_name": "run", "max_depth": 1})]
+        # The owner is asked first how many functions carry the name (an
+        # ambiguous one exits 4), then for the callees.
+        assert seen == [
+            ("symbol_lookup", {"name": "run"}),
+            ("find_callees", {"fn_name": "run", "max_depth": 1}),
+        ]
         assert "helper" in captured_console.getvalue()
 
     def test_outline_via_owner(self, tmp_path, monkeypatch, captured_console):

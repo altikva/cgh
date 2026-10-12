@@ -306,6 +306,10 @@
         "default": 3,
         "type": "integer"
       },
+      "max_tokens": {
+        "default": 0,
+        "type": "integer"
+      },
       "symbol_or_file": {
         "type": "string"
       }
@@ -701,6 +705,10 @@
       },
       "file_path": {
         "type": "string"
+      },
+      "max_tokens": {
+        "default": 0,
+        "type": "integer"
       }
     },
     "required": [

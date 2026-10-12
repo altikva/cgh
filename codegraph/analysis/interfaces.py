@@ -25,6 +25,15 @@ from codegraph.analysis.call_rules import MAX_CLASS_DEPTH
 # Base names that make a class a structural interface. A dotted base
 # (typing.Protocol, typing_extensions.Protocol) keeps its last segment.
 _PROTOCOL_BASES = frozenset({"Protocol"})
+# Direct bases that make a class an interface whose methods a traversal
+# may follow to their single implementation: a Protocol or an ABC.
+_INTERFACE_BASES = frozenset({"Protocol", "ABC"})
+
+
+def _base(name: str) -> str:
+    """A base name as recorded (``typing.Protocol``, ``Protocol[T]``)
+    reduced to its last plain segment."""
+    return name.split("[", 1)[0].rsplit(".", 1)[-1]
 
 
 def _is_dunder(name: str) -> bool:
@@ -81,6 +90,8 @@ class InterfaceResolver:
         self._methods: dict[str, dict[str, str]] = {}
         self._ancestors: dict[str, list[str]] = {}
         self._protocols: dict[str, list[tuple[str, str]]] = {}
+        self._by_name: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {}
+        self._impls: dict[str, list[str]] = {}
 
     def owner(self, fn_id: str) -> str:
         """The class id defining method ``fn_id``, "" for a plain function."""
@@ -126,19 +137,62 @@ class InterfaceResolver:
             self._ancestors[class_id] = out
         return self._ancestors[class_id]
 
+    def _named(self, method: str) -> list[tuple[str, str, tuple[str, ...]]]:
+        """(Function id, class id, class base names) of every function named
+        ``method``; the class id is "" for a plain function."""
+        if method not in self._by_name:
+            self._by_name[method] = sorted(
+                (fn_id, class_id, tuple(bases))
+                for fn_id, _n, _f, class_id, bases in self.conn.call_targets_named(
+                    [method]
+                )
+            )
+        return self._by_name[method]
+
     def _protocol_methods(self, method: str) -> list[tuple[str, str]]:
         """(Function id, class id) of every method named ``method`` declared
         by a class with a Protocol base."""
         if method not in self._protocols:
-            self._protocols[method] = sorted(
+            self._protocols[method] = [
                 (fn_id, class_id)
-                for fn_id, _n, _f, class_id, bases in self.conn.call_targets_named(
-                    [method]
-                )
-                if class_id
-                and any(b.rsplit(".", 1)[-1] in _PROTOCOL_BASES for b in bases)
-            )
+                for fn_id, class_id, bases in self._named(method)
+                if class_id and any(_base(b) in _PROTOCOL_BASES for b in bases)
+            ]
         return self._protocols[method]
+
+    def is_interface(self, fn_id: str) -> bool:
+        """True for a method of a class declaring an interface: a
+        ``typing.Protocol`` or an ``abc.ABC`` (a direct base)."""
+        method = label(fn_id).rsplit(".", 1)[-1]
+        if _is_dunder(method):
+            return False
+        return any(
+            fid == fn_id and cid and any(_base(b) in _INTERFACE_BASES for b in bases)
+            for fid, cid, bases in self._named(method)
+        )
+
+    def implementations(self, fn_id: str) -> list[str]:
+        """Ids of the methods implementing the interface method ``fn_id``
+        (the same-named methods whose interfaces_of include it). Empty when
+        ``fn_id`` is no interface method."""
+        if fn_id not in self._impls:
+            found: list[str] = []
+            if self.is_interface(fn_id):
+                method = label(fn_id).rsplit(".", 1)[-1]
+                found = [
+                    fid
+                    for fid, cid, _b in self._named(method)
+                    if cid and fid != fn_id and fn_id in self.interfaces_of(fid)
+                ]
+            self._impls[fn_id] = found
+        return self._impls[fn_id]
+
+    def sole_implementation(self, fn_id: str) -> str:
+        """The one implementation of the interface method ``fn_id``, "" when
+        it has none or several (a call through it cannot be followed
+        without guessing)."""
+        impls = self.implementations(fn_id)
+        return impls[0] if len(impls) == 1 else ""
 
     def interfaces_of(self, fn_id: str) -> list[str]:
         """Function ids of the interface methods ``fn_id`` implements: the

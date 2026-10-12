@@ -335,6 +335,17 @@ cgh lookup BaseHandler
 cgh lookup "Multi-tenancy"    # matches doc sections
 ```
 
+**Exit codes** of `lookup`, `callers` and `callees`, for scripts:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Answered: definitions found, or the callers / callees list (even an empty one for a name that is defined) |
+| 1 | Could not answer (an owner that timed out or is older than this cgh) |
+| 3 | Not found: nothing in the index defines the name (`lookup`: no symbol and no doc section; `callers` / `callees`: no function, class or Terraform block of that name) |
+| 4 | Ambiguous, `callees` only: a bare name defined by several functions. The candidates are listed on stderr; qualify the name as `Class.method` or `module.function` |
+
+A subrepo that could not be read leaves `lookup` at 0, since the name may live there.
+
 ---
 
 ### `callers`
@@ -381,7 +392,11 @@ cgh callees <fn_name> [--root DIR]
 
 ```bash
 cgh callees get_current_user
+cgh callees UserService.get_current_user   # one definition of a shared name
 ```
+
+A name defined by several functions exits 4 with the candidates on stderr
+(see the exit codes under `lookup`): their callees would read as one list.
 
 ---
 

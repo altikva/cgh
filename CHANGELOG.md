@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Overlapping open PRs.** `cgh prs overlap` (and the `pr_overlap` MCP
+  tool) reads the open pull requests through `gh` and lists the pairs that
+  change the same symbols, call into each other's changes, or only share
+  files, so collisions show up before review. A missing or logged-out `gh`
+  or a repo without a GitHub remote gives a clear message.
+- **GraphML export.** `cgh export --format graphml [--out FILE] [--scope
+  PATH]` writes the code graph (files, symbols, typed edges, call
+  resolution) for Gephi or yEd, on both graph backends.
 - **Architecture report.** `cgh report` (and the `architecture_report` MCP
   tool) writes one Markdown page on how the code is put together: the
   subsystems, the files everything leans on and whether tests reach them,

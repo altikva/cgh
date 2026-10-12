@@ -81,6 +81,7 @@ from codegraph.cli.commands_query import (
     cmd_grep,
     cmd_lookup,
     cmd_outline,
+    cmd_report,
     cmd_search,
 )
 from codegraph.cli.commands_session import (
@@ -131,6 +132,7 @@ def _print_help():
                 ("outline", "Heading tree of a Markdown file"),
                 ("endpoints", "HTTP routes with full paths, handler and location"),
                 ("communities", "Subsystems found from the import and call graph"),
+                ("report", "Architecture report in Markdown (--out FILE)"),
                 (
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
@@ -391,7 +393,7 @@ def _register_setup_and_serve(sub) -> None:
 
 def _register_inspect(sub) -> None:
     """Register stats, logs, search, lookup, callers, callees, outline,
-    endpoints, communities, doctor."""
+    endpoints, communities, report, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -583,6 +585,26 @@ def _register_inspect(sub) -> None:
         "--limit", "-n", type=int, default=30, help="Max communities per scope"
     )
     p.add_argument("--json", action="store_true")
+    _add_root(p)
+
+    # --- report ---
+    p = sub.add_parser(
+        "report",
+        help="Architecture report: subsystems, pivots, bridges, unexpected "
+        "links, cycles, questions",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=10, help="Rows per section (default 10)"
+    )
+    p.add_argument(
+        "--resolution",
+        "-r",
+        type=float,
+        default=1.0,
+        help="Community resolution, as in `cgh communities` (default 1.0)",
+    )
+    p.add_argument("--json", action="store_true", help="The MCP tool payload")
+    add_out_option(p, what="the report")
     _add_root(p)
 
     # --- doctor ---
@@ -914,6 +936,7 @@ def main() -> None:
         "outline": cmd_outline,
         "endpoints": cmd_endpoints,
         "communities": cmd_communities,
+        "report": cmd_report,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,

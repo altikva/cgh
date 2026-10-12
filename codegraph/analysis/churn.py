@@ -8,6 +8,8 @@
 #              MCP and no graph DB. file_churn aggregates per-file commit
 #              counts, recency, authors, and line deltas from the numstat
 #              log. file_ownership rolls up the top authors for one file.
+#              rank_hotspots scores files by churn, recency and an
+#              importer count the caller reads from the graph.
 #              Results are cached per (repo_root, git HEAD) so a long-running
 #              owner process does not re-shell out on every query. Every
 #              git call has a timeout and degrades to an empty result when
@@ -16,6 +18,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from codegraph.core.utils import quiet_subprocess_kwargs
@@ -250,3 +253,62 @@ def clear_cache() -> None:
     """Drop the per-HEAD churn / ownership caches. Mostly for tests."""
     _CHURN_CACHE.clear()
     _OWNERSHIP_CACHE.clear()
+
+
+def rank_hotspots(
+    churn: dict[str, dict],
+    importers: dict[str, int],
+    to_graph_path: Callable[[str], str],
+    scan_cap: int = 2000,
+    now: float | None = None,
+) -> list[dict]:
+    """Change-risk ranking: files that churn a lot AND that many files
+    import. ``churn`` is :func:`file_churn` (repo-relative paths),
+    ``importers`` the IMPORTS in-degree keyed by graph path, and
+    ``to_graph_path`` maps one to the other.
+
+    Each term is in 0..1, log1p-compressed so a few hot files do not crush
+    the scale; score = 100 * (0.45 commits + 0.35 importers + 0.20 recency),
+    recency = 1 / (1 + age_days / 30). Returns rows {file, commits,
+    last_modified, importers, authors, score}, highest score first.
+    """
+    import math
+    import time
+
+    now = time.time() if now is None else now
+    items = list(churn.items())[:scan_cap]
+    max_commits = max((e["commits"] for _p, e in items), default=1)
+    max_importers = max(importers.values(), default=1) if importers else 1
+    log_commits = math.log1p(max_commits)
+    log_importers = math.log1p(max_importers)
+
+    scored: list[dict] = []
+    for rel_path, e in items:
+        imp = importers.get(to_graph_path(rel_path), 0)
+        commits = e["commits"]
+        last = e.get("last_modified", 0) or 0
+        commit_term = math.log1p(commits) / log_commits if log_commits else 0.0
+        import_term = math.log1p(imp) / log_importers if log_importers and imp else 0.0
+        if last > 0:
+            age_days = max(0.0, (now - last) / 86400.0)
+            recency_term = 1.0 / (1.0 + age_days / 30.0)
+        else:
+            recency_term = 0.0
+        score = round(
+            100.0 * (0.45 * commit_term + 0.35 * import_term + 0.20 * recency_term), 2
+        )
+        authors = sorted(
+            e.get("authors", {}).items(), key=lambda kv: kv[1], reverse=True
+        )[:5]
+        scored.append(
+            {
+                "file": rel_path,
+                "commits": commits,
+                "last_modified": last,
+                "importers": imp,
+                "authors": [{"name": n, "commits": c} for n, c in authors],
+                "score": score,
+            }
+        )
+    scored.sort(key=lambda r: r["score"], reverse=True)
+    return scored

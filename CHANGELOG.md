@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Architecture report.** `cgh report` (and the `architecture_report` MCP
+  tool) writes one Markdown page on how the code is put together: the
+  subsystems, the files everything leans on and whether tests reach them,
+  the single links between subsystems, imports that go up the layers, calls
+  with no import behind them, import cycles, and review questions drawn
+  from those findings. Deterministic, no LLM; `--out FILE` saves it.
 - **Subsystems from how the code connects.** The new `communities` MCP tool
   and `cgh communities` cluster the file graph (imports and calls) into
   communities and name each one from its own files, so an agent sees which

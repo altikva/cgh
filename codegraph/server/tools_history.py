@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import time
 
@@ -94,58 +93,16 @@ def register(mcp) -> None:
         except Exception:
             importers = {}
 
-        # Map churn (repo-relative paths) onto graph paths (absolute) so we
-        # can attach the importer count.
-        items = list(churn.items())[:_HOTSPOT_SCAN_CAP]
-        max_commits = max((e["commits"] for _p, e in items), default=1)
-        max_importers = max(importers.values(), default=1) if importers else 1
-        now = time.time()
-        log_commits = math.log1p(max_commits)
-        log_importers = math.log1p(max_importers)
-
-        scored: list[dict] = []
-        for rel_path, e in items:
-            abs_path = _abs(rel_path)
-            imp = importers.get(abs_path, 0)
-            commits = e["commits"]
-            last = e.get("last_modified", 0) or 0
-
-            commit_term = math.log1p(commits) / log_commits if log_commits else 0.0
-            import_term = (
-                math.log1p(imp) / log_importers if log_importers and imp else 0.0
-            )
-            if last > 0:
-                age_days = max(0.0, (now - last) / 86400.0)
-                recency_term = 1.0 / (1.0 + age_days / 30.0)
-            else:
-                recency_term = 0.0
-            score = round(
-                100.0 * (0.45 * commit_term + 0.35 * import_term + 0.20 * recency_term),
-                2,
-            )
-
-            # Authors as a sorted [name, commits] list, top few only.
-            authors = sorted(
-                e.get("authors", {}).items(), key=lambda kv: kv[1], reverse=True
-            )[:5]
-            scored.append(
-                {
-                    "file": rel_path,
-                    "commits": commits,
-                    "last_modified": last,
-                    "importers": imp,
-                    "authors": [{"name": n, "commits": c} for n, c in authors],
-                    "score": score,
-                }
-            )
-
-        scored.sort(key=lambda r: r["score"], reverse=True)
+        scored = _churn.rank_hotspots(
+            churn, importers, _abs, scan_cap=_HOTSPOT_SCAN_CAP, now=time.time()
+        )
+        items = min(len(churn), _HOTSPOT_SCAN_CAP)
         top = scored[: max(1, int(limit))]
         return json.dumps(
             {
                 "hotspots": top,
                 "count": len(top),
-                "scanned": len(items),
+                "scanned": items,
                 "note": (
                     f"churn covers the last {_churn.DEFAULT_COMMIT_CAP} commits; "
                     "score combines commit count (0.45), import in-degree "

@@ -49,6 +49,7 @@
     "parsers",
     "plan-index",
     "plugins",
+    "report",
     "reset",
     "search",
     "serve",
@@ -619,6 +620,19 @@
           "--json",
           "--root",
           "-h"
+        ]
+      },
+      "report": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
         ]
       },
       "reset": {

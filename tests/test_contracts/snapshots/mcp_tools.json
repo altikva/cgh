@@ -18,6 +18,19 @@
     },
     "required": []
   },
+  "architecture_report": {
+    "properties": {
+      "max_items": {
+        "default": 10,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
+  },
   "call_stats": {
     "properties": {},
     "required": []

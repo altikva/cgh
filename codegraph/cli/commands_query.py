@@ -584,6 +584,71 @@ def _owner_lookup_rows(data: dict) -> list[tuple] | None:
     return rows
 
 
+# Exit codes of the lookup verbs (lookup, callers, callees), on top of 0
+# (answered) and 1 (could not answer: locked store, older owner...).
+EXIT_NOT_FOUND = 3  # no definition of the name in any scope
+EXIT_AMBIGUOUS = 4  # several definitions, and the command needs one
+
+
+def _definitions(root: str, name: str) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) of the code definitions
+    of ``name`` (functions, classes, Terraform blocks; not doc sections),
+    every scope. None when the graph cannot be read to tell."""
+    served = _ask_owner(root, "lookup", "symbol_lookup", {"name": name})
+    if served is not None:
+        rows = _owner_lookup_rows(served)
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            return None
+        rows = [("parent", *r) for r in _lookup_conn(conn, name)]
+        child_rows, _warnings = _query_children(root, lambda c: _lookup_conn(c, name))
+        rows += child_rows
+    if rows is None:
+        return None
+    return [r for r in rows if r[1] != "md_section"]
+
+
+def _exit_if_unknown(root: str, name: str) -> None:
+    """Exit EXIT_NOT_FOUND, saying so on stderr, when nothing defines
+    ``name``. A ``Class.method`` / ``module.function`` name counts as known
+    when a function carries its last part. Returns when it is defined or
+    the graph cannot tell."""
+    import sys
+
+    defs = _definitions(root, name)
+    if defs is None or defs:
+        return
+    if "." in name:
+        tail = _definitions(root, name.rsplit(".", 1)[-1])
+        if tail is None or any(d[1] == "function" for d in tail):
+            return
+    print(f"cgh: no definition of '{name}' in the index", file=sys.stderr)
+    raise SystemExit(EXIT_NOT_FOUND)
+
+
+def _exit_if_ambiguous(root: str, name: str) -> None:
+    """Exit EXIT_AMBIGUOUS, listing the candidates on stderr, when the bare
+    function name ``name`` has several definitions."""
+    import sys
+
+    if "." in name:
+        return
+    defs = _definitions(root, name)
+    functions = [d for d in defs or () if d[1] == "function"]
+    if len(functions) < 2:
+        return
+    print(
+        f"cgh: '{name}' names {len(functions)} functions; qualify it as "
+        "Class.method or module.function:",
+        file=sys.stderr,
+    )
+    for scope, _kind, _n, fp, start, _end in functions:
+        where = f"  ({scope})" if scope != "parent" else ""
+        print(f"  {_short_path(fp, root)}:{start}{where}", file=sys.stderr)
+    raise SystemExit(EXIT_AMBIGUOUS)
+
+
 def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
@@ -630,6 +695,7 @@ def cmd_lookup(args: argparse.Namespace) -> None:
                 console.print(
                     f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
                 )
+                raise SystemExit(EXIT_NOT_FOUND)
             return
 
     # No owner: open the graph read-only. An older owner holds the graph
@@ -690,6 +756,9 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         console.print(
             f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
         )
+        if not child_failures:
+            # A subrepo that could not be read may hold it: no verdict then.
+            raise SystemExit(EXIT_NOT_FOUND)
 
 
 # ---------------------------------------------------------------------------
@@ -1032,6 +1101,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
     _print_scope_warnings(warnings)
 
     if not rows:
+        _exit_if_unknown(root, args.fn_name)
         console.print(
             f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]"
         )
@@ -1077,20 +1147,45 @@ def cmd_callers(args: argparse.Namespace) -> None:
 
 
 def _callees_conn(conn, fn_name: str) -> list[tuple]:
+    from codegraph.analysis.interfaces import qualified_methods
     from codegraph.analysis.provenance import RESOLVED, EdgeProvenance
 
-    found = conn.find_neighbors(
-        "CALLS",
-        src_where={"name": fn_name},
-        return_src=["id"],
-        return_dst=["id", "name", "file_path", "start_line"],
-    )
-    rows = [
-        (row["dst_name"], row["dst_file_path"], row["dst_start_line"], resolution)
-        for row, resolution in zip(
-            found, EdgeProvenance(conn).of_rows(found), strict=True
+    # `Class.method` / `module.function` selects those definitions only.
+    start_ids = qualified_methods(conn, fn_name) if "." in fn_name else []
+    anchors = [{"src_key": i} for i in start_ids] or [{"src_where": {"name": fn_name}}]
+    found = [
+        row
+        for anchor in anchors
+        for row in conn.find_neighbors(
+            "CALLS",
+            return_src=["id"],
+            return_dst=["id", "name", "file_path", "start_line"],
+            **anchor,
         )
     ]
+    from codegraph.analysis.interfaces import InterfaceResolver
+    from codegraph.analysis.provenance import INTERFACE
+
+    resolver = InterfaceResolver(conn)
+    rows: list[tuple] = []
+    for row, resolution in zip(found, EdgeProvenance(conn).of_rows(found), strict=True):
+        rows.append(
+            (row["dst_name"], row["dst_file_path"], row["dst_start_line"], resolution)
+        )
+        # A call to an interface method with a single implementation lands
+        # there, as find_callees reports it.
+        impl = resolver.sole_implementation(str(row.get("dst_id") or ""))
+        for r in (
+            conn.find_nodes(
+                "Function",
+                where={"id": impl},
+                return_fields=["name", "file_path", "start_line"],
+                limit=1,
+            )
+            if impl
+            else ()
+        ):
+            rows.append((r["name"], r["file_path"], r["start_line"], INTERFACE))
     if "." in fn_name:
         # A Terraform address: the blocks it references.
         from codegraph.analysis.terraform import used_by
@@ -1106,6 +1201,8 @@ def cmd_callees(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     federated = has_subrepos(root)
     rows: list[tuple] = []
+    # The callees of several same-named functions would read as one list.
+    _exit_if_ambiguous(root, args.fn_name)
 
     served = _ask_owner(
         root, "callees", "find_callees", {"fn_name": args.fn_name, "max_depth": 1}
@@ -1141,6 +1238,7 @@ def cmd_callees(args: argparse.Namespace) -> None:
     _print_scope_warnings(warnings)
 
     if not rows:
+        _exit_if_unknown(root, args.fn_name)
         console.print(f"[dim]'{args.fn_name}' calls no indexed functions[/dim]")
         return
 

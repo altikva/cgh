@@ -456,30 +456,94 @@ def register(mcp) -> None:
         so the guessed rows are told apart. `truncated` is set when the
         fan-out or total cap was hit.
 
+        A call to an interface method (a Protocol or ABC method) that has
+        exactly one implementation in the scope is followed to it: the
+        implementation is listed right after, at the same depth, with
+        `resolution` "interface" and `via` naming the interface method.
+        With several implementations the walk stops there and the row
+        carries `implementations` (their count). `Class.method` or
+        `module.function` starts from that definition only.
+
         For a Terraform address it returns the blocks that block references.
         """
         depth_cap = max(1, min(int(max_depth), _CALLEE_DEPTH_CAP))
         state = {"truncated": False}
 
         def query(conn):
-            from codegraph.analysis.provenance import RESOLVED, EdgeProvenance
+            from codegraph.analysis.interfaces import (
+                InterfaceResolver,
+                label,
+                qualified_methods,
+            )
+            from codegraph.analysis.provenance import (
+                INTERFACE,
+                RESOLVED,
+                EdgeProvenance,
+            )
 
             prov = EdgeProvenance(conn)
+            resolver = InterfaceResolver(conn)
+            # `Class.method` / `module.function` starts from those functions.
+            start_ids = qualified_methods(conn, fn_name) if "." in fn_name else []
             seen: set[str] = {fn_name}  # names already expanded (cycle guard)
             frontier = [fn_name]
             out: list[dict] = []
             depth = 0
+
+            def dispatched(row: dict) -> dict | None:
+                """The implementation a call to an interface method lands
+                on, as a callee row, when the interface has exactly one in
+                this scope; the interface row gets `implementations` when
+                it has several."""
+                dst = str(row.get("dst_id") or "")
+                if not dst or not resolver.is_interface(dst):
+                    return None
+                impls = resolver.implementations(dst)
+                if len(impls) != 1:
+                    if impls:
+                        out[-1]["implementations"] = len(impls)
+                    return None
+                found = conn.find_nodes(
+                    "Function",
+                    where={"id": impls[0]},
+                    return_fields=["name", "file_path", "start_line"],
+                    limit=1,
+                )
+                if not found:
+                    return None
+                return {
+                    "callee": found[0]["name"],
+                    "file": found[0]["file_path"],
+                    "line": found[0]["start_line"],
+                    "depth": depth,
+                    "resolution": INTERFACE,
+                    "via": label(dst),
+                }
+
             while frontier and depth < depth_cap:
                 depth += 1
                 nxt: list[str] = []
                 for name in frontier:
-                    rows = conn.find_neighbors(
-                        "CALLS",
-                        src_where={"name": name},
-                        return_src=["id"],
-                        return_dst=["id", "name", "file_path", "start_line"],
-                        limit=_CALLEE_FANOUT_CAP,
-                    )
+                    if depth == 1 and start_ids:
+                        rows = [
+                            r
+                            for sid in start_ids
+                            for r in conn.find_neighbors(
+                                "CALLS",
+                                src_key=sid,
+                                return_src=["id"],
+                                return_dst=["id", "name", "file_path", "start_line"],
+                                limit=_CALLEE_FANOUT_CAP,
+                            )
+                        ]
+                    else:
+                        rows = conn.find_neighbors(
+                            "CALLS",
+                            src_where={"name": name},
+                            return_src=["id"],
+                            return_dst=["id", "name", "file_path", "start_line"],
+                            limit=_CALLEE_FANOUT_CAP,
+                        )
                     resolutions = prov.of_rows(rows)
                     if "." in name:
                         # A Terraform address: the blocks it references.
@@ -506,6 +570,14 @@ def register(mcp) -> None:
                         if callee not in seen:
                             seen.add(callee)
                             nxt.append(callee)
+                        impl = dispatched(row) if i < len(resolutions) else None
+                        if impl is not None:
+                            # Not a call of its own: the same hop, landing
+                            # on the interface's only implementation.
+                            out.append(impl)
+                            if impl["callee"] not in seen:
+                                seen.add(impl["callee"])
+                                nxt.append(impl["callee"])
                     if len(out) >= _CALLEE_TOTAL_CAP:
                         state["truncated"] = True
                         return out
@@ -743,12 +815,17 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def subgraph(file_path: str, depth: int = 1) -> str:
+    def subgraph(file_path: str, depth: int = 1, max_tokens: int = 0) -> str:
         """
         Return files related to `file_path` within `depth` import hops.
         Federated. Inter-repo edges are not modeled, each subrepo's IMPORTS
         graph is canonical for its own files. Useful for blast radius
         within a single scope; results are concatenated across scopes.
+
+        `max_tokens` (0 = no budget) caps the answer's approximate size
+        (about 4 characters per token of JSON): the farthest files go
+        first (with depth 1, from the longer of the two lists), and the
+        answer gets `truncated: true` and `dropped` (how many).
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
@@ -795,11 +872,11 @@ def register(mcp) -> None:
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload, indent=2)
+            return _within_budget(payload, ["depends_on", "depended_by"], max_tokens)
 
         # depth >= 2, recursive traversal via the GraphDB helper
         def run_reach(conn):
-            return [
+            rows = [
                 {"file": row["path"], "lang": row["lang"]}
                 for row in conn.reach_via_edge(
                     "IMPORTS",
@@ -808,10 +885,40 @@ def register(mcp) -> None:
                     return_fields=["path", "lang"],
                 )
             ]
+            if max_tokens > 0:
+                # Nearest first, so a budget trims the farthest files.
+                hops = _import_hops(conn, file_path, int(depth))
+                rows.sort(key=lambda r: (hops.get(r["file"], depth + 1), r["file"]))
+            return rows
 
         deps, warnings = _federate(run_reach)
         payload = {"file": file_path, "depth": depth, "reachable": deps}
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
+        return _within_budget(payload, ["reachable"], max_tokens)
+
+    def _import_hops(conn, start: str, depth: int) -> dict[str, int]:
+        """{file: import hops from ``start``} within ``depth`` hops."""
+        hops: dict[str, int] = {}
+        frontier = [start]
+        for level in range(1, depth + 1):
+            nxt: list[str] = []
+            for key in frontier:
+                for row in conn.find_neighbors(
+                    "IMPORTS", src_key=key, return_dst=["path"]
+                ):
+                    path = row["dst_path"]
+                    if path not in hops and path != start:
+                        hops[path] = level
+                        nxt.append(path)
+            frontier = nxt
+        return hops
+
+    def _within_budget(payload: dict, keys: list[str], max_tokens: int) -> str:
+        """The payload as JSON, trimmed to ``max_tokens`` when one is set."""
+        if max_tokens > 0:
+            from codegraph.server._budget import fit_tokens
+
+            fit_tokens(payload, keys, max_tokens)
         return json.dumps(payload, indent=2)

@@ -20,13 +20,13 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 |------|-------------|
 | `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters |
 | `find_callers(fn_name)` | Find all functions that call `fn_name`; each row says how its edge was obtained in `resolution` (see below) |
-| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls, each with its `resolution`; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
+| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls, each with its `resolution`; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call. A call to a Protocol or ABC method with a single implementation in the scope continues into it (a row marked `interface`, with `via`); with several, the row carries `implementations` and the walk stops. `Class.method` / `module.function` starts from that definition only |
 | `imports_of(file_path)` | List modules imported by a file |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
 | `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning `{file, line, text}`, instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
-| `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
+| `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |
 
 **Call edge resolution.** The rows of `find_callers` and `find_callees`, the
@@ -48,8 +48,8 @@ queried name keeps the most certain one.
 | Tool | Description |
 |------|-------------|
 | `file_summary(file_path)` | One-shot orientation for a file: role/layer/lang, its functions and classes with line ranges, what it imports, and who imports it |
-| `impact_of(symbol_or_file, max_depth?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints; an impacted function carries the `resolution` of the edge that reached it |
-| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS`; over CALLS, `hops` gives each step's `resolution` |
+| `impact_of(symbol_or_file, max_depth?, focus?, max_tokens?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints; an impacted function carries the `resolution` of the edge that reached it. The single implementation of a Protocol or ABC method also counts the callers of that method. `max_tokens` trims the farthest nodes first (`truncated`, `dropped`) |
+| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS`; over CALLS, `hops` gives each step's `resolution`, and a Protocol or ABC method with a single implementation leads on to it |
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
 | `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
@@ -63,7 +63,7 @@ queried name keeps the most certain one.
 |------|-------------|
 | `search_docs(query, limit?)` | Search Markdown by heading title or body content |
 | `doc_outline(file_path)` | Table of contents of a Markdown file |
-| `doc_refs(symbol_name)` | Find all docs that reference a code symbol |
+| `doc_refs(symbol_name)` | Find all docs that reference a code symbol; `match` is `exact` when an inline code span names the symbol and nothing else, `heuristic` for a name picked out by its shape or a text mention |
 
 ### Full-Text & AI Context
 

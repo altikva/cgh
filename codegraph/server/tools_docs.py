@@ -137,7 +137,19 @@ def register(mcp) -> None:
         """
         Find all Markdown documentation that references a code symbol.
         Use this to find docs about a function or class before reading its code.
+
+        Each reference carries `match`: "exact" when an inline code span
+        names the symbol and nothing else (`verify_token`, `Repo`), so the
+        link exists only because a symbol of that very name is indexed;
+        "heuristic" for a name picked out of a longer span or a code block
+        by its shape (PascalCase, snake_case), and for a plain text mention.
         """
+        from codegraph.parsers.markdown import EXACT_CONTEXT
+
+        def _mention(context: str) -> dict:
+            if context == EXACT_CONTEXT:
+                return {"context": "inline", "match": "exact"}
+            return {"context": context, "match": "heuristic"}
 
         def query(conn):
             out: list[dict] = []
@@ -155,7 +167,7 @@ def register(mcp) -> None:
                         "file": row["src_file_path"],
                         "lines": f"{row['src_start_line']}-{row['src_end_line']}",
                         "ref_type": "function",
-                        "context": row.get("edge_context") or "",
+                        **_mention(row.get("edge_context") or ""),
                     }
                 )
             for row in conn.find_neighbors(
@@ -170,7 +182,7 @@ def register(mcp) -> None:
                         "file": row["src_file_path"],
                         "lines": f"{row['src_start_line']}-{row['src_end_line']}",
                         "ref_type": "class",
-                        "context": row.get("edge_context") or "",
+                        **_mention(row.get("edge_context") or ""),
                     }
                 )
             seen = {(it["file"], it["lines"]) for it in out}
@@ -191,6 +203,7 @@ def register(mcp) -> None:
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "ref_type": "text_mention",
                         "context": "body",
+                        "match": "heuristic",
                     }
                 )
             return out

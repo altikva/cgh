@@ -246,7 +246,7 @@ cgh stop [--root DIR]
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
 `cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
-`cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh communities`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -438,6 +438,46 @@ cgh endpoints [PATTERN] [--method M] [--include-tests] [--limit N] [--json] [--r
 cgh endpoints "/v1/donations/{id}/cancel"
 cgh endpoints "*/donations*" --method POST
 cgh endpoints --include-tests --json
+```
+
+---
+
+### `communities`
+
+Subsystems found from how the code connects rather than from its
+directories. Imports and calls are folded into a weighted file graph,
+clustered by modularity, and each cluster is named from its own files: the
+directory most of them share, then the file-name words that recur in it and
+rarely elsewhere. Same query as the MCP `communities` tool, federated across
+subrepos (each scope clustered on its own graph, shown in a `scope` column).
+
+```
+cgh communities [--resolution R] [--min-size N] [--limit N] [--json] [--root DIR]
+```
+
+- One row per community: name, file count, cohesion (the share of its link
+  weight that stays inside it), most central file, and the ids of the
+  communities it links to most.
+- **Shared utilities**: files linked to so many others that they would glue
+  every subsystem together are left out of clustering and listed below the
+  table with their neighbour count.
+- Test files are left out; `tests_for` maps them to what they exercise.
+- `--resolution R`: above 1 gives more, smaller communities; below 1 fewer,
+  larger ones (default 1.0).
+- `--min-size N`: hide communities with fewer files (default 2).
+- `--limit N`: at most N communities per scope (default 30), biggest first.
+- `--json`: the MCP tool payload, `{communities, shared_utilities, scopes,
+  count, truncated, note}`.
+
+The same graph always gives the same communities. The result is cached until
+the index changes, so asking twice costs nothing.
+
+**Example:**
+
+```bash
+cgh communities
+cgh communities --resolution 1.5 --min-size 3
+cgh communities --json
 ```
 
 ---

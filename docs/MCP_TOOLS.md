@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 56 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 57 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -8,8 +8,9 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 
 | Tool | Description |
 |------|-------------|
-| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries: no Read needed |
+| `architecture_overview(max_files_per_role?)` | Compact map of all files grouped by layer (presentation/application/domain/infra/test/doc) and role (handler/router/component/store/…) with 1-line summaries, plus a short `subsystems` list (the biggest communities): no Read needed |
 | `domain_map(keyword, limit_per_role?)` | Every file whose path / role / module_doc mentions the keyword, grouped by role |
+| `communities(resolution?, min_size?, max_communities?)` | Subsystems detected from the import and call graph (modularity clustering, deterministic), each named from its own files, with its size, central file, files, top symbols, cohesion and strongest links to other communities. Files linked to nearly everything are listed apart as shared utilities; test files are left out. Federated per scope, cached until the index changes |
 | `endpoints(path_pattern?, method?, include_tests?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers and, for FastAPI / Flask, full paths composed from router and include prefixes. A full path, a glob or a path with other parameter names finds a route; an unmatched path falls back to a flagged suffix match. Routes in test files are left out unless `include_tests`: works cross-repo when `extra_dirs` is configured |
 
 ### Code Navigation

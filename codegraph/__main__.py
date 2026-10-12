@@ -76,6 +76,7 @@ from codegraph.cli.commands_plugins import cmd_plugins
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
+    cmd_communities,
     cmd_endpoints,
     cmd_grep,
     cmd_lookup,
@@ -129,6 +130,7 @@ def _print_help():
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
                 ("endpoints", "HTTP routes with full paths, handler and location"),
+                ("communities", "Subsystems found from the import and call graph"),
                 (
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
@@ -389,7 +391,7 @@ def _register_setup_and_serve(sub) -> None:
 
 def _register_inspect(sub) -> None:
     """Register stats, logs, search, lookup, callers, callees, outline,
-    endpoints, doctor."""
+    endpoints, communities, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -554,6 +556,31 @@ def _register_inspect(sub) -> None:
     )
     p.add_argument(
         "--limit", "-n", type=int, default=0, help="Max routes to show (default: all)"
+    )
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
+    # --- communities ---
+    p = sub.add_parser(
+        "communities",
+        help="Subsystems detected from the import and call graph, named from "
+        "their files",
+    )
+    p.add_argument(
+        "--resolution",
+        "-r",
+        type=float,
+        default=1.0,
+        help="Above 1: more, smaller communities; below 1: fewer, larger (default 1.0)",
+    )
+    p.add_argument(
+        "--min-size",
+        type=int,
+        default=2,
+        help="Leave out communities with fewer files (default 2)",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=30, help="Max communities per scope"
     )
     p.add_argument("--json", action="store_true")
     _add_root(p)
@@ -886,6 +913,7 @@ def main() -> None:
         "callees": cmd_callees,
         "outline": cmd_outline,
         "endpoints": cmd_endpoints,
+        "communities": cmd_communities,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,

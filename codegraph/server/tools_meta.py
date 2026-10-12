@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+from codegraph.core.utils import short_path as _short_path
+
 
 def register(mcp) -> None:
     """Register meta tools on the given FastMCP instance."""
@@ -272,19 +274,51 @@ def register(mcp) -> None:
             )
 
         md = render_context_markdown(ctx)
-        return json.dumps(
-            {
-                "context_markdown": md,
-                "files_referenced": ctx.files_referenced,
-                "symbol_count": len(ctx.nodes),
-                "memory_docs_count": len(ctx.memory_docs),
-                "plan_docs_count": len(ctx.plan_docs),
-                "knowledge_docs_count": len(ctx.knowledge_docs),
-                "estimated_tokens": ctx.token_estimate,
-                "session_id": session_id or None,
-            },
-            indent=2,
-        )
+        payload = {
+            "context_markdown": md,
+            "files_referenced": ctx.files_referenced,
+            "symbol_count": len(ctx.nodes),
+            "memory_docs_count": len(ctx.memory_docs),
+            "plan_docs_count": len(ctx.plan_docs),
+            "knowledge_docs_count": len(ctx.knowledge_docs),
+            "estimated_tokens": ctx.token_estimate,
+            "session_id": session_id or None,
+        }
+        subsystem = _subsystem_of(ctx)
+        if subsystem:
+            payload["subsystem"] = subsystem
+            payload["context_markdown"] = md + (
+                f"\n**Subsystem**: {subsystem['name']} ({subsystem['size']} files)"
+                + (
+                    f", also: {', '.join(subsystem['files'])}"
+                    if subsystem["files"]
+                    else ""
+                )
+            )
+        return json.dumps(payload, indent=2)
+
+    def _subsystem_of(ctx) -> dict | None:
+        """The community the best-matching symbols live in, with its central
+        files the context did not already list. Best effort: the context
+        answers without it on any failure."""
+        if not ctx.nodes:
+            return None
+        try:
+            from codegraph.analysis.communities import communities_for, subsystem_hint
+
+            result = communities_for(_get_conn())
+            seeds = [n.file_path for n in ctx.nodes]
+            hint = subsystem_hint(result, seeds, exclude=ctx.files_referenced)
+        except Exception:  # best effort, see the docstring
+            return None
+        if hint is None:
+            return None
+        full = next(c for c in result.communities if c.id == hint.id)
+        return {
+            "name": hint.name,
+            "size": full.size,
+            "files": [_short_path(f, _srv._root) for f in hint.files],
+        }
 
     @mcp.tool()
     @_logged_tool

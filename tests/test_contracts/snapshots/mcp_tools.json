@@ -40,6 +40,23 @@
       "session_id"
     ]
   },
+  "communities": {
+    "properties": {
+      "max_communities": {
+        "default": 30,
+        "type": "integer"
+      },
+      "min_size": {
+        "default": 2,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
+  },
   "compact_session": {
     "properties": {
       "digest": {

@@ -892,6 +892,138 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_communities
+# ---------------------------------------------------------------------------
+
+
+def communities_payload_for(root: str, arguments: dict) -> dict:
+    """The communities tool payload, from the live owner or a local
+    read-only open (parent plus each subrepo), built by the same code either
+    way."""
+    from codegraph.analysis.communities import communities_for, communities_payload
+
+    served = _ask_owner(root, "communities", "communities", arguments)
+    if served is not None:
+        return served
+    resolution = arguments["resolution"]
+    per_scope: list[tuple[str, object]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", communities_for(conn, resolution)))
+    buckets, failures = _query_children_scoped(
+        root, lambda c: communities_for(c, resolution)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = communities_payload(
+        per_scope,  # type: ignore[arg-type]
+        lambda p: _short_path(p, root),
+        resolution=resolution,
+        min_size=arguments["min_size"],
+        max_communities=arguments["max_communities"],
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_communities(args: argparse.Namespace) -> None:
+    """Subsystems detected from the import and call graph, as a table."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "resolution": float(args.resolution),
+        "min_size": int(args.min_size),
+        "max_communities": int(args.limit),
+    }
+    payload = communities_payload_for(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    rows = payload.get("communities") or []
+    if not rows:
+        console.print("[dim]No communities: the graph has too few linked files.[/dim]")
+        return
+    federated = len(payload.get("scopes") or []) > 1
+    table = Table(box=box.SIMPLE_HEAD, pad_edge=False, padding=(0, 1))
+    table.add_column("#", justify="right", style="dim", no_wrap=True, min_width=2)
+    if federated:
+        table.add_column("scope", style="magenta")
+    table.add_column("name", style="bold", ratio=1)
+    table.add_column("files", justify="right", no_wrap=True)
+    table.add_column("cohesion", justify="right", no_wrap=True)
+    table.add_column("central", style="cyan", no_wrap=True)
+    table.add_column("links", style="dim", no_wrap=True)
+    for r in rows:
+        links = ", ".join(str(lk["id"]) for lk in r.get("links") or []) or "-"
+        cells = [str(r["id"])]
+        if federated:
+            cells.append(escape(r.get("scope", "parent")))
+        cells += [
+            escape(r["name"]),
+            str(r["size"]),
+            f"{r['cohesion']:.2f}",
+            escape(os.path.basename(r.get("central", ""))),
+            links,
+        ]
+        table.add_row(*cells)
+    console.print(table)
+    hubs = payload.get("shared_utilities") or []
+    if hubs:
+        shown = ", ".join(f"{escape(h['file'])} ({h['degree']})" for h in hubs[:6])
+        more = f" and {len(hubs) - 6} more" if len(hubs) > 6 else ""
+        console.print(f"[dim]Shared utilities, left out:[/dim] {shown}{more}")
+    for s in payload.get("scopes") or []:
+        label = f"{s['scope']}: " if federated else ""
+        console.print(
+            f"[dim]{label}{s['shown']} of {s['communities']} communities shown, "
+            f"{s['files_clustered']} files clustered, modularity {s['modularity']}"
+            + (", more with --limit" if payload.get("truncated") else "")
+            + "[/dim]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# cmd_report
+# ---------------------------------------------------------------------------
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    """The architecture report: Markdown on stdout, --out also saves it."""
+    import sys
+
+    from codegraph.cli.output import emit_result
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "max_items": int(args.limit),
+        "resolution": float(args.resolution),
+    }
+    payload = _ask_owner(root, "report", "architecture_report", arguments)
+    if payload is None:
+        from codegraph.analysis.arch_report import build_report
+
+        payload = build_report(
+            _query_conn(root),
+            root,
+            lambda p: _short_path(p, root),
+            resolution=arguments["resolution"],
+            max_items=max(1, arguments["max_items"]),
+        )
+    for w in payload.get("warnings") or []:
+        print(f"cgh: {w.get('scope')}: {w.get('error')}", file=sys.stderr)
+    if args.json:
+        emit_result(json.dumps(payload, indent=2), args.out, "architecture.json")
+        return
+    emit_result(payload.get("markdown", ""), args.out, "ARCHITECTURE.md")
+
+
+# ---------------------------------------------------------------------------
 # cmd_callers
 # ---------------------------------------------------------------------------
 

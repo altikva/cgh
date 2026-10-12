@@ -9,6 +9,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Architecture report.** `cgh report` (and the `architecture_report` MCP
+  tool) writes one Markdown page on how the code is put together: the
+  subsystems, the files everything leans on and whether tests reach them,
+  the single links between subsystems, imports that go up the layers, calls
+  with no import behind them, import cycles, and review questions drawn
+  from those findings. Deterministic, no LLM; `--out FILE` saves it.
+- **Subsystems from how the code connects.** The new `communities` MCP tool
+  and `cgh communities` cluster the file graph (imports and calls) into
+  communities and name each one from its own files, so an agent sees which
+  files form one unit even where the directories do not say. Widely shared
+  utility files are listed apart instead of gluing everything together.
+  The answer is deterministic, federated per scope and cached until the
+  index changes. `architecture_overview` gains a short `subsystems` list,
+  and `context_for_task` names the subsystem its best matches belong to.
 - **Call rows say how sure they are.** `find_callers`, `find_callees`,
   `impact_of` and `path_between` (its new `hops` list) give each call edge
   a `resolution`: `resolved` when the call's shape fixes the target (same
@@ -52,6 +66,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   object plus the web globals common to browsers and Node (typed arrays,
   `Function`, `eval`, `atob`, `WeakRef`...). A call to one of these no
   longer produces a CALLS edge to a repo function that shadows the name.
+
+### Fixed
+- **Windows: no more `~gh-...` skills after an upgrade.** pip and uv can
+  leave a replaced folder behind under `~` plus its name minus the first
+  letter, and cgh listed and installed it as a skill (`~gh-papercuts` next
+  to `cgh-papercuts`). Bundled skills now need a valid name, and the next
+  `cgh init` or `cgh setup` removes the copies an older cgh installed.
 
 ## [0.17.1] - 2026-10-11
 

@@ -48,8 +48,14 @@ def register(mcp) -> None:
             "domain":      { "model": [...], "schema": [...] },
             "infra":       { "provider": [...], ... },
             "test":        { "test": [...] },
-            "doc":         { "doc": [...] }
+            "doc":         { "doc": [...] },
+            "subsystems":  [{name, size, central, scope?}, ...]
           }
+
+        "subsystems" lists the biggest communities of connected files (see
+        the communities tool for their members, symbols and links). In a
+        federated project the layers sit under "by_scope" and each
+        subsystem carries its scope.
         """
 
         def query(conn):
@@ -97,10 +103,44 @@ def register(mcp) -> None:
                     ordered[lyr] = dict(val)
             scopes_out[scope] = ordered
 
+        subsystems = _subsystems()
         # If only the parent scope is present, keep the legacy flat shape.
         if list(scopes_out.keys()) == ["parent"]:
-            return json.dumps(scopes_out["parent"], indent=2)
-        return json.dumps({"by_scope": scopes_out}, indent=2)
+            flat = scopes_out["parent"]
+            if subsystems:
+                flat["subsystems"] = [
+                    {k: v for k, v in s.items() if k != "scope"} for s in subsystems
+                ]
+            return json.dumps(flat, indent=2)
+        out: dict = {"by_scope": scopes_out}
+        if subsystems:
+            out["subsystems"] = subsystems
+        return json.dumps(out, indent=2)
+
+    def _subsystems(per_scope_cap: int = 8) -> list[dict]:
+        """The biggest communities of each scope, for architecture_overview.
+        Best effort: the overview answers without them on any failure."""
+        try:
+            from codegraph.analysis.communities import communities_for
+
+            per_scope, _warnings = federate_scoped(
+                _get_conn, _srv._root, lambda conn: communities_for(conn)
+            )
+        except Exception:
+            return []
+        rows: list[dict] = []
+        for scope, result in per_scope:
+            kept = [c for c in result.communities if c.size > 1][:per_scope_cap]
+            rows.extend(
+                {
+                    "name": c.name,
+                    "size": c.size,
+                    "central": _short_path(c.files[0], _srv._root),
+                    "scope": scope,
+                }
+                for c in kept
+            )
+        return rows
 
     @mcp.tool()
     @_logged_tool
@@ -170,6 +210,97 @@ def register(mcp) -> None:
             },
             indent=2,
         )
+
+    @mcp.tool()
+    @_logged_tool
+    def communities(
+        resolution: float = 1.0, min_size: int = 2, max_communities: int = 30
+    ) -> str:
+        """
+        Subsystems detected from how the code actually connects, not from
+        directory names: IMPORTS and CALLS folded into a weighted file graph,
+        clustered by modularity (Louvain), each cluster named from its own
+        files (dominant directory, recurring file-name words).
+
+        Use it to learn which files form one unit before changing them, or
+        to see how a codebase splits when its directories do not say.
+
+        Args:
+          resolution: above 1 gives more, smaller communities; below 1 fewer,
+            larger ones (default 1.0).
+          min_size: leave out communities with fewer files (default 2).
+          max_communities: cap per scope (default 30), biggest first.
+
+        Returns JSON {communities: [{scope, id, name, size, central, dirs,
+        files, files_more?, top_symbols: [{name, file, line, callers}],
+        cohesion, links: [{id, name, weight}]}], shared_utilities: [{scope,
+        file, degree, communities}], scopes: [{scope, files_clustered, edges,
+        communities, modularity, ...}], count, truncated, note}. cohesion is
+        the share of a community's edge weight that stays inside it. Shared
+        utilities are files so widely used they were left out of clustering
+        (they would glue everything together). Test files are left out.
+        Same graph, same answer; cached until the index changes.
+        """
+        from codegraph.analysis.communities import (
+            communities_for,
+            communities_payload,
+        )
+
+        per_scope, warnings = federate_scoped(
+            _get_conn, _srv._root, lambda conn: communities_for(conn, resolution)
+        )
+        payload = communities_payload(
+            per_scope,
+            lambda p: _short_path(p, _srv._root),
+            resolution=resolution,
+            min_size=min_size,
+            max_communities=max_communities,
+        )
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
+        return json.dumps(payload, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def architecture_report(max_items: int = 10, resolution: float = 1.0) -> str:
+        """
+        One Markdown page on how the codebase is put together, built from
+        the graph with no LLM: the subsystems (see communities) with names
+        and sizes, shared utilities, pivot files (change-risk hotspots when
+        git history is there, import in-degree otherwise, each marked when no
+        test imports it), bridges (the only link between two subsystems,
+        files reaching many of them), unexpected links (layer inversions,
+        calls with no import behind them), import cycles, and a short list
+        of questions worth asking, generated by fixed rules from those
+        findings.
+
+        Use it for a first look at an unfamiliar repo, before a refactor, or
+        to prepare an architecture review. Same index, same report.
+
+        Args:
+          max_items: rows per section (default 10).
+          resolution: passed to the community detection (default 1.0).
+
+        Returns JSON {markdown, questions, scopes: [{scope, subsystems,
+        pivots, untested_pivots, sole_links, bridge_files,
+        layer_inversions, calls_without_import, import_cycles, ...}],
+        partial?, warnings?}. Federated: one section per scope.
+        """
+        from codegraph.analysis.arch_report import build_report
+
+        try:
+            conn = _get_conn()
+        except Exception:
+            conn = None
+        payload = build_report(
+            conn,
+            _srv._root,
+            lambda p: _short_path(p, _srv._root),
+            resolution=resolution,
+            max_items=max(1, int(max_items)),
+        )
+        return json.dumps(payload, indent=2)
 
     @mcp.tool()
     @_logged_tool

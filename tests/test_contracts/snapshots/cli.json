@@ -19,6 +19,7 @@
     "backend",
     "callees",
     "callers",
+    "communities",
     "compact",
     "diff",
     "doctor",
@@ -48,6 +49,7 @@
     "parsers",
     "plan-index",
     "plugins",
+    "report",
     "reset",
     "search",
     "serve",
@@ -231,6 +233,19 @@
         ],
         "positionals": [
           "fn_name"
+        ]
+      },
+      "communities": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--min-size",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
         ]
       },
       "compact": {
@@ -605,6 +620,19 @@
           "--json",
           "--root",
           "-h"
+        ]
+      },
+      "report": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
         ]
       },
       "reset": {

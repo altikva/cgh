@@ -18,6 +18,19 @@
     },
     "required": []
   },
+  "architecture_report": {
+    "properties": {
+      "max_items": {
+        "default": 10,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
+  },
   "call_stats": {
     "properties": {},
     "required": []
@@ -39,6 +52,23 @@
       "digest",
       "session_id"
     ]
+  },
+  "communities": {
+    "properties": {
+      "max_communities": {
+        "default": 30,
+        "type": "integer"
+      },
+      "min_size": {
+        "default": 2,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
   },
   "compact_session": {
     "properties": {

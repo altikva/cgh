@@ -47,6 +47,10 @@ knowledge_record(
 per entry. Reuse existing tags when possible: call `knowledge_terms()`
 first to see what's already in use.
 
+**Record outcomes**: when a knowledge entry helped or misled you, say so
+with `knowledge_outcome(verdict="useful"|"dead_end"|"corrected", entry_id=...,
+note="<task>")`, so later searches rank it and resume warns about dead ends.
+
 ## Context lifecycle: persist before compaction, reload after
 
 Your context window is finite. Knowledge survives compaction: raw

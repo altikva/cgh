@@ -84,6 +84,8 @@ than reading.
 - **You learn something worth remembering** (pattern / decision /
   gotcha / style / glossary term):
   1. `knowledge_record(title, body, kind, tags, file_refs?)`
+- **A knowledge entry helped or misled you**: record an outcome,
+  `knowledge_outcome(verdict="useful"|"dead_end"|"corrected", entry_id, note?)`.
 - **Tooling or the environment fails (NOT your code)**: a wedged process, a
   held lock, `SERVICE_DISABLED`, a CI job stuck `queued`, a stale token while
   another credential works, a flag that misbehaves. This is a *papercut*, and

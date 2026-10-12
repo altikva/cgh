@@ -820,6 +820,23 @@ checkpoints and superseded entries stay behind. For each entry:
 Each promoted entry keeps its original timestamp and records its branch,
 commit, pull request, source worktree, id in the source store and promotion
 time. `knowledge_list` and `knowledge_search` return these under `provenance`.
+Outcomes are not promoted: they stay in the store they were recorded in.
+
+Outcomes record whether relying on an entry, or on some files, worked. They
+are what the `knowledge_outcome` MCP tool writes, from the shell:
+
+```
+cgh knowledge outcome useful|dead_end|corrected [--id N | --query Q] \
+    [--file PATH ...] [--note TEXT] [--corrected-by N] [--json]
+cgh knowledge outcomes [--limit N] [--json]
+```
+
+`outcome` needs an entry (`--id`, or `--query` for the best search hit), one
+or more `--file`, or both; `corrected` needs an entry and takes the id of the
+entry that fixed it. `outcomes` lists the rated entries and files with their
+status (`preferred`, `useful`, `contested`, `dead_end`, `corrected`, `faded`),
+decayed score and verdict counts. Verdicts fade with a half-life set by
+`[codegraph] knowledge_half_life_days` (30 days by default).
 
 ### `guard`
 

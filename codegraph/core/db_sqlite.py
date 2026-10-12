@@ -514,6 +514,21 @@ class SQLiteGraphDB:
                 out.extend(tuple("" if v is None else v for v in r) for r in rows)
         return out
 
+    def call_sites_from(self, from_ids: list[str]) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for chunk in _chunks(sorted(set(from_ids)), 200):
+            # A Function id starts with its file path: filter on the indexed
+            # file column first, then on the exact ids.
+            files = sorted({i.rsplit("::", 1)[0] for i in chunk})
+            rows = self._conn.execute(
+                "SELECT from_id, file_path, name, to_id, kind, hint, ctx FROM call_site "
+                f"WHERE file_path IN ({', '.join('?' for _ in files)}) "
+                f"AND from_id IN ({', '.join('?' for _ in chunk)})",
+                [*files, *chunk],
+            ).fetchall()
+            out.extend(tuple("" if v is None else v for v in r) for r in rows)
+        return out
+
     def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
         out: list[tuple[str, str, str]] = []
         for chunk in _chunks(sorted(set(names))):

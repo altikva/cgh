@@ -360,6 +360,7 @@ mcp = FastMCP(
         "       1. symbol_lookup / find_callers / find_callees\n"
         "       2. search_symbols for a half-known name, fts_search for code\n"
         "          described in words (a sentence, French or English)\n"
+        "       Call rows carry `resolution`: name / ambiguous are guesses.\n"
         "  • Text/regex pattern search ('find every occurrence of X'):\n"
         "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
         "          Returns {file, line, text}. Then Read only those lines.\n"

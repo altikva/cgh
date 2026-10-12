@@ -160,6 +160,11 @@ class GraphDB(Protocol):
         ctx).
         """
 
+    def call_sites_from(self, from_ids: list[str]) -> list[tuple[str, ...]]:
+        """The call sites recorded in the functions ``from_ids``, as
+        (from_id, file_path, name, to_id, kind, hint, ctx) rows. Read at
+        query time to tell how each CALLS edge of a caller was resolved."""
+
     def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
         """Every Function whose name is in ``names``, as (id, name, file_path)."""
 

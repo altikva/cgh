@@ -417,6 +417,13 @@ def register(mcp) -> None:
         conforms to), since a call through the interface links to the
         interface's method; those rows carry `via` ("KmsClient.encrypt").
 
+        Each row carries `resolution`: "resolved" (the call's shape fixes
+        the target: same file, an import naming it, a known receiver
+        class), "name" (matched by name, one definition), "ambiguous"
+        (matched by name, several definitions) or "interface" (reached
+        only through an interface method). Treat name and ambiguous as
+        guesses.
+
         For a Terraform address (var.region, google_x.y, module.m) it
         returns each block that uses it.
         """
@@ -444,8 +451,10 @@ def register(mcp) -> None:
         Federated across subrepos; cross-repo CALLS edges are not inferred
         (each subrepo's graph is canonical for its own code). Like every
         name-matched CALLS reach it can over-count: a listed callee may
-        belong to a same-named function elsewhere. `truncated` is set when
-        the fan-out or total cap was hit.
+        belong to a same-named function elsewhere. Each callee carries
+        `resolution` ("resolved", "name", "ambiguous", see find_callers),
+        so the guessed rows are told apart. `truncated` is set when the
+        fan-out or total cap was hit.
 
         For a Terraform address it returns the blocks that block references.
         """
@@ -453,6 +462,9 @@ def register(mcp) -> None:
         state = {"truncated": False}
 
         def query(conn):
+            from codegraph.analysis.provenance import RESOLVED, EdgeProvenance
+
+            prov = EdgeProvenance(conn)
             seen: set[str] = {fn_name}  # names already expanded (cycle guard)
             frontier = [fn_name]
             out: list[dict] = []
@@ -464,9 +476,11 @@ def register(mcp) -> None:
                     rows = conn.find_neighbors(
                         "CALLS",
                         src_where={"name": name},
-                        return_dst=["name", "file_path", "start_line"],
+                        return_src=["id"],
+                        return_dst=["id", "name", "file_path", "start_line"],
                         limit=_CALLEE_FANOUT_CAP,
                     )
+                    resolutions = prov.of_rows(rows)
                     if "." in name:
                         # A Terraform address: the blocks it references.
                         rows = rows + [
@@ -475,7 +489,7 @@ def register(mcp) -> None:
                         ]
                     if len(rows) >= _CALLEE_FANOUT_CAP:
                         state["truncated"] = True
-                    for row in rows:
+                    for i, row in enumerate(rows):
                         callee = row["dst_name"]
                         out.append(
                             {
@@ -483,6 +497,10 @@ def register(mcp) -> None:
                                 "file": row["dst_file_path"],
                                 "line": row["dst_start_line"],
                                 "depth": depth,
+                                # Terraform rows name their address exactly.
+                                "resolution": resolutions[i]
+                                if i < len(resolutions)
+                                else RESOLVED,
                             }
                         )
                         if callee not in seen:

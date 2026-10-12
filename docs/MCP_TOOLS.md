@@ -18,8 +18,8 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | Tool | Description |
 |------|-------------|
 | `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters |
-| `find_callers(fn_name)` | Find all functions that call `fn_name` |
-| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
+| `find_callers(fn_name)` | Find all functions that call `fn_name`; each row says how its edge was obtained in `resolution` (see below) |
+| `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls, each with its `resolution`; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call |
 | `imports_of(file_path)` | List modules imported by a file |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
@@ -28,13 +28,27 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | `subgraph(file_path, depth?)` | Find files related within N import hops (blast radius) |
 | `graph_stats()` | Node and edge counts per type |
 
+**Call edge resolution.** The rows of `find_callers` and `find_callees`, the
+impacted functions of `impact_of` and the `hops` of `path_between` over CALLS
+carry a `resolution`, read from the call sites the caller recorded:
+
+| Value | Meaning |
+|-------|---------|
+| `resolved` | The call's shape fixes the target: a call to a function of the same file, an import naming the target's file, `self.f()` on the caller's class or a base, a receiver whose class is known, or a hit of the opt-in precise resolver |
+| `name` | Matched by the callee's name only (receiver of unknown type, no import binding it, a language without call shapes), one definition of that name |
+| `ambiguous` | Matched by name, and the caller links to several definitions of it (the rows that list `targets`) |
+| `interface` | Reached only through an interface method the target implements (the rows with `via`) |
+
+Treat `name` and `ambiguous` as guesses. A caller with several edges to the
+queried name keeps the most certain one.
+
 ### Code Intelligence
 
 | Tool | Description |
 |------|-------------|
 | `file_summary(file_path)` | One-shot orientation for a file: role/layer/lang, its functions and classes with line ranges, what it imports, and who imports it |
-| `impact_of(symbol_or_file, max_depth?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints |
-| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS` |
+| `impact_of(symbol_or_file, max_depth?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints; an impacted function carries the `resolution` of the edge that reached it |
+| `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS`; over CALLS, `hops` gives each step's `resolution` |
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
 | `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |

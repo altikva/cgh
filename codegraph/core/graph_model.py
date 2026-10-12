@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,13 @@ class EdgeSpec:
 
 EDGES: dict[str, EdgeSpec] = {
     "IMPORTS": EdgeSpec(
-        "IMPORTS", "edge_imports", "File", "File", "from_path", "to_path", ("symbol",)
+        "IMPORTS",
+        "edge_imports",
+        "File",
+        "File",
+        "from_path",
+        "to_path",
+        ("symbol", "kind"),
     ),
     "DEFINES_FN": EdgeSpec(
         "DEFINES_FN", "edge_defines_fn", "File", "Function", "from_path", "to_id"
@@ -279,3 +286,77 @@ ORPHAN_REFS_SQL = (
     " UNION SELECT file_path AS path FROM name_ref"
     ") r WHERE path NOT IN (SELECT path FROM file WHERE mtime IS NOT NULL)"
 )
+
+
+# The rationale side table (analysis/rationale.py): the columns
+# rationale_rows returns, in order, and the one SELECT both backends run.
+RATIONALE_COLUMNS: tuple[str, ...] = (
+    "file_path",
+    "line",
+    "tag",
+    "text",
+    "symbol_id",
+    "symbol",
+    "symbol_kind",
+    "symbol_line",
+    "adr",
+)
+
+
+_RATIONALE_SELECT = (
+    "SELECT file_path, line, tag, text, symbol_id, symbol, symbol_kind, "
+    "symbol_line, adr FROM rationale"
+)
+
+
+def escape_like(value: str, escape: str = "!") -> str:
+    """``value`` with the LIKE wildcards escaped by ``escape``."""
+    return (
+        value.replace(escape, escape * 2)
+        .replace("%", escape + "%")
+        .replace("_", escape + "_")
+    )
+
+
+def rationale_rows_sql(
+    symbol: str = "",
+    file_suffix: str = "",
+    tag: str = "",
+    symbol_ids: list[str] | None = None,
+    file_paths: list[str] | None = None,
+    limit: int = 0,
+) -> tuple[str, list[Any]]:
+    """The SELECT both backends run for rationale_rows, with its params.
+    Every value is bound; only fixed column names are interpolated."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if symbol:
+        esc = escape_like(symbol)
+        clauses.append(
+            "(symbol = ? OR symbol LIKE ? ESCAPE '!' OR symbol LIKE ? ESCAPE '!')"
+        )
+        params += [symbol, f"%.{esc}", f"{esc}.%"]
+    if file_suffix:
+        want = file_suffix.replace("\\", "/")
+        while want.startswith("./"):
+            want = want[2:]
+        clauses.append("(file_path = ? OR file_path LIKE ? ESCAPE '!')")
+        params += [file_suffix, f"%/{escape_like(want)}"]
+    if tag:
+        clauses.append("tag = ?")
+        params.append(tag)
+    if symbol_ids is not None:
+        ph = ", ".join("?" for _ in symbol_ids) or "NULL"
+        clauses.append(f"symbol_id IN ({ph})")
+        params += list(symbol_ids)
+    if file_paths is not None:
+        ph = ", ".join("?" for _ in file_paths) or "NULL"
+        clauses.append(f"file_path IN ({ph})")
+        params += list(file_paths)
+    sql = _RATIONALE_SELECT
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY file_path, line"
+    if limit and limit > 0:
+        sql += f" LIMIT {int(limit)}"
+    return sql, params

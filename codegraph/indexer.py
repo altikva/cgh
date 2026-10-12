@@ -27,7 +27,7 @@ from codegraph.core.protocol import GraphDB
 from codegraph.core.utils import quiet_subprocess_kwargs
 
 from .parsers import get_parser, is_supported
-from .parsers.base import FileIndex
+from .parsers.base import IMPORT_DYNAMIC, IMPORT_REEXPORT, FileIndex
 
 # The tree walks recurse once per nesting level, and generated or heavily
 # nested code (big JSX trees, protobuf stubs, long method chains) goes deeper
@@ -840,7 +840,12 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
 
     seen_targets: set[str] = set()
     stubbed: set[str] = set()
-    for imp in idx.imports:
+    # One edge per (target, symbol): when a file both re-exports and imports
+    # a module, or imports it statically and dynamically, the edge keeps the
+    # strongest kind. A re-export first (impact follows it through the
+    # barrel), then a plain import, then a dynamic one.
+    rank = {IMPORT_REEXPORT: 0, "": 1, IMPORT_DYNAMIC: 2}
+    for imp in sorted(idx.imports, key=lambda i: rank.get(i.kind, 1)):
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
         _count_import(idx.lang, target is not None)
         if target is None:
@@ -871,7 +876,9 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
             if edge_key in seen_targets:
                 continue
             seen_targets.add(edge_key)
-            conn.ensure_edge("IMPORTS", idx.path, target_str, {"symbol": sym})
+            conn.ensure_edge(
+                "IMPORTS", idx.path, target_str, {"symbol": sym, "kind": imp.kind}
+            )
     # A stub can be the only File node a path ever gets (a target cgh does not
     # parse), so markdown links waiting for it must land now, as they would
     # had the doc been ingested after this file.
@@ -1188,6 +1195,23 @@ def _ingest_manifest(conn: GraphDB, manifest) -> list[NameRef]:
     return sorted(refs)
 
 
+def _ingest_rationale(conn: GraphDB, path: Path, idx: FileIndex, root: Path) -> None:
+    """Store the file's rationale comments (purge_file_data cleared the old
+    ones). A failure here costs the file its rationale, never its index."""
+    from codegraph.analysis.rationale import extract, supported
+
+    if not supported(path):
+        return
+    try:
+        rows = extract(path, idx)
+        if rows:
+            conn.replace_rationale(str(path), rows)
+    except Exception as exc:
+        from codegraph.state.activity import log as _act_log
+
+        _act_log(root, "rationale_error", f"{path}: {type(exc).__name__}: {exc}")
+
+
 def _find_section_for_line(sections: list, line: int):
     """Find the deepest (most specific) section containing a given line."""
     best = None
@@ -1411,6 +1435,8 @@ def _index_file(
         root,
         old_classes | {c.name for c in idx.classes},
     )
+
+    _ingest_rationale(conn, path, idx, root)
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)

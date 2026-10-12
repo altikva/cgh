@@ -29,6 +29,7 @@ from codegraph.cli.commands_bob import (
     cmd_bob_tool_log,
 )
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
+from codegraph.cli.commands_export import cmd_export, register_export_parser
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_githooks import cmd_githooks
@@ -73,6 +74,7 @@ from codegraph.cli.commands_monitor import (
 )
 from codegraph.cli.commands_papercut import cmd_papercut, register_papercut_parser
 from codegraph.cli.commands_plugins import cmd_plugins
+from codegraph.cli.commands_prs import cmd_prs, register_prs_parser
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
@@ -84,6 +86,8 @@ from codegraph.cli.commands_query import (
     cmd_packages,
     cmd_report,
     cmd_search,
+    cmd_shared_types,
+    cmd_why,
 )
 from codegraph.cli.commands_session import (
     cmd_hook_checkpoint,
@@ -136,12 +140,15 @@ def _print_help():
                     "packages",
                     "Manifest packages, internal deps, dependents, MCP servers",
                 ),
+                ("why", "Rationale comments (WHY:, NOTE:, HACK:, ADR) of a symbol"),
                 ("communities", "Subsystems found from the import and call graph"),
+                ("shared-types", "Types mirrored across federated repos (deduced)"),
                 ("report", "Architecture report in Markdown (--out FILE)"),
                 (
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
                 ),
+                ("export", "Write the graph as GraphML (Gephi, yEd)"),
             ],
         ),
         (
@@ -154,6 +161,7 @@ def _print_help():
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
                 ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
+                ("prs", "Open PRs that touch the same symbols or files (overlap)"),
                 ("parsers", "List registered language parsers"),
                 ("findings", "Scanner findings: pii, secrets, summaries"),
                 ("files", "List indexed files, or check one (--check)"),
@@ -398,7 +406,7 @@ def _register_setup_and_serve(sub) -> None:
 
 def _register_inspect(sub) -> None:
     """Register stats, logs, search, lookup, callers, callees, outline,
-    endpoints, communities, report, doctor."""
+    endpoints, shared-types, communities, report, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -544,6 +552,23 @@ def _register_inspect(sub) -> None:
     p.add_argument("file", help="Markdown file path")
     _add_root(p)
 
+    # --- why ---
+    p = sub.add_parser(
+        "why",
+        help="Rationale comments (WHY:, NOTE:, HACK:, SAFETY:, ADR refs) "
+        "of a symbol or file",
+    )
+    p.add_argument(
+        "target",
+        nargs="?",
+        default="",
+        help="Symbol (name or Class.method) or file path; empty = all",
+    )
+    p.add_argument("--tag", "-t", default="", help="Keep one tag (WHY, NOTE, ADR...)")
+    p.add_argument("--limit", "-n", type=int, default=50, help="Max rows (default 50)")
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
     # --- endpoints ---
     p = sub.add_parser(
         "endpoints", help="List HTTP routes: method, full path, handler, file:line"
@@ -587,6 +612,25 @@ def _register_inspect(sub) -> None:
     )
     p.add_argument(
         "--limit", "-n", type=int, default=0, help="Max packages to show (default 200)"
+    )
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
+    # --- shared-types ---
+    p = sub.add_parser(
+        "shared-types",
+        help="Types defined under one name in two federated repos whose "
+        "fields agree (deduced, nothing stored)",
+    )
+    p.add_argument("name", nargs="?", default="", help="Only this type name")
+    p.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        help="Lowest share of matching fields, 0..1 (default 0.5)",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=100, help="Max pairs (default 100)"
     )
     p.add_argument("--json", action="store_true")
     _add_root(p)
@@ -686,6 +730,10 @@ def _register_analysis(sub) -> None:
         "The graph index should be fresh: run `cgh index` first in CI.",
     )
     add_out_option(p, what="the report")
+
+    # --- prs (overlap between open pull requests) + export ---
+    register_prs_parser(sub)
+    register_export_parser(sub)
 
     # --- history ---
     p = sub.add_parser("history", help="Show recent indexing activity by day")
@@ -965,11 +1013,15 @@ def main() -> None:
         "outline": cmd_outline,
         "endpoints": cmd_endpoints,
         "packages": cmd_packages,
+        "why": cmd_why,
         "communities": cmd_communities,
+        "shared-types": cmd_shared_types,
         "report": cmd_report,
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,
+        "prs": cmd_prs,
+        "export": cmd_export,
         "history": cmd_history,
         "compact": cmd_compact,
         "graph": cmd_graph,

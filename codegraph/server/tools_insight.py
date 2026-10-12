@@ -8,8 +8,10 @@
 #              protocol: file_summary (one-shot file orientation),
 #              impact_of (reverse blast radius over CALLS / IMPORTS),
 #              path_between (shortest path over an edge type), and
-#              import_cycles (SCC detection on the IMPORTS graph). All are
-#              federated across subrepos and return JSON strings.
+#              import_cycles (SCC detection on the IMPORTS graph) and
+#              shared_types (same-named types with agreeing fields in two
+#              federated scopes, deduced at query time). All are federated
+#              across subrepos and return JSON strings.
 
 from __future__ import annotations
 
@@ -203,6 +205,13 @@ def register(mcp) -> None:
         we resolve it as a function name and walk CALLS backward to find
         every transitive caller.
 
+        JS / TS: dynamic imports with a literal specifier (`import('./x')`)
+        count as imports, and a barrel that re-exports a file (`export *
+        from './x'`, `export { a } from './x'`) passes it on: the barrel's
+        importers are reached in the same hop. Each impacted file says
+        `via` which link reached it ("import", "reexport", "dynamic",
+        "interface", "terraform").
+
         Terraform: a .tf path or an address (var.region) walks back the
         blocks that reference it.
 
@@ -251,6 +260,7 @@ def register(mcp) -> None:
         direction = "importers" if as_path else "callers"
         edge = "IMPORTS" if as_path else "CALLS"
 
+        from codegraph.analysis.impact import REEXPORT, import_edges_into
         from codegraph.analysis.terraform import dependent_files as tf_dependents
         from codegraph.analysis.terraform import impacted_files as tf_impacted_files
         from codegraph.analysis.terraform import nodes_named as tf_nodes_named
@@ -264,6 +274,7 @@ def register(mcp) -> None:
             first_hop: list[str] | None = None,
             reached_by: dict[str, str] | None = None,
             dispatch=None,
+            via: dict[str, str] | None = None,
         ) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
             start keys within max_depth hops. Returns (keys, truncated).
@@ -272,27 +283,36 @@ def register(mcp) -> None:
             when given, maps each reached key to the key it was found
             calling (the edge that brought it in). ``dispatch(key)``, when
             given, names the interface methods whose only implementation is
-            the function ``key``: their callers reach it too.
+            the function ``key``: their callers reach it too. ``via``, when
+            given (file walks), maps each reached file to the link that
+            brought it in: "import", "reexport", "dynamic", "terraform" or
+            "interface". A barrel re-exporting a reached file passes it on
+            to its importers within the same hop.
 
             Terraform has no imports or calls: a .tf file's dependents are
             the files whose blocks reference its blocks, and a block's are
             the blocks referencing it (the TF reference edges)."""
             extra = [k for k in first_hop or () if k not in start_keys]
+            if via is None:
+                via = {}
+            via.update(dict.fromkeys(extra, "interface"))
             seen: set[str] = set(start_keys) | set(extra)
             frontier = list(start_keys) + extra
             ordered: list[str] = list(extra)
             truncated = False
             depth = 0
+            kinds: dict[str, str] = {}
             while frontier and depth < max(1, int(max_depth)):
                 depth += 1
                 next_frontier: list[str] = []
-                for key in frontier:
+                # Grows while it is walked: the importers of a barrel that
+                # re-exports a reached file are reached in the same hop.
+                queue = list(frontier)
+                for key in queue:
                     if as_path:
-                        rows = conn.find_neighbors(
-                            edge, dst_key=key, return_src=["path"], limit=_FANOUT_CAP
-                        )
-                        srcs = [r["src_path"] for r in rows]
-                        srcs += tf_dependents(conn, key, limit=_FANOUT_CAP)
+                        kinds = import_edges_into(conn, key, limit=_FANOUT_CAP)
+                        rows = srcs = list(kinds)
+                        srcs = srcs + tf_dependents(conn, key, limit=_FANOUT_CAP)
                     elif key in tf_ids:
                         rows = srcs = tf_referrers(conn, key, limit=_FANOUT_CAP)
                         tf_ids.update(srcs)
@@ -318,7 +338,13 @@ def register(mcp) -> None:
                         if reached_by is not None:
                             reached_by[s] = callee.get(s, key)
                         ordered.append(s)
-                        next_frontier.append(s)
+                        kind = kinds.get(s) if as_path else ""
+                        if as_path:
+                            via[s] = "terraform" if kind is None else kind or "import"
+                        if kind == REEXPORT:
+                            queue.append(s)
+                        else:
+                            next_frontier.append(s)
                         if len(ordered) >= _IMPACT_CAP:
                             return ordered, True
                 frontier = next_frontier
@@ -335,6 +361,7 @@ def register(mcp) -> None:
             first_hop: list[str] = []
             iface_keys: set[str] = set()
             reached_by: dict[str, str] = {}
+            via: dict[str, str] = {}
             resolver = InterfaceResolver(conn)
 
             def dispatch(key: str) -> list[str]:
@@ -396,6 +423,7 @@ def register(mcp) -> None:
                     first_hop,
                     None if as_path else reached_by,
                     None if as_path else dispatch,
+                    via,
                 )
 
             out: list[dict] = []
@@ -420,6 +448,7 @@ def register(mcp) -> None:
                             "role": role,
                             "layer": layer,
                             "lang": lang,
+                            "via": via.get(path, "import"),
                             "_trunc": trunc,
                         }
                     )
@@ -566,6 +595,42 @@ def register(mcp) -> None:
             # Impacted nodes come nearest first: the farthest go first.
             if fit_tokens(payload, ["impacted"], max_tokens):
                 payload["count"] = len(payload["impacted"])
+        return json.dumps(payload, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def shared_types(
+        name: str = "", min_confidence: float = 0.5, limit: int = 100
+    ) -> str:
+        """
+        Types shared across federated repos, deduced at query time: a class,
+        interface or object type alias defined under the same name in two
+        scopes whose field names agree, such as a backend Pydantic model and
+        the frontend TypeScript interface mirroring it. Federation stores no
+        cross-repo edge; this view stores nothing either.
+
+        Args:
+          name:           only this type name (default: every shared name).
+          min_confidence: lowest share of matching fields to report, 0..1
+                          (default 0.5). snake_case and camelCase compare
+                          equal.
+          limit:          most pairs to return, best first (default 100).
+
+        Returns JSON `shared_types`: one `{name, scopes, matched_fields,
+        confidence, deduced: true, definitions, only_in}` per pair, with
+        `definitions` giving each side's scope, file, line and fields and
+        `only_in` the fields one side lacks (drift). Reads Python and
+        TypeScript / JavaScript declarations. Children are opened read-only.
+        """
+        from codegraph.analysis.shared_types import shared_types_report
+
+        payload = shared_types_report(
+            _get_conn,
+            _srv._root,
+            name=name,
+            min_confidence=float(min_confidence),
+            limit=int(limit),
+        )
         return json.dumps(payload, indent=2)
 
     @mcp.tool()

@@ -418,6 +418,7 @@ from codegraph.server.tools_knowledge import (
 from codegraph.server.tools_memory import register as _register_memory
 from codegraph.server.tools_meta import register as _register_meta
 from codegraph.server.tools_plans import register as _register_plans
+from codegraph.server.tools_prs import register as _register_prs
 from codegraph.server.tools_query import register as _register_query
 from codegraph.server.tools_session import register as _register_session
 from codegraph.server.tools_tests import register as _register_tests
@@ -428,6 +429,7 @@ _register_arch(mcp)
 _register_query(mcp)
 _register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
 _register_tests(mcp)  # tests_for, impact_report, untested
+_register_prs(mcp)  # pr_overlap
 _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)

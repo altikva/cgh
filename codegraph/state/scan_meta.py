@@ -62,11 +62,18 @@ _META_FILE = "scan_meta.json"
 #      one file declaring the same method and path no longer merge), records
 #      its router variable and whether its file is a test file, and Python
 #      files keep their router prefixes and include calls for the full path.
-#  13: package manifests (package.json, pyproject.toml) are stored as Package
+#  13: rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) are
+#      stored with the symbol each documents, so symbol_lookup,
+#      context_for_task and the rationale tool can show them.
+#  14: JavaScript / TypeScript re-exports (`export * from`, `export { a } from`)
+#      and dynamic imports with a literal specifier are IMPORTS edges, marked
+#      by the edge's kind, and TypeScript interfaces and object type aliases
+#      are Class nodes.
+#  15: package manifests (package.json, pyproject.toml) are stored as Package
 #      nodes with DEPENDS_ON edges between the packages of one repo, and MCP
 #      client configs (.mcp.json, .cursor/mcp.json, .vscode/mcp.json) as
 #      McpServer nodes: unchanged manifests need a parse to get them.
-GRAPH_FORMAT = 13
+GRAPH_FORMAT = 15
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

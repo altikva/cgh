@@ -128,10 +128,22 @@ class ClassDef:
 
 @dataclass(slots=True)
 class ImportRef:
-    """An import/require/include statement."""
+    """An import/require/include statement.
+
+    ``kind`` is "" for a plain import, "reexport" for a statement that
+    forwards another module's names (``export * from './x'``,
+    ``export { a as b } from './x'``) and "dynamic" for a call whose
+    specifier is a string literal (``import('./x')``).
+    """
 
     source_module: str
     symbols: list[str] = field(default_factory=list)
+    kind: str = ""
+
+
+# ImportRef.kind values, stored as the `kind` property of IMPORTS edges.
+IMPORT_REEXPORT = "reexport"
+IMPORT_DYNAMIC = "dynamic"
 
 
 @dataclass(slots=True)

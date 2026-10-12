@@ -5,12 +5,14 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP query tools: symbol_lookup, callers, callees, imports_of,
-#              indexed_files, search_symbols, subgraph.
+#              indexed_files, search_symbols, subgraph, rationale.
 
 from __future__ import annotations
 
 import json
 import os
+
+from codegraph.core.utils import short_path as _short_path
 
 # Forward call-chain traversal bounds for find_callees(max_depth>1): the
 # hop ceiling, the per-node edge fan-out, and the total callees returned.
@@ -259,6 +261,77 @@ def register(mcp) -> None:
             indent=2,
         )
 
+    def _attach_rationale(conn, hits: list[dict]) -> None:
+        """Give each function / class hit the rationale comments attached to
+        it (at most RATIONALE_PER_SYMBOL, text cut short), as `rationale`;
+        drops the internal `_id`. A graph without the rationale table (a
+        child indexed by an older cgh) answers without them."""
+        from codegraph.analysis.rationale import (
+            RATIONALE_PER_SYMBOL,
+            RATIONALE_TEXT_CAP,
+            for_symbol_ids,
+            item,
+        )
+
+        ids = [h["_id"] for h in hits if h.get("_id")]
+        try:
+            by_id = for_symbol_ids(conn, ids)
+        except Exception:  # older graph without the table, see the docstring
+            by_id = {}
+        for hit in hits:
+            rows = by_id.get(hit.pop("_id", None) or "", [])
+            if rows:
+                hit["rationale"] = [
+                    item(r, RATIONALE_TEXT_CAP, with_symbol=False)
+                    for r in rows[:RATIONALE_PER_SYMBOL]
+                ]
+
+    @mcp.tool()
+    @_logged_tool
+    def rationale(target: str = "", tag: str = "", limit: int = 50) -> str:
+        """
+        Rationale comments: the comments that say WHY code is the way it
+        is, read from the source at index time. A comment counts when it
+        opens with WHY:, NOTE:, HACK:, SAFETY:, INVARIANT:, IMPORTANT:,
+        WARNING: or DECISION: (an owner in parentheses is fine, as in
+        HACK(joy):), or when it cites an ADR (ADR-0007, docs/adr/0007-x.md).
+        Each is attached to the function or class right below it, else the
+        innermost one around it, else the module. Read these before
+        changing code that looks odd: they record the constraint behind it.
+
+        Args:
+          target: a symbol name (bare, or Class.method; a class also lists
+                  its members'), a file path (absolute or a path suffix like
+                  "app/store.py"), or "" for every one in the index
+          tag:    keep one tag only (WHY, NOTE, ..., ADR for a comment that
+                  only cites an ADR); case-insensitive
+          limit:  max rows per scope (default 50, at most 200)
+
+        Returns {target, tag, total, truncated, rationale: [{scope, file,
+        line, tag, text, symbol, symbol_kind, adr?, adr_file?}]}; adr_file
+        is the indexed Markdown file the ADR reference resolves to.
+        Supported: Python, JavaScript / TypeScript, Vue, Go, Rust, Java,
+        C#, Ruby, Terraform, SQL. Federated, each row tagged with `scope`.
+        """
+        from codegraph.analysis.federation import federate_scoped
+        from codegraph.analysis.rationale import clamp_limit, payload, query
+
+        cap = clamp_limit(limit)
+        per_scope, warnings = federate_scoped(
+            _get_conn, _srv._root, lambda conn: query(conn, target, tag, cap + 1)
+        )
+        out = payload(
+            per_scope,
+            target,
+            tag,
+            cap,
+            short_path=lambda p: _short_path(p, _srv._root),
+        )
+        if warnings:
+            out["partial"] = True
+            out["warnings"] = warnings
+        return json.dumps(out, indent=2)
+
     @mcp.tool()
     @_logged_tool
     def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
@@ -276,6 +349,11 @@ def register(mcp) -> None:
 
         Terraform blocks are found by address too (var.region,
         google_x.y, module.m, local.l, data.t.n, output.o).
+
+        A function or class whose code carries rationale comments (WHY:,
+        NOTE:, HACK:, SAFETY:, INVARIANT:, ... or an ADR reference) lists
+        the first few in `rationale` ({tag, line, text, adr?, adr_file?});
+        the `rationale` tool returns them all.
         """
 
         def query(conn):
@@ -289,6 +367,7 @@ def register(mcp) -> None:
                     "start_line",
                     "end_line",
                     "docstring",
+                    "id",
                 ],
             ):
                 out.append(
@@ -298,6 +377,7 @@ def register(mcp) -> None:
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
+                        "_id": row["id"],
                     }
                 )
             for row in conn.find_nodes(
@@ -309,6 +389,7 @@ def register(mcp) -> None:
                     "start_line",
                     "end_line",
                     "docstring",
+                    "id",
                 ],
             ):
                 out.append(
@@ -318,6 +399,7 @@ def register(mcp) -> None:
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
+                        "_id": row["id"],
                     }
                 )
             # Terraform blocks, by address (var.region, google_x.y) or by
@@ -354,6 +436,7 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            _attach_rationale(conn, out)
             if role or layer:
                 cache: dict[str, tuple[str, str]] = {}
                 kept = []
@@ -599,19 +682,25 @@ def register(mcp) -> None:
         """
         Return all modules imported by `file_path`. Federated: the file may
         live in the parent or in any subrepo, we query all and aggregate.
-        Pass a path relative to the parent's repo root or absolute.
+        Pass a path relative to the parent's repo root or absolute. Each
+        row's `kind` is "" for a plain import, "reexport" (JS / TS
+        `export ... from`) or "dynamic" (`import('./x')`).
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
 
         def query(conn):
             return [
-                {"module": row["dst_path"], "symbol": row.get("edge_symbol", "")}
+                {
+                    "module": row["dst_path"],
+                    "symbol": row.get("edge_symbol", ""),
+                    "kind": row.get("edge_kind") or "",
+                }
                 for row in conn.find_neighbors(
                     "IMPORTS",
                     src_key=file_path,
                     return_dst=["path"],
-                    return_edge=["symbol"],
+                    return_edge=["symbol", "kind"],
                 )
             ]
 

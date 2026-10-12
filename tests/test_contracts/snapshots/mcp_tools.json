@@ -676,6 +676,32 @@
       "query"
     ]
   },
+  "pr_overlap": {
+    "properties": {
+      "limit": {
+        "default": 30,
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
+  "rationale": {
+    "properties": {
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      },
+      "tag": {
+        "default": "",
+        "type": "string"
+      },
+      "target": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "resume": {
     "properties": {
       "budget_kb": {
@@ -777,6 +803,23 @@
     "required": [
       "session_id"
     ]
+  },
+  "shared_types": {
+    "properties": {
+      "limit": {
+        "default": 100,
+        "type": "integer"
+      },
+      "min_confidence": {
+        "default": 0.5,
+        "type": "number"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
   },
   "subgraph": {
     "properties": {

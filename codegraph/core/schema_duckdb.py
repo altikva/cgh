@@ -252,6 +252,20 @@ SIDE_TABLES = [
         path       TEXT,
         mtime      DOUBLE
     )""",
+    # Rationale comments (analysis/rationale.py): a tagged or ADR-citing
+    # comment, the symbol it documents (symbol_id "" and kind "module" at
+    # the top level) and the start line of that symbol. Purged with its file.
+    """CREATE TABLE IF NOT EXISTS rationale (
+        file_path    TEXT,
+        line         BIGINT,
+        tag          TEXT,
+        text         TEXT,
+        symbol_id    TEXT NOT NULL DEFAULT '',
+        symbol       TEXT NOT NULL DEFAULT '',
+        symbol_kind  TEXT NOT NULL DEFAULT '',
+        symbol_line  BIGINT,
+        adr          TEXT NOT NULL DEFAULT ''
+    )""",
 ]
 
 
@@ -277,6 +291,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_from ON name_ref(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_file ON rationale(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_symbol ON rationale(symbol_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
 ]

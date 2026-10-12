@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI commands: search, lookup, callers, callees, outline.
+# Description: CLI commands: search, lookup, callers, callees, outline, why.
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
 #              SQLite alike, and federate across subrepos with a scope tag.
@@ -889,6 +889,80 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
     note = f", {excluded} test route(s) left out (--include-tests)" if excluded else ""
     if rows or excluded:
         console.print(f"[dim]{len(rows)} endpoint(s){more}{note}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_why
+# ---------------------------------------------------------------------------
+
+
+def _why_payload(root: str, arguments: dict) -> dict:
+    """The rationale tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.rationale import clamp_limit, payload, query
+
+    data = _ask_owner(root, "why", "rationale", arguments)
+    if data is not None:
+        return data
+    cap = clamp_limit(arguments["limit"])
+    target, tag = arguments["target"], arguments["tag"]
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        try:
+            per_scope.append(("parent", query(conn, target, tag, cap + 1)))
+        except Exception as exc:  # an index from an older cgh has no table
+            warnings.append({"scope": "parent", "error": str(exc)})
+    buckets, failures = _query_children_scoped(
+        root, lambda c: query(c, target, tag, cap + 1)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    out = payload(per_scope, target, tag, cap, lambda p: _short_path(p, root))
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def cmd_why(args: argparse.Namespace) -> None:
+    """Rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) of a
+    symbol, a file, or the whole index."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "target": args.target or "",
+        "tag": args.tag or "",
+        "limit": args.limit,
+    }
+    data = _why_payload(root, arguments)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return
+    _print_scope_warnings(_owner_warnings(data))
+    rows = data.get("rationale") or []
+    if not rows:
+        what = f" for '{arguments['target']}'" if arguments["target"] else ""
+        console.print(f"[dim]No rationale comments{escape(what)}[/dim]")
+        return
+    federated = has_subrepos(root)
+    for r in rows:
+        where = f"{r['file']}:{r['line']}"
+        if federated and r.get("scope", "parent") != "parent":
+            where = f"{r['scope']}:{where}"
+        symbol = r.get("symbol") or "(module)"
+        console.print(
+            f"  [bold yellow]{escape(r['tag'])}[/bold yellow]  "
+            f"[green]{escape(symbol)}[/green]  [dim]{escape(where)}[/dim]"
+        )
+        console.print(f"      {escape(r['text'])}", soft_wrap=True)
+        if r.get("adr_file"):
+            console.print(f"      [cyan]-> {escape(r['adr_file'])}[/cyan]")
+        elif r.get("adr"):
+            console.print(f"      [dim]{escape(r['adr'])} (no indexed file)[/dim]")
+    more = ", more not shown (--limit)" if data.get("truncated") else ""
+    console.print(f"[dim]{len(rows)} rationale comment(s){more}[/dim]")
 
 
 # ---------------------------------------------------------------------------

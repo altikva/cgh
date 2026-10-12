@@ -196,7 +196,10 @@ def register(mcp) -> None:
             include_shown: if true, ignore session dedup and return
                   everything. Useful to review what was previously served.
 
-        Returns structured markdown context + hit counts.
+        Returns structured markdown context + hit counts. When the served
+        functions and classes carry rationale comments (WHY:, NOTE:, HACK:,
+        ... or an ADR reference), a short `rationale` list gives them
+        ({file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}).
         """
         from codegraph.analysis.context_builder import context_for_task as _ctx
         from codegraph.analysis.context_builder import render_context_markdown
@@ -284,6 +287,9 @@ def register(mcp) -> None:
             "estimated_tokens": ctx.token_estimate,
             "session_id": session_id or None,
         }
+        rationale = _rationale_of(ctx)
+        if rationale:
+            payload["rationale"] = rationale
         subsystem = _subsystem_of(ctx)
         if subsystem:
             payload["subsystem"] = subsystem
@@ -296,6 +302,17 @@ def register(mcp) -> None:
                 )
             )
         return json.dumps(payload, indent=2)
+
+    def _rationale_of(ctx) -> list[dict]:
+        """The rationale comments of the served symbols, flat and short, the
+        same items the context markdown lists under each symbol."""
+        from codegraph.analysis.rationale import RATIONALE_TEXT_CAP, item
+
+        return [
+            item(r, RATIONALE_TEXT_CAP, lambda p: _short_path(p, _srv._root))
+            for n in ctx.nodes
+            for r in n.rationale
+        ]
 
     def _subsystem_of(ctx) -> dict | None:
         """The community the best-matching symbols live in, with its central

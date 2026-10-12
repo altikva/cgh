@@ -668,6 +668,23 @@
     },
     "required": []
   },
+  "rationale": {
+    "properties": {
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      },
+      "tag": {
+        "default": "",
+        "type": "string"
+      },
+      "target": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "resume": {
     "properties": {
       "budget_kb": {

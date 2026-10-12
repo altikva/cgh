@@ -87,7 +87,7 @@ class TestResolvePython:
         (cluster / "__init__.py").write_text("")
         (utils / "__init__.py").write_text("")
         (utils / "action.py").write_text("def go(): pass\n")
-        importer = cluster / "bot.py"
+        importer = cluster / "app.py"
         importer.write_text("from utilities.action import go\n")
 
         result = resolve_python("utilities.action", importer, tmp_path)

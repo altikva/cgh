@@ -20,7 +20,7 @@ from codegraph.core.db import get_connection, reset_connection
 from codegraph.indexer import index_file
 
 # Importing jedi pulls in parso, which lowers sys.recursionlimit to 3000 on
-# import. The indexer raises it to 10_000 (deep tree-sitter walks). Restore
+# import. The indexer raises it to 8_192 (deep tree-sitter walks). Restore
 # the higher value after the skip-guard import so this module never weakens
 # the limit for tests that run later in the same session.
 _prior_limit = sys.getrecursionlimit()

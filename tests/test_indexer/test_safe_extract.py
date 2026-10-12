@@ -14,7 +14,7 @@ import textwrap
 import pytest
 
 from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import _RECURSION_LIMIT, index_file
+from codegraph.indexer import _MIN_RECURSION_DEPTH, index_file
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +28,7 @@ class TestRecursionLimit:
     def test_recursion_limit_raised_at_import(self):
         """We bump the recursion limit at module import so tree-sitter walks
         on deeply-nested code don't crash before our handler kicks in."""
-        assert sys.getrecursionlimit() >= _RECURSION_LIMIT
+        assert sys.getrecursionlimit() >= _MIN_RECURSION_DEPTH
 
 
 class TestParseErrorHandling:

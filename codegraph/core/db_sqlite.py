@@ -59,6 +59,15 @@ _NODE_TABLES = [
         start_line BIGINT, end_line BIGINT, body_preview TEXT, anchor TEXT,
         kind TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS package (
+        id TEXT PRIMARY KEY, name TEXT, pkg_key TEXT, ecosystem TEXT, version TEXT,
+        file_path TEXT, start_line BIGINT, workspaces TEXT, workspace_root TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS mcp_server (
+        id TEXT PRIMARY KEY, name TEXT, file_path TEXT, start_line BIGINT,
+        transport TEXT, command TEXT, url TEXT, args TEXT, env_keys TEXT,
+        header_keys TEXT
+    )""",
 ]
 
 # Columns added after a graph may already exist on disk, mirrored from the
@@ -142,6 +151,17 @@ _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_implemented_by (
         from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_package (
+        from_path TEXT, to_id TEXT, PRIMARY KEY (from_path, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_depends_on (
+        from_id TEXT, to_id TEXT, dep_group TEXT NOT NULL DEFAULT '',
+        spec TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (from_id, to_id, dep_group, spec)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_mcp_server (
+        from_path TEXT, to_id TEXT, PRIMARY KEY (from_path, to_id)
+    )""",
 ]
 
 # Mirrors schema_duckdb.SIDE_TABLES: call sites by callee name (or resolved
@@ -195,6 +215,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_tf_refs_var_to ON edge_tf_refs_var(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_depends_to ON edge_tf_var_depends(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_refs_to ON edge_tf_var_refs(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_package_key ON package(pkg_key)",
+    "CREATE INDEX IF NOT EXISTS idx_depends_on_to ON edge_depends_on(to_id)",
 ]
 
 _NAMED_PARAM = re.compile(r"\$(\w+)")

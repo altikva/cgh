@@ -62,7 +62,11 @@ _META_FILE = "scan_meta.json"
 #      one file declaring the same method and path no longer merge), records
 #      its router variable and whether its file is a test file, and Python
 #      files keep their router prefixes and include calls for the full path.
-GRAPH_FORMAT = 12
+#  13: package manifests (package.json, pyproject.toml) are stored as Package
+#      nodes with DEPENDS_ON edges between the packages of one repo, and MCP
+#      client configs (.mcp.json, .cursor/mcp.json, .vscode/mcp.json) as
+#      McpServer nodes: unchanged manifests need a parse to get them.
+GRAPH_FORMAT = 13
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

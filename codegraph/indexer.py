@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -48,6 +49,32 @@ def _get_fts(repo_root):
         conn = get_fts_conn(repo_root)
         _fts_conns[key] = conn
     return conn
+
+
+def skipped_path_parts(parts: tuple[str, ...]) -> bool:
+    """True when a (repo-relative) path is left out of the index: it crosses
+    an ignored directory, or a dot-name other than an MCP client config
+    (.mcp.json, .cursor/mcp.json, .vscode/mcp.json)."""
+    if any(part in _IGNORE_DIRS for part in parts):
+        return True
+    if any(part.startswith(".") for part in parts):
+        from codegraph.parsers.manifests import hidden_path_allowed
+
+        return not hidden_path_allowed(parts)
+    return False
+
+
+def _mcp_configs_missing(repo_root: Path, found: list[Path]) -> list[Path]:
+    """The MCP client configs at the repo top that a walk pruning every dot
+    directory missed."""
+    from codegraph.parsers.manifests import mcp_config_files
+
+    seen = set(found)
+    return [
+        p
+        for p in mcp_config_files(repo_root)
+        if p not in seen and not _is_cghignored(p, repo_root)
+    ]
 
 
 _IGNORE_DIRS = {
@@ -529,8 +556,12 @@ def _relink_calls_named(
 #             that module
 #   calls_import  file path -> a repo file it imports (at module level or in
 #             a function body), read by the call rules of its call sites
+#   pkg_dep   Package id -> key of a package it depends on ("npm:<name>",
+#             "python:<normalized name>"), extra = "<group>\t<name>\t<spec>"
+#             (see codegraph/analysis/packages.py)
 NameRef = tuple[str, str, str, str]
 CALLS_IMPORT = "calls_import"
+PKG_DEP = "pkg_dep"
 
 
 def _keys_by_value(conn: GraphDB, label: str, field: str, values) -> dict:
@@ -561,7 +592,12 @@ def _resolve_inherits(conn: GraphDB, classes: list) -> list[NameRef]:
     return refs
 
 
-def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None:
+def _resolve_inbound_refs(
+    conn: GraphDB,
+    file_path: str,
+    idx: FileIndex,
+    packages: dict[str, list[str]] | None = None,
+) -> None:
     """Link the name references of OTHER files to what ``file_path`` defines.
 
     purge_file_data drops every edge into a file's symbols, and a reference
@@ -579,7 +615,10 @@ def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None
     classes: dict[str, list[str]] = {}
     for cls in idx.classes:
         classes.setdefault(cls.name, []).append(cls.id)
-    refs = conn.name_refs_into(sorted({*fns, *classes, file_path}), file_path)
+    packages = packages or {}
+    refs = conn.name_refs_into(
+        sorted({*fns, *classes, *packages, file_path}), file_path
+    )
     if not refs:
         return
     edges: dict[str, list[tuple]] = {}
@@ -600,6 +639,11 @@ def _resolve_inbound_refs(conn: GraphDB, file_path: str, idx: FileIndex) -> None
         elif kind == "handler" and extra == file_path:
             edges.setdefault("IMPLEMENTED_BY", []).extend(
                 (from_id, f) for f in fns.get(name, ())
+            )
+        elif kind == PKG_DEP:
+            group, _dep, spec = [*extra.split("\t", 2), "", ""][:3]
+            edges.setdefault("DEPENDS_ON", []).extend(
+                (from_id, p, group, spec) for p in packages.get(name, ())
             )
     for edge_type, rows in edges.items():
         if rows:
@@ -1085,6 +1129,66 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
     return sorted(refs)
 
 
+def _ingest_manifest(conn: GraphDB, manifest) -> list[NameRef]:
+    """Store the packages and MCP servers a manifest declares. A dependency
+    on a package already in the graph gets its DEPENDS_ON edge now; every
+    dependency is kept as a pkg_dep reference, so a package indexed later
+    links back (_resolve_inbound_refs) and the external ones stay listable.
+    Returns the references to record."""
+    from codegraph.parsers.manifests import package_key
+
+    refs: set[NameRef] = set()
+    for pkg in manifest.packages:
+        conn.upsert_node(
+            "Package",
+            "id",
+            pkg.id,
+            {
+                "name": pkg.name,
+                "pkg_key": pkg.key,
+                "ecosystem": pkg.ecosystem,
+                "version": pkg.version,
+                "file_path": pkg.file_path,
+                "start_line": pkg.start_line,
+                "workspaces": ",".join(pkg.workspaces),
+                "workspace_root": pkg.workspace_root,
+            },
+        )
+        conn.ensure_edge("DEFINES_PACKAGE", pkg.file_path, pkg.id)
+        for dep in pkg.deps:
+            key = package_key(pkg.ecosystem, dep.name)
+            refs.add((PKG_DEP, pkg.id, key, f"{dep.group}\t{dep.name}\t{dep.spec}"))
+    targets = _keys_by_value(conn, "Package", "pkg_key", [r[2] for r in refs])
+    conn.ensure_edges(
+        "DEPENDS_ON",
+        [
+            (src, dst, *(extra.split("\t", 2)[::2]))
+            for _, src, key, extra in refs
+            for dst in targets.get(key, ())
+            if dst != src
+        ],
+    )
+    for srv in manifest.mcp_servers:
+        conn.upsert_node(
+            "McpServer",
+            "id",
+            srv.id,
+            {
+                "name": srv.name,
+                "file_path": srv.file_path,
+                "start_line": srv.start_line,
+                "transport": srv.transport,
+                "command": srv.command,
+                "url": srv.url,
+                "args": json.dumps(srv.args),
+                "env_keys": ",".join(srv.env_keys),
+                "header_keys": ",".join(srv.header_keys),
+            },
+        )
+        conn.ensure_edge("DEFINES_MCP_SERVER", srv.file_path, srv.id)
+    return sorted(refs)
+
+
 def _find_section_for_line(sections: list, line: int):
     """Find the deepest (most specific) section containing a given line."""
     best = None
@@ -1268,6 +1372,17 @@ def _index_file(
         refs += _ingest_terraform(conn, idx, eff_cfg, root)
     if idx.sections:
         refs += _ingest_markdown(conn, idx)
+    # Package manifests and MCP client configs, read beside the JSON / TOML
+    # parse (their sections stay as they are).
+    from codegraph.parsers.manifests import read_manifest
+
+    manifest = read_manifest(path)
+    own_packages: dict[str, list[str]] = {}
+    if manifest is not None:
+        refs += _ingest_manifest(conn, manifest)
+        for pkg in manifest.packages:
+            if pkg.key:
+                own_packages.setdefault(pkg.key, []).append(pkg.id)
 
     # IMPORTS edges, wire them up after the File node exists, regardless
     # of whether the file defines functions/classes (pure __init__.py
@@ -1282,7 +1397,7 @@ def _index_file(
     # files hold to what this one defines (purge_file_data cleared both).
     if refs:
         conn.replace_name_refs(str(path), refs)
-    _resolve_inbound_refs(conn, str(path), idx)
+    _resolve_inbound_refs(conn, str(path), idx, own_packages)
 
     # CALLS last: the call rules read the recorded base classes and imports.
     # Then the calls of other files to the names this file defines now or
@@ -1402,8 +1517,7 @@ def _git_tracked_files(repo_root: Path) -> list[Path] | None:
             if not line:
                 continue
             # Skip files inside ignored directories
-            parts = Path(line).parts
-            if any(part in _IGNORE_DIRS or part.startswith(".") for part in parts):
+            if skipped_path_parts(Path(line).parts):
                 continue
             # Skip files matching .cghignore
             full = repo_root / line
@@ -1519,7 +1633,7 @@ def _discover_find(repo_root: Path) -> list[Path]:
             if _is_cghignored(p, repo_root):
                 continue
             out.append(p)
-        return out
+        return out + _mcp_configs_missing(repo_root, out)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return []
 
@@ -1546,7 +1660,7 @@ def _discover_os_walk(repo_root: Path) -> list[Path]:
             if subrepos and is_under_any(p, subrepos):
                 continue
             out.append(p)
-    return out
+    return out + _mcp_configs_missing(repo_root, out)
 
 
 def _discover_git_diff(repo_root: Path) -> tuple[list[Path], list[Path]]:
@@ -2291,8 +2405,7 @@ def _untracked_blob_shas(repo_root: Path) -> dict[str, str]:
 
     paths: list[Path] = []
     for rel in git_untracked_files(repo_root):
-        parts = Path(rel).parts
-        if any(part in _IGNORE_DIRS or part.startswith(".") for part in parts):
+        if skipped_path_parts(Path(rel).parts):
             continue
         full = repo_root / rel
         if not is_supported(full) or _is_cghignored(full, repo_root):

@@ -45,6 +45,7 @@
     "memory",
     "memory-index",
     "outline",
+    "packages",
     "papercut",
     "parsers",
     "plan-index",
@@ -584,6 +585,20 @@
         ],
         "positionals": [
           "file"
+        ]
+      },
+      "packages": {
+        "options": [
+          "--external",
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "-h",
+          "-n"
+        ],
+        "positionals": [
+          "name"
         ]
       },
       "papercut": {

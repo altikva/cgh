@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 58 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 59 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -13,6 +13,7 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | `communities(resolution?, min_size?, max_communities?)` | Subsystems detected from the import and call graph (modularity clustering, deterministic), each named from its own files, with its size, central file, files, top symbols, cohesion and strongest links to other communities. Files linked to nearly everything are listed apart as shared utilities; test files are left out. Federated per scope, cached until the index changes |
 | `architecture_report(max_items?, resolution?)` | One Markdown page built from the graph, no LLM: subsystems with names and sizes, shared utilities, pivot files (change-risk hotspots when the repo has commit history, each marked when no test imports it), bridges (the only link between two subsystems, files reaching many of them), unexpected links (layer inversions, calls with no import behind them), import cycles, and rule-made questions worth asking. Capped sections with file:line references, one section per federated scope |
 | `endpoints(path_pattern?, method?, include_tests?)` | List HTTP endpoints (FastAPI, Flask, Nuxt, Express, Django urls, NestJS, Spring, Gin/Echo) with their handlers and, for FastAPI / Flask, full paths composed from router and include prefixes. A full path, a glob or a path with other parameter names finds a route; an unmatched path falls back to a flagged suffix match. Routes in test files are left out unless `include_tests`: works cross-repo when `extra_dirs` is configured |
+| `packages(name?, include_external?, limit?)` | Packages declared by `package.json` (npm / pnpm / yarn workspaces) and `pyproject.toml` (uv workspaces, Poetry), each with its internal dependencies (packages declared in the same repo), external ones (name and spec, as a count unless `include_external` or `name`), the packages depending on it, and its workspace; internal dependency cycles; and the MCP servers declared in `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json` (transport, command or url, env and header key names, never their values). Federated per scope |
 
 ### Code Navigation
 

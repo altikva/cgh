@@ -81,6 +81,7 @@ from codegraph.cli.commands_query import (
     cmd_grep,
     cmd_lookup,
     cmd_outline,
+    cmd_packages,
     cmd_report,
     cmd_search,
 )
@@ -131,6 +132,10 @@ def _print_help():
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
                 ("endpoints", "HTTP routes with full paths, handler and location"),
+                (
+                    "packages",
+                    "Manifest packages, internal deps, dependents, MCP servers",
+                ),
                 ("communities", "Subsystems found from the import and call graph"),
                 ("report", "Architecture report in Markdown (--out FILE)"),
                 (
@@ -562,6 +567,30 @@ def _register_inspect(sub) -> None:
     p.add_argument("--json", action="store_true")
     _add_root(p)
 
+    # --- packages ---
+    p = sub.add_parser(
+        "packages",
+        help="Packages from package.json / pyproject.toml, their internal "
+        "dependencies, dependents and cycles, plus declared MCP servers",
+    )
+    p.add_argument(
+        "name",
+        nargs="?",
+        default="",
+        help="Package name (exact, else substring): show only it, with its "
+        "external deps and who depends on it",
+    )
+    p.add_argument(
+        "--external",
+        action="store_true",
+        help="List external dependencies instead of a count",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=0, help="Max packages to show (default 200)"
+    )
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
     # --- communities ---
     p = sub.add_parser(
         "communities",
@@ -935,6 +964,7 @@ def main() -> None:
         "callees": cmd_callees,
         "outline": cmd_outline,
         "endpoints": cmd_endpoints,
+        "packages": cmd_packages,
         "communities": cmd_communities,
         "report": cmd_report,
         "doctor": cmd_doctor,

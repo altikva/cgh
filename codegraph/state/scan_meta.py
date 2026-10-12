@@ -62,7 +62,10 @@ _META_FILE = "scan_meta.json"
 #      one file declaring the same method and path no longer merge), records
 #      its router variable and whether its file is a test file, and Python
 #      files keep their router prefixes and include calls for the full path.
-GRAPH_FORMAT = 12
+#  13: rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) are
+#      stored with the symbol each documents, so symbol_lookup,
+#      context_for_task and the rationale tool can show them.
+GRAPH_FORMAT = 13
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

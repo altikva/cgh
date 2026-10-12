@@ -246,7 +246,7 @@ cgh stop [--root DIR]
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
 `cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
-`cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh why`, `cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -453,6 +453,46 @@ cgh endpoints [PATTERN] [--method M] [--include-tests] [--limit N] [--json] [--r
 cgh endpoints "/v1/donations/{id}/cancel"
 cgh endpoints "*/donations*" --method POST
 cgh endpoints --include-tests --json
+```
+
+---
+
+### `why`
+
+List the rationale comments of a symbol, a file, or the whole index: the
+comments that say why the code is the way it is. Same query as the MCP
+`rationale` tool, federated across subrepos.
+
+```
+cgh why [TARGET] [--tag T] [--limit N] [--json] [--root DIR]
+```
+
+A comment counts when it opens with `WHY:`, `NOTE:`, `HACK:`, `SAFETY:`,
+`INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:` (upper case, colon
+required; an owner in parentheses is fine, as in `HACK(joy):`), or when it
+cites an ADR (`ADR-0007`, `docs/adr/0007-x.md`); one that only cites an ADR is
+listed under the `ADR` tag. The comment lines right after a tag continue it. It
+is attached to the function or class right below it (decorators in between are
+fine, a blank line is not), else the innermost one around it, else the module.
+An ADR reference that matches an indexed Markdown file (`ADR-7` finds
+`docs/adr/0007-*.md`) is shown with that file. Read from Python,
+JavaScript / TypeScript, Vue, Go, Rust, Java, C#, Ruby, Terraform and SQL;
+`TODO` and `FIXME` are not rationale and are left out.
+
+- **TARGET**: a symbol name (bare, or `Class.method`; a class also lists its
+  members' comments), a file path (absolute or a suffix like `app/store.py`),
+  or nothing for every comment in the index.
+- `--tag`, `-t`: keep one tag (any case).
+- `--limit`, `-n`: maximum rows per scope (default 50, at most 200).
+- `--json`: `{target, tag, total, truncated, rationale}`, each row being
+  `{scope, file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}`.
+
+**Example:**
+
+```bash
+cgh why Store.get
+cgh why app/billing/refund.py --tag HACK
+cgh why --tag ADR --json
 ```
 
 ---

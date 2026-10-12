@@ -158,6 +158,12 @@ _SIDE_TABLES = [
         extra TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS file_stamp (path TEXT, mtime REAL)""",
+    """CREATE TABLE IF NOT EXISTS rationale (
+        file_path TEXT, line INTEGER, tag TEXT, text TEXT,
+        symbol_id TEXT NOT NULL DEFAULT '', symbol TEXT NOT NULL DEFAULT '',
+        symbol_kind TEXT NOT NULL DEFAULT '', symbol_line INTEGER,
+        adr TEXT NOT NULL DEFAULT ''
+    )""",
 ]
 
 _INDEXES = [
@@ -176,6 +182,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_from ON name_ref(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_file ON rationale(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_symbol ON rationale(symbol_id)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
     # find_callers/find_callees join full-scans the edge table (measured 27 ms
@@ -407,6 +415,7 @@ class SQLiteGraphDB:
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
 
     # --- Writer stamps --------------------------------------------------
 
@@ -422,6 +431,51 @@ class SQLiteGraphDB:
         stale = self._conn.execute(STALE_FILES_SQL).fetchall()
         orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
         return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
+
+    # --- Rationale comments ---------------------------------------------
+
+    def replace_rationale(self, file_path: str, rows: list[tuple[Any, ...]]) -> None:
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 100):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for row in chunk for v in (file_path, *row)]
+            self._conn.execute(
+                "INSERT INTO rationale (file_path, line, tag, text, symbol_id, "
+                f"symbol, symbol_kind, symbol_line, adr) VALUES {values}",
+                params,
+            )
+
+    def rationale_rows(
+        self,
+        symbol: str = "",
+        file_suffix: str = "",
+        tag: str = "",
+        symbol_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import RATIONALE_COLUMNS, rationale_rows_sql
+
+        if symbol_ids is not None or file_paths is not None:
+            # Chunk the longer IN list so a statement stays under the
+            # parameter limit; the other one is passed whole.
+            out: list[dict[str, Any]] = []
+            ids = None if symbol_ids is None else sorted(set(symbol_ids))
+            paths = None if file_paths is None else sorted(set(file_paths))
+            for chunk in _chunks(ids if ids is not None else paths or []):
+                chunk_ids, chunk_paths = (
+                    (chunk, paths) if ids is not None else (None, chunk)
+                )
+                sql, params = rationale_rows_sql(
+                    symbol, file_suffix, tag, chunk_ids, chunk_paths, 0
+                )
+                rows = self._conn.execute(sql, params).fetchall()
+                out.extend(dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows)
+            out.sort(key=lambda r: (r["file_path"], r["line"]))
+            return out[:limit] if limit and limit > 0 else out
+        sql, params = rationale_rows_sql(symbol, file_suffix, tag, None, None, limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows]
 
     # --- Name references ------------------------------------------------
 

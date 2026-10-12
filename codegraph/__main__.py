@@ -83,6 +83,7 @@ from codegraph.cli.commands_query import (
     cmd_outline,
     cmd_report,
     cmd_search,
+    cmd_why,
 )
 from codegraph.cli.commands_session import (
     cmd_hook_checkpoint,
@@ -131,6 +132,7 @@ def _print_help():
                 ("callees", "What does this function call? (tree view)"),
                 ("outline", "Heading tree of a Markdown file"),
                 ("endpoints", "HTTP routes with full paths, handler and location"),
+                ("why", "Rationale comments (WHY:, NOTE:, HACK:, ADR) of a symbol"),
                 ("communities", "Subsystems found from the import and call graph"),
                 ("report", "Architecture report in Markdown (--out FILE)"),
                 (
@@ -539,6 +541,23 @@ def _register_inspect(sub) -> None:
     p.add_argument("file", help="Markdown file path")
     _add_root(p)
 
+    # --- why ---
+    p = sub.add_parser(
+        "why",
+        help="Rationale comments (WHY:, NOTE:, HACK:, SAFETY:, ADR refs) "
+        "of a symbol or file",
+    )
+    p.add_argument(
+        "target",
+        nargs="?",
+        default="",
+        help="Symbol (name or Class.method) or file path; empty = all",
+    )
+    p.add_argument("--tag", "-t", default="", help="Keep one tag (WHY, NOTE, ADR...)")
+    p.add_argument("--limit", "-n", type=int, default=50, help="Max rows (default 50)")
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
     # --- endpoints ---
     p = sub.add_parser(
         "endpoints", help="List HTTP routes: method, full path, handler, file:line"
@@ -935,6 +954,7 @@ def main() -> None:
         "callees": cmd_callees,
         "outline": cmd_outline,
         "endpoints": cmd_endpoints,
+        "why": cmd_why,
         "communities": cmd_communities,
         "report": cmd_report,
         "doctor": cmd_doctor,

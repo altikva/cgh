@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Rationale comments.** Comments opening with `WHY:`, `NOTE:`, `HACK:`,
+  `SAFETY:`, `INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:`, or
+  citing an ADR, are indexed with the function, class or module they
+  document, so an agent sees why odd-looking code is that way before it
+  changes it. `symbol_lookup` and `context_for_task` carry a short
+  `rationale` list, the new `rationale` MCP tool and `cgh why <symbol|file>`
+  list them all, and an ADR reference links to its indexed Markdown file.
+  The graph format moves to 13: run `cgh index` once to fill it in.
 - **Architecture report.** `cgh report` (and the `architecture_report` MCP
   tool) writes one Markdown page on how the code is put together: the
   subsystems, the files everything leans on and whether tests reach them,

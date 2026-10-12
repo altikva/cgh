@@ -1085,6 +1085,23 @@ def _ingest_markdown(conn: GraphDB, idx: FileIndex) -> list[NameRef]:
     return sorted(refs)
 
 
+def _ingest_rationale(conn: GraphDB, path: Path, idx: FileIndex, root: Path) -> None:
+    """Store the file's rationale comments (purge_file_data cleared the old
+    ones). A failure here costs the file its rationale, never its index."""
+    from codegraph.analysis.rationale import extract, supported
+
+    if not supported(path):
+        return
+    try:
+        rows = extract(path, idx)
+        if rows:
+            conn.replace_rationale(str(path), rows)
+    except Exception as exc:
+        from codegraph.state.activity import log as _act_log
+
+        _act_log(root, "rationale_error", f"{path}: {type(exc).__name__}: {exc}")
+
+
 def _find_section_for_line(sections: list, line: int):
     """Find the deepest (most specific) section containing a given line."""
     best = None
@@ -1297,6 +1314,8 @@ def _index_file(
         root,
         old_classes | {c.name for c in idx.classes},
     )
+
+    _ingest_rationale(conn, path, idx, root)
 
     # Ingest into FTS
     _fts_ingest(fts_conn, idx)

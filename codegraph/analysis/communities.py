@@ -73,6 +73,10 @@ HUBS_CAP = 15
 
 _CACHE_SIZE = 16
 
+# The name-reference kind listing every repo file a file imports, at module
+# level or inside a function body (written by the indexer).
+_CALLS_IMPORT = "calls_import"
+
 
 @dataclass(slots=True, frozen=True)
 class SymbolRef:
@@ -181,6 +185,16 @@ def build_file_graph(conn: Any, files: list[dict] | None = None) -> FileGraph:
         a, b = row.get("src_path"), row.get("dst_path")
         if a and b and a != b and a in keep and b in keep:
             imports[(a, b)] += 1
+    # Imports made inside a function body carry no IMPORTS edge; the
+    # indexer records them (with the module-level ones) as name references.
+    # A codebase that defers its imports would otherwise look unlinked.
+    try:
+        local = conn.name_refs_of_kind(_CALLS_IMPORT)
+    except Exception:  # an index from before these references: edges only
+        local = []
+    for a, b, _extra in local:
+        if a and b and a != b and a in keep and b in keep and (a, b) not in imports:
+            imports[(a, b)] = 1
 
     calls: Counter[tuple[str, str]] = Counter()
     in_degree: Counter[tuple[str, str, int]] = Counter()

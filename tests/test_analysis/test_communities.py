@@ -379,3 +379,16 @@ def test_context_for_task_names_the_subsystem_of_its_matches(repo):
     assert sub["name"].startswith("alpha") and sub["size"] == 6
     assert "**Subsystem**" in out["context_markdown"]
     assert not set(sub["files"]) & set(out["files_referenced"])
+
+
+def test_function_body_imports_link_files(repo):
+    lazy = repo / "pkg" / "lazy.py"
+    lazy.write_text(
+        "def run():\n"
+        "    from pkg.beta.router_2 import f_beta_2\n\n"
+        "    return f_beta_2()\n"
+    )
+    index_file(lazy, repo)
+    graph = cm.build_file_graph(get_connection(repo))
+    target = str(repo / "pkg" / "beta" / "router_2.py")
+    assert (str(lazy), target) in graph.imports

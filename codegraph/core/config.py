@@ -287,6 +287,11 @@ class CodegraphConfig:
     # is audited.
     allow_fetch: bool = False
 
+    # Half-life, in days, of a knowledge outcome: a verdict this old weighs
+    # half as much as a fresh one when entries and files are scored. Zero
+    # turns decay off.
+    knowledge_half_life_days: float = 30.0
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -384,6 +389,13 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.legacy_secure_mode = str(cg["mode"]).strip().lower() == "secure"
     if "allow_fetch" in cg:
         config.allow_fetch = bool(cg["allow_fetch"])
+    if "knowledge_half_life_days" in cg:
+        try:
+            config.knowledge_half_life_days = max(
+                0.0, float(cg["knowledge_half_life_days"])
+            )
+        except (TypeError, ValueError):
+            pass  # a malformed value keeps the default rather than break loading
 
     terraform = data.get("terraform", {})
     sources = terraform.get("module_sources") if isinstance(terraform, dict) else None
@@ -480,6 +492,9 @@ max_file_size_kb = 500
 # on their own shortly after the parent owner exits.
 # subrepos = ["./child-repo"]
 # federate_auto_up = true
+# Knowledge outcomes (knowledge_outcome) fade with age: a verdict this many
+# days old weighs half as much as a fresh one. 0 turns the decay off.
+# knowledge_half_life_days = 30
 
 [parsers]
 # Uncomment to restrict which parsers are active:

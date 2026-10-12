@@ -412,6 +412,40 @@
     },
     "required": []
   },
+  "knowledge_outcome": {
+    "properties": {
+      "corrected_by": {
+        "default": 0,
+        "type": "integer"
+      },
+      "entry_id": {
+        "default": 0,
+        "type": "integer"
+      },
+      "file_refs": {
+        "default": "",
+        "type": "string"
+      },
+      "note": {
+        "default": "",
+        "type": "string"
+      },
+      "query": {
+        "default": "",
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      },
+      "verdict": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict"
+    ]
+  },
   "knowledge_record": {
     "properties": {
       "body": {

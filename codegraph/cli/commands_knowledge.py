@@ -13,6 +13,9 @@
 #              preserved. A revised entry supersedes its earlier copy; --archive
 #              dumps the whole source store first. Wraps
 #              call_log.promote_knowledge.
+#              `cgh knowledge outcome` records whether relying on an entry or
+#              a file worked (useful, dead_end, corrected); `cgh knowledge
+#              outcomes` shows the derived standing of rated entries and files.
 
 from __future__ import annotations
 
@@ -28,7 +31,9 @@ from codegraph.cli import console
 
 
 def register_knowledge_parser(sub) -> None:
-    kp = sub.add_parser("knowledge", help="Knowledge store maintenance (promote)")
+    kp = sub.add_parser(
+        "knowledge", help="Knowledge store maintenance (promote, outcomes)"
+    )
     ksub = kp.add_subparsers(dest="knowledge_cmd")
     pr = ksub.add_parser(
         "promote",
@@ -80,6 +85,35 @@ def register_knowledge_parser(sub) -> None:
     )
     pr.add_argument("--json", action="store_true", help="Machine-readable output")
 
+    oc = ksub.add_parser(
+        "outcome", help="Record whether relying on an entry or a file worked"
+    )
+    oc.add_argument("verdict", choices=["useful", "dead_end", "corrected"])
+    oc.add_argument("--id", dest="entry_id", type=int, default=0, help="Entry id")
+    oc.add_argument(
+        "--query", default="", help="Target the best search hit instead of an id"
+    )
+    oc.add_argument(
+        "--file",
+        dest="files",
+        action="append",
+        default=[],
+        help="A file or symbol the verdict covers (repeatable)",
+    )
+    oc.add_argument("--note", default="", help="One line on why")
+    oc.add_argument(
+        "--corrected-by",
+        dest="corrected_by",
+        type=int,
+        default=0,
+        help="With corrected: the id of the entry that fixed it",
+    )
+    oc.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    ol = ksub.add_parser("outcomes", help="Show rated entries and files")
+    ol.add_argument("--limit", type=int, default=20, help="Rows per section")
+    ol.add_argument("--json", action="store_true", help="Machine-readable output")
+
 
 def _git(root: Path, *args: str) -> str:
     """Best-effort git read against ``root``; empty string on any failure."""
@@ -119,9 +153,122 @@ def _fail(msg: str, as_json: bool) -> None:
     raise SystemExit(1)
 
 
+def _store_root(as_json: bool) -> Path:
+    from codegraph.core.config import find_codegraph_root
+
+    root = find_codegraph_root(Path.cwd())
+    if root is None:
+        _fail("Not inside a cgh project (no .codegraph/ found)", as_json)
+    return root  # type: ignore[return-value]
+
+
+def _cmd_outcome(args: argparse.Namespace) -> None:
+    from codegraph.state.call_log import (
+        knowledge_outcome_record,
+        knowledge_outcome_scores,
+        knowledge_search,
+    )
+
+    as_json = bool(args.json)
+    root = _store_root(as_json)
+    entry_id = int(args.entry_id or 0)
+    if not entry_id and args.query.strip():
+        hits = knowledge_search(
+            args.query, limit=1, repo_root=root, rank_outcomes=False
+        )
+        if not hits:
+            _fail(f"No knowledge entry matches {args.query!r}", as_json)
+        entry_id = int(hits[0]["id"])
+    try:
+        outcome_id = knowledge_outcome_record(
+            verdict=args.verdict,
+            entry_id=entry_id or None,
+            file_refs=args.files,
+            note=args.note,
+            corrected_by=args.corrected_by or None,
+            repo_root=root,
+        )
+    except ValueError as exc:
+        _fail(str(exc), as_json)
+        return
+    entries, _files = knowledge_outcome_scores(repo_root=root)
+    standing = entries[entry_id].summary() if entry_id in entries else None
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "id": outcome_id,
+                    "verdict": args.verdict,
+                    "entry_id": entry_id or None,
+                    "files": args.files,
+                    "outcome": standing,
+                }
+            )
+        )
+        return
+    target = f"entry {entry_id}" if entry_id else ", ".join(args.files)
+    line = f"[green]Recorded[/green] {args.verdict} for {target}"
+    if standing:
+        line += f" (now {standing['status']}, score {standing['score']})"
+    console.print(line)
+
+
+def _cmd_outcomes(args: argparse.Namespace) -> None:
+    from codegraph.state.call_log import knowledge_export, knowledge_outcome_scores
+
+    as_json = bool(args.json)
+    root = _store_root(as_json)
+    entries, files = knowledge_outcome_scores(repo_root=root)
+    titles = {r["id"]: r["title"] for r in knowledge_export(root)}
+
+    def _order(item):
+        return (-abs(item[1].score), -item[1].last_ts)
+
+    entry_rows = [
+        {"entry_id": i, "title": titles.get(i, ""), **s.summary()}
+        for i, s in sorted(entries.items(), key=_order)
+    ][: args.limit]
+    file_rows = [
+        {"file": f, **s.summary()} for f, s in sorted(files.items(), key=_order)
+    ][: args.limit]
+    if as_json:
+        print(json.dumps({"entries": entry_rows, "files": file_rows}, indent=2))
+        return
+    if not entry_rows and not file_rows:
+        console.print("No outcomes recorded yet.")
+        return
+    for label, rows, key in (
+        ("Entries", entry_rows, "entry_id"),
+        ("Files", file_rows, "file"),
+    ):
+        if not rows:
+            continue
+        console.print(f"[bold]{label}[/bold]")
+        for r in rows:
+            name = (
+                f"#{r[key]} {r.get('title', '')}".strip()
+                if key == "entry_id"
+                else r[key]
+            )
+            console.print(
+                f"  {r['status']:<10} {r['score']:>7.3f}  "
+                f"+{r['useful']} -{r['dead_end']} x{r['corrected']}  {name}"
+            )
+
+
 def cmd_knowledge(args: argparse.Namespace) -> None:
-    if getattr(args, "knowledge_cmd", None) != "promote":
-        console.print("[yellow]Usage:[/yellow] cgh knowledge promote --to <checkout>")
+    sub = getattr(args, "knowledge_cmd", None)
+    if sub == "outcome":
+        _cmd_outcome(args)
+        return
+    if sub == "outcomes":
+        _cmd_outcomes(args)
+        return
+    if sub != "promote":
+        console.print(
+            "[yellow]Usage:[/yellow] cgh knowledge promote --to <checkout> | "
+            "outcome <verdict> [--id N | --query Q] [--file F] | outcomes"
+        )
         raise SystemExit(2)
 
     from codegraph.state.call_log import promote_knowledge

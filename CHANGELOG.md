@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Subsystems from how the code connects.** The new `communities` MCP tool
+  and `cgh communities` cluster the file graph (imports and calls) into
+  communities and name each one from its own files, so an agent sees which
+  files form one unit even where the directories do not say. Widely shared
+  utility files are listed apart instead of gluing everything together.
+  The answer is deterministic, federated per scope and cached until the
+  index changes. `architecture_overview` gains a short `subsystems` list,
+  and `context_for_task` names the subsystem its best matches belong to.
+
 ### Changed
 - **Built-in filter rebuilt from the language references.** The Python list
   is now the full built-in functions table of the Python docs, and the

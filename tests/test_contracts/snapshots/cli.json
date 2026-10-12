@@ -19,6 +19,7 @@
     "backend",
     "callees",
     "callers",
+    "communities",
     "compact",
     "diff",
     "doctor",
@@ -231,6 +232,19 @@
         ],
         "positionals": [
           "fn_name"
+        ]
+      },
+      "communities": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--min-size",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
         ]
       },
       "compact": {

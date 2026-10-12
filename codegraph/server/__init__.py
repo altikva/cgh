@@ -120,6 +120,7 @@ def _call_origin() -> str | None:
 _GRAPH_TOOLS = frozenset(
     {
         "architecture_overview",
+        "communities",
         "context_for_task",
         "doc_refs",
         "domain_map",
@@ -177,6 +178,7 @@ def _mark_stale(result, reason: str):
 _FEDERATED_TOOLS = frozenset(
     {
         "architecture_overview",
+        "communities",
         "doc_outline",
         "doc_refs",
         "domain_map",
@@ -418,7 +420,9 @@ from codegraph.server.tools_session import register as _register_session
 from codegraph.server.tools_tests import register as _register_tests
 from codegraph.server.tools_viz import register as _register_viz
 
-_register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
+_register_arch(
+    mcp
+)  # architecture_overview, domain_map, communities, endpoints, use FIRST
 _register_query(mcp)
 _register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
 _register_tests(mcp)  # tests_for, impact_report, untested

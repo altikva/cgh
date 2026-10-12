@@ -123,7 +123,7 @@ NODE_TABLES = [
         transport       TEXT,
         command         TEXT,
         url             TEXT,
-        args            TEXT,
+        arg_count       BIGINT,
         env_keys        TEXT,
         header_keys     TEXT
     )""",

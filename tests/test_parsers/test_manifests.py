@@ -75,7 +75,7 @@ def test_pnpm_workspace_globs(tmp_path):
     assert app.packages[0].workspace_root == str(tmp_path)
 
 
-def test_mcp_secrets_masked(tmp_path):
+def test_mcp_servers_keep_no_argument_or_query(tmp_path):
     cfg = {
         "mcpServers": {
             "db": {
@@ -94,16 +94,11 @@ def test_mcp_secrets_masked(tmp_path):
     }
     m = read_manifest(_write(tmp_path / ".mcp.json", json.dumps(cfg)))
     servers = {s.name: s for s in m.mcp_servers}
-    assert servers["db"].args == [
-        "-y",
-        "server-db",
-        "postgres://db.local/app",
-        "--password",
-        "***",
-    ]
+    assert servers["db"].arg_count == 5
+    assert not hasattr(servers["db"], "args")
     assert servers["db"].env_keys == ["PGPASSWORD"]
     assert servers["plain"].transport == "http"
-    assert servers["plain"].url == "https://mcp.example.com/sse?token=***"
+    assert servers["plain"].url == "https://mcp.example.com/sse"
 
 
 def test_package_key():

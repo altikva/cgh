@@ -177,6 +177,7 @@ def test_mcp_servers_keep_no_secret_values(tmp_path, backend):
                         "args": ["serve", "--api-key", "sk-live-123", "--token=abc"],
                         "env": {"API_TOKEN": "s3cr3t-value"},
                     },
+                    "inline": {"command": "npx -y server ghp_inlinetoken"},
                     "remote": {
                         "type": "http",
                         "url": "https://user:pw@mcp.example.com/v1?api_key=xyz&x=1",
@@ -195,16 +196,18 @@ def test_mcp_servers_keep_no_secret_values(tmp_path, backend):
         assert index_file(tmp_path / rel, tmp_path)
 
     servers = {s["name"]: s for s in _payload(tmp_path)["mcp_servers"]}
-    assert set(servers) == {"graph", "remote", "docs"}
+    assert set(servers) == {"graph", "inline", "remote", "docs"}
     graph = servers["graph"]
     assert graph["transport"] == "stdio"
     assert graph["command"] == "cgh"
-    assert graph["args"] == ["serve", "--api-key", "***", "--token=***"]
+    assert graph["arg_count"] == 4
+    assert "args" not in graph
+    assert servers["inline"]["command"] == "npx"
     assert graph["env_keys"] == ["API_TOKEN"]
     assert graph["file"] == ".mcp.json"
     remote = servers["remote"]
     assert remote["transport"] == "http"
-    assert remote["url"] == "https://mcp.example.com/v1?api_key=***&x=1"
+    assert remote["url"] == "https://mcp.example.com/v1"
     assert remote["header_keys"] == ["Authorization"]
     assert servers["docs"]["transport"] == "sse"
     assert servers["docs"]["file"] == ".vscode/mcp.json"
@@ -215,7 +218,15 @@ def test_mcp_servers_keep_no_secret_values(tmp_path, backend):
         res = conn.execute(f"SELECT * FROM {table}")
         while res.has_next():
             row = " ".join(str(v) for v in res.get_next())
-            for secret in ("s3cr3t-value", "t0k3n", "sk-live-123", "xyz", ":pw@"):
+            for secret in (
+                "s3cr3t-value",
+                "t0k3n",
+                "sk-live-123",
+                "abc",
+                "xyz",
+                ":pw@",
+                "ghp_inlinetoken",
+            ):
                 assert secret not in row
 
 

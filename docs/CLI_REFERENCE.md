@@ -480,9 +480,9 @@ cgh packages [NAME] [--external] [--limit N] [--json] [--root DIR]
 - **Cycles**: internal dependency cycles are printed after the list.
 - **MCP servers**: `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`
   (comments allowed) give each server's transport and command or url. Env
-  vars and headers are listed by key name only; their values are never
-  read into the index, and credential-like arguments or url parameters are
-  masked.
+  vars and headers are listed by key name only and arguments by their
+  count; none of their values reaches the index. A command keeps its first
+  word, a url its scheme, host and path.
 - **NAME**: show only that package (exact name first, else a substring),
   with its external dependencies and its dependents.
 - `--external`: list external dependencies instead of a count.

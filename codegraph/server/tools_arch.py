@@ -375,9 +375,10 @@ def register(mcp) -> None:
         ecosystem, version, file, line, internal: [{name, group, spec,
         file}], external | external_count, dependents: [{name, group,
         spec}], workspaces?, workspace_root?, scope}], cycles: [{scope,
-        packages}], mcp_servers: [{name, transport, command?, url?, args?,
+        packages}], mcp_servers: [{name, transport, command?, url?, arg_count?,
         env_keys?, header_keys?, file, line, scope}]}. MCP servers carry the
-        names of their env vars and headers, never the values.
+        names of their env vars and headers and the number of arguments,
+        never their values.
         """
         from codegraph.analysis.packages import collect, packages_payload
 

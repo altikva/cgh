@@ -65,7 +65,7 @@ _NODE_TABLES = [
     )""",
     """CREATE TABLE IF NOT EXISTS mcp_server (
         id TEXT PRIMARY KEY, name TEXT, file_path TEXT, start_line BIGINT,
-        transport TEXT, command TEXT, url TEXT, args TEXT, env_keys TEXT,
+        transport TEXT, command TEXT, url TEXT, arg_count BIGINT, env_keys TEXT,
         header_keys TEXT
     )""",
 ]

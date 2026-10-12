@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable
 from typing import Any
@@ -44,7 +43,7 @@ _MCP_FIELDS = [
     "transport",
     "command",
     "url",
-    "args",
+    "arg_count",
     "env_keys",
     "header_keys",
 ]
@@ -153,10 +152,6 @@ def _scope_report(
 
     servers = []
     for srv in data.get("servers") or []:
-        try:
-            args = json.loads(srv.get("args") or "[]")
-        except ValueError:
-            args = []
         entry = {
             "name": srv.get("name") or "",
             "transport": srv.get("transport") or "",
@@ -167,7 +162,7 @@ def _scope_report(
         for key, value in (
             ("command", srv.get("command")),
             ("url", srv.get("url")),
-            ("args", args),
+            ("arg_count", srv.get("arg_count")),
             ("env_keys", _split(srv.get("env_keys"))),
             ("header_keys", _split(srv.get("header_keys"))),
         ):

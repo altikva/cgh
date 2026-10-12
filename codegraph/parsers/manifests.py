@@ -16,9 +16,9 @@
 #                .mcp.json, .cursor/mcp.json, .vscode/mcp.json
 #                                one McpServerDef per declared server: name,
 #                                transport, command or url. Env and header
-#                                VALUES are never kept, only their key names,
-#                                and arguments or urls that look like they
-#                                carry a credential are masked.
+#                                values and the arguments are never kept,
+#                                only the key names and the argument count;
+#                                a url keeps its scheme, host and path.
 #              read_manifest(path) is the single entry point; it returns
 #              None for any other file and never raises.
 
@@ -57,12 +57,6 @@ _NPM_GROUPS = (
     ("optionalDependencies", "optional"),
 )
 
-_MASK = "***"
-# Flag or key names whose value is a credential, in args and url queries.
-_SECRET_NAME = re.compile(
-    r"(token|secret|passw(or)?d|api[-_]?key|apikey|auth|credential|bearer|private[-_]?key)",
-    re.IGNORECASE,
-)
 _PEP508_NAME = re.compile(r"^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
 
 
@@ -96,8 +90,9 @@ class PackageDef:
 
 @dataclass(slots=True)
 class McpServerDef:
-    """An MCP server declared in a client config file. Holds no env or
-    header value: ``env_keys`` and ``header_keys`` are the key names only."""
+    """An MCP server declared in a client config file. Holds no secret:
+    ``env_keys`` and ``header_keys`` are the key names only, the arguments
+    are reduced to their count, and the url keeps no user info or query."""
 
     id: str
     name: str
@@ -106,7 +101,7 @@ class McpServerDef:
     transport: str = ""
     command: str = ""
     url: str = ""
-    args: list[str] = field(default_factory=list)
+    arg_count: int = 0
     env_keys: list[str] = field(default_factory=list)
     header_keys: list[str] = field(default_factory=list)
 
@@ -417,45 +412,21 @@ def _python_package(path: Path, data: dict, lines: list[str]) -> PackageDef | No
 
 
 def _safe_url(url: str) -> str:
-    """The url without user info, and with credential-like query values
-    masked."""
+    """Scheme, host and path of ``url``. User info, query and fragment are
+    dropped: any of them can carry a token, and none says what the server
+    is."""
     try:
         parts = urlsplit(url)
     except ValueError:
-        return _MASK
+        return ""
     netloc = parts.netloc.rsplit("@", 1)[-1]
-    query = "&".join(
-        f"{k}={_MASK}" if _SECRET_NAME.search(k) else (f"{k}={v}" if sep else k)
-        for k, sep, v in (q.partition("=") for q in parts.query.split("&") if q)
-    )
-    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
-def _safe_args(args: list[str]) -> list[str]:
-    """Arguments with the value of any credential-like flag masked
-    (--api-key X, --token=X), and urls cleaned like the server url."""
-    out: list[str] = []
-    mask_next = False
-    for arg in args:
-        if mask_next and not arg.startswith("-"):
-            out.append(_MASK)
-            mask_next = False
-            continue
-        mask_next = False
-        flag, eq, _value = arg.partition("=")
-        if arg.startswith("-") and _SECRET_NAME.search(flag):
-            if eq:
-                out.append(f"{flag}={_MASK}")
-            else:
-                out.append(arg)
-                mask_next = True
-        elif "://" in arg:
-            out.append(_safe_url(arg))
-        elif eq and _SECRET_NAME.search(flag):
-            out.append(f"{flag}={_MASK}")
-        else:
-            out.append(arg)
-    return out
+def _safe_command(command: str) -> str:
+    """The executable only. A command written as one string with its
+    arguments ("npx -y server --token X") keeps its first word."""
+    return command.split(maxsplit=1)[0] if command.strip() else ""
 
 
 def _mcp_servers(path: Path, data: dict, lines: list[str]) -> list[McpServerDef]:
@@ -483,9 +454,9 @@ def _mcp_servers(path: Path, data: dict, lines: list[str]) -> list[McpServerDef]
                 file_path=str(path),
                 start_line=_line_of(lines, name, container),
                 transport=transport,
-                command=command,
+                command=_safe_command(command),
                 url=_safe_url(url) if url else "",
-                args=_safe_args(_str_list(spec.get("args"))),
+                arg_count=len(_str_list(spec.get("args"))),
                 env_keys=sorted(str(k) for k in env) if isinstance(env, dict) else [],
                 header_keys=(
                     sorted(str(k) for k in headers) if isinstance(headers, dict) else []

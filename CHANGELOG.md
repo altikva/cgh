@@ -15,7 +15,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   ones depend on each other inside the repo, who depends on a given
   package, internal dependency cycles, and external dependencies by name
   and spec. They also list the MCP servers declared in `.mcp.json`,
-  `.cursor/mcp.json` and `.vscode/mcp.json`, with env and header key names
+  `.cursor/mcp.json` and `.vscode/mcp.json`, with env and header key names and an argument count
   only, never their values. An agent sees how a monorepo's packages and
   tools fit together without reading every manifest. The graph format
   moves to 13: the next `cgh index` (or owner start) reparses once.

@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -1180,7 +1179,7 @@ def _ingest_manifest(conn: GraphDB, manifest) -> list[NameRef]:
                 "transport": srv.transport,
                 "command": srv.command,
                 "url": srv.url,
-                "args": json.dumps(srv.args),
+                "arg_count": srv.arg_count,
                 "env_keys": ",".join(srv.env_keys),
                 "header_keys": ",".join(srv.header_keys),
             },

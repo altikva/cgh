@@ -920,6 +920,41 @@ def cmd_communities(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_report
+# ---------------------------------------------------------------------------
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    """The architecture report: Markdown on stdout, --out also saves it."""
+    import sys
+
+    from codegraph.cli.output import emit_result
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "max_items": int(args.limit),
+        "resolution": float(args.resolution),
+    }
+    payload = _ask_owner(root, "report", "architecture_report", arguments)
+    if payload is None:
+        from codegraph.analysis.arch_report import build_report
+
+        payload = build_report(
+            _query_conn(root),
+            root,
+            lambda p: _short_path(p, root),
+            resolution=arguments["resolution"],
+            max_items=max(1, arguments["max_items"]),
+        )
+    for w in payload.get("warnings") or []:
+        print(f"cgh: {w.get('scope')}: {w.get('error')}", file=sys.stderr)
+    if args.json:
+        emit_result(json.dumps(payload, indent=2), args.out, "architecture.json")
+        return
+    emit_result(payload.get("markdown", ""), args.out, "ARCHITECTURE.md")
+
+
+# ---------------------------------------------------------------------------
 # cmd_callers
 # ---------------------------------------------------------------------------
 

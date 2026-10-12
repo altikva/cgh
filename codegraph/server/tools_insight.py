@@ -634,26 +634,10 @@ def register(mcp) -> None:
         each cycle tagged inline with its scope via the file paths it holds.
         """
 
+        from codegraph.analysis.cycles import find_import_cycles
+
         def query(conn):
-            adj: dict[str, list[str]] = {}
-            for row in conn.find_neighbors(
-                "IMPORTS", return_src=["path"], return_dst=["path"]
-            ):
-                src = row["src_path"]
-                dst = row["dst_path"]
-                adj.setdefault(src, []).append(dst)
-                adj.setdefault(dst, [])
-            comps = _tarjan_scc(adj)
-            # Only components that are a real cycle: size > 1, or a self-loop.
-            cycles: list[dict] = []
-            for comp in comps:
-                if len(comp) > 1:
-                    cycles.append({"cycle": sorted(comp)})
-                elif len(comp) == 1:
-                    node = comp[0]
-                    if node in adj.get(node, []):
-                        cycles.append({"cycle": [node]})
-            return cycles
+            return [{"cycle": c} for c in find_import_cycles(conn)]
 
         results, warnings = _federate(query)
         cycles = [r["cycle"] for r in results]
@@ -668,51 +652,3 @@ def register(mcp) -> None:
             payload["partial"] = True
             payload["warnings"] = warnings
         return json.dumps(payload, indent=2)
-
-
-def _tarjan_scc(adj: dict[str, list[str]]) -> list[list[str]]:
-    """Tarjan strongly-connected components, iterative to avoid recursion
-    limits on large import graphs. Returns a list of components (each a list
-    of node keys)."""
-    index_counter = [0]
-    index: dict[str, int] = {}
-    lowlink: dict[str, int] = {}
-    on_stack: dict[str, bool] = {}
-    stack: list[str] = []
-    result: list[list[str]] = []
-
-    for start in list(adj.keys()):
-        if start in index:
-            continue
-        # Iterative DFS. work stack holds (node, neighbor_iterator_position).
-        work: list[tuple[str, int]] = [(start, 0)]
-        while work:
-            node, pi = work[-1]
-            if pi == 0:
-                index[node] = lowlink[node] = index_counter[0]
-                index_counter[0] += 1
-                stack.append(node)
-                on_stack[node] = True
-            neighbors = adj.get(node, [])
-            if pi < len(neighbors):
-                work[-1] = (node, pi + 1)
-                nxt = neighbors[pi]
-                if nxt not in index:
-                    work.append((nxt, 0))
-                elif on_stack.get(nxt):
-                    lowlink[node] = min(lowlink[node], index[nxt])
-            else:
-                if lowlink[node] == index[node]:
-                    comp: list[str] = []
-                    while True:
-                        w = stack.pop()
-                        on_stack[w] = False
-                        comp.append(w)
-                        if w == node:
-                            break
-                    result.append(comp)
-                work.pop()
-                if work:
-                    parent_node = work[-1][0]
-                    lowlink[parent_node] = min(lowlink[parent_node], lowlink[node])
-    return result

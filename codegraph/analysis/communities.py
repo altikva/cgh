@@ -127,6 +127,9 @@ class FileGraph:
     ``weights`` is undirected, keyed by the sorted path pair. ``imports`` and
     ``calls`` keep the directed counts behind it, for reports that need to
     say which way a link points. ``roles`` maps each file to (role, layer).
+    ``call_sites`` keeps, per directed file pair, the first calling function
+    (its name and line) and the function it calls, so a report can point at
+    a line.
     """
 
     nodes: list[str] = field(default_factory=list)
@@ -135,6 +138,9 @@ class FileGraph:
     calls: dict[tuple[str, str], int] = field(default_factory=dict)
     roles: dict[str, tuple[str, str]] = field(default_factory=dict)
     symbols: list[SymbolRef] = field(default_factory=list)
+    call_sites: dict[tuple[str, str], tuple[int, str, str]] = field(
+        default_factory=dict
+    )
 
     def degree(self) -> dict[str, int]:
         """Distinct neighbour count per file."""
@@ -197,10 +203,11 @@ def build_file_graph(conn: Any, files: list[dict] | None = None) -> FileGraph:
             imports[(a, b)] = 1
 
     calls: Counter[tuple[str, str]] = Counter()
+    call_sites: dict[tuple[str, str], tuple[int, str, str]] = {}
     in_degree: Counter[tuple[str, str, int]] = Counter()
     for row in conn.find_neighbors(
         "CALLS",
-        return_src=["file_path"],
+        return_src=["file_path", "name", "start_line"],
         return_dst=["file_path", "name", "start_line"],
     ):
         a, b = row.get("src_file_path"), row.get("dst_file_path")
@@ -212,6 +219,13 @@ def build_file_graph(conn: Any, files: list[dict] | None = None) -> FileGraph:
             ] += 1
         if a != b and a in keep and b in keep:
             calls[(a, b)] += 1
+            site = (
+                int(row.get("src_start_line") or 0),
+                row.get("src_name") or "?",
+                row.get("dst_name") or "?",
+            )
+            if (a, b) not in call_sites or site < call_sites[(a, b)]:
+                call_sites[(a, b)] = site
 
     pair_imports: Counter[tuple[str, str]] = Counter()
     pair_calls: Counter[tuple[str, str]] = Counter()
@@ -239,6 +253,7 @@ def build_file_graph(conn: Any, files: list[dict] | None = None) -> FileGraph:
         weights=weights,
         imports=dict(imports),
         calls=dict(calls),
+        call_sites=call_sites,
         roles=roles,
         symbols=symbols,
     )

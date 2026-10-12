@@ -1025,6 +1025,122 @@ def cmd_why(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_packages
+# ---------------------------------------------------------------------------
+
+
+def _packages_payload(root: str, arguments: dict) -> dict:
+    """The packages tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.packages import collect, packages_payload
+
+    route, served = _route(root, "packages", "packages", arguments)
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'packages')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner" and served is not None:
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", collect(conn)))
+    buckets, failures = _query_children_scoped(root, collect)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = packages_payload(
+        per_scope, short_path=lambda p: _short_path(p, root), **arguments
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def _dep_text(dep: dict) -> str:
+    group = "" if dep.get("group") == "runtime" else f" [{dep['group']}]"
+    spec = f" {dep['spec']}" if dep.get("spec") else ""
+    return f"{dep['name']}{spec}{group}"
+
+
+def cmd_packages(args: argparse.Namespace) -> None:
+    """Packages declared by manifests, their internal dependencies, who
+    depends on them, internal cycles, and declared MCP servers."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "include_external": bool(args.external),
+        "limit": args.limit if args.limit and args.limit > 0 else 200,
+    }
+    payload = _packages_payload(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    rows = payload.get("packages") or []
+    if not rows:
+        what = f" matching '{arguments['name']}'" if arguments["name"] else ""
+        console.print(f"[dim]No packages{escape(what)}[/dim]")
+    for row in rows:
+        scope = (
+            f"  [dim]({escape(row['scope'])})[/dim]"
+            if federated and row.get("scope", "parent") != "parent"
+            else ""
+        )
+        version = f" {row['version']}" if row.get("version") else ""
+        console.print(
+            f"[bold]{escape(row['name'])}[/bold][dim]{escape(version)}"
+            f"  {row['ecosystem']}  {escape(row['file'])}:{row['line']}[/dim]{scope}"
+        )
+        if row.get("workspaces"):
+            members = ", ".join(row["workspaces"])
+            console.print(f"  [dim]workspace members:[/dim] {escape(members)}")
+        for dep in row.get("internal") or []:
+            console.print(f"  [green]->[/green] {escape(_dep_text(dep))}")
+        for dep in row.get("dependents") or []:
+            console.print(f"  [cyan]<-[/cyan] {escape(_dep_text(dep))}")
+        if "external" in row:
+            for dep in row["external"]:
+                console.print(f"  [dim]ext[/dim] {escape(_dep_text(dep))}")
+        elif row.get("external_count"):
+            console.print(
+                f"  [dim]{row['external_count']} external dependency(ies), "
+                "--external to list[/dim]"
+            )
+    if rows:
+        more = ", truncated (--limit)" if payload.get("truncated") else ""
+        console.print(
+            f"[dim]{payload.get('total', len(rows))} package(s), "
+            f"{payload.get('internal_edges', 0)} internal dependency edge(s)"
+            f"{more}[/dim]"
+        )
+    for cycle in payload.get("cycles") or []:
+        console.print(
+            f"[yellow]cycle[/yellow] {escape(' -> '.join(cycle['packages']))}"
+        )
+    servers = payload.get("mcp_servers") or []
+    if servers:
+        console.print("[bold]MCP servers[/bold]")
+    for srv in servers:
+        target = srv.get("command") or srv.get("url") or "?"
+        if srv.get("args"):
+            target = f"{target} {' '.join(srv['args'])}"
+        keys = srv.get("env_keys", []) + srv.get("header_keys", [])
+        extra = f"  [dim]keys: {escape(', '.join(keys))}[/dim]" if keys else ""
+        console.print(
+            f"  [bold]{escape(srv['name'])}[/bold] [dim]{escape(srv['transport'])}[/dim]"
+            f"  {escape(target)}  [dim]{escape(srv['file'])}:{srv['line']}[/dim]{extra}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # cmd_communities
 # ---------------------------------------------------------------------------
 

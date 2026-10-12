@@ -5,8 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP architecture-awareness tools: architecture_overview,
-#              domain_map, endpoints. Designed to be the FIRST tools Claude
-#              calls for new-feature / code-exploration tasks.
+#              domain_map, endpoints, packages. Designed to be the FIRST tools
+#              Claude calls for new-feature / code-exploration tasks.
 
 from __future__ import annotations
 
@@ -344,5 +344,53 @@ def register(mcp) -> None:
             short_path=lambda p: _short_path(p, _srv._root),
         )
         if warnings:
+            payload["warnings"] = warnings
+        return json.dumps(payload, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def packages(
+        name: str = "", include_external: bool = False, limit: int = 200
+    ) -> str:
+        """
+        Packages declared by the repo's manifests (package.json, including
+        npm / pnpm / yarn workspaces, and pyproject.toml, including uv
+        workspace members), how they depend on each other, and the MCP
+        servers its client configs declare (.mcp.json, .cursor/mcp.json,
+        .vscode/mcp.json).
+
+        A dependency is internal when it names a package declared in the
+        same repo (a monorepo sibling), external otherwise (name and version
+        spec only, nothing is fetched).
+
+        Args:
+          name: a package name (exact first, else a substring) to show only
+            that package, with its external dependencies and the packages
+            that depend on it ("who depends on X").
+          include_external: list every external dependency instead of a
+            count, when no name is given.
+          limit: max packages returned (default 200).
+
+        Returns: {total, internal_edges, truncated, packages: [{name,
+        ecosystem, version, file, line, internal: [{name, group, spec,
+        file}], external | external_count, dependents: [{name, group,
+        spec}], workspaces?, workspace_root?, scope}], cycles: [{scope,
+        packages}], mcp_servers: [{name, transport, command?, url?, arg_count?,
+        env_keys?, header_keys?, file, line, scope}]}. MCP servers carry the
+        names of their env vars and headers and the number of arguments,
+        never their values.
+        """
+        from codegraph.analysis.packages import collect, packages_payload
+
+        per_scope, warnings = federate_scoped(_get_conn, _srv._root, collect)
+        payload = packages_payload(
+            per_scope,
+            name=name,
+            include_external=include_external,
+            limit=limit,
+            short_path=lambda p: _short_path(p, _srv._root),
+        )
+        if warnings:
+            payload["partial"] = True
             payload["warnings"] = warnings
         return json.dumps(payload, indent=2)

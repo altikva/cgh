@@ -42,6 +42,10 @@ NODES: dict[str, NodeSpec] = {
     "TFResource": NodeSpec("TFResource", "tf_resource", "id", True),
     "TFVar": NodeSpec("TFVar", "tf_var", "id", True),
     "MdSection": NodeSpec("MdSection", "md_section", "id", True),
+    # A package declared by a manifest (package.json, pyproject.toml) and an
+    # MCP server declared by a client config file (.mcp.json and the like).
+    "Package": NodeSpec("Package", "package", "id", True),
+    "McpServer": NodeSpec("McpServer", "mcp_server", "id", True),
 }
 
 
@@ -183,6 +187,33 @@ EDGES: dict[str, EdgeSpec] = {
         "from_id",
         "to_id",
     ),
+    "DEFINES_PACKAGE": EdgeSpec(
+        "DEFINES_PACKAGE",
+        "edge_defines_package",
+        "File",
+        "Package",
+        "from_path",
+        "to_id",
+    ),
+    # A dependency on a package declared in the same repo. Dependencies on
+    # anything else stay as name references (see analysis/packages.py).
+    "DEPENDS_ON": EdgeSpec(
+        "DEPENDS_ON",
+        "edge_depends_on",
+        "Package",
+        "Package",
+        "from_id",
+        "to_id",
+        ("dep_group", "spec"),
+    ),
+    "DEFINES_MCP_SERVER": EdgeSpec(
+        "DEFINES_MCP_SERVER",
+        "edge_defines_mcp_server",
+        "File",
+        "McpServer",
+        "from_path",
+        "to_id",
+    ),
 }
 
 
@@ -214,6 +245,8 @@ STATS_NODE_LABELS: tuple[str, ...] = (
     "TFResource",
     "TFVar",
     "MdSection",
+    "Package",
+    "McpServer",
 )
 STATS_EDGE_TYPES: tuple[str, ...] = (
     "IMPORTS",
@@ -230,6 +263,7 @@ STATS_EDGE_TYPES: tuple[str, ...] = (
     "TF_REFS_VAR",
     "TF_VAR_DEPENDS",
     "TF_VAR_REFS",
+    "DEPENDS_ON",
 )
 
 

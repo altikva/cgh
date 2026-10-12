@@ -99,6 +99,34 @@ NODE_TABLES = [
         anchor          TEXT,
         kind            TEXT
     )""",
+    # Package manifests. `pkg_key` is the ecosystem-qualified normalized name
+    # dependencies match on; `workspaces` the member globs a workspace root
+    # declares and `workspace_root` the root that lists this package.
+    """CREATE TABLE IF NOT EXISTS package (
+        id              TEXT PRIMARY KEY,
+        name            TEXT,
+        pkg_key         TEXT,
+        ecosystem       TEXT,
+        version         TEXT,
+        file_path       TEXT,
+        start_line      BIGINT,
+        workspaces      TEXT,
+        workspace_root  TEXT
+    )""",
+    # MCP servers from client config files. No env or header value is ever
+    # stored: env_keys / header_keys hold comma-joined key names only.
+    """CREATE TABLE IF NOT EXISTS mcp_server (
+        id              TEXT PRIMARY KEY,
+        name            TEXT,
+        file_path       TEXT,
+        start_line      BIGINT,
+        transport       TEXT,
+        command         TEXT,
+        url             TEXT,
+        arg_count       BIGINT,
+        env_keys        TEXT,
+        header_keys     TEXT
+    )""",
 ]
 
 
@@ -209,6 +237,23 @@ EDGE_TABLES = [
         to_id      TEXT,
         PRIMARY KEY (from_id, to_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_package (
+        from_path  TEXT,
+        to_id      TEXT,
+        PRIMARY KEY (from_path, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_depends_on (
+        from_id    TEXT,
+        to_id      TEXT,
+        dep_group  TEXT NOT NULL DEFAULT '',
+        spec       TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (from_id, to_id, dep_group, spec)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_mcp_server (
+        from_path  TEXT,
+        to_id      TEXT,
+        PRIMARY KEY (from_path, to_id)
+    )""",
 ]
 
 
@@ -296,6 +341,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_rationale_symbol ON rationale(symbol_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_resource_dir ON tf_resource(module_dir)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_dir ON tf_var(module_dir)",
+    "CREATE INDEX IF NOT EXISTS idx_package_key ON package(pkg_key)",
+    "CREATE INDEX IF NOT EXISTS idx_depends_on_to ON edge_depends_on(to_id)",
 ]
 
 

@@ -246,7 +246,7 @@ cgh stop [--root DIR]
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
 `cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
-`cgh shared-types`, `cgh why`, `cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh packages`, `cgh shared-types`, `cgh why`, `cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -457,6 +457,39 @@ cgh endpoints --include-tests --json
 
 ---
 
+### `packages`
+
+List the packages the repo's manifests declare and how they depend on each
+other, plus the MCP servers its client configs declare. Same query as the MCP
+`packages` tool, federated across subrepos (a non-parent scope is shown next
+to the package).
+
+```
+cgh packages [NAME] [--external] [--limit N] [--json] [--root DIR]
+```
+
+- **Manifests**: every `package.json` (npm, pnpm and yarn workspaces, read
+  the way the import resolver reads them) and every `pyproject.toml` that
+  declares a package or dependencies (`[project]`, optional extras,
+  `[dependency-groups]`, Poetry tables, uv workspace members). A
+  `pyproject.toml` that only configures tools is skipped.
+- **Internal or external**: a dependency is internal (`->`) when it names a
+  package declared in the same repo, external otherwise, kept as name and
+  version spec only. Python names are compared normalized (`My_Lib` matches
+  `my-lib`). `<-` lines list the packages that depend on this one.
+- **Cycles**: internal dependency cycles are printed after the list.
+- **MCP servers**: `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`
+  (comments allowed) give each server's transport and command or url. Env
+  vars and headers are listed by key name only and arguments by their
+  count; none of their values reaches the index. A command keeps its first
+  word, a url its scheme, host and path.
+- **NAME**: show only that package (exact name first, else a substring),
+  with its external dependencies and its dependents.
+- `--external`: list external dependencies instead of a count.
+- `--limit N`: show the first N packages (default 200).
+- `--json`: `{total, internal_edges, truncated, packages, cycles,
+  mcp_servers, warnings?}`.
+
 ### `shared-types`
 
 Types mirrored across federated repos: a class, interface or object type
@@ -517,6 +550,9 @@ JavaScript / TypeScript, Vue, Go, Rust, Java, C#, Ruby, Terraform and SQL;
 **Example:**
 
 ```bash
+cgh packages
+cgh packages @acme/core       # who depends on it, what it pulls in
+cgh packages --external --json
 cgh shared-types
 cgh shared-types UserOut --json
 cgh shared-types --min-confidence 0.8

@@ -576,6 +576,23 @@
       "query"
     ]
   },
+  "packages": {
+    "properties": {
+      "include_external": {
+        "default": false,
+        "type": "boolean"
+      },
+      "limit": {
+        "default": 200,
+        "type": "integer"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "path_between": {
     "properties": {
       "dst": {

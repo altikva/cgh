@@ -69,7 +69,11 @@ _META_FILE = "scan_meta.json"
 #      and dynamic imports with a literal specifier are IMPORTS edges, marked
 #      by the edge's kind, and TypeScript interfaces and object type aliases
 #      are Class nodes.
-GRAPH_FORMAT = 14
+#  15: package manifests (package.json, pyproject.toml) are stored as Package
+#      nodes with DEPENDS_ON edges between the packages of one repo, and MCP
+#      client configs (.mcp.json, .cursor/mcp.json, .vscode/mcp.json) as
+#      McpServer nodes: unchanged manifests need a parse to get them.
+GRAPH_FORMAT = 15
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

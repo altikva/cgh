@@ -9,6 +9,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Packages and MCP servers in the graph.** The new `packages` MCP tool
+  and `cgh packages` list the packages declared by `package.json` (npm,
+  pnpm and yarn workspaces) and `pyproject.toml` (uv workspaces too), which
+  ones depend on each other inside the repo, who depends on a given
+  package, internal dependency cycles, and external dependencies by name
+  and spec. They also list the MCP servers declared in `.mcp.json`,
+  `.cursor/mcp.json` and `.vscode/mcp.json`: env and header key names and
+  the argument count only, never a value. An agent sees how a monorepo's
+  packages and tools fit together without reading every manifest.
+  Existing indexes are re-parsed once.
 - **Rationale comments.** Comments opening with `WHY:`, `NOTE:`, `HACK:`,
   `SAFETY:`, `INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:`, or
   citing an ADR, are indexed with the function, class or module they

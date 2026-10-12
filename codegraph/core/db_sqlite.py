@@ -78,11 +78,13 @@ _MIGRATIONS = [
     ("call_site", "ctx", "TEXT NOT NULL DEFAULT ''"),
     ("endpoint", "router", "TEXT"),
     ("endpoint", "is_test", "BOOLEAN"),
+    ("edge_imports", "kind", "TEXT DEFAULT ''"),
 ]
 
 _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_imports (
         from_path TEXT, to_path TEXT, symbol TEXT NOT NULL DEFAULT '',
+        kind TEXT DEFAULT '',
         PRIMARY KEY (from_path, to_path, symbol)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_defines_fn (

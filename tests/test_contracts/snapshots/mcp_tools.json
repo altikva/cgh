@@ -787,6 +787,23 @@
       "session_id"
     ]
   },
+  "shared_types": {
+    "properties": {
+      "limit": {
+        "default": 100,
+        "type": "integer"
+      },
+      "min_confidence": {
+        "default": 0.5,
+        "type": "number"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "subgraph": {
     "properties": {
       "depth": {

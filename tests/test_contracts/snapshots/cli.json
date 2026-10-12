@@ -56,6 +56,7 @@
     "search",
     "serve",
     "setup",
+    "shared-types",
     "stats",
     "status",
     "stop",
@@ -710,6 +711,20 @@
         ],
         "positionals": [
           "target"
+        ]
+      },
+      "shared-types": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--min-confidence",
+          "--root",
+          "-h",
+          "-n"
+        ],
+        "positionals": [
+          "name"
         ]
       },
       "stats": {

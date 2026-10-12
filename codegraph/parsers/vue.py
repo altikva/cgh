@@ -15,6 +15,8 @@ from pathlib import Path
 
 from . import register_parser
 from .base import (
+    IMPORT_DYNAMIC,
+    IMPORT_REEXPORT,
     BaseParser,
     ClassDef,
     CodeRef,
@@ -54,6 +56,15 @@ _IMPORT_RE = re.compile(
     r"""(?:\*\s+as\s+(\w+))"""  # namespace: import * as X from
     r""")\s+from\s+['"]([^'"]+)['"]""",
 )
+
+# Re-exports (`export * from '...'`, `export { a as b } from '...'`) and
+# dynamic imports with a string literal specifier (`import('./X.vue')`, as
+# defineAsyncComponent and route tables write them).
+_REEXPORT_RE = re.compile(
+    r"""export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{([^}]*)\})\s*"""
+    r"""from\s+['"]([^'"]+)['"]"""
+)
+_DYNAMIC_IMPORT_RE = re.compile(r"""\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)""")
 
 # defineComponent / defineNuxtComponent
 _DEFINE_COMPONENT_RE = re.compile(
@@ -242,6 +253,21 @@ class VueParser(BaseParser):
                         source_module=module,
                         symbols=named + default + namespace,
                     )
+                )
+            for rm in _REEXPORT_RE.finditer(script_body):
+                names = [
+                    s.strip().split(" as ")[0].strip()
+                    for s in (rm.group(1) or "").split(",")
+                    if s.strip()
+                ]
+                index.imports.append(
+                    ImportRef(
+                        source_module=rm.group(2), symbols=names, kind=IMPORT_REEXPORT
+                    )
+                )
+            for dm in _DYNAMIC_IMPORT_RE.finditer(script_body):
+                index.imports.append(
+                    ImportRef(source_module=dm.group(1), kind=IMPORT_DYNAMIC)
                 )
 
             # Functions

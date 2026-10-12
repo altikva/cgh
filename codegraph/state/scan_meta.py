@@ -65,7 +65,11 @@ _META_FILE = "scan_meta.json"
 #  13: rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) are
 #      stored with the symbol each documents, so symbol_lookup,
 #      context_for_task and the rationale tool can show them.
-GRAPH_FORMAT = 13
+#  14: JavaScript / TypeScript re-exports (`export * from`, `export { a } from`)
+#      and dynamic imports with a literal specifier are IMPORTS edges, marked
+#      by the edge's kind, and TypeScript interfaces and object type aliases
+#      are Class nodes.
+GRAPH_FORMAT = 14
 # Files written by an indexer that predates the per-file stamps (file_stamp
 # table) are found and parsed again one by one; the stamps needed no bump of
 # their own.

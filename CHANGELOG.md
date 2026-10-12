@@ -16,7 +16,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   changes it. `symbol_lookup` and `context_for_task` carry a short
   `rationale` list, the new `rationale` MCP tool and `cgh why <symbol|file>`
   list them all, and an ADR reference links to its indexed Markdown file.
-  The graph format moves to 13: run `cgh index` once to fill it in.
+  Existing indexes are re-parsed once to fill it in.
 - **Overlapping open PRs.** `cgh prs overlap` (and the `pr_overlap` MCP
   tool) reads the open pull requests through `gh` and lists the pairs that
   change the same symbols, call into each other's changes, or only share
@@ -69,8 +69,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   each rated hit shows its standing, and `resume` lists known dead ends so a
   new session does not retry a path that already failed. Existing stores
   gain a new table on open; nothing else changes for them.
+- **Shared types across federated repos.** The new `shared_types` MCP tool
+  and `cgh shared-types` list types defined under the same name in two
+  scopes whose fields agree, such as a backend Pydantic model and the
+  frontend TypeScript interface mirroring it, with the matched fields, a
+  confidence and the fields only one side has. The pairs are deduced at
+  query time and marked so: nothing is stored, subrepos are only read.
 
 ### Changed
+- **`impact_of` follows JS / TS barrels and dynamic imports.** `export *
+  from`, `export { a as b } from` and `import('./x')` with a literal
+  specifier are now import edges, resolved like any import (tsconfig paths,
+  workspaces). A change behind an `index.ts` reaches the barrel's importers
+  without spending depth on the chain, each impacted file says `via` which
+  link reached it, and `imports_of` rows carry a `kind`. TypeScript
+  interfaces and object type aliases are indexed as classes. Existing
+  indexes are re-parsed once.
 - **Lookup verbs exit non-zero when the name is missing or ambiguous.**
   `cgh lookup`, `cgh callers` and `cgh callees` exit 3 when nothing defines
   the name, and `cgh callees` exits 4, listing the candidates on stderr,

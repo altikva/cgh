@@ -85,6 +85,7 @@ from codegraph.cli.commands_query import (
     cmd_outline,
     cmd_report,
     cmd_search,
+    cmd_shared_types,
     cmd_why,
 )
 from codegraph.cli.commands_session import (
@@ -136,6 +137,7 @@ def _print_help():
                 ("endpoints", "HTTP routes with full paths, handler and location"),
                 ("why", "Rationale comments (WHY:, NOTE:, HACK:, ADR) of a symbol"),
                 ("communities", "Subsystems found from the import and call graph"),
+                ("shared-types", "Types mirrored across federated repos (deduced)"),
                 ("report", "Architecture report in Markdown (--out FILE)"),
                 (
                     "graph",
@@ -399,7 +401,7 @@ def _register_setup_and_serve(sub) -> None:
 
 def _register_inspect(sub) -> None:
     """Register stats, logs, search, lookup, callers, callees, outline,
-    endpoints, communities, report, doctor."""
+    endpoints, shared-types, communities, report, doctor."""
     # --- stats ---
     p = sub.add_parser("stats", help="Show graph, edges, call stats, storage")
     _add_root(p)
@@ -581,6 +583,25 @@ def _register_inspect(sub) -> None:
     )
     p.add_argument(
         "--limit", "-n", type=int, default=0, help="Max routes to show (default: all)"
+    )
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
+    # --- shared-types ---
+    p = sub.add_parser(
+        "shared-types",
+        help="Types defined under one name in two federated repos whose "
+        "fields agree (deduced, nothing stored)",
+    )
+    p.add_argument("name", nargs="?", default="", help="Only this type name")
+    p.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        help="Lowest share of matching fields, 0..1 (default 0.5)",
+    )
+    p.add_argument(
+        "--limit", "-n", type=int, default=100, help="Max pairs (default 100)"
     )
     p.add_argument("--json", action="store_true")
     _add_root(p)
@@ -964,6 +985,7 @@ def main() -> None:
         "endpoints": cmd_endpoints,
         "why": cmd_why,
         "communities": cmd_communities,
+        "shared-types": cmd_shared_types,
         "report": cmd_report,
         "doctor": cmd_doctor,
         "diff": cmd_diff,

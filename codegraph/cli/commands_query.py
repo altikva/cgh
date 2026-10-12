@@ -892,6 +892,65 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_shared_types
+# ---------------------------------------------------------------------------
+
+
+def cmd_shared_types(args: argparse.Namespace) -> None:
+    """Same-named types with agreeing fields in two federated scopes,
+    deduced at query time (the shared_types MCP tool)."""
+    from codegraph.analysis.shared_types import shared_types_report
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "min_confidence": float(args.min_confidence),
+        "limit": int(args.limit),
+    }
+    route, served = _route(root, "shared-types", "shared_types", arguments)
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'shared_types')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        payload = served or {}
+    else:
+        payload = shared_types_report(
+            lambda: _query_conn(root),
+            root,
+            name=arguments["name"],
+            min_confidence=arguments["min_confidence"],
+            limit=arguments["limit"],
+        )
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    pairs = payload.get("shared_types") or []
+    if not pairs:
+        console.print(f"[dim]No shared types. {escape(payload.get('note', ''))}[/dim]")
+        return
+    for p in pairs:
+        a, b = p["definitions"]
+        console.print(
+            f"  [bold]{escape(p['name'])}[/bold]  [dim]{p['confidence']:.2f}[/dim]"
+            f"  [cyan]{escape(a['scope'])}[/cyan] {escape(_short_path(a['file'], root))}"
+            f":{a['line']}  [cyan]{escape(b['scope'])}[/cyan]"
+            f" {escape(_short_path(b['file'], root))}:{b['line']}"
+        )
+        console.print(f"      [green]{escape(', '.join(p['matched_fields']))}[/green]")
+        for scope, missing in (p.get("only_in") or {}).items():
+            if missing:
+                console.print(
+                    f"      [dim]only in {escape(scope)}: {escape(', '.join(missing))}[/dim]"
+                )
+    more = " (truncated)" if payload.get("truncated") else ""
+    console.print(f"[dim]{len(pairs)} shared type(s), deduced{more}[/dim]")
+
+
 # cmd_why
 # ---------------------------------------------------------------------------
 

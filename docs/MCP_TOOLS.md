@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 60 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 61 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -21,7 +21,7 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters. A function or class with rationale comments lists the first three in `rationale` |
 | `find_callers(fn_name)` | Find all functions that call `fn_name`; each row says how its edge was obtained in `resolution` (see below) |
 | `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls, each with its `resolution`; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call. A call to a Protocol or ABC method with a single implementation in the scope continues into it (a row marked `interface`, with `via`); with several, the row carries `implementations` and the walk stops. `Class.method` / `module.function` starts from that definition only |
-| `imports_of(file_path)` | List modules imported by a file |
+| `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
 | `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning `{file, line, text}`, instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
@@ -48,9 +48,10 @@ queried name keeps the most certain one.
 | Tool | Description |
 |------|-------------|
 | `file_summary(file_path)` | One-shot orientation for a file: role/layer/lang, its functions and classes with line ranges, what it imports, and who imports it |
-| `impact_of(symbol_or_file, max_depth?, focus?, max_tokens?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints; an impacted function carries the `resolution` of the edge that reached it. The single implementation of a Protocol or ABC method also counts the callers of that method. `max_tokens` trims the farthest nodes first (`truncated`, `dropped`) |
+| `impact_of(symbol_or_file, max_depth?, focus?, max_tokens?)` | Reverse blast radius: everything that transitively calls or imports the target, grouped by role/layer, with reaching endpoints; an impacted function carries the `resolution` of the edge that reached it. The single implementation of a Protocol or ABC method also counts the callers of that method. `max_tokens` trims the farthest nodes first (`truncated`, `dropped`). JS / TS dynamic imports count as imports, and a barrel re-exporting the target passes it on to its own importers in the same hop; each impacted file says `via` which link reached it (`import`, `reexport`, `dynamic`, `interface`, `terraform`) |
 | `path_between(src, dst, edge?)` | Shortest path between two symbols/files over `CALLS` or `IMPORTS`; over CALLS, `hops` gives each step's `resolution`, and a Protocol or ABC method with a single implementation leads on to it |
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
+| `shared_types(name?, min_confidence?, limit?)` | Types mirrored across federated repos, deduced at query time: a class, interface or object type alias defined under the same name in two scopes whose field names agree (a backend Pydantic model and the frontend TypeScript interface, snake_case and camelCase equal). Each pair is `{name, scopes, matched_fields, confidence, deduced: true, definitions, only_in}`; nothing is stored and children are only read. Python and TypeScript / JavaScript |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
 | `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
 | `pr_overlap(limit?)` | Open pull requests that collide, read through the GitHub CLI: pairs that change the same symbol (`strong`), where one PR's changed code calls what the other changes (`indirect`, one hop), or that edit the same files (`weak`). Returns `{error}` when `gh` is missing, not authenticated or the repo has no GitHub remote (parent scope only) |

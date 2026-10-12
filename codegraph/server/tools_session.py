@@ -7,10 +7,10 @@
 # Description: Session continuity in one call each. checkpoint persists a
 #              session digest before a clear or compaction; resume returns
 #              ONE composed, ranked, budgeted bundle: standing
-#              instructions first, then recent digests, task-relevant
-#              knowledge, open plans, and recent file summaries. Clearing
-#              a context stops costing anything: what was learned survives
-#              outside the window.
+#              instructions first, then recent digests, known dead ends,
+#              task-relevant knowledge, open plans, and recent file
+#              summaries. Clearing a context stops costing anything: what
+#              was learned survives outside the window.
 
 from __future__ import annotations
 
@@ -24,6 +24,10 @@ _KNOWLEDGE_RESERVE = 0.4
 
 # How many knowledge entries the bucket aims to carry.
 _KNOWLEDGE_LIMIT = 8
+
+# How many known dead ends (entries and files whose recorded outcomes say they
+# did not work) the bundle carries, strongest and most recent first.
+_DEAD_ENDS_LIMIT = 5
 
 
 def _is_auto_checkpoint(entry: dict) -> bool:
@@ -43,7 +47,11 @@ def build_resume_bundle(
     """The composed bundle, priority-ordered and budget-capped. Shared by
     the resume MCP tool and the SessionStart header hook."""
     from codegraph.core.fts import get_fts_conn, list_plan_entries
-    from codegraph.state.call_log import knowledge_list, knowledge_search
+    from codegraph.state.call_log import (
+        knowledge_dead_ends,
+        knowledge_list,
+        knowledge_search,
+    )
     from codegraph.state.findings import query_findings
 
     sections: list[tuple[str, list[dict]]] = []
@@ -97,6 +105,12 @@ def build_resume_bundle(
     digests = content_digests + auto_digests[:1]
     sections.append(("digests", digests))
 
+    # Paths an earlier session already found to go nowhere, so this one does
+    # not retry them. Small and capped, right after the digests.
+    sections.append(
+        ("known_dead_ends", knowledge_dead_ends(_DEAD_ENDS_LIMIT, repo_root=repo_root))
+    )
+
     # Coverage-first: a task ranks the entries (BM25 is strict AND over the
     # terms), but a search that matches nothing must never SHRINK the bucket,
     # so backfill with recent entries up to the limit. The no-task path is pure
@@ -121,7 +135,10 @@ def build_resume_bundle(
     have = {k["id"] for k in knowledge}
     if len(knowledge) < _KNOWLEDGE_LIMIT:
         for k in knowledge_list(
-            limit=_KNOWLEDGE_LIMIT, exclude_tag="session-digest", repo_root=repo_root
+            limit=_KNOWLEDGE_LIMIT,
+            exclude_tag="session-digest",
+            repo_root=repo_root,
+            rank_outcomes=True,
         ):
             if len(knowledge) >= _KNOWLEDGE_LIMIT:
                 break
@@ -194,7 +211,13 @@ def build_resume_bundle(
     # The non-knowledge sections share the budget MINUS the knowledge reserve,
     # in priority order, so they cannot eat into knowledge's floor.
     other_cap = used + int(avail * (1 - _KNOWLEDGE_RESERVE))
-    for name in ("digests", "open_plans", "recent_summaries", "federated_knowledge"):
+    for name in (
+        "digests",
+        "known_dead_ends",
+        "open_plans",
+        "recent_summaries",
+        "federated_knowledge",
+    ):
         if name in by_name:
             used = _fill(name, by_name[name], other_cap, used)
 
@@ -247,9 +270,10 @@ def register(mcp) -> None:
         """
         ONE call to rehydrate after a context clear: standing
         instructions first (never truncated), then recent session
-        digests, task-relevant knowledge, open plans, and recent file
-        summaries, ranked and capped at budget_kb. Pass the task for
-        relevance ranking; pass scope="all" to also pull knowledge from
+        digests, known dead ends (entries and files recorded as not
+        working: do not retry them), task-relevant knowledge, open plans,
+        and recent file summaries, ranked and capped at budget_kb. Pass
+        the task for relevance ranking; pass scope="all" to also pull knowledge from
         federated subrepos (read-only, scope-tagged). Call this at
         session start when the header announces a bundle.
         """

@@ -487,6 +487,29 @@
           "-h"
         ],
         "verbs": {
+          "outcome": {
+            "options": [
+              "--corrected-by",
+              "--file",
+              "--help",
+              "--id",
+              "--json",
+              "--note",
+              "--query",
+              "-h"
+            ],
+            "positionals": [
+              "verdict"
+            ]
+          },
+          "outcomes": {
+            "options": [
+              "--help",
+              "--json",
+              "--limit",
+              "-h"
+            ]
+          },
           "promote": {
             "options": [
               "--archive",

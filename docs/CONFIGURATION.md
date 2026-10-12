@@ -68,6 +68,13 @@ log_backup_count = 3
 # parent owner exits. Set to false to opt out.
 # federate_auto_up = true
 
+# Knowledge outcomes (the knowledge_outcome tool, `cgh knowledge outcome`)
+# fade with age: a verdict this many days old weighs half as much as a
+# fresh one when entries and files are scored for search, list and the
+# resume bundle's known dead ends. Three half-lives on, a lone verdict no
+# longer steers anything; a correction never fades. 0 turns decay off.
+# knowledge_half_life_days = 30
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.

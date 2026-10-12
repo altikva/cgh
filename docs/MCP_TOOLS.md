@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 56 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 57 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -89,6 +89,17 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | `scan_status()` | Is the graph in sync with `git HEAD`? Returns `fresh`, `indexed_sha`, `behind_by`, `changed_files` |
 | `incremental_reindex()` | Surgical reindex: compares per-file git blob SHAs and touches only what actually changed since the last scan |
 | `add_directory(path)` | Hot-add an external directory (sibling repo) to the graph: persists to config, scans, extends the watcher. No restart needed. |
+
+### Knowledge
+
+| Tool | Description |
+|------|-------------|
+| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions |
+| `knowledge_search(query, kind?, limit?, scope?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes |
+| `knowledge_list(kind?, tag?, session_id?, limit?, offset?)` | Browse saved notes: useful entries first, corrected ones last, newest first inside each tier |
+| `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[codegraph] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
+| `knowledge_terms(min_count?)` | Every tag with its count: the glossary of captured topics |
+| `knowledge_forget(entry_id)` | Delete one entry and its outcomes |
 
 ### Usage log
 

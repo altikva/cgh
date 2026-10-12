@@ -5,8 +5,9 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP tools for codegraph's knowledge store: record, search,
-#              list, terms (glossary), forget, and compact_session.
-#              Lets Claude persist distilled insights across sessions.
+#              list, terms (glossary), forget, outcome, and compact_session.
+#              Lets Claude persist distilled insights across sessions and
+#              record whether relying on them worked.
 
 from __future__ import annotations
 
@@ -102,6 +103,11 @@ def register(mcp) -> None:
               search federated subrepos' knowledge read-only; their hits
               come back tagged with a `scope` field. Never on by
               default: cross-repo learnings load only when asked.
+
+        Ranking follows recorded outcomes (knowledge_outcome): entries
+        that proved useful rank up, dead ends and corrected entries rank
+        down, and every rated hit carries an `outcome` summary (status:
+        preferred, useful, contested, dead_end, corrected or faded).
         """
         from codegraph.state.call_log import knowledge_search as _search
 
@@ -145,6 +151,10 @@ def register(mcp) -> None:
         follow up without counting locally. An entry promoted from another
         worktree (`cgh knowledge promote`) carries a `provenance` object:
         source branch, PR, worktree, origin id, promoted_at.
+
+        Entries with recorded outcomes are tiered first (useful, then
+        unrated or contested, then dead ends, then corrected), newest
+        first inside each tier, and carry an `outcome` summary.
         """
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list
@@ -156,6 +166,7 @@ def register(mcp) -> None:
             limit=limit,
             offset=offset,
             repo_root=_srv._root,
+            rank_outcomes=True,
         )
         total = knowledge_count(
             kind=kind or None,
@@ -210,6 +221,73 @@ def register(mcp) -> None:
 
         ok = _forget(entry_id=entry_id, repo_root=_srv._root)
         return json.dumps({"id": entry_id, "forgotten": ok})
+
+    @mcp.tool()
+    @_logged_tool
+    def knowledge_outcome(
+        verdict: str,
+        entry_id: int = 0,
+        query: str = "",
+        note: str = "",
+        file_refs: str = "",
+        corrected_by: int = 0,
+        session_id: str = "",
+    ) -> str:
+        """
+        Record whether relying on a knowledge entry, or on some files,
+        actually worked. Call it when an entry helped you, misled you, or
+        sent you down a path that went nowhere. Search, list and resume
+        use these verdicts: useful entries rank up, corrected ones rank
+        down and are flagged, and resume lists known dead ends so the
+        next session does not retry them.
+
+        verdict: useful | dead_end | corrected (the entry was wrong and
+              has been fixed; pass corrected_by=<id of the fixing entry>)
+        entry_id: the entry the verdict is about (from search/list), or
+        query: pick the best knowledge_search hit instead of an id.
+        file_refs: comma-separated files or symbols the verdict also
+              covers ("this file was a dead end for task X"); may be the
+              only target.
+        note: one line on why, e.g. the task it was for.
+        """
+        from codegraph.state.call_log import (
+            knowledge_outcome_record,
+            knowledge_outcome_scores,
+        )
+        from codegraph.state.call_log import knowledge_search as _search
+
+        target = int(entry_id or 0)
+        title = ""
+        if not target and query.strip():
+            # Plain relevance: the target must not depend on earlier verdicts.
+            hits = _search(query, limit=1, repo_root=_srv._root, rank_outcomes=False)
+            if not hits:
+                return json.dumps({"error": f"no knowledge entry matches {query!r}"})
+            target, title = int(hits[0]["id"]), hits[0]["title"]
+        try:
+            outcome_id = knowledge_outcome_record(
+                verdict=verdict,
+                entry_id=target or None,
+                file_refs=file_refs,
+                note=note,
+                corrected_by=corrected_by or None,
+                session_id=session_id,
+                repo_root=_srv._root,
+            )
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        entries, files = knowledge_outcome_scores(repo_root=_srv._root)
+        refs = [f.strip() for f in file_refs.split(",") if f.strip()]
+        out: dict = {"id": outcome_id, "verdict": verdict}
+        if target:
+            out["entry_id"] = target
+            if title:
+                out["title"] = title
+            if target in entries:
+                out["outcome"] = entries[target].summary()
+        if refs:
+            out["files"] = {f: files[f].summary() for f in refs if f in files}
+        return json.dumps(out, default=str)
 
     @mcp.tool()
     @_logged_tool

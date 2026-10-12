@@ -17,6 +17,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   The answer is deterministic, federated per scope and cached until the
   index changes. `architecture_overview` gains a short `subsystems` list,
   and `context_for_task` names the subsystem its best matches belong to.
+- **Knowledge outcomes.** The new `knowledge_outcome` MCP tool (and `cgh
+  knowledge outcome` / `outcomes`) records whether relying on a knowledge
+  entry, or on some files, worked: `useful`, `dead_end` or `corrected`.
+  Verdicts fade with age (`[codegraph] knowledge_half_life_days`, 30 by
+  default). Search and list rank useful entries up and corrected ones down,
+  each rated hit shows its standing, and `resume` lists known dead ends so a
+  new session does not retry a path that already failed. Existing stores
+  gain a new table on open; nothing else changes for them.
 
 ### Changed
 - **Built-in filter rebuilt from the language references.** The Python list

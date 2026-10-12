@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Call rows say how sure they are.** `find_callers`, `find_callees`,
+  `impact_of` and `path_between` (its new `hops` list) give each call edge
+  a `resolution`: `resolved` when the call's shape fixes the target (same
+  file, an import, a known receiver class), `name` for a match on the
+  callee's name, `ambiguous` when several definitions share it, `interface`
+  through an implemented interface method. An agent can tell the certain
+  callers from the guesses. `cgh callers` and `cgh callees` mark the
+  guessed rows with `?` / `??`. Works on existing indexes, no reindex.
 - **Knowledge outcomes.** The new `knowledge_outcome` MCP tool (and `cgh
   knowledge outcome` / `outcomes`) records whether relying on a knowledge
   entry, or on some files, worked: `useful`, `dead_end` or `corrected`.

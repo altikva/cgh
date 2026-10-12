@@ -831,9 +831,34 @@ def _callers_conn(conn, fn_name: str) -> list[tuple]:
     from codegraph.analysis.callers import callers_of
 
     return [
-        (c["caller"], c["file"], c["line"], c.get("targets", []), c.get("via", ""))
+        (
+            c["caller"],
+            c["file"],
+            c["line"],
+            c.get("targets", []),
+            c.get("via", ""),
+            c.get("resolution", ""),
+        )
         for c in callers_of(conn, fn_name)
     ]
+
+
+def _guess_tag(resolution: str) -> str:
+    """A compact marker for a row matched by name only: "?" for one
+    definition, "??" for several. Empty for a resolved or interface row
+    (and for an owner from an older cgh, which sends no resolution)."""
+    from codegraph.analysis.provenance import AMBIGUOUS, NAME
+
+    if resolution == NAME:
+        return "  [yellow]?[/yellow]"
+    if resolution == AMBIGUOUS:
+        return "  [yellow]??[/yellow]"
+    return ""
+
+
+_GUESS_LEGEND = (
+    "[dim]? matched by name only, ?? several definitions share the name[/dim]"
+)
 
 
 def cmd_callers(args: argparse.Namespace) -> None:
@@ -852,6 +877,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 c["line"],
                 c.get("targets", []),
                 c.get("via", ""),
+                c.get("resolution", ""),
             )
             for c in served.get("callers") or []
         ]
@@ -885,8 +911,10 @@ def cmd_callers(args: argparse.Namespace) -> None:
     # unreadable (thousands of lines), so callers are grouped under each
     # distinct list instead, printed once.
     groups: dict[tuple, list[tuple]] = {}
-    for scope, name, fp, line, targets, via in rows:
-        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line, via))
+    for scope, name, fp, line, targets, via, resolution in rows:
+        groups.setdefault(tuple(targets or ()), []).append(
+            (scope, name, fp, line, via, resolution)
+        )
     for targets, members in groups.items():
         branch = tree
         if targets:
@@ -895,7 +923,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 + ", ".join(_short_path(t, root) for t in targets)
                 + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
             )
-        for scope, name, fp, line, via in members:
+        for scope, name, fp, line, via, resolution in members:
             short = _short_path(fp, root)
             scope_tag = (
                 f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
@@ -903,9 +931,12 @@ def cmd_callers(args: argparse.Namespace) -> None:
             # Reached through an interface method the queried one implements.
             via_tag = f"  [dim]via {via}[/dim]" if via else ""
             branch.add(
-                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via_tag}{scope_tag}"
+                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]"
+                f"{via_tag}{_guess_tag(resolution)}{scope_tag}"
             )
     console.print(tree)
+    if any(_guess_tag(r[6]) for r in rows):
+        console.print(_GUESS_LEGEND)
 
 
 # ---------------------------------------------------------------------------
@@ -914,12 +945,18 @@ def cmd_callers(args: argparse.Namespace) -> None:
 
 
 def _callees_conn(conn, fn_name: str) -> list[tuple]:
+    from codegraph.analysis.provenance import RESOLVED, EdgeProvenance
+
+    found = conn.find_neighbors(
+        "CALLS",
+        src_where={"name": fn_name},
+        return_src=["id"],
+        return_dst=["id", "name", "file_path", "start_line"],
+    )
     rows = [
-        (row["dst_name"], row["dst_file_path"], row["dst_start_line"])
-        for row in conn.find_neighbors(
-            "CALLS",
-            src_where={"name": fn_name},
-            return_dst=["name", "file_path", "start_line"],
+        (row["dst_name"], row["dst_file_path"], row["dst_start_line"], resolution)
+        for row, resolution in zip(
+            found, EdgeProvenance(conn).of_rows(found), strict=True
         )
     ]
     if "." in fn_name:
@@ -927,7 +964,7 @@ def _callees_conn(conn, fn_name: str) -> list[tuple]:
         from codegraph.analysis.terraform import used_by
 
         rows += [
-            (r["dst_address"], r["dst_file_path"], r["dst_start_line"])
+            (r["dst_address"], r["dst_file_path"], r["dst_start_line"], RESOLVED)
             for r in used_by(conn, fn_name)
         ]
     return rows
@@ -944,7 +981,13 @@ def cmd_callees(args: argparse.Namespace) -> None:
     if served is not None:
         # The owner already federates, every row carries its scope.
         rows = [
-            (c.get("scope", "parent"), c["callee"], c["file"], c["line"])
+            (
+                c.get("scope", "parent"),
+                c["callee"],
+                c["file"],
+                c["line"],
+                c.get("resolution", ""),
+            )
             for c in served.get("callees") or []
         ]
         warnings = _owner_warnings(served)
@@ -970,11 +1013,16 @@ def cmd_callees(args: argparse.Namespace) -> None:
         return
 
     tree = Tree(f"[bold green]{args.fn_name}[/bold green] [dim]calls:[/dim]")
-    for scope, name, fp, line in rows:
+    for scope, name, fp, line, resolution in rows:
         short = _short_path(fp, root)
         scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
-        tree.add(f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]{scope_tag}")
+        tree.add(
+            f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]"
+            f"{_guess_tag(resolution)}{scope_tag}"
+        )
     console.print(tree)
+    if any(_guess_tag(r[4]) for r in rows):
+        console.print(_GUESS_LEGEND)
 
 
 # ---------------------------------------------------------------------------

@@ -218,7 +218,10 @@ def register(mcp) -> None:
 
         Federated per scope. CALLS reverse reach over-counts (see `note`):
         edges are name-matched, so a listed caller may belong to a
-        same-named symbol elsewhere.
+        same-named symbol elsewhere. Each impacted function carries the
+        `resolution` of the call edge that reached it ("resolved", "name",
+        "ambiguous", "interface", see find_callers): the guessed ones are
+        where the over-count lives.
         """
         arg = symbol_or_file
         as_path = _looks_like_path(arg)
@@ -246,12 +249,17 @@ def register(mcp) -> None:
         tf_ids: set[str] = set()
 
         def reverse_bfs(
-            conn, start_keys: list[str], first_hop: list[str] | None = None
+            conn,
+            start_keys: list[str],
+            first_hop: list[str] | None = None,
+            reached_by: dict[str, str] | None = None,
         ) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
             start keys within max_depth hops. Returns (keys, truncated).
             ``first_hop`` keys count as reached in the first hop (the files
-            calling a file's methods through an interface).
+            calling a file's methods through an interface). ``reached_by``,
+            when given, maps each reached key to the key it was found
+            calling (the edge that brought it in).
 
             Terraform has no imports or calls: a .tf file's dependents are
             the files whose blocks reference its blocks, and a block's are
@@ -286,6 +294,8 @@ def register(mcp) -> None:
                         if s in seen:
                             continue
                         seen.add(s)
+                        if reached_by is not None:
+                            reached_by[s] = key
                         ordered.append(s)
                         next_frontier.append(s)
                         if len(ordered) >= _IMPACT_CAP:
@@ -302,6 +312,8 @@ def register(mcp) -> None:
 
             # Resolve the starting key(s) within this scope.
             first_hop: list[str] = []
+            iface_keys: set[str] = set()
+            reached_by: dict[str, str] = {}
             if as_path:
                 start_keys = [_abs(arg)]
                 if not start_keys[0].endswith((".tf", ".tfvars")):
@@ -319,8 +331,11 @@ def register(mcp) -> None:
                     # Class.method: that method and the interface methods it
                     # implements (their callers reach it through them).
                     resolver = InterfaceResolver(conn)
-                    for fid in qualified_methods(conn, arg):
-                        for key in (fid, *resolver.interfaces_of(fid)):
+                    own = qualified_methods(conn, arg)
+                    for fid in own:
+                        ifaces = resolver.interfaces_of(fid)
+                        iface_keys.update(i for i in ifaces if i not in own)
+                        for key in (fid, *ifaces):
                             if key not in start_keys:
                                 start_keys.append(key)
                     # A Terraform address (var.region, google_x.y).
@@ -340,7 +355,9 @@ def register(mcp) -> None:
                     cap=_IMPACT_CAP,
                 )
             else:
-                keys, trunc = reverse_bfs(conn, start_keys, first_hop)
+                keys, trunc = reverse_bfs(
+                    conn, start_keys, first_hop, None if as_path else reached_by
+                )
 
             out: list[dict] = []
             if as_path:
@@ -368,7 +385,25 @@ def register(mcp) -> None:
                         }
                     )
             else:
-                # Each impacted key is a Function id "file::name".
+                # Each impacted key is a Function id "file::name", carrying
+                # the resolution of the CALLS edge that brought it in.
+                from codegraph.analysis.provenance import (
+                    INTERFACE,
+                    RESOLVED,
+                    EdgeProvenance,
+                )
+
+                prov = EdgeProvenance(conn)
+                prov.prefetch([k for k in keys if k not in tf_ids])
+
+                def _resolution(fid: str) -> str:
+                    callee = reached_by.get(fid, "")
+                    if fid in tf_ids or not callee:
+                        return RESOLVED
+                    if callee in iface_keys:
+                        return INTERFACE
+                    return prov.of(fid, callee)
+
                 for fid in keys:
                     file_path = fid.rsplit("::", 1)[0] if "::" in fid else ""
                     role = layer = ""
@@ -389,6 +424,7 @@ def register(mcp) -> None:
                             "file": file_path,
                             "role": role,
                             "layer": layer,
+                            "resolution": _resolution(fid),
                             "_trunc": trunc,
                         }
                     )
@@ -503,7 +539,10 @@ def register(mcp) -> None:
 
         Returns JSON `{src, dst, edge, path: [...], length}` or
         `{found: false}`. Per scope: a path is reported from the first scope
-        that contains one, so it never crosses repo boundaries.
+        that contains one, so it never crosses repo boundaries. Over CALLS,
+        `hops` lists each step as {from, to, resolution} ("resolved",
+        "name", "ambiguous", see find_callers), so a path resting on a
+        guessed edge shows it.
         """
         edge = (edge or "CALLS").upper()
         if edge not in {"CALLS", "IMPORTS"}:
@@ -572,7 +611,19 @@ def register(mcp) -> None:
                 chain.append(node)
                 node = parent.get(node)
             chain.reverse()
-            return chain
+            if not is_calls:
+                return {"path": chain}
+            from itertools import pairwise
+
+            from codegraph.analysis.provenance import EdgeProvenance
+
+            prov = EdgeProvenance(conn)
+            prov.prefetch(chain[:-1])
+            hops = [
+                {"from": a, "to": b, "resolution": prov.of(a, b)}
+                for a, b in pairwise(chain)
+            ]
+            return {"path": chain, "hops": hops}
 
         results = None
         warnings: list[dict] = []
@@ -603,7 +654,8 @@ def register(mcp) -> None:
                 payload["warnings"] = warnings
             return json.dumps(payload, indent=2)
 
-        scope, chain = results
+        scope, found = results
+        chain = found["path"]
         payload = {
             "src": src,
             "dst": dst,
@@ -613,6 +665,8 @@ def register(mcp) -> None:
             "path": chain,
             "length": len(chain) - 1,
         }
+        if "hops" in found:
+            payload["hops"] = found["hops"]
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings

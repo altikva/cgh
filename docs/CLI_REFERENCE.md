@@ -362,6 +362,11 @@ declares). A call through `self._kms: KmsClient` links to
 `KmsClient.destroy_crypto_key`; those callers are shown with
 `via KmsClient.destroy_crypto_key`.
 
+A caller matched by the callee's name only is marked `?`, and `??` when
+several definitions share the name; unmarked rows are fixed by the call's
+shape (same file, an import, a known receiver class) or reached through an
+interface. `cgh callees` marks its rows the same way.
+
 ---
 
 ### `callees`

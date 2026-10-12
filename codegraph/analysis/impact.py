@@ -76,21 +76,48 @@ def resolve_target_file(conn: Any, target: str) -> str | None:
     return None
 
 
-def _split_importers(conn: Any, target_file: str) -> tuple[list[str], list[str]]:
-    """(module-level importers, function-body-only importers) of
-    ``target_file``. IMPORTS edges carry the first; the imports made inside
-    a function body are only recorded with the call sites (the file's
-    "calls_import" references, which list module-level imports too)."""
-    module = [
-        p
-        for p in dict.fromkeys(
-            r.get("src_path") or ""
-            for r in conn.find_neighbors(
-                "IMPORTS", dst_key=target_file, return_src=["path"], limit=_FANOUT_CAP
-            )
-        )
-        if p
-    ]
+# IMPORTS edge kinds (parsers.base.ImportRef.kind): a re-export forwards
+# the module to the barrel's own importers, a dynamic import loads it lazily.
+REEXPORT = "reexport"
+DYNAMIC = "dynamic"
+# When one file reaches another through several edges (one per symbol), the
+# strongest kind names the link.
+_KIND_RANK = {REEXPORT: 0, "": 1, DYNAMIC: 2}
+
+
+def import_edges_into(
+    conn: Any, target_file: str, limit: int = _FANOUT_CAP
+) -> dict[str, str]:
+    """``{importer: kind}`` for the IMPORTS edges into ``target_file``, in
+    first-seen order. ``kind`` is "" for a plain import, "reexport" or
+    "dynamic"; a file with several edges keeps the strongest kind."""
+    out: dict[str, str] = {}
+    for r in conn.find_neighbors(
+        "IMPORTS",
+        dst_key=target_file,
+        return_src=["path"],
+        return_edge=["kind"],
+        limit=limit,
+    ):
+        src = r.get("src_path") or ""
+        if not src:
+            continue
+        kind = r.get("edge_kind") or ""
+        if src not in out or _KIND_RANK.get(kind, 1) < _KIND_RANK.get(out[src], 1):
+            out[src] = kind
+    return out
+
+
+def _split_importers(
+    conn: Any, target_file: str
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """(module-level importers, function-body-only importers, kinds) of
+    ``target_file``. IMPORTS edges carry the first, with the kind of each
+    (see import_edges_into); the imports made inside a function body are
+    only recorded with the call sites (the file's "calls_import"
+    references, which list module-level imports too)."""
+    kinds = import_edges_into(conn, target_file)
+    module = list(kinds)
     names = sorted({target_file, os.path.realpath(target_file)})
     known = set(module)
     local = sorted(
@@ -102,13 +129,13 @@ def _split_importers(conn: Any, target_file: str) -> tuple[list[str], list[str]]
             if kind == _CALLS_IMPORT and ref_file and ref_file not in known
         }
     )
-    return module, local
+    return module, local, kinds
 
 
 def importers_of(conn: Any, target_file: str) -> list[str]:
     """Files that import ``target_file``, at module level (IMPORTS) or
     inside a function body. Order-preserving, capped at _FANOUT_CAP."""
-    module, local = _split_importers(conn, target_file)
+    module, local, _kinds = _split_importers(conn, target_file)
     return (module + local)[:_FANOUT_CAP]
 
 
@@ -250,6 +277,7 @@ def reverse_import_bfs(
     conn: Any,
     start_files: list[str],
     max_depth: int = 3,
+    via: dict[str, str] | None = None,
 ) -> tuple[list[str], bool]:
     """Bounded reverse BFS over imports: every file that transitively imports
     any of ``start_files`` within ``max_depth`` hops. A file importing one
@@ -257,6 +285,12 @@ def reverse_import_bfs(
     a hub such as a conftest.py would pull in every test, and the callers of
     that function are found over CALLS (reverse_calls_bfs). A Terraform file
     counts as imported by the files whose blocks reference its blocks.
+
+    A barrel that re-exports a file (``export * from './x'``) passes it on
+    to its own importers: they are reached in the same hop as the barrel,
+    so a chain of index files does not use up ``max_depth``. ``via``, when
+    given, maps each reached file to the kind of link that brought it in
+    ("import", "reexport", "dynamic").
 
     Returns ``(ordered_file_paths, truncated)``. ``start_files`` themselves are
     not included in the result. Caps both the per-node fan-out and the total
@@ -272,8 +306,10 @@ def reverse_import_bfs(
     while frontier and depth < max(1, int(max_depth)):
         depth += 1
         nxt: list[str] = []
-        for key in frontier:
-            srcs, local = _split_importers(conn, key)
+        # Grows while it is walked: a barrel's importers join this hop.
+        queue = list(frontier)
+        for key in queue:
+            srcs, local, kinds = _split_importers(conn, key)
             if len(srcs) >= _FANOUT_CAP:
                 truncated = True
             # A .tf file is "imported" by the files whose blocks reference
@@ -285,7 +321,12 @@ def reverse_import_bfs(
                     continue
                 seen.add(src)
                 ordered.append(src)
-                if src not in leaves:
+                kind = kinds.get(src, "")
+                if via is not None:
+                    via[src] = kind or "import"
+                if kind == REEXPORT:
+                    queue.append(src)
+                elif src not in leaves:
                     nxt.append(src)
                 if len(ordered) >= _REVERSE_CAP:
                     return ordered, True

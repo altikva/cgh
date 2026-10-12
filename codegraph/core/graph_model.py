@@ -69,7 +69,13 @@ class EdgeSpec:
 
 EDGES: dict[str, EdgeSpec] = {
     "IMPORTS": EdgeSpec(
-        "IMPORTS", "edge_imports", "File", "File", "from_path", "to_path", ("symbol",)
+        "IMPORTS",
+        "edge_imports",
+        "File",
+        "File",
+        "from_path",
+        "to_path",
+        ("symbol", "kind"),
     ),
     "DEFINES_FN": EdgeSpec(
         "DEFINES_FN", "edge_defines_fn", "File", "Function", "from_path", "to_id"

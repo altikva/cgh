@@ -599,19 +599,25 @@ def register(mcp) -> None:
         """
         Return all modules imported by `file_path`. Federated: the file may
         live in the parent or in any subrepo, we query all and aggregate.
-        Pass a path relative to the parent's repo root or absolute.
+        Pass a path relative to the parent's repo root or absolute. Each
+        row's `kind` is "" for a plain import, "reexport" (JS / TS
+        `export ... from`) or "dynamic" (`import('./x')`).
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
 
         def query(conn):
             return [
-                {"module": row["dst_path"], "symbol": row.get("edge_symbol", "")}
+                {
+                    "module": row["dst_path"],
+                    "symbol": row.get("edge_symbol", ""),
+                    "kind": row.get("edge_kind") or "",
+                }
                 for row in conn.find_neighbors(
                     "IMPORTS",
                     src_key=file_path,
                     return_dst=["path"],
-                    return_edge=["symbol"],
+                    return_edge=["symbol", "kind"],
                 )
             ]
 

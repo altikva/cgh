@@ -246,7 +246,7 @@ cgh stop [--root DIR]
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
 `cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
-`cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh shared-types`, `cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -453,6 +453,43 @@ cgh endpoints [PATTERN] [--method M] [--include-tests] [--limit N] [--json] [--r
 cgh endpoints "/v1/donations/{id}/cancel"
 cgh endpoints "*/donations*" --method POST
 cgh endpoints --include-tests --json
+```
+
+---
+
+### `shared-types`
+
+Types mirrored across federated repos: a class, interface or object type
+alias defined under the same name in two scopes (the parent and a subrepo, or
+two subrepos) whose field names agree, such as a backend Pydantic model and
+the frontend TypeScript interface that mirrors it. Same view as the MCP
+`shared_types` tool.
+
+```
+cgh shared-types [NAME] [--min-confidence F] [--limit N] [--json] [--root DIR]
+```
+
+- The pairs are **deduced** at query time, never stored: federation keeps no
+  cross-repo edge, and this verb adds none. Each subrepo's graph is opened
+  read-only, and fields are read from the declarations in the source files
+  (Python annotated attributes; TypeScript / JavaScript property signatures
+  and class fields).
+- Field names compare without case or underscores, so `created_at` matches
+  `createdAt`. `confidence` is the matched fields over all fields of the
+  pair; `only_in` lists the fields one side lacks (drift).
+- **NAME**: only that type name.
+- `--min-confidence F`: lowest confidence reported, 0 to 1 (default 0.5).
+- `--limit N`: most pairs, best first (default 100).
+- `--json`: `{shared_types, count, scopes, min_confidence, truncated, note,
+  warnings?}`, each pair `{name, scopes, matched_fields, confidence,
+  deduced, definitions, only_in}`.
+
+**Example:**
+
+```bash
+cgh shared-types
+cgh shared-types UserOut --json
+cgh shared-types --min-confidence 0.8
 ```
 
 ---

@@ -113,6 +113,7 @@ EDGE_TABLES = [
         from_path  TEXT,
         to_path    TEXT,
         symbol     TEXT NOT NULL DEFAULT '',
+        kind       TEXT DEFAULT '',
         PRIMARY KEY (from_path, to_path, symbol)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_defines_fn (
@@ -298,6 +299,7 @@ MIGRATIONS = [
     "ALTER TABLE call_site ADD COLUMN IF NOT EXISTS ctx TEXT DEFAULT ''",
     "ALTER TABLE endpoint ADD COLUMN IF NOT EXISTS router TEXT",
     "ALTER TABLE endpoint ADD COLUMN IF NOT EXISTS is_test BOOLEAN",
+    "ALTER TABLE edge_imports ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT ''",
 ]
 
 

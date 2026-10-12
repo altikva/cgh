@@ -53,8 +53,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   each rated hit shows its standing, and `resume` lists known dead ends so a
   new session does not retry a path that already failed. Existing stores
   gain a new table on open; nothing else changes for them.
+- **Shared types across federated repos.** The new `shared_types` MCP tool
+  and `cgh shared-types` list types defined under the same name in two
+  scopes whose fields agree, such as a backend Pydantic model and the
+  frontend TypeScript interface mirroring it, with the matched fields, a
+  confidence and the fields only one side has. The pairs are deduced at
+  query time and marked so: nothing is stored, subrepos are only read.
 
 ### Changed
+- **`impact_of` follows JS / TS barrels and dynamic imports.** `export *
+  from`, `export { a as b } from` and `import('./x')` with a literal
+  specifier are now import edges, resolved like any import (tsconfig paths,
+  workspaces). A change behind an `index.ts` reaches the barrel's importers
+  without spending depth on the chain, each impacted file says `via` which
+  link reached it, and `imports_of` rows carry a `kind`. TypeScript
+  interfaces and object type aliases are indexed as classes. Existing
+  indexes are re-parsed once (graph format 13).
 - **Lookup verbs exit non-zero when the name is missing or ambiguous.**
   `cgh lookup`, `cgh callers` and `cgh callees` exit 3 when nothing defines
   the name, and `cgh callees` exits 4, listing the candidates on stderr,

@@ -48,6 +48,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `Function`, `eval`, `atob`, `WeakRef`...). A call to one of these no
   longer produces a CALLS edge to a repo function that shadows the name.
 
+### Fixed
+- **Windows: no more `~gh-...` skills after an upgrade.** pip and uv can
+  leave a replaced folder behind under `~` plus its name minus the first
+  letter, and cgh listed and installed it as a skill (`~gh-papercuts` next
+  to `cgh-papercuts`). Bundled skills now need a valid name, and the next
+  `cgh init` or `cgh setup` removes the copies an older cgh installed.
+
 ## [0.17.1] - 2026-10-11
 
 ### Added

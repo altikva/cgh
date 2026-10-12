@@ -29,6 +29,9 @@ class ContextNode:
     docstring: str
     relevance: float  # 0.0 - 1.0
     relationships: list[str] = field(default_factory=list)
+    # Rationale comments attached to the symbol (analysis/rationale.py),
+    # rows over graph_model.RATIONALE_COLUMNS, a few at most.
+    rationale: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -203,6 +206,7 @@ def context_for_task(
     # Sort by relevance, take top N
     nodes.sort(key=lambda n: n.relevance, reverse=True)
     nodes = nodes[:max_nodes]
+    _attach_rationale(graph_conn, nodes)
 
     # Collect referenced files
     files = sorted(set(n.file_path for n in nodes))
@@ -222,6 +226,38 @@ def context_for_task(
         plan_docs=plan_docs,
         knowledge_docs=knowledge_docs,
     )
+
+
+def _attach_rationale(graph_conn, nodes: list[ContextNode]) -> None:
+    """Give the function and class nodes their rationale comments, a few per
+    node and a few in all, best first. Best effort: an index without the
+    rationale table, or any read failure, leaves the context without them."""
+    from codegraph.analysis.rationale import (
+        CONTEXT_PER_NODE,
+        CONTEXT_TOTAL,
+        for_definitions,
+    )
+
+    defs = [
+        (n.file_path, n.start_line)
+        for n in nodes
+        if n.kind in ("function", "method", "class")
+    ]
+    if not defs:
+        return
+    try:
+        found = for_definitions(graph_conn, defs)
+    except Exception:  # best effort, see the docstring
+        return
+    budget = CONTEXT_TOTAL
+    for n in nodes:
+        rows = found.get((n.file_path, n.start_line), [])[
+            : min(CONTEXT_PER_NODE, budget)
+        ]
+        n.rationale = rows
+        budget -= len(rows)
+        if budget <= 0:
+            break
 
 
 def _local_knowledge_hits(task: str, limit: int = 3) -> list[KnowledgeHit]:
@@ -317,6 +353,10 @@ def render_context_markdown(ctx: TaskContext) -> str:
             lines.append(f"> {node.docstring[:150]}")
         if node.relationships:
             lines.append(f"  Relationships: {', '.join(node.relationships)}")
+        for r in node.rationale:
+            text = (r.get("text") or "")[:160]
+            adr = f" ({r['adr']})" if r.get("adr") and r["adr"] not in text else ""
+            lines.append(f"  {r['tag']} (line {r['line']}): {text}{adr}")
         lines.append("")
 
     # Claude Code memory (user preferences / feedback / project notes)

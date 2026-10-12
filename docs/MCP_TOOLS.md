@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 59 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 61 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -18,7 +18,7 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 
 | Tool | Description |
 |------|-------------|
-| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters |
+| `symbol_lookup(name, role?, layer?)` | Find where a function, class, TF resource, or doc section is defined (each definition carries its `name`, the title for a doc section); optional `role` / `layer` filters. A function or class with rationale comments lists the first three in `rationale` |
 | `find_callers(fn_name)` | Find all functions that call `fn_name`; each row says how its edge was obtained in `resolution` (see below) |
 | `find_callees(fn_name, max_depth?)` | Functions `fn_name` calls, each with its `resolution`; `max_depth>1` walks the CALLS chain forward and returns the ordered trace in one call. A call to a Protocol or ABC method with a single implementation in the scope continues into it (a row marked `interface`, with `via`); with several, the row carries `implementations` and the walk stops. `Class.method` / `module.function` starts from that definition only |
 | `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
@@ -54,9 +54,11 @@ queried name keeps the most certain one.
 | `shared_types(name?, min_confidence?, limit?)` | Types mirrored across federated repos, deduced at query time: a class, interface or object type alias defined under the same name in two scopes whose field names agree (a backend Pydantic model and the frontend TypeScript interface, snake_case and camelCase equal). Each pair is `{name, scopes, matched_fields, confidence, deduced: true, definitions, only_in}`; nothing is stored and children are only read. Python and TypeScript / JavaScript |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
 | `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
+| `pr_overlap(limit?)` | Open pull requests that collide, read through the GitHub CLI: pairs that change the same symbol (`strong`), where one PR's changed code calls what the other changes (`indirect`, one hop), or that edit the same files (`weak`). Returns `{error}` when `gh` is missing, not authenticated or the repo has no GitHub remote (parent scope only) |
 | `untested(role?, layer?)` | Source files that no test file imports |
 | `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
 | `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |
+| `rationale(target?, tag?, limit?)` | Rationale comments of a symbol (bare name or `Class.method`; a class includes its members), a file, or the whole index: comments opening with `WHY:`, `NOTE:`, `HACK:`, `SAFETY:`, `INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:`, or citing an ADR (`ADR-0007`, `docs/adr/0007-x.md`). Each row gives `file`, `line`, `tag`, `text` and the `symbol` it documents (the definition right below, else the one around it, else the module), with `adr_file` when the ADR resolves to an indexed Markdown file. Python, JS / TS, Vue, Go, Rust, Java, C#, Ruby, Terraform, SQL. Same query as `cgh why` |
 
 ### Documentation
 
@@ -71,7 +73,7 @@ queried name keeps the most certain one.
 | Tool | Description |
 |------|-------------|
 | `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
-| `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task |
+| `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task; the rationale comments of the served functions and classes come along (a few, short) in `rationale` and under each symbol |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
 | `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[codegraph] allow_fetch = true`) |
 | `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |

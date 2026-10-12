@@ -26,6 +26,7 @@
     "endpoints",
     "ensurepath",
     "examples",
+    "export",
     "federate",
     "fetch",
     "files",
@@ -49,6 +50,7 @@
     "parsers",
     "plan-index",
     "plugins",
+    "prs",
     "report",
     "reset",
     "search",
@@ -59,7 +61,8 @@
     "status",
     "stop",
     "tail",
-    "watch"
+    "watch",
+    "why"
   ],
   "tree": {
     "options": [
@@ -308,6 +311,16 @@
         "positionals": [
           "example_action",
           "name"
+        ]
+      },
+      "export": {
+        "options": [
+          "--format",
+          "--help",
+          "--out",
+          "--root",
+          "--scope",
+          "-h"
         ]
       },
       "federate": {
@@ -623,6 +636,20 @@
           "-h"
         ]
       },
+      "prs": {
+        "options": [
+          "--format",
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
       "report": {
         "options": [
           "--help",
@@ -744,6 +771,21 @@
           "--verbose",
           "-h",
           "-v"
+        ]
+      },
+      "why": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "--tag",
+          "-h",
+          "-n",
+          "-t"
+        ],
+        "positionals": [
+          "target"
         ]
       }
     }

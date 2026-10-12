@@ -9,6 +9,22 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Rationale comments.** Comments opening with `WHY:`, `NOTE:`, `HACK:`,
+  `SAFETY:`, `INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:`, or
+  citing an ADR, are indexed with the function, class or module they
+  document, so an agent sees why odd-looking code is that way before it
+  changes it. `symbol_lookup` and `context_for_task` carry a short
+  `rationale` list, the new `rationale` MCP tool and `cgh why <symbol|file>`
+  list them all, and an ADR reference links to its indexed Markdown file.
+  Existing indexes are re-parsed once to fill it in.
+- **Overlapping open PRs.** `cgh prs overlap` (and the `pr_overlap` MCP
+  tool) reads the open pull requests through `gh` and lists the pairs that
+  change the same symbols, call into each other's changes, or only share
+  files, so collisions show up before review. A missing or logged-out `gh`
+  or a repo without a GitHub remote gives a clear message.
+- **GraphML export.** `cgh export --format graphml [--out FILE] [--scope
+  PATH]` writes the code graph (files, symbols, typed edges, call
+  resolution) for Gephi or yEd, on both graph backends.
 - **Architecture report.** `cgh report` (and the `architecture_report` MCP
   tool) writes one Markdown page on how the code is put together: the
   subsystems, the files everything leans on and whether tests reach them,
@@ -68,7 +84,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   without spending depth on the chain, each impacted file says `via` which
   link reached it, and `imports_of` rows carry a `kind`. TypeScript
   interfaces and object type aliases are indexed as classes. Existing
-  indexes are re-parsed once (graph format 13).
+  indexes are re-parsed once.
 - **Lookup verbs exit non-zero when the name is missing or ambiguous.**
   `cgh lookup`, `cgh callers` and `cgh callees` exit 3 when nothing defines
   the name, and `cgh callees` exits 4, listing the candidates on stderr,

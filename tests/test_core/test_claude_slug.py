@@ -21,13 +21,10 @@ def test_posix_path():
 
 
 def test_windows_path_matches_real_claude_dir():
-    # Observed on disk: C:\Users\jn532e9l\IdeaProjects\landing-zone ->
-    # ~/.claude/projects/C--Users-jn532e9l-IdeaProjects-landing-zone
-    win = "C:\\Users\\jn532e9l\\IdeaProjects\\landing-zone"
-    assert (
-        _claude_project_slug_from_abs(win)
-        == "C--Users-jn532e9l-IdeaProjects-landing-zone"
-    )
+    # Claude Code names the project dir of C:\Users\dev\IdeaProjects\example
+    # ~/.claude/projects/C--Users-dev-IdeaProjects-example
+    win = "C:\\Users\\dev\\IdeaProjects\\example"
+    assert _claude_project_slug_from_abs(win) == "C--Users-dev-IdeaProjects-example"
 
 
 def test_windows_drive_colon_and_backslashes_both_become_dash():

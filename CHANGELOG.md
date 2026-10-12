@@ -8,6 +8,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Built-in filter rebuilt from the language references.** The Python list
+  is now the full built-in functions table of the Python docs, and the
+  JS/TS list the callable and namespace properties of the ECMAScript global
+  object plus the web globals common to browsers and Node (typed arrays,
+  `Function`, `eval`, `atob`, `WeakRef`...). A call to one of these no
+  longer produces a CALLS edge to a repo function that shadows the name.
+
 ## [0.17.1] - 2026-10-11
 
 ### Added

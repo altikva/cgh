@@ -17,9 +17,9 @@ from codegraph.cli import commands_init as ci
 def test_windows_launcher_path_uses_forward_slashes():
     # Passed explicitly: patching os.name to "nt" makes pathlib build
     # WindowsPath objects, which Python 3.11 refuses on Linux.
-    exe = r"C:\Users\jn532e9l\AppData\Local\Python\pythoncore-3.14-64\Scripts\cghw.EXE"
+    exe = r"C:\Users\dev\AppData\Local\Python\pythoncore-3.14-64\Scripts\cghw.EXE"
     assert ci._hook_exe_path(exe, windows=True) == (
-        "C:/Users/jn532e9l/AppData/Local/Python/pythoncore-3.14-64/Scripts/cghw.EXE"
+        "C:/Users/dev/AppData/Local/Python/pythoncore-3.14-64/Scripts/cghw.EXE"
     )
     assert ci._hook_exe_path(r"C:\Program Files\cgh\cghw.exe", windows=True) == (
         '"C:/Program Files/cgh/cghw.exe"'

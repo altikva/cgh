@@ -29,13 +29,12 @@ from codegraph.core.utils import quiet_subprocess_kwargs
 from .parsers import get_parser, is_supported
 from .parsers.base import FileIndex
 
-# Default Python recursion limit is 1000. Tree-sitter walks on deeply nested
-# code (long method chains, big JSX trees, generated protobufs) can blow past
-# that. Raise once at import time so we don't pay the cost on every call.
-# Ported from graphify, same constant.
-_RECURSION_LIMIT = 10_000
-if sys.getrecursionlimit() < _RECURSION_LIMIT:
-    sys.setrecursionlimit(_RECURSION_LIMIT)
+# The tree walks recurse once per nesting level, and generated or heavily
+# nested code (big JSX trees, protobuf stubs, long method chains) goes deeper
+# than CPython's default of 1000 frames. Raise the ceiling once, at import,
+# and never lower one a host process already raised.
+_MIN_RECURSION_DEPTH = 8_192
+sys.setrecursionlimit(max(sys.getrecursionlimit(), _MIN_RECURSION_DEPTH))
 
 # Keyed by resolved repo root: one owner process can touch several repos
 # (federation, tests), and a single global conn would return the wrong DB.
@@ -1199,7 +1198,7 @@ def _index_file(
         # raised limit. Skip the file cleanly so the rest of the scan continues.
         from codegraph.state.activity import log as _act_log
 
-        msg = f"{path}: recursion_limit_exceeded (depth > {_RECURSION_LIMIT})"
+        msg = f"{path}: recursion_limit_exceeded (depth > {_MIN_RECURSION_DEPTH})"
         print(f"[codegraph] parse skipped: {msg}", file=sys.stderr, flush=True)
         _act_log(root, "parse_error", msg)
         _relink_calls_named(conn, str(path), old_names, root, old_classes)

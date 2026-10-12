@@ -26,6 +26,7 @@
     "endpoints",
     "ensurepath",
     "examples",
+    "export",
     "federate",
     "fetch",
     "files",
@@ -49,6 +50,7 @@
     "parsers",
     "plan-index",
     "plugins",
+    "prs",
     "report",
     "reset",
     "search",
@@ -308,6 +310,16 @@
         "positionals": [
           "example_action",
           "name"
+        ]
+      },
+      "export": {
+        "options": [
+          "--format",
+          "--help",
+          "--out",
+          "--root",
+          "--scope",
+          "-h"
         ]
       },
       "federate": {
@@ -621,6 +633,20 @@
           "--json",
           "--root",
           "-h"
+        ]
+      },
+      "prs": {
+        "options": [
+          "--format",
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action"
         ]
       },
       "report": {

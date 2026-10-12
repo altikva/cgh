@@ -659,6 +659,15 @@
       "query"
     ]
   },
+  "pr_overlap": {
+    "properties": {
+      "limit": {
+        "default": 30,
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
   "rationale": {
     "properties": {
       "limit": {

@@ -613,6 +613,38 @@ cgh graph imports --html graph.html # save to file
 
 ---
 
+### `export`
+
+Write the code graph to a file other graph tools open. GraphML opens in
+Gephi, yEd and Cytoscape.
+
+```
+cgh export [--format graphml] [--out FILE] [--scope PATH] [--root DIR]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `graphml` | Export format |
+| `--out` | stdout | Write to this file instead of stdout |
+| `--scope` | whole repo | Keep only the files under this repo-relative directory or file, their symbols, and the edges between kept nodes |
+
+Nodes are the files, functions, classes, endpoints, Terraform blocks and
+Markdown sections, with their kind, repo-relative file, line span, and
+role / layer for files. Edges carry their `type` (`IMPORTS`, `CALLS`,
+`DEFINES_FN`, `HAS_METHOD`, ...), the imported `symbol` on IMPORTS, and on
+CALLS the `resolution` (`resolved`, `name`, `ambiguous`) also shown by
+`cgh callers`. Parent scope only. The graph is opened read-only: when a
+running owner holds it, the command says so; stop the owner with
+`cgh stop` and retry.
+
+```bash
+cgh export --out graph.graphml
+cgh export --scope src/api --out api.graphml
+cgh export > graph.graphml
+```
+
+---
+
 ## Monitor
 
 ### `stats`
@@ -703,6 +735,44 @@ cgh diff [--since REF] [--root DIR]
 cgh diff
 cgh diff --since HEAD~5
 cgh diff --since main
+```
+
+---
+
+### `prs`
+
+Read the open pull requests through the GitHub CLI and report the pairs
+that collide.
+
+```
+cgh prs overlap [--limit N] [--json | --format md|json] [--out FILE] [--root DIR]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--limit` | 30 | Open PRs to read, newest first (max 100) |
+| `--json` / `--format` | `md` | Markdown summary or JSON |
+| `--out` | | Also write the report to this file |
+
+Each PR's diff is mapped onto the graph symbols it changes, the way
+`cgh impact` does, using the diff's base-side line numbers (keep the index
+fresh on the PRs' base branch). Pairs are ranked:
+
+| Level | Meaning |
+|-------|---------|
+| `strong` | Both PRs change the same function or class |
+| `indirect` | Code one PR changes calls a symbol the other PR changes (one CALLS hop) |
+| `weak` | Both PRs edit the same files, with no shared symbol |
+
+Only read-only `gh` calls are made (`gh pr list`, `gh pr diff`, and
+`gh pr view` when a diff is too large). When `gh` is missing, not
+authenticated, or the repo has no GitHub remote, the command prints a
+clear message and exits 1. Served by the `pr_overlap` MCP tool while an
+owner runs.
+
+```bash
+cgh prs overlap
+cgh prs overlap --json --limit 50 --out overlap.json
 ```
 
 ---

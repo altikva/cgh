@@ -170,6 +170,59 @@ def _mark_stale(result, reason: str):
     return json.dumps(payload, indent=2)
 
 
+# Tools that fan out to federated subrepos and tag each row with `scope`.
+# In a federated project their responses also carry `scopes`: for each
+# scope, the commit checked out and the one its index was built at, so an
+# answer can cite the commit it was read from.
+_FEDERATED_TOOLS = frozenset(
+    {
+        "architecture_overview",
+        "doc_outline",
+        "doc_refs",
+        "domain_map",
+        "endpoints",
+        "find_callees",
+        "find_callers",
+        "find_dead_code",
+        "fts_search",
+        "imports_of",
+        "pattern_search",
+        "search_docs",
+        "search_symbols",
+        "subgraph",
+        "symbol_lookup",
+    }
+)
+
+
+def _scope_commits(root) -> dict | None:
+    """{scope: commit info} for a federated project, None otherwise."""
+    if root is None:
+        return None
+    from codegraph.analysis.federation import has_subrepos, scope_commits
+
+    if not has_subrepos(root):
+        return None
+    return scope_commits(root)
+
+
+def _add_scopes(result, scopes: dict | None):
+    """Add ``scopes`` to a JSON-object tool result. A pattern_search aimed
+    at one repo and ref already names its commit, and is left alone."""
+    if not scopes or not isinstance(result, str) or not result.startswith("{"):
+        return result
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return result
+    if not isinstance(payload, dict) or "scopes" in payload:
+        return result
+    if payload.get("repo") or payload.get("ref"):
+        return result
+    payload["scopes"] = scopes
+    return json.dumps(payload, indent=2)
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
@@ -191,6 +244,11 @@ def _logged_tool(fn):
             if tool_name in _GRAPH_TOOLS:
                 try:
                     result = _mark_stale(result, _stale_reason(_root))
+                except Exception:
+                    pass  # best-effort note: never fail the answer on it
+            if tool_name in _FEDERATED_TOOLS:
+                try:
+                    result = _add_scopes(result, _scope_commits(_root))
                 except Exception:
                     pass  # best-effort note: never fail the answer on it
             return result
@@ -323,6 +381,10 @@ mcp = FastMCP(
         "  • Each result has a `scope` field: 'parent' or '<subrepo-name>'.\n"
         "    Use it to disambiguate when the same symbol exists in multiple\n"
         "    repos, and to route file Read calls to the right tree.\n"
+        "  • The response's `scopes` map gives, per scope, the commit read:\n"
+        "    `head` + `branch` checked out, `indexed_commit` (what graph\n"
+        "    answers come from), `index_at_head`. Cite it when a change\n"
+        "    must name the commit it was checked against.\n"
         "  • Cross-repo edges are NOT inferred, find_callers in subrepo A\n"
         "    won't surface callers from subrepo B; subgraph imports stop at\n"
         "    repo boundaries. Treat scopes as independent islands.\n"

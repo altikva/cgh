@@ -226,6 +226,26 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_knowledge_origin "
         "ON knowledge(origin_id, source_worktree)"
     )
+    # Outcomes: whether relying on an entry, or on a file, worked. A table of
+    # its own (never a column on knowledge) so an older owner reading the same
+    # store sees nothing new. entry_id is NULL for an outcome about files only;
+    # corrected_by points at the entry that fixed a wrong one.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_outcome (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id      INTEGER,
+            verdict       TEXT NOT NULL,
+            note          TEXT NOT NULL DEFAULT '',
+            file_refs     TEXT NOT NULL DEFAULT '',
+            corrected_by  INTEGER,
+            session_id    TEXT NOT NULL DEFAULT '',
+            ts            REAL NOT NULL
+        )
+    """)
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_outcome_entry "
+        "ON knowledge_outcome(entry_id)"
+    )
     # Who triggered each call (agent, hook, cli, internal) and which repo it
     # served, so usage data separates agent choices from hook traffic and can
     # be aggregated per repo. Rows logged before these columns stay NULL,
@@ -636,9 +656,45 @@ def knowledge_search(
     kind: str | None = None,
     limit: int = 10,
     repo_root: str | Path | None = None,
+    rank_outcomes: bool = True,
 ) -> list[dict]:
-    """BM25 search over knowledge entries. Graceful LIKE fallback."""
+    """BM25 search over knowledge entries. Graceful LIKE fallback.
+
+    With rank_outcomes (the default) and outcomes on record, a wider candidate
+    set is fetched, each relevance score is multiplied by the entry's outcome
+    factor (useful up, dead ends and corrected entries down), and every rated
+    hit carries an ``outcome`` summary.
+    """
     conn = _get_conn(repo_root)
+    if not (rank_outcomes and _has_outcomes(conn)):
+        return _knowledge_search(conn, query, kind, limit)
+    from codegraph.state.knowledge_outcomes import rank_factor
+
+    entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
+    # Room for a well-rated entry just under the cut to move up.
+    raw: list[float] = []
+    hits = _knowledge_search(conn, query, kind, max(limit * 3, limit + 10), raw)
+    # Rank on the unrounded relevance: on a small store BM25 scores are tiny
+    # and round to zero, which would erase the outcome factor.
+    adjusted = [
+        r * rank_factor(entries.get(h["id"])) for h, r in zip(hits, raw, strict=True)
+    ]
+    order = sorted(range(len(hits)), key=lambda i: -adjusted[i])  # stable on ties
+    hits = [hits[i] | {"score": round(adjusted[i], 4)} for i in order[:limit]]
+    _attach_outcomes(hits, entries)
+    return hits
+
+
+def _knowledge_search(
+    conn: sqlite3.Connection,
+    query: str,
+    kind: str | None,
+    limit: int,
+    raw_scores: list[float] | None = None,
+) -> list[dict]:
+    """The plain relevance search behind knowledge_search. Caller holds the
+    lock. raw_scores, when given, receives each hit's unrounded score."""
+    raw = raw_scores if raw_scores is not None else []
     out: list[dict] = []
     try:
         sql = (
@@ -653,6 +709,7 @@ def knowledge_search(
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
         for row in conn.execute(sql, params).fetchall():
+            raw.append(-row[-1])
             out.append(_knowledge_row_to_dict(row, score=-row[-1]))
     except sqlite3.OperationalError:
         like = f"%{query}%"
@@ -666,7 +723,9 @@ def knowledge_search(
             params.append(kind)
         sql += "ORDER BY ts DESC LIMIT ?"
         params.append(limit)
+        raw.clear()  # the FTS attempt may have filled part of it
         for i, row in enumerate(conn.execute(sql, params).fetchall()):
+            raw.append(1.0 / (i + 1))
             out.append(_knowledge_row_to_dict(row, score=1.0 / (i + 1)))
     return out
 
@@ -717,12 +776,22 @@ def knowledge_list(
     offset: int = 0,
     repo_root: str | Path | None = None,
     exclude_tag: str | None = None,
+    rank_outcomes: bool = False,
 ) -> list[dict]:
     """Browse knowledge entries. Filters: kind / tag (substring) / session /
     exclude_tag (substring to omit). Pagination: limit + offset. Caller can
     fetch limit+1 to detect has_more.
+
+    Newest first. With rank_outcomes, entries are tiered by outcome first
+    (useful, then unrated or contested, then dead ends, then corrected) and
+    newest first inside a tier; off by default because internal callers rely
+    on plain recency (the latest digest of a session, for one). Rated entries
+    carry an ``outcome`` summary either way.
     """
     conn = _get_conn(repo_root)
+    entries: dict = {}
+    if _has_outcomes(conn):
+        entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
     sql = f"SELECT {_k_cols()} FROM knowledge"
     where: list[str] = ["superseded_by IS NULL"]
     params: list = []
@@ -740,12 +809,30 @@ def knowledge_list(
         params.append(session_id)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+    order = "ts DESC"
+    if rank_outcomes and entries:
+        from codegraph.state.knowledge_outcomes import list_bucket
+
+        tiers: dict[int, list[int]] = {}
+        for entry_id, score in entries.items():
+            bucket = list_bucket(score)
+            if bucket != 1:
+                tiers.setdefault(bucket, []).append(entry_id)
+        if tiers:
+            cases = []
+            for bucket in sorted(tiers):
+                ids = tiers[bucket]
+                cases.append(f"WHEN id IN ({','.join('?' for _ in ids)}) THEN {bucket}")
+                params.extend(ids)
+            order = f"CASE {' '.join(cases)} ELSE 1 END, ts DESC"
+    sql += f" ORDER BY {order} LIMIT ? OFFSET ?"
     params.extend([limit, max(0, offset)])
-    return [
+    hits = [
         _knowledge_row_to_dict(row, score=row[7])
         for row in conn.execute(sql, params).fetchall()
     ]
+    _attach_outcomes(hits, entries)
+    return hits
 
 
 @_locked
@@ -814,8 +901,190 @@ def knowledge_forget(
         return False
     # FTS sync is handled by the AFTER DELETE trigger.
     conn.execute("DELETE FROM knowledge WHERE id = ?", (entry_id,))
+    conn.execute("DELETE FROM knowledge_outcome WHERE entry_id = ?", (entry_id,))
     conn.commit()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Knowledge outcomes: did relying on an entry, or a file, work?
+# ---------------------------------------------------------------------------
+
+
+def _split_refs(refs: list[str] | str) -> list[str]:
+    if isinstance(refs, str):
+        refs = refs.split(",")
+    out: list[str] = []
+    for r in refs:
+        r = (r or "").strip()
+        if r and r not in out:
+            out.append(r)
+    return out
+
+
+def _half_life_days(repo_root: str | Path | None) -> float:
+    """[codegraph] knowledge_half_life_days, or the default when the config
+    cannot be read (scoring must never fail on a config problem)."""
+    from codegraph.state.knowledge_outcomes import DEFAULT_HALF_LIFE_DAYS
+
+    try:
+        from codegraph.core.config import load_config
+
+        return float(load_config(repo_root).knowledge_half_life_days)
+    except Exception:
+        return DEFAULT_HALF_LIFE_DAYS
+
+
+@_locked
+def knowledge_outcome_record(
+    verdict: str,
+    entry_id: int | None = None,
+    file_refs: list[str] | str = "",
+    note: str = "",
+    corrected_by: int | None = None,
+    session_id: str = "",
+    repo_root: str | Path | None = None,
+) -> int:
+    """Store one outcome and return its id.
+
+    verdict is one of useful, dead_end, corrected. The target is an entry, a
+    set of files, or both; at least one is required. corrected needs an entry
+    and accepts the id of the entry that fixed it. Raises ValueError on a bad
+    verdict, a missing target, or an id that does not exist.
+    """
+    from codegraph.state.knowledge_outcomes import VERDICTS
+
+    if verdict not in VERDICTS:
+        raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}")
+    refs = _split_refs(file_refs)
+    if not entry_id and not refs:
+        raise ValueError("an outcome needs an entry id, a query or file_refs")
+    if corrected_by and verdict != "corrected":
+        raise ValueError("corrected_by only goes with the corrected verdict")
+    if verdict == "corrected" and not entry_id:
+        raise ValueError("the corrected verdict needs the entry that was wrong")
+    conn = _get_conn(repo_root)
+    for label, ident in (("entry", entry_id), ("corrected_by entry", corrected_by)):
+        if (
+            ident
+            and not conn.execute(
+                "SELECT 1 FROM knowledge WHERE id = ?", (int(ident),)
+            ).fetchone()
+        ):
+            raise ValueError(f"no knowledge {label} with id {ident}")
+    cur = conn.execute(
+        "INSERT INTO knowledge_outcome(entry_id, verdict, note, file_refs, "
+        "corrected_by, session_id, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            int(entry_id) if entry_id else None,
+            verdict,
+            note or "",
+            ",".join(refs),
+            int(corrected_by) if corrected_by else None,
+            session_id or "",
+            time.time(),
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid or 0)
+
+
+def _outcome_scores(
+    conn: sqlite3.Connection,
+    now: float,
+    half_life_days: float,
+) -> tuple[dict, dict]:
+    """Per-entry and per-file OutcomeScore maps. Caller holds the lock."""
+    from codegraph.state.knowledge_outcomes import score_outcomes
+
+    by_entry: dict[int, list] = {}
+    by_file: dict[str, list] = {}
+    for entry_id, verdict, note, refs, corrected_by, ts in conn.execute(
+        "SELECT entry_id, verdict, note, file_refs, corrected_by, ts "
+        "FROM knowledge_outcome"
+    ).fetchall():
+        row = (verdict, ts, note, corrected_by)
+        if entry_id is not None:
+            by_entry.setdefault(int(entry_id), []).append(row)
+        for ref in _split_refs(refs or ""):
+            # A correction is about an entry; for its files it reads as a
+            # plain dead end.
+            by_file.setdefault(ref, []).append(
+                ("dead_end" if verdict == "corrected" else verdict, ts, note, None)
+            )
+    entries = {k: score_outcomes(v, now, half_life_days) for k, v in by_entry.items()}
+    files = {k: score_outcomes(v, now, half_life_days) for k, v in by_file.items()}
+    return entries, files
+
+
+def _has_outcomes(conn: sqlite3.Connection) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM knowledge_outcome LIMIT 1").fetchone() is not None
+    )
+
+
+@_locked
+def knowledge_outcome_scores(
+    repo_root: str | Path | None = None,
+    now: float | None = None,
+    half_life_days: float | None = None,
+) -> tuple[dict, dict]:
+    """(entries, files): OutcomeScore per entry id and per file path."""
+    conn = _get_conn(repo_root)
+    return _outcome_scores(
+        conn,
+        time.time() if now is None else now,
+        _half_life_days(repo_root) if half_life_days is None else half_life_days,
+    )
+
+
+@_locked
+def knowledge_dead_ends(
+    limit: int = 5,
+    repo_root: str | Path | None = None,
+    now: float | None = None,
+    half_life_days: float | None = None,
+) -> list[dict]:
+    """Known dead ends, strongest and most recent first: live entries whose
+    outcomes say dead_end or corrected, and files whose outcomes say
+    dead_end. Faded verdicts are left out."""
+    conn = _get_conn(repo_root)
+    if not _has_outcomes(conn):
+        return []
+    entries, files = _outcome_scores(
+        conn,
+        time.time() if now is None else now,
+        _half_life_days(repo_root) if half_life_days is None else half_life_days,
+    )
+    items: list[tuple[float, float, dict]] = []
+    bad = [i for i, s in entries.items() if s.status in ("dead_end", "corrected")]
+    if bad:
+        placeholders = ",".join("?" for _ in bad)
+        titles = dict(
+            conn.execute(
+                f"SELECT id, title FROM knowledge WHERE id IN ({placeholders}) "
+                "AND superseded_by IS NULL",
+                bad,
+            ).fetchall()
+        )
+        for entry_id in bad:
+            if entry_id not in titles:
+                continue  # forgotten or superseded
+            s = entries[entry_id]
+            item = {"entry_id": entry_id, "title": titles[entry_id], **s.summary()}
+            items.append((s.negative_weight, s.last_ts, item))
+    for ref, s in files.items():
+        if s.status == "dead_end":
+            items.append((s.negative_weight, s.last_ts, {"file": ref, **s.summary()}))
+    items.sort(key=lambda t: (-t[0], -t[1]))
+    return [item for _, _, item in items[: max(0, limit)]]
+
+
+def _attach_outcomes(hits: list[dict], entries: dict) -> None:
+    for hit in hits:
+        s = entries.get(hit["id"])
+        if s is not None:
+            hit["outcome"] = s.summary()
 
 
 _K_BASE_COLS = ("id", "kind", "title", "body", "tags", "file_refs", "session_id", "ts")

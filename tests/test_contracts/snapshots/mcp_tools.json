@@ -659,6 +659,15 @@
       "query"
     ]
   },
+  "pr_overlap": {
+    "properties": {
+      "limit": {
+        "default": 30,
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
   "resume": {
     "properties": {
       "budget_kb": {

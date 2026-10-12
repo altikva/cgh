@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 58 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), codegraph exposes 59 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -53,6 +53,7 @@ queried name keeps the most certain one.
 | `import_cycles(limit?)` | Detect import cycles (strongly-connected components) in the file import graph |
 | `tests_for(symbol_or_file)` | Test files that exercise the target (inferred from imports/calls + role, not coverage) |
 | `impact_report(changed_files)` | The `cgh impact --json` payload for a change set: changed symbols, importers by role/layer, endpoints, tests to run (parent scope only) |
+| `pr_overlap(limit?)` | Open pull requests that collide, read through the GitHub CLI: pairs that change the same symbol (`strong`), where one PR's changed code calls what the other changes (`indirect`, one hop), or that edit the same files (`weak`). Returns `{error}` when `gh` is missing, not authenticated or the repo has no GitHub remote (parent scope only) |
 | `untested(role?, layer?)` | Source files that no test file imports |
 | `hotspots(limit?)` | Change-risk ranking: git churn x import centrality x recency |
 | `who_knows(file_path)` | Top authors of a file by commit count and recency (from git history) |

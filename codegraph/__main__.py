@@ -29,6 +29,7 @@ from codegraph.cli.commands_bob import (
     cmd_bob_tool_log,
 )
 from codegraph.cli.commands_ensurepath import cmd_ensurepath
+from codegraph.cli.commands_export import cmd_export, register_export_parser
 from codegraph.cli.commands_federate import cmd_federate
 from codegraph.cli.commands_findings import cmd_findings
 from codegraph.cli.commands_githooks import cmd_githooks
@@ -73,6 +74,7 @@ from codegraph.cli.commands_monitor import (
 )
 from codegraph.cli.commands_papercut import cmd_papercut, register_papercut_parser
 from codegraph.cli.commands_plugins import cmd_plugins
+from codegraph.cli.commands_prs import cmd_prs, register_prs_parser
 from codegraph.cli.commands_query import (
     cmd_callees,
     cmd_callers,
@@ -137,6 +139,7 @@ def _print_help():
                     "graph",
                     "Visualize the graph in browser (imports/calls/classes/docs)",
                 ),
+                ("export", "Write the graph as GraphML (Gephi, yEd)"),
             ],
         ),
         (
@@ -149,6 +152,7 @@ def _print_help():
                 ("history", "Recent indexing activity grouped by day"),
                 ("diff", "Files changed since last index"),
                 ("impact", "CI: blast radius + tests for a PR diff (JSON/md)"),
+                ("prs", "Open PRs that touch the same symbols or files (overlap)"),
                 ("parsers", "List registered language parsers"),
                 ("findings", "Scanner findings: pii, secrets, summaries"),
                 ("files", "List indexed files, or check one (--check)"),
@@ -658,6 +662,10 @@ def _register_analysis(sub) -> None:
     )
     add_out_option(p, what="the report")
 
+    # --- prs (overlap between open pull requests) + export ---
+    register_prs_parser(sub)
+    register_export_parser(sub)
+
     # --- history ---
     p = sub.add_parser("history", help="Show recent indexing activity by day")
     _add_root(p)
@@ -940,6 +948,8 @@ def main() -> None:
         "doctor": cmd_doctor,
         "diff": cmd_diff,
         "impact": cmd_impact,
+        "prs": cmd_prs,
+        "export": cmd_export,
         "history": cmd_history,
         "compact": cmd_compact,
         "graph": cmd_graph,

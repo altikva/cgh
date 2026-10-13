@@ -57,6 +57,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   carries an explicit patent grant, which makes cgh easier to adopt.
   Versions 0.18.x and earlier keep their original license.
 
+### Fixed
+- **A file moved or deleted during `cgh index` no longer aborts the scan.**
+  It is skipped. Before, a file that disappeared between the directory walk
+  and its turn, for example a ticket another tool was moving, stopped the
+  whole index with `FileNotFoundError`.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

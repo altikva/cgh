@@ -1299,7 +1299,12 @@ def _index_file(
             pass
 
     conn = get_connection(repo_root)
-    mtime = path.stat().st_mtime
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        # Moved or deleted between the directory walk and now (another
+        # process tidying its folder mid-scan): skip it, the scan goes on.
+        return False
 
     # Check if already indexed and unchanged (skip if force or reparse)
     if not force and not reparse:

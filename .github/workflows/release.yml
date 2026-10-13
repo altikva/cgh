@@ -136,7 +136,7 @@ jobs:
     name: Publish first-party plugins to PyPI
     needs: validate
     runs-on: ubuntu-latest
-    # One GitHub environment PER plugin (pypi-cgh-docs, pypi-cgh-pii, ...):
+    # One GitHub environment PER plugin (pypi-cgh-pii, pypi-cgh-vision, ...):
     # PyPI requires every PENDING trusted publisher to have a unique
     # (owner, repo, workflow, environment) configuration, since before
     # the first upload nothing else can map a token to a project name.
@@ -150,8 +150,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # cgh-docs is not published any more: its parsers are part of the
+        # core, and the core ignores an installed copy. Its last release
+        # (0.2.0) stays on PyPI.
         plugin:
-          - cgh-docs
           - cgh-pii
           - cgh-bugreport
           - cgh-vision
@@ -210,10 +212,9 @@ jobs:
     #
     # TWO variants per target (see packaging/build-binary.sh), named for
     # EGRESS, not a plugin count:
-    #   sealed -> cgh-<target>         : core + the local-only default
-    #             plugin (docs). Provably egress-free, so "the core never
-    #             phones home" stays verifiable by absence of the code, not a
-    #             flag.
+    #   sealed -> cgh-<target>         : core only, document parsers
+    #             included. Provably egress-free, so "the core never phones
+    #             home" stays verifiable by absence of the code, not a flag.
     #   egress -> cgh-egress-<target>  : adds the egress-capable default
     #             plugins (codegen, bugreport), inert until configured. The
     #             name is the honest capability, not a state.
@@ -276,7 +277,7 @@ jobs:
           fi
           ls -lh
 
-      - name: Smoke-test + verify bundled plugins
+      - name: Smoke-test + verify bundled plugins and document readers
         shell: bash
         env:
           VARIANT: ${{ matrix.variant }}
@@ -286,8 +287,8 @@ jobs:
           # The binary is only as bundled as its metadata: without --copy-metadata
           # the plugins vanish silently. Assert the expected set is ACTIVE in the
           # built binary itself, not in the source tree.
-          expected="docs"
-          [ "$VARIANT" = egress ] && expected="docs codegen bugreport"
+          expected=""
+          [ "$VARIANT" = egress ] && expected="codegen bugreport"
           python3 - "out/$ASSET" $expected <<'PY'
           import json, subprocess, sys
           binp, expected = sys.argv[1], set(sys.argv[2:])
@@ -300,6 +301,13 @@ jobs:
               sys.exit(f"FAIL: expected plugins not active in the binary: {sorted(missing)}")
           print("all expected plugins active")
           PY
+          # The document parsers import their readers lazily and skip a format
+          # whose reader is missing, so a binary that forgot one would still
+          # start. Index one file of each format and require a section from
+          # every one of them. The fixture writers run in a throwaway uv env;
+          # the binary under test is the only cgh involved.
+          uv run --no-project --with python-docx --with openpyxl --with python-pptx \
+            python packaging/smoke_documents.py "./out/$ASSET"
 
       - name: Upload to the GitHub Release
         shell: bash

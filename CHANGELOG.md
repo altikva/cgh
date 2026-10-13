@@ -8,7 +8,28 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
+  store between checkouts as JSON Lines, filtered by time (`--before`,
+  `--before-commit`), tag glob (`--exclude-tag`, provenance included as
+  `pr:`/`branch:` pseudo-tags) and kind. Digests and checkpoints follow the
+  same filters. Import is lossless and deduplicated, and refuses while an
+  owner runs on the target. Lets a replay worktree start from what the main
+  checkout knew before a ticket, without what that ticket taught it.
+
 ### Changed
+- **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
+  pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
+  joined by pptx (slide text, tables, speaker notes) and a CSV / TSV
+  summary (header, size, first rows; at most 1,000 rows read). Most
+  installs had no plugin, so cgh read none of these files before.
+  Each format works under fixed limits, and an office file that would
+  inflate past 64 MB, or looks like a zip bomb, is skipped before it is
+  opened (see docs/PARSERS.md).
+  Existing indexes pick the files up on the next index, no full re-parse.
+  cgh-docs is no longer published and an installed copy is ignored with a
+  notice: uninstall it. These formats no longer count as opaque artifacts.
+
 - **The MCP server is named `cgh`.** `cgh init` and `cgh setup` register
   it as `cgh` instead of `codegraph`, so agents see `mcp__cgh__<tool>` and
   the Claude allow rules are `mcp__cgh` / `mcp__cgh__*`. The product has

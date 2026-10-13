@@ -97,7 +97,7 @@ class VisionScanner:
         auto = _as_bool(self.config.get("auto_extract", False))
 
         if suffix == ".pdf":
-            # PDFs are indexed and PII-scanned by cgh-docs on their extracted
+            # PDFs are indexed and PII-scanned by cgh core on their extracted
             # text; the vision scanner only touches them to write the
             # structured sidecar when auto-extract asks for it.
             if auto:

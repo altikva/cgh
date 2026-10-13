@@ -109,8 +109,8 @@ npm install -g @altikva/cgh     # or install the `cgh` command globally
 ```
 
 The binary comes in two variants. The default is **sealed**: the core graph,
-the MCP tools, memory, plans and knowledge, plus the local-only document
-parsers (cgh-docs). It contains no code that can reach the network.
+the MCP tools, memory, plans and knowledge, and the document parsers (PDF,
+Word, Excel, PowerPoint, CSV). It contains no code that can reach the network.
 
 ```bash
 npx @altikva/cgh --egress serve   # the egress build: adds the plugins that can

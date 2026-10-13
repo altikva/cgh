@@ -4,8 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Plain-text parser for .txt / .text / .log / .csv / .tsv /
-#              .rst. The indexer skips any file no parser claims, so these
+# Description: Plain-text parser for .txt / .text / .log / .rst (CSV and
+#              TSV have their own summarizing parser in csv_table.py). The indexer skips any file no parser claims, so these
 #              formats were invisible: not indexed, never scanned for PII or
 #              secrets. This claims them and exposes their content as
 #              scan_text so scanners see it, with a short preview section so
@@ -22,18 +22,16 @@ _PREVIEW_CHARS = 400
 _MAX_SCAN_CHARS = 200_000  # cap the text fed to scanners
 
 
-@register_parser(".txt", ".text", ".log", ".csv", ".tsv", ".rst")
+@register_parser(".txt", ".text", ".log", ".rst")
 class PlainTextParser(BaseParser):
     """Register a plain-text file as indexed and expose its content to
     scanners. Read-with-replace: a stray non-UTF-8 byte never crashes the
     scan, it just decodes lossily."""
 
     lang = "text"
-    extensions = [".txt", ".text", ".log", ".csv", ".tsv", ".rst"]
+    extensions = [".txt", ".text", ".log", ".rst"]
     extracts = ["sections"]
-    description = (
-        "Plain-text files (txt, log, csv, ...) indexed for search and scanning"
-    )
+    description = "Plain-text files (txt, log, rst) indexed for search and scanning"
 
     def parse(self, path: Path) -> FileIndex:
         idx = FileIndex(path=str(path), lang=self.lang)

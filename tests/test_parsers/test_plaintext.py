@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The plain-text parser claims txt/log/csv/tsv/text/rst so they
+# Description: The plain-text parser claims txt/log/text/rst so they
 #              are indexed at all, and exposes their content as scan_text so
 #              PII and secret scanners can see it.
 
@@ -17,7 +17,7 @@ import pytest
 from codegraph.parsers import get_parser_for_path
 
 
-@pytest.mark.parametrize("ext", [".txt", ".text", ".log", ".csv", ".tsv", ".rst"])
+@pytest.mark.parametrize("ext", [".txt", ".text", ".log", ".rst"])
 def test_plaintext_extensions_are_claimed(ext):
     parser = get_parser_for_path(Path(f"file{ext}"))
     assert parser is not None

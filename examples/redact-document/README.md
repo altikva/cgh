@@ -52,7 +52,7 @@ cgh pii redact report.docx --only person --out report.anon.docx   # needs cgh-pi
 
 Word documents redact body paragraphs and table cells; formatting
 inside a changed paragraph is flattened. PDF is not supported: extract
-its text first (see cgh-docs) and redact that.
+its text first (cgh indexes it, or use pypdf) and redact that.
 
 ## Tests
 

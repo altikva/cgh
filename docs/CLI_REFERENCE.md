@@ -1045,8 +1045,10 @@ cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override 
 
 ### `artifact`
 
-A read-through cache for files cgh cannot parse into the graph: PDFs, images,
-office documents. Opening one costs vision or extractor tokens, so the finding
+A read-through cache for files cgh cannot parse into the graph: images, and
+legacy or OpenDocument office files (doc, xls, ppt, odt, ods, odp, rtf, epub).
+PDF, docx, xlsx, pptx and csv are parsed into sections and need no cache.
+Opening an opaque file costs vision or extractor tokens, so the finding
 is saved once and recalled after. A summary is a knowledge entry of kind `note`
 tagged `artifact`, with the file's SHA-256 in the body, so `recall` can tell a
 still-accurate summary from one whose file has changed. The Read pre-hook
@@ -1119,6 +1121,59 @@ entry that fixed it. `outcomes` lists the rated entries and files with their
 status (`preferred`, `useful`, `contested`, `dead_end`, `corrected`, `faded`),
 decayed score and verdict counts. Verdicts fade with a half-life set by
 `[codegraph] knowledge_half_life_days` (30 days by default).
+
+#### `knowledge export` / `knowledge import`
+
+Copy a filtered knowledge store from one checkout to another, from the shell,
+without MCP.
+
+```
+cgh knowledge export [--root R] [--before TIME | --before-commit REV] \
+    [--exclude-tag GLOB ...] [--kinds a,b] [--include-digests | --no-include-digests]
+cgh knowledge import [--root R] [FILE | -] [--json]
+```
+
+`export` writes JSON Lines to stdout, one row per line with every column
+(provenance included) plus a `record` field: `knowledge` for an entry,
+`outcome` for an outcome. It reads the store read-only, so it works while the
+source's owner runs.
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Store to read (default: the current checkout) |
+| `--before TIME` | Keep entries whose `ts` is strictly before TIME, an epoch or an ISO date (UTC when no zone) |
+| `--before-commit REV` | Same, at REV's committer date, resolved in `--root` |
+| `--exclude-tag GLOB` | Drop entries with a tag matching GLOB (repeatable). Tags are split on commas and spaces. Provenance matches as pseudo-tags: `pr:<source_pr>`, `branch:<source_branch>`, `commit:<source_commit>`, `session:<source_session>` |
+| `--kinds` | Keep only these kinds |
+| `--no-include-digests` | Drop session digests and checkpoints (tagged `session-digest`, `auto-checkpoint` or `auto-digest`, or a note carrying a session id) |
+
+Session digests and checkpoints are ordinary rows of the knowledge table, so
+every filter applies to them. `ts` is when an entry entered this store: for a
+promoted entry that is the promotion time, not the original `origin_ts`, so
+`--before` errs on the side of dropping. A supersede link to a dropped entry is
+cleared, since the older entry was still live at that time. An outcome is
+kept when its own `ts` passes and the entry it rates was kept.
+
+`import` inserts the rows with new ids and keeps `ts` and provenance. An entry
+whose kind, title and body already exist in the target is skipped, so a re-run
+adds nothing; supersede links and outcome targets are remapped. The full-text
+index follows through the table's triggers. It refuses while an owner runs on
+the target (`cgh stop --root R` first).
+
+Other inputs of `resume` are not part of the store and need no copy: open
+plans come from the agent's own plan files, and file summaries are findings
+that `cgh init` recomputes against the checkout's files.
+
+Seeding a replay worktree with what the main checkout knew before a ticket,
+minus what its own PR promoted:
+
+```
+cgh init --root "$WT"            # full index, no --from
+cgh stop --root "$WT"            # if a hook spawned an owner
+cgh knowledge export --root "$MAIN" --before-commit "$PARENT_SHA" \
+    --exclude-tag 'pr:*#2488' --exclude-tag 'branch:fix/2488*' \
+  | cgh knowledge import --root "$WT"
+```
 
 ### `guard`
 

@@ -15,8 +15,8 @@ Then configure Codex to use codegraph as MCP server:
 ```json
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "cgh": {
+      "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   }

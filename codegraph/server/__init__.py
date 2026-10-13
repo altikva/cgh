@@ -319,7 +319,7 @@ def _short_path(path: str) -> str:
 from codegraph.integrations.tool_guide import SEARCH_GUIDE
 
 mcp = FastMCP(
-    name="codegraph",
+    name="cgh",
     instructions=(
         "Local code graph + Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"

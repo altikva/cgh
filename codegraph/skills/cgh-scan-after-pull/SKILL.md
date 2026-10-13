@@ -24,11 +24,11 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
 
 ## How to refresh
 
-1. Call `mcp__codegraph__scan_status` to see how stale the graph is.
+1. Call `mcp__cgh__scan_status` to see how stale the graph is.
    - If `fresh=true`, do nothing.
    - If `fresh=false`, proceed.
 
-2. **Preferred**: call `mcp__codegraph__incremental_reindex`. It compares
+2. **Preferred**: call `mcp__cgh__incremental_reindex`. It compares
    stored per-file git blob SHAs to the current HEAD and re-indexes only
    the files whose content changed. Handles deletions too. Fast and
    correct for branch switches, pulls, rebases.
@@ -36,7 +36,7 @@ Trigger immediately after the user mentions (or runs via Bash) any of:
 3. If `incremental_reindex` returns `mode=fallback_full` (old index
    without blob tracking), it already ran a full scan: you're done.
 
-4. Only call `mcp__codegraph__scan_repo` if the user explicitly asks
+4. Only call `mcp__cgh__scan_repo` if the user explicitly asks
    for a full rebuild.
 
 5. Report the result to the user briefly (e.g. "Refreshed codegraph:

@@ -30,6 +30,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   cgh-docs is no longer published and an installed copy is ignored with a
   notice: uninstall it. These formats no longer count as opaque artifacts.
 
+- **The MCP server is named `cgh`.** `cgh init` and `cgh setup` register
+  it as `cgh` instead of `codegraph`, so agents see `mcp__cgh__<tool>` and
+  the Claude allow rules are `mcp__cgh` / `mcp__cgh__*`. The product has
+  one name everywhere. Migration: run `cgh setup migrate` once per repo
+  (`cgh init` and `cgh setup <tool>` do it too). It moves the old entry in
+  `.mcp.json`, `.cursor/mcp.json` and `.bob/mcp.json` with its settings
+  and renames the `mcp__codegraph` allow rules in `.claude/settings*.json`;
+  deny and ask rules keep the original and gain a `mcp__cgh` twin. The
+  rename is refused, and the repo stays on `codegraph`, while a deny / ask
+  rule in user or managed settings, a hook matcher, or an unreadable
+  settings file would stop applying to the new names (`--force`
+  overrides). `cgh doctor` flags a repo still on the old name, and fails
+  on a refused rename. See [docs/UPGRADING-0.19.md](docs/UPGRADING-0.19.md).
+
 - **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
   npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0
   and its SDK and plugin exceptions. Apache-2.0 allows commercial use and

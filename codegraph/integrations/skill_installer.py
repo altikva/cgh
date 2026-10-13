@@ -58,10 +58,10 @@ than reading.
 **Workflow matrix, when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
-  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
+  1. `mcp__cgh__context_for_task(task, session_id=<id>)`
 , merges graph + memory + plans + knowledge in one call
-  2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
-  3. `mcp__codegraph__endpoints(path_pattern)` for API questions
+  2. `mcp__cgh__architecture_overview()` or `domain_map(keyword)`
+  3. `mcp__cgh__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
   2. `search_symbols` for a half-known name, `fts_search` for code described

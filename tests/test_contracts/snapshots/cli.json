@@ -744,6 +744,7 @@
       },
       "setup": {
         "options": [
+          "--force",
           "--help",
           "--root",
           "-h"

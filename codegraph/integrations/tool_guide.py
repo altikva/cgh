@@ -6,7 +6,7 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The "which tool answers which question" guide, shared by the
 #              MCP server instructions and the usage rules installed for each
-#              agent. Tool names are written bare (no mcp__codegraph__
+#              agent. Tool names are written bare (no mcp__cgh__
 #              prefix) because each agent spells the MCP prefix differently.
 
 from __future__ import annotations

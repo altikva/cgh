@@ -151,7 +151,14 @@ cgh setup <target> [--root DIR]
 
 | Argument | Values |
 |----------|--------|
-| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all` |
+| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all`, `migrate` |
+
+The server is registered as `cgh` in every client config, so its tools
+reach the agent as `mcp__cgh__<tool>`. Each target also renames an entry
+an older cgh wrote as `codegraph`, keeping its settings. The rename is
+refused (and `setup migrate` exits 1) while a deny / ask rule or hook
+matcher keyed on `mcp__codegraph`, or an unreadable settings file, would
+stop applying; `cgh setup migrate --force` overrides.
 
 **Example:**
 
@@ -160,6 +167,7 @@ cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
 cgh setup bob        # writes .bob/mcp.json + .bob/skills/
 cgh setup all        # writes configs for all tools
+cgh setup migrate    # only renames codegraph to cgh, see docs/UPGRADING-0.19.md
 ```
 
 ---
@@ -221,8 +229,8 @@ cgh serve [--watch] [--reindex] [--background] [--stop] [--root DIR]
 ```json
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "cgh": {
+      "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   }

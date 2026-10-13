@@ -151,7 +151,14 @@ cgh setup <target> [--root DIR]
 
 | Argument | Values |
 |----------|--------|
-| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all` |
+| `target` | `claude`, `cursor`, `codex`, `gemini`, `bob`, `all`, `migrate` |
+
+The server is registered as `cgh` in every client config, so its tools
+reach the agent as `mcp__cgh__<tool>`. Each target also renames an entry
+an older cgh wrote as `codegraph`, keeping its settings. The rename is
+refused (and `setup migrate` exits 1) while a deny / ask rule or hook
+matcher keyed on `mcp__codegraph`, or an unreadable settings file, would
+stop applying; `cgh setup migrate --force` overrides.
 
 **Example:**
 
@@ -160,6 +167,7 @@ cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
 cgh setup bob        # writes .bob/mcp.json + .bob/skills/
 cgh setup all        # writes configs for all tools
+cgh setup migrate    # only renames codegraph to cgh, see docs/UPGRADING-0.19.md
 ```
 
 ---
@@ -221,8 +229,8 @@ cgh serve [--watch] [--reindex] [--background] [--stop] [--root DIR]
 ```json
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "cgh": {
+      "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   }
@@ -1037,8 +1045,10 @@ cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override 
 
 ### `artifact`
 
-A read-through cache for files cgh cannot parse into the graph: PDFs, images,
-office documents. Opening one costs vision or extractor tokens, so the finding
+A read-through cache for files cgh cannot parse into the graph: images, and
+legacy or OpenDocument office files (doc, xls, ppt, odt, ods, odp, rtf, epub).
+PDF, docx, xlsx, pptx and csv are parsed into sections and need no cache.
+Opening an opaque file costs vision or extractor tokens, so the finding
 is saved once and recalled after. A summary is a knowledge entry of kind `note`
 tagged `artifact`, with the file's SHA-256 in the body, so `recall` can tell a
 still-accurate summary from one whose file has changed. The Read pre-hook

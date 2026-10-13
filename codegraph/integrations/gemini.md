@@ -15,8 +15,8 @@ Add to `.gemini/settings.json` or project MCP config:
 ```json
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "cgh": {
+      "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   }

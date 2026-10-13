@@ -319,7 +319,7 @@ def _short_path(path: str) -> str:
 from codegraph.integrations.tool_guide import SEARCH_GUIDE
 
 mcp = FastMCP(
-    name="codegraph",
+    name="cgh",
     instructions=(
         "cgh, the context graph hub: the project memory of your coding agents,\n"
         "plus a code and document graph and the Claude Code memory/plan index.\n\n"

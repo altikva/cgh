@@ -76,7 +76,9 @@ pip install cgh                 # or: pipx install cgh / uv tool install cgh
 pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
 ```
 
-`cgh[plugins]` and `cgh[full]` bring cgh-docs, cgh-codegen and cgh-bugreport.
+`cgh[plugins]` and `cgh[full]` bring cgh-codegen and cgh-bugreport. PDF,
+Word, Excel, PowerPoint and CSV parsing is built in (it used to be the
+cgh-docs plugin, which cgh now ignores if it is still installed).
 cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
 understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
 
@@ -162,6 +164,13 @@ Alongside them, Markdown becomes a heading tree with its links and code
 references, Terraform yields resources, variables and outputs, and JSON,
 TOML, YAML and SQL expose their structure as sections. Every one of them is
 searchable and reachable from the graph.
+
+Documents are read out of the box, no plugin needed: PDF pages, Word
+headings and tables, Excel sheets, PowerPoint slides with their speaker
+notes, and CSV / TSV summaries (header, size, first rows) all land in the
+index as sections, so `search_docs` and `cgh search --text` find what is
+inside them. Big files stay cheap: the size cap applies first and each
+format bounds its own work (see [docs/PARSERS.md](docs/PARSERS.md)).
 
 ---
 

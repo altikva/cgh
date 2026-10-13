@@ -20,7 +20,7 @@
     "sqlite"
   ],
   "mcpServers": {
-    "codegraph": {
+    "cgh": {
       "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }

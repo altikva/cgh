@@ -59,17 +59,25 @@ dependencies = [
     # sections it tests for do not depend on a transitive install.
     "pyyaml>=6.0",
     "tree-sitter-hcl>=1.2",
+    # Office and pdf documents are read out of the box (codegraph/parsers/
+    # documents.py). python-docx and python-pptx pull lxml, a native wheel
+    # published for every platform cgh supports, the binary targets included.
+    # 6.0 caps how far one compressed pdf stream may inflate.
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
 ]
 
 [project.optional-dependencies]
-# The first-party plugins most installs want, in one go:
+# The first-party plugins most installs want, in one go (the document
+# parsers that used to come as cgh-docs are part of the core now):
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 # cgh-pii and cgh-vision stay installable by name (pip install cgh-pii);
 # they no longer scan at index unless [plugin.<name>] scan_on_index = true.
 # cgh-summarize and cgh-classify are frozen: their final releases stay on
 # PyPI, they left this repo and are in no extra.
 plugins = [
-    "cgh-docs>=0.2",
     "cgh-bugreport>=0.1.3",
     "cgh-codegen>=0.1.2",
 ]
@@ -79,7 +87,6 @@ plugins = [
 # which is what makes this superset safe to offer.
 #   pip install "cgh[full]"
 full = [
-    "cgh-docs>=0.2",
     "cgh-bugreport>=0.1.3",
     "cgh-codegen>=0.1.2",
     "tree-sitter-c-sharp>=0.23",

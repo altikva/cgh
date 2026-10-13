@@ -58,10 +58,10 @@ than reading.
 **Workflow matrix, when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
-  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
+  1. `mcp__cgh__context_for_task(task, session_id=<id>)`
 , merges graph + memory + plans + knowledge in one call
-  2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
-  3. `mcp__codegraph__endpoints(path_pattern)` for API questions
+  2. `mcp__cgh__architecture_overview()` or `domain_map(keyword)`
+  3. `mcp__cgh__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
   2. `search_symbols` for a half-known name, `fts_search` for code described
@@ -96,7 +96,9 @@ than reading.
      <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
      <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
      the no-MCP backup; `cgh papercut` lets the human read the list.
-- **About to inspect a file cgh can't parse** (pdf, image, office doc) and
+- **About to inspect a file cgh can't parse** (an image, a legacy office file
+  such as doc/xls/ppt; pdf, docx, xlsx, pptx and csv ARE parsed, use
+  `search_docs` / `doc_outline` for those) and
   **after** you do: it is opaque, so treat it as a cache.
   1. BEFORE reading: the Read hook surfaces any saved summary automatically;
      outside Claude Code, `cgh artifact recall <path>` first. Use a fresh

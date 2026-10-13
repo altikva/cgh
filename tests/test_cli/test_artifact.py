@@ -164,3 +164,39 @@ def test_artifact_is_wired_into_the_installed_rule_and_skill():
     assert "artifact" in _USAGE_BODY.lower()
     assert 'tags="artifact"' in _USAGE_BODY  # the record path
     assert "cgh-artifacts" in list_bundled_skills()
+
+
+def _run_read_hook(monkeypatch, capsys, root, path):
+    from codegraph.cli.commands_hooks import cmd_hook_precheck_read
+
+    payload = {"tool_input": {"file_path": str(path)}, "cwd": str(root)}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        cmd_hook_precheck_read(argparse.Namespace())
+    assert exc.value.code == 0
+    return capsys.readouterr().out
+
+
+def test_parsed_documents_are_not_artifacts():
+    # cgh parses these into sections now; only images and legacy or
+    # OpenDocument office files stay opaque.
+    from codegraph.cli.commands_artifact import ARTIFACT_EXTS, PARSED_DOC_EXTS
+
+    assert {".pdf", ".docx", ".xlsx", ".pptx"} <= PARSED_DOC_EXTS
+    assert not (ARTIFACT_EXTS & PARSED_DOC_EXTS)
+    assert {".png", ".svg", ".doc", ".xls", ".ppt"} <= ARTIFACT_EXTS
+
+
+def test_read_hook_does_not_ask_to_record_a_parsed_document(
+    _fresh, monkeypatch, capsys
+):
+    (_fresh / ".codegraph" / "fts.db").write_bytes(b"")
+    big = _make_artifact(_fresh, name="manual.pdf", data=b"%PDF" + b"x" * 200_000)
+    out = _run_read_hook(monkeypatch, capsys, _fresh, big)
+    assert "can't parse" not in out
+    assert "cgh artifact note" not in out
+
+    # An image still gets the record nudge.
+    img = _make_artifact(_fresh, name="shot.png", data=b"\x89PNG" + b"x" * 200_000)
+    out = _run_read_hook(monkeypatch, capsys, _fresh, img)
+    assert "can't parse" in out

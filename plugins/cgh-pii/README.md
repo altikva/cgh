@@ -123,7 +123,7 @@ the regex tier misses what does not fit its patterns.
   redact PII split across runs, like a bold surname); unchanged
   paragraphs keep their formatting. A docx needs `--out` or
   `--in-place`. PDF is not supported: real pdf redaction needs an
-  AGPL library; extract the pdf text (see cgh-docs) and redact that.
+  AGPL library; extract the pdf text (cgh indexes it, or use pypdf) and redact that.
 
 ## The optional LLM tier
 

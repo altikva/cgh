@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "codegraph": {
+    "cgh": {
       "command": "python",
       "args": [
         "-m", "codegraph",

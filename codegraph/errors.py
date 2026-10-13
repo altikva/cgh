@@ -2,7 +2,7 @@
 # __creation__ = 2026-08-01
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT (SDK embedding exception, see LICENSE)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The public exception hierarchy. Entrypoints (CLI, MCP,
 #              SDK consumers) catch CodegraphError to shape exit codes

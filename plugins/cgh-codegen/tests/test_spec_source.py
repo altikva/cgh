@@ -2,7 +2,7 @@
 # __creation__ = 2026-09-20
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Tests for cgh_codegen.cli._resolve_spec, which resolves the
 #              codegen spec from --spec, --spec-file, or stdin.

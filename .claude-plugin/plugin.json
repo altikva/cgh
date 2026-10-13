@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/altikva/cgh",
   "repository": "https://github.com/altikva/cgh",
-  "license": "MIT AND CC-BY-NC-SA-4.0",
+  "license": "Apache-2.0",
   "keywords": [
     "code-graph",
     "mcp",

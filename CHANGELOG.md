@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
+  npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0
+  and its SDK and plugin exceptions. Apache-2.0 allows commercial use and
+  carries an explicit patent grant, which makes cgh easier to adopt.
+  Versions 0.18.x and earlier keep their original license.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

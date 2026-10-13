@@ -530,9 +530,36 @@ def _write_zip(path, members):
                 zf.writestr(name, data)
 
 
+@pytest.fixture
+def doc_log():
+    """Warnings the document parsers log, collected by a handler attached
+    to their own logger. caplog listens on the root logger, so it misses
+    these whenever something has set propagate=False on "codegraph" (the
+    background logging setup does, by design); this does not depend on
+    propagation, nor on the level a parent logger was left at."""
+    records: list[logging.LogRecord] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("codegraph.parsers.documents")
+    handler = _Collect(logging.WARNING)
+    saved = (logger.level, logger.disabled)
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    logger.disabled = False
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(saved[0])
+        logger.disabled = saved[1]
+
+
 @pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
 def test_zip_bomb_is_skipped_before_the_library(
-    tmp_path, library_calls, caplog, fmt, member
+    tmp_path, library_calls, doc_log, fmt, member
 ):
     import time
 
@@ -542,12 +569,16 @@ def test_zip_bomb_is_skipped_before_the_library(
     assert bomb.stat().st_size < 500 * 1024
 
     t0 = time.perf_counter()
-    with caplog.at_level(logging.WARNING, logger="codegraph.parsers.documents"):
-        idx = _parse(fmt, bomb)
+    idx = _parse(fmt, bomb)
     assert time.perf_counter() - t0 < 1.0
     assert idx.sections == [] and idx.scan_text == ""
     assert library_calls == []
-    assert len([r for r in caplog.records if str(bomb) in r.getMessage()]) == 1
+    # Skipped by the zip check itself, and said so exactly once.
+    assert not documents.zip_container_ok(bomb, fmt)
+    doc_log.clear()
+    _parse(fmt, bomb)
+    lines = [r.getMessage() for r in doc_log if str(bomb) in r.getMessage()]
+    assert len(lines) == 1 and "inflates past" in lines[0], lines
 
 
 @pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
@@ -603,16 +634,16 @@ def test_hard_input_cap_applies_even_when_forced(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_missing_library_skips_with_one_log_line(tmp_path, monkeypatch, caplog):
+def test_missing_library_skips_with_one_log_line(tmp_path, monkeypatch, doc_log):
     f = tmp_path / "deck.pptx"
     _make_pptx(f)
     monkeypatch.setitem(sys.modules, "pptx", None)  # import pptx raises
     monkeypatch.setattr(documents, "_missing_logged", set())
-    with caplog.at_level(logging.WARNING, logger="codegraph.parsers.documents"):
-        first = PptxParser().parse(f)
-        second = PptxParser().parse(f)
+    first = PptxParser().parse(f)
+    second = PptxParser().parse(f)
     assert first.sections == [] and second.sections == []
-    lines = [r for r in caplog.records if "pptx files skipped" in r.getMessage()]
+    assert documents._missing_logged == {"pptx"}
+    lines = [r for r in doc_log if "pptx files skipped" in r.getMessage()]
     assert len(lines) == 1
 
 

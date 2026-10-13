@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-13
+
 ### Added
 - **Shorter tool list on request.** `[tools] expose = "core"` in
   `.codegraph/config.toml` makes `tools/list` show 15 core tools, the
@@ -2444,7 +2446,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/altikva/cgh/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/altikva/cgh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/altikva/cgh/compare/v0.16.0...v0.16.1

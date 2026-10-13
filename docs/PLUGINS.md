@@ -18,7 +18,7 @@ Control which plugins load per repo in `.codegraph/config.toml`:
 # scan_on_index = false
 ```
 
-A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
+A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. cgh is Apache-2.0, so a plugin may use any license its author chooses.
 
 First-party plugins live in [plugins/](../plugins) and install separately, so the core stays lean. `pip install "cgh[plugins]"` brings the first two:
 

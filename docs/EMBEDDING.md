@@ -5,11 +5,9 @@ It exposes cgh's bricks as explicit functions, no CLI, no owner
 process, no MCP server, no `.codegraph/` directory. Everything else
 under `codegraph.*` is internal and changes without notice.
 
-Licensing: code exercised solely through this surface may be used
-under the MIT license alone, including commercially (the "SDK
-embedding exception" in [LICENSE](../LICENSE)). The graph index, MCP
-server, federation and shared memory are not part of the surface and
-remain under the dual license.
+Licensing: cgh is Apache-2.0 from 0.19 on, so embedding it, including
+commercially, needs no special exception. See [LICENSE](../LICENSE)
+and [NOTICE](../NOTICE).
 
 Stability: `sdk.SDK_API` is `1`; the surface follows SemVer, with a
 one-release deprecation window and runtime warnings while the project

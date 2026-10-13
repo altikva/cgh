@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
+  store between checkouts as JSON Lines, filtered by time (`--before`,
+  `--before-commit`), tag glob (`--exclude-tag`, provenance included as
+  `pr:`/`branch:` pseudo-tags) and kind. Digests and checkpoints follow the
+  same filters. Import is lossless and deduplicated, and refuses while an
+  owner runs on the target. Lets a replay worktree start from what the main
+  checkout knew before a ticket, without what that ticket taught it.
+
 ### Changed
 - **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
   pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
@@ -20,6 +29,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Existing indexes pick the files up on the next index, no full re-parse.
   cgh-docs is no longer published and an installed copy is ignored with a
   notice: uninstall it. These formats no longer count as opaque artifacts.
+
+- **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
+  npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0
+  and its SDK and plugin exceptions. Apache-2.0 allows commercial use and
+  carries an explicit patent grant, which makes cgh easier to adopt.
+  Versions 0.18.x and earlier keep their original license.
 
 ## [0.18.0] - 2026-10-13
 

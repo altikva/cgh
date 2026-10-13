@@ -503,6 +503,30 @@
           "-h"
         ],
         "verbs": {
+          "export": {
+            "options": [
+              "--before",
+              "--before-commit",
+              "--exclude-tag",
+              "--help",
+              "--include-digests",
+              "--kinds",
+              "--no-include-digests",
+              "--root",
+              "-h"
+            ]
+          },
+          "import": {
+            "options": [
+              "--help",
+              "--json",
+              "--root",
+              "-h"
+            ],
+            "positionals": [
+              "file"
+            ]
+          },
           "outcome": {
             "options": [
               "--corrected-by",

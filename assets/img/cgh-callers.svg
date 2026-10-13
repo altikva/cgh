@@ -1,4 +1,4 @@
-<svg class="rich-terminal" viewBox="0 0 1360 98.8" xmlns="http://www.w3.org/2000/svg">
+<svg class="rich-terminal" viewBox="0 0 1360 269.6" xmlns="http://www.w3.org/2000/svg">
     <!-- Generated with Rich https://www.textualize.io -->
     <style>
 
@@ -19,46 +19,74 @@
         font-weight: 700;
     }
 
-    .terminal-4102652098-matrix {
+    .terminal-684165435-matrix {
         font-family: Fira Code, monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
     }
 
-    .terminal-4102652098-title {
+    .terminal-684165435-title {
         font-size: 18px;
         font-weight: bold;
         font-family: arial;
     }
 
-    .terminal-4102652098-r1 { fill: #d0b344;font-weight: bold }
-.terminal-4102652098-r2 { fill: #c5c8c6 }
-.terminal-4102652098-r3 { fill: #868887 }
-.terminal-4102652098-r4 { fill: #98a84b }
+    .terminal-684165435-r1 { fill: #d0b344;font-weight: bold }
+.terminal-684165435-r2 { fill: #c5c8c6 }
+.terminal-684165435-r3 { fill: #868887 }
+.terminal-684165435-r4 { fill: #98a84b }
     </style>
 
     <defs>
-    <clipPath id="terminal-4102652098-clip-terminal">
-      <rect x="0" y="0" width="1341.0" height="47.8" />
+    <clipPath id="terminal-684165435-clip-terminal">
+      <rect x="0" y="0" width="1341.0" height="218.6" />
     </clipPath>
-    <clipPath id="terminal-4102652098-line-0">
+    <clipPath id="terminal-684165435-line-0">
     <rect x="0" y="1.5" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-1">
+    <rect x="0" y="25.9" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-2">
+    <rect x="0" y="50.3" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-3">
+    <rect x="0" y="74.7" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-4">
+    <rect x="0" y="99.1" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-5">
+    <rect x="0" y="123.5" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-6">
+    <rect x="0" y="147.9" width="1342" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-684165435-line-7">
+    <rect x="0" y="172.3" width="1342" height="24.65"/>
             </clipPath>
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1358" height="96.8" rx="8"/><text class="terminal-4102652098-title" fill="#c5c8c6" text-anchor="middle" x="679" y="27">cgh&#160;callers</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1358" height="267.6" rx="8"/><text class="terminal-684165435-title" fill="#c5c8c6" text-anchor="middle" x="679" y="27">cgh&#160;callers</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
             <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
-    <g transform="translate(9, 41)" clip-path="url(#terminal-4102652098-clip-terminal)">
+    <g transform="translate(9, 41)" clip-path="url(#terminal-684165435-clip-terminal)">
     
-    <g class="terminal-4102652098-matrix">
-    <text class="terminal-4102652098-r1" x="0" y="20" textLength="170.8" clip-path="url(#terminal-4102652098-line-0)">resolve_import</text><text class="terminal-4102652098-r3" x="183" y="20" textLength="158.6" clip-path="url(#terminal-4102652098-line-0)">is&#160;called&#160;by:</text><text class="terminal-4102652098-r2" x="1342" y="20" textLength="12.2" clip-path="url(#terminal-4102652098-line-0)">
-</text><text class="terminal-4102652098-r2" x="0" y="44.4" textLength="48.8" clip-path="url(#terminal-4102652098-line-1)">└──&#160;</text><text class="terminal-4102652098-r4" x="48.8" y="44.4" textLength="183" clip-path="url(#terminal-4102652098-line-1)">_ingest_imports</text><text class="terminal-4102652098-r3" x="256.2" y="44.4" textLength="292.8" clip-path="url(#terminal-4102652098-line-1)">codegraph/indexer.py:504</text><text class="terminal-4102652098-r2" x="1342" y="44.4" textLength="12.2" clip-path="url(#terminal-4102652098-line-1)">
+    <g class="terminal-684165435-matrix">
+    <text class="terminal-684165435-r1" x="0" y="20" textLength="170.8" clip-path="url(#terminal-684165435-line-0)">resolve_import</text><text class="terminal-684165435-r3" x="183" y="20" textLength="158.6" clip-path="url(#terminal-684165435-line-0)">is&#160;called&#160;by:</text><text class="terminal-684165435-r2" x="1342" y="20" textLength="12.2" clip-path="url(#terminal-684165435-line-0)">
+</text><text class="terminal-684165435-r2" x="0" y="44.4" textLength="48.8" clip-path="url(#terminal-684165435-line-1)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="44.4" textLength="85.4" clip-path="url(#terminal-684165435-line-1)">_lookup</text><text class="terminal-684165435-r3" x="158.6" y="44.4" textLength="439.2" clip-path="url(#terminal-684165435-line-1)">codegraph/analysis/call_rules.py:180</text><text class="terminal-684165435-r2" x="1342" y="44.4" textLength="12.2" clip-path="url(#terminal-684165435-line-1)">
+</text><text class="terminal-684165435-r2" x="0" y="68.8" textLength="48.8" clip-path="url(#terminal-684165435-line-2)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="68.8" textLength="183" clip-path="url(#terminal-684165435-line-2)">_ingest_imports</text><text class="terminal-684165435-r3" x="256.2" y="68.8" textLength="292.8" clip-path="url(#terminal-684165435-line-2)">codegraph/indexer.py:827</text><text class="terminal-684165435-r2" x="1342" y="68.8" textLength="12.2" clip-path="url(#terminal-684165435-line-2)">
+</text><text class="terminal-684165435-r2" x="0" y="93.2" textLength="48.8" clip-path="url(#terminal-684165435-line-3)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="93.2" textLength="292.8" clip-path="url(#terminal-684165435-line-3)">_handler_candidate_files</text><text class="terminal-684165435-r3" x="366" y="93.2" textLength="292.8" clip-path="url(#terminal-684165435-line-3)">codegraph/indexer.py:888</text><text class="terminal-684165435-r2" x="1342" y="93.2" textLength="12.2" clip-path="url(#terminal-684165435-line-3)">
+</text><text class="terminal-684165435-r2" x="0" y="117.6" textLength="48.8" clip-path="url(#terminal-684165435-line-4)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="117.6" textLength="146.4" clip-path="url(#terminal-684165435-line-4)">_router_refs</text><text class="terminal-684165435-r3" x="219.6" y="117.6" textLength="305" clip-path="url(#terminal-684165435-line-4)">codegraph/indexer.py:1013</text><text class="terminal-684165435-r2" x="1342" y="117.6" textLength="12.2" clip-path="url(#terminal-684165435-line-4)">
+</text><text class="terminal-684165435-r2" x="0" y="142" textLength="48.8" clip-path="url(#terminal-684165435-line-5)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="142" textLength="244" clip-path="url(#terminal-684165435-line-5)">test_python_dispatch</text><text class="terminal-684165435-r3" x="317.2" y="142" textLength="536.8" clip-path="url(#terminal-684165435-line-5)">tests/test_indexer/test_imports_edges.py:324</text><text class="terminal-684165435-r2" x="1342" y="142" textLength="12.2" clip-path="url(#terminal-684165435-line-5)">
+</text><text class="terminal-684165435-r2" x="0" y="166.4" textLength="48.8" clip-path="url(#terminal-684165435-line-6)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="166.4" textLength="292.8" clip-path="url(#terminal-684165435-line-6)">test_typescript_dispatch</text><text class="terminal-684165435-r3" x="366" y="166.4" textLength="536.8" clip-path="url(#terminal-684165435-line-6)">tests/test_indexer/test_imports_edges.py:329</text><text class="terminal-684165435-r2" x="1342" y="166.4" textLength="12.2" clip-path="url(#terminal-684165435-line-6)">
+</text><text class="terminal-684165435-r2" x="0" y="190.8" textLength="48.8" clip-path="url(#terminal-684165435-line-7)">├──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="190.8" textLength="219.6" clip-path="url(#terminal-684165435-line-7)">test_java_dispatch</text><text class="terminal-684165435-r3" x="292.8" y="190.8" textLength="536.8" clip-path="url(#terminal-684165435-line-7)">tests/test_indexer/test_imports_edges.py:334</text><text class="terminal-684165435-r2" x="1342" y="190.8" textLength="12.2" clip-path="url(#terminal-684165435-line-7)">
+</text><text class="terminal-684165435-r2" x="0" y="215.2" textLength="48.8" clip-path="url(#terminal-684165435-line-8)">└──&#160;</text><text class="terminal-684165435-r4" x="48.8" y="215.2" textLength="366" clip-path="url(#terminal-684165435-line-8)">test_unknown_lang_returns_none</text><text class="terminal-684165435-r3" x="439.2" y="215.2" textLength="536.8" clip-path="url(#terminal-684165435-line-8)">tests/test_indexer/test_imports_edges.py:341</text><text class="terminal-684165435-r2" x="1342" y="215.2" textLength="12.2" clip-path="url(#terminal-684165435-line-8)">
 </text>
     </g>
     </g>

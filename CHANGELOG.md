@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
+  store between checkouts as JSON Lines, filtered by time (`--before`,
+  `--before-commit`), tag glob (`--exclude-tag`, provenance included as
+  `pr:`/`branch:` pseudo-tags) and kind. Digests and checkpoints follow the
+  same filters. Import is lossless and deduplicated, and refuses while an
+  owner runs on the target. Lets a replay worktree start from what the main
+  checkout knew before a ticket, without what that ticket taught it.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

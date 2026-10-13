@@ -196,7 +196,7 @@ def _print_help():
                 ),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
-                ("knowledge", "Promote a worktree's learnings to its main checkout"),
+                ("knowledge", "Promote, export or import a store's learnings"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),

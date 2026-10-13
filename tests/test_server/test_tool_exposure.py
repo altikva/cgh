@@ -64,6 +64,12 @@ def _server(root: Path) -> tuple[FastMCP, ToolExposureMiddleware]:
     return server, mw
 
 
+async def _list(server: FastMCP) -> set:
+    # Through a client, as an agent sees it: works on every supported fastmcp.
+    async with Client(server) as client:
+        return {t.name for t in await client.list_tools()}
+
+
 async def _list_and_call(server: FastMCP, name: str, args: dict) -> tuple[set, str]:
     async with Client(server) as client:
         listed = {t.name for t in await client.list_tools()}
@@ -93,7 +99,7 @@ def test_default_config_lists_every_real_tool(tmp_path, monkeypatch):
     names = registered_tool_names(srv.mcp)
     monkeypatch.setattr(srv.tool_exposure, "builtin_names", names)
     monkeypatch.setattr(srv.tool_exposure, "registered_names", names)
-    listed = {t.name for t in asyncio.run(srv.mcp.list_tools())}
+    listed = asyncio.run(_list(srv.mcp))
     assert listed == names
     assert names >= CORE_TOOLS  # every core name is a real tool
 
@@ -142,7 +148,8 @@ def test_unknown_extra_names_are_ignored(tmp_path, caplog):
     assert "no_such_tool" not in listed
     assert "find_callees" in listed
     assert mw.exposure().unknown_extra == ("no_such_tool",)
-    assert "no_such_tool" in caplog.text
+    # Warned once, whichever logging setup the fastmcp version installs.
+    assert "no_such_tool" in mw._warned_unknown
 
 
 def test_malformed_extra_is_dropped(tmp_path):

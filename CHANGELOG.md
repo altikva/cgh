@@ -18,6 +18,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   checkout knew before a ticket, without what that ticket taught it.
 
 ### Changed
+- **Name: cgh, the context graph hub.** The banner, `--version` line,
+  README and package descriptions now present cgh as the project memory of
+  your coding agents, plus a code and document graph. Nothing to migrate:
+  the command, the PyPI and npm packages, the `codegraph` import and the
+  `.codegraph/` directory keep their names.
 - **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
   npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0
   and its SDK and plugin exceptions. Apache-2.0 allows commercial use and

@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 62 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 62 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 

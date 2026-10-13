@@ -12,7 +12,12 @@
 
 **cgh, the context graph hub: the project memory of your coding agents.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and scanner findings (PII, secrets, confidentiality labels) that plugins check before sending a file to a cloud model.
+cgh is not a coding agent. It is an MCP server and a CLI that the agent you already use plugs into: Claude Code, Codex, Cursor, Gemini or IBM Bob. It keeps what those agents learn about a project, and it answers their questions about the code from a graph, so they spend fewer tokens per ticket and pick up where the last session stopped.
+
+- **Shared project memory.** Knowledge, decisions, gotchas and session digests are stored per repo, with where each one came from (session, branch, commit, PR, files). Every connected agent reads the same store, it survives a `/clear` or a compaction, and it can be exported to another repo.
+- **A code and document graph.** Files, functions, classes, calls, imports, Terraform resources and Markdown sections are indexed locally. Lookups return an exact `file:line`, so the agent reads those lines instead of whole files. Sibling repos can be federated into one view.
+- **Cost and continuity.** Fewer context tokens and fewer turns per task, measured below, and a resume bundle that hands the next session the standing instructions, recent digests and open plans.
+- **Gates on what leaves the machine.** Scanner findings (PII, secrets, confidentiality labels) are recorded in the graph, and plugins check them before a file goes to a cloud model.
 
 **Result:** 40-60% fewer context tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
 
@@ -123,7 +128,7 @@ AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
     |  search_docs("reconciliation")
     |  context_for_task("fix auth bug")
     v
-MCP server (codegraph)          <-- stdio, no network
+MCP server (cgh)                <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
 DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based

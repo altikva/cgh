@@ -1,11 +1,11 @@
-# codegraph for Google Gemini CLI
+# cgh for Google Gemini CLI
 
 ## Setup
 
 Gemini CLI supports MCP servers via configuration.
 
 ```bash
-# Initialize codegraph
+# Initialize cgh
 cgh init
 cgh index
 ```
@@ -25,12 +25,12 @@ Add to `.gemini/settings.json` or project MCP config:
 
 ## GEMINI.md instructions
 
-Add to `GEMINI.md` to teach Gemini to use codegraph:
+Add to `GEMINI.md` to teach Gemini to use cgh:
 
 ```markdown
-## Code Navigation with codegraph
+## Code Navigation with cgh
 
-This project is indexed by codegraph. Use its MCP tools for efficient navigation:
+This project is indexed by cgh. Use its MCP tools for efficient navigation:
 
 - symbol_lookup(name): find where any function/class/section is defined
 - context_for_task(task): build ranked context from the code graph + docs
@@ -41,7 +41,7 @@ This project is indexed by codegraph. Use its MCP tools for efficient navigation
 - doc_outline(file): table of contents for markdown files
 - visualize_graph(scope): generate Mermaid diagrams of relationships
 
-Prefer codegraph tools over reading entire files: they return exact file:line references.
+Prefer cgh tools over reading entire files: they return exact file:line references.
 ```
 
 ## Environment variable

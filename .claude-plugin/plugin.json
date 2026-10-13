@@ -1,7 +1,7 @@
 {
   "name": "cgh",
   "version": "0.18.0",
-  "description": "Local code graph + memory + plans + knowledge for AI coding agents. 62 MCP tools that return exact file:line server-side, so navigation costs near-zero model tokens. Requires the cgh binary on PATH (uvx cgh, pip install cgh, or the standalone binary).",
+  "description": "cgh, the context graph hub: the project memory of your coding agents, shared across sessions, agents and repos, plus a code and document graph. 62 MCP tools that return exact file:line server-side, so navigation costs near-zero model tokens. Requires the cgh binary on PATH (uvx cgh, pip install cgh, or the standalone binary).",
   "author": {
     "name": "Joy Ndjama",
     "email": "joy.ndjama@altikva.com"
@@ -10,9 +10,11 @@
   "repository": "https://github.com/altikva/cgh",
   "license": "Apache-2.0",
   "keywords": [
+    "context-graph",
     "code-graph",
     "mcp",
     "memory",
+    "agent-memory",
     "navigation",
     "duckdb",
     "sqlite"

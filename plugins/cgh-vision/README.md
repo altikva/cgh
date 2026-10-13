@@ -1,6 +1,6 @@
 # cgh-vision
 
-Image understanding for [cgh](https://github.com/altikva/cgh): a
+Image understanding for [cgh](https://github.com/altikva/cgh), the context graph hub: a
 content inventory decides what each image contains, then only the
 extractors the content warrants run: architecture diagrams become
 markdown plus Mermaid, tables and charts become data, dense text

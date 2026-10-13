@@ -1,7 +1,7 @@
 # cgh-pii
 
 Secret scanning and PII redaction for
-[cgh](https://github.com/altikva/cgh).
+[cgh](https://github.com/altikva/cgh), the context graph hub.
 
 ```bash
 pip install cgh-pii

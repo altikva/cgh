@@ -26,7 +26,7 @@ adopting over time):
 
 ### `init`
 
-Interactive wizard that initializes codegraph in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
+Interactive wizard that initializes cgh in a project. Detects AI tools, installs MCP server configs and hooks, scans for parseable files, and optionally runs the first index.
 
 ```
 cgh init [--yes | -y] [--from CHECKOUT] [--no-children] [--tools LIST] [--root DIR]
@@ -52,7 +52,7 @@ scripted or empty-repo bootstrap.
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
 5. Removes the guard hooks an older cgh wrote (only those); keeps its deny rules and `.bobignore` block and prints how many remain (`cgh guard --remove-rules` removes them)
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
-6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the codegraph usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
+6. For selected tools: writes MCP config, installs the bundled skills, and (optional) writes the cgh usage guidelines to the agent's rules (CLAUDE.md / AGENTS.md / GEMINI.md / `.cursor/rules/` / `.bob/rules/`)
 7. Offers Claude-specific auto-accept for MCP tool calls
 8. Counts parseable files by language
 9. Optionally runs `cgh index`
@@ -872,7 +872,7 @@ cgh files --check report.xlsx   # indexed? if not, why
 
 ### `doctor`
 
-Run a health check that verifies all codegraph components are operational.
+Run a health check that verifies all cgh components are operational.
 
 ```
 cgh doctor [--strict] [--owner] [--root DIR]

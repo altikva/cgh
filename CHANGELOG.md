@@ -8,6 +8,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
+  pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
+  joined by pptx (slide text, tables, speaker notes) and a CSV / TSV
+  summary (header, size, first rows; at most 1,000 rows read). Most
+  installs had no plugin, so cgh read none of these files before.
+  Existing indexes pick the files up on the next index, no full re-parse.
+  cgh-docs is no longer published and an installed copy is ignored with a
+  notice: uninstall it. These formats no longer count as opaque artifacts.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

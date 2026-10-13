@@ -93,7 +93,7 @@ class TestWithNer:
 
 
 class TestDocx:
-    """python-docx is present in CI via cgh-docs; skip if absent."""
+    """python-docx is a cgh core dependency; skip if absent."""
 
     def _doc(self, tmp_path):
         pytest.importorskip("docx")

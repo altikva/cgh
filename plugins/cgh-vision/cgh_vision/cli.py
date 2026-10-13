@@ -146,7 +146,7 @@ def _run(args, config: dict) -> None:
             f"[red]cgh vision reads an image[/red] ({', '.join(sorted(_IMAGE_EXTS))}) "
             "or a pdf. "
             + (
-                "Extract a document's text with cgh-docs instead."
+                "cgh indexes a document's text itself (cgh search --text)."
                 if suffix in (".docx", ".xlsx", ".txt", ".md")
                 else "Convert this file to an image first."
             )

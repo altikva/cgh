@@ -7,7 +7,7 @@
   <a href="https://pypi.org/project/cgh/"><img src="https://img.shields.io/pypi/pyversions/cgh" alt="Python versions"></a>
   <a href="https://www.npmjs.com/package/@altikva/cgh"><img src="https://img.shields.io/npm/v/%40altikva%2Fcgh?color=CB3837&label=npx" alt="npx"></a>
   <a href="https://github.com/altikva/cgh/actions/workflows/ci.yml"><img src="https://github.com/altikva/cgh/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%26%20CC%20BY--NC--SA-3DA639" alt="License: MIT and CC BY-NC-SA"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3DA639" alt="License: Apache-2.0"></a>
 </p>
 
 **cgh, the context graph hub: the project memory of your coding agents.**
@@ -193,6 +193,6 @@ searchable and reachable from the graph.
 
 ## License
 
-Dual-licensed under MIT **and** CC BY-NC-SA 4.0: both licenses apply together and you must comply with both. In practice that means non-commercial use, share-alike derivatives, attribution, and no warranty. Copyright (c) 2026 ALTIKVA. See [LICENSE](./LICENSE) or the canonical notice at https://www.altikva.com/licenses/LICENSE-1.0.
+Licensed under the [Apache License, Version 2.0](./LICENSE), from version 0.19 on. That covers cgh itself, the first-party plugins under `plugins/`, the SDK and the npx wrapper. Copyright 2026 ALTIKVA; see [NOTICE](./NOTICE).
 
-**Plugin exception**: a plugin that talks to cgh only through the documented plugin interfaces (the `cgh` entry-point group and the public plugin API) is not treated as a derivative work and may be licensed under any terms its author chooses, including commercial ones. Using cgh itself stays under the dual license whatever plugins are installed. Full wording in [LICENSE](./LICENSE).
+Versions 0.18.x and earlier were published under MIT and CC BY-NC-SA 4.0 and keep that license.

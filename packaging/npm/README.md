@@ -62,5 +62,5 @@ instead.
 
 ## License
 
-MIT AND CC-BY-NC-SA-4.0, the same as cgh itself. See the
-[main repository](https://github.com/altikva/cgh).
+Apache-2.0, the same as cgh itself. See [LICENSE](./LICENSE),
+[NOTICE](./NOTICE) and the [main repository](https://github.com/altikva/cgh).

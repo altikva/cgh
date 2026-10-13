@@ -160,7 +160,7 @@ def test_unreadable_config_is_left_alone(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["settings.json", "settings.local.json"])
-def test_allow_rules_are_rewritten_and_nothing_else(tmp_path, name):
+def test_allow_rules_renamed_and_restrictions_twinned(tmp_path, name):
     path = tmp_path / ".claude" / name
     _write(
         path,
@@ -178,7 +178,8 @@ def test_allow_rules_are_rewritten_and_nothing_else(tmp_path, name):
                 "deny": ["mcp__codegraph__scan_repo"],
             },
             "enabledMcpjsonServers": ["codegraph", "other"],
-            "hooks": {"PreToolUse": [{"matcher": "mcp__codegraph__.*"}]},
+            "disabledMcpjsonServers": ["codegraph"],
+            "hooks": {"PreToolUse": [{"matcher": "mcp__(cgh|codegraph)__.*"}]},
         },
     )
 
@@ -194,10 +195,15 @@ def test_allow_rules_are_rewritten_and_nothing_else(tmp_path, name):
         "mcp__codegraphx__foo",
         "mcp__other__codegraph",
     ]
-    assert data["permissions"]["deny"] == ["mcp__cgh__scan_repo"]
+    # A restriction is never dropped: the old deny rule stays, with a twin.
+    assert data["permissions"]["deny"] == [
+        "mcp__codegraph__scan_repo",
+        "mcp__cgh__scan_repo",
+    ]
     assert data["enabledMcpjsonServers"] == ["cgh", "other"]
-    # A team-owned hook matcher is never rewritten, only reported.
-    assert data["hooks"]["PreToolUse"][0]["matcher"] == "mcp__codegraph__.*"
+    assert data["disabledMcpjsonServers"] == ["codegraph", "cgh"]
+    # A matcher that already fires for both names is left as it is.
+    assert data["hooks"]["PreToolUse"][0]["matcher"] == "mcp__(cgh|codegraph)__.*"
 
 
 def test_auto_accept_over_legacy_rules_keeps_only_cgh(tmp_path):
@@ -260,21 +266,17 @@ def test_bob_hooks_ignore_other_servers():
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_findings_split_fixable_and_manual(tmp_path):
+def test_legacy_findings_lists_what_migrate_would_change(tmp_path):
     _write(tmp_path / ".bob" / "mcp.json", {"mcpServers": {"codegraph": {}}})
     _write(
         tmp_path / ".claude" / "settings.json",
-        {
-            "permissions": {"allow": ["mcp__codegraph__*"]},
-            "hooks": {"PostToolUse": [{"matcher": "mcp__codegraph__scan_repo"}]},
-        },
+        {"permissions": {"allow": ["mcp__codegraph__*"]}},
     )
 
     found = mcp_name.legacy_findings(tmp_path)
 
-    assert (".bob/mcp.json", 'server key "codegraph"', True) in found
-    assert any(rel == ".claude/settings.json" and fix for rel, _w, fix in found)
-    assert any(rel == ".claude/settings.json" and not fix for rel, _w, fix in found)
+    assert (".bob/mcp.json", 'server key "codegraph"') in found
+    assert any(rel == ".claude/settings.json" for rel, _w in found)
 
 
 def test_legacy_findings_empty_on_a_migrated_repo(tmp_path):
@@ -346,3 +348,224 @@ def test_setup_migrate_renames_without_installing_anything(tmp_path):
     assert _servers(tmp_path, ".cursor/mcp.json") == {"cgh": {"a": 1}}
     assert not (tmp_path / ".mcp.json").exists()
     assert not (tmp_path / ".claude").exists()
+
+
+# ---------------------------------------------------------------------------
+# Fail closed: what the rename would void stops it
+# ---------------------------------------------------------------------------
+
+
+def _legacy_repo(root):
+    _write(root / ".mcp.json", {"mcpServers": {"codegraph": {"command": "cgh"}}})
+
+
+@pytest.mark.parametrize("kind", ["deny", "ask"])
+def test_project_deny_and_ask_rules_keep_the_old_and_gain_a_twin(tmp_path, kind):
+    _legacy_repo(tmp_path)
+    path = tmp_path / ".claude" / "settings.local.json"
+    _write(path, {"permissions": {kind: ["mcp__codegraph__scan_repo", "Bash(rm:*)"]}})
+
+    result = mcp_name.migrate_repo(tmp_path)
+
+    assert not result.blocked
+    rules = json.loads(path.read_text())["permissions"][kind]
+    assert rules == ["mcp__codegraph__scan_repo", "mcp__cgh__scan_repo", "Bash(rm:*)"]
+    assert list(_servers(tmp_path, ".mcp.json")) == ["cgh"]
+
+
+@pytest.mark.parametrize(
+    "layer",
+    [
+        {"permissions": {"deny": ["mcp__codegraph__scan_repo"]}},
+        {"permissions": {"ask": ["mcp__codegraph__*"]}},
+        {"disabledMcpjsonServers": ["codegraph"]},
+        {"hooks": {"PreToolUse": [{"matcher": "mcp__codegraph__scan_repo"}]}},
+    ],
+    ids=["deny", "ask", "disabled-server", "hook"],
+)
+def test_user_layer_restriction_blocks_the_rename(tmp_path, layer):
+    _legacy_repo(tmp_path)
+    before = (tmp_path / ".mcp.json").read_text()
+    _write(mcp_name._home() / ".claude" / "settings.json", layer)
+
+    result = mcp_name.migrate_repo(tmp_path)
+
+    assert result.blocked
+    assert result.blockers[0].file == "~/.claude/settings.json"
+    assert (tmp_path / ".mcp.json").read_text() == before
+
+
+def test_managed_settings_deny_blocks_the_rename(tmp_path):
+    _legacy_repo(tmp_path)
+    managed = mcp_name.managed_settings_paths()[0]
+    _write(managed, {"permissions": {"deny": ["mcp__codegraph__fetch_and_index"]}})
+
+    result = mcp_name.migrate_repo(tmp_path)
+
+    assert result.blocked
+    assert result.blockers[0].file == str(managed)
+    assert list(_servers(tmp_path, ".mcp.json")) == ["codegraph"]
+
+
+@pytest.mark.parametrize("name", ["settings.json", "settings.local.json"])
+def test_project_hook_on_the_old_names_blocks_the_rename(tmp_path, name):
+    _legacy_repo(tmp_path)
+    _write(
+        tmp_path / ".claude" / name,
+        {"hooks": {"PreToolUse": [{"matcher": "mcp__codegraph__scan_repo"}]}},
+    )
+
+    result = mcp_name.migrate_repo(tmp_path)
+
+    assert result.blocked
+    assert "scan_repo" in result.blockers[0].what
+    assert list(_servers(tmp_path, ".mcp.json")) == ["codegraph"]
+
+
+@pytest.mark.parametrize(
+    ("matcher", "blocks"),
+    [
+        ("mcp__codegraph__scan_repo", True),
+        ("mcp__codegraph__.*", True),
+        ("mcp__codegraph__(", True),  # cannot compile: assumed to block
+        ("mcp__(cgh|codegraph)__scan_repo", False),
+        ("mcp__(cgh|codegraph)__.*", False),
+        ("mcp__.*", False),
+        ("Bash", False),
+    ],
+)
+def test_hook_matcher_blocks_only_when_it_misses_cgh(matcher, blocks):
+    assert mcp_name._matcher_misses_cgh(matcher) is blocks
+
+
+@pytest.mark.parametrize("where", ["project", "project-local", "user", "managed"])
+def test_unreadable_settings_layer_blocks_the_rename(tmp_path, where):
+    _legacy_repo(tmp_path)
+    path = {
+        "project": tmp_path / ".claude" / "settings.json",
+        "project-local": tmp_path / ".claude" / "settings.local.json",
+        "user": mcp_name._home() / ".claude" / "settings.json",
+        "managed": mcp_name.managed_settings_paths()[0],
+    }[where]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json", encoding="utf-8")
+
+    result = mcp_name.migrate_repo(tmp_path)
+
+    assert result.blocked
+    assert "cannot be read" in result.blockers[0].what
+    assert list(_servers(tmp_path, ".mcp.json")) == ["codegraph"]
+    assert path.read_text() == "{ not json"
+
+
+@pytest.mark.parametrize("tool", sorted(CLIENT_FILES))
+def test_setup_keeps_a_blocked_repo_on_codegraph(tmp_path, no_cli_on_path, tool):
+    from codegraph.cli.commands_init import _install_integration
+
+    rel = CLIENT_FILES[tool]
+    _write(tmp_path / rel, {"mcpServers": {"codegraph": {"env": {"A": "1"}}}})
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"permissions": {"deny": ["mcp__codegraph__scan_repo"]}},
+    )
+
+    _install_integration(tmp_path, tool)
+
+    servers = _servers(tmp_path, rel)
+    assert list(servers) == ["codegraph"]
+    assert servers["codegraph"]["env"] == {"A": "1"}
+
+
+def test_blocked_auto_accept_keeps_the_codegraph_wildcards(tmp_path):
+    from codegraph.cli.commands_init import _configure_claude_auto_accept
+
+    _legacy_repo(tmp_path)
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"hooks": {"PreToolUse": [{"matcher": "mcp__codegraph__scan_repo"}]}},
+    )
+
+    added = _configure_claude_auto_accept(tmp_path)
+
+    assert added == ["mcp__codegraph", "mcp__codegraph__*"]
+
+
+def test_auto_accept_never_rewrites_an_unreadable_local_settings(tmp_path):
+    from codegraph.cli.commands_init import _configure_claude_auto_accept
+
+    path = tmp_path / ".claude" / "settings.local.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"permissions": {"deny": ["Bash(rm:*)"]', encoding="utf-8")
+
+    assert _configure_claude_auto_accept(tmp_path) == []
+    assert path.read_text() == '{"permissions": {"deny": ["Bash(rm:*)"]'
+
+
+def test_setup_migrate_blocked_exits_1_and_changes_nothing(tmp_path, capsys):
+    from codegraph.cli.commands_init import cmd_setup
+
+    _legacy_repo(tmp_path)
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"permissions": {"deny": ["mcp__codegraph__scan_repo"]}},
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_setup(argparse.Namespace(root=str(tmp_path), target="migrate", force=False))
+
+    assert exc.value.code == 1
+    assert list(_servers(tmp_path, ".mcp.json")) == ["codegraph"]
+    out = capsys.readouterr().out
+    assert "~/.claude/settings.json" in out
+    assert "mcp__codegraph__scan_repo" in out
+
+
+def test_setup_migrate_force_renames_with_a_warning(tmp_path, capsys):
+    from codegraph.cli.commands_init import cmd_setup
+
+    _legacy_repo(tmp_path)
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"permissions": {"deny": ["mcp__codegraph__scan_repo"]}},
+    )
+
+    cmd_setup(argparse.Namespace(root=str(tmp_path), target="migrate", force=True))
+
+    assert list(_servers(tmp_path, ".mcp.json")) == ["cgh"]
+    assert "--force" in capsys.readouterr().out
+
+
+def test_init_step_leaves_a_blocked_repo_alone(tmp_path, capsys):
+    from codegraph.cli.commands_init import migrate_mcp_server_name
+
+    _legacy_repo(tmp_path)
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"permissions": {"ask": ["mcp__codegraph__scan_repo"]}},
+    )
+
+    migrate_mcp_server_name(tmp_path)
+
+    assert list(_servers(tmp_path, ".mcp.json")) == ["codegraph"]
+    assert 'left on "codegraph"' in capsys.readouterr().out
+
+
+def test_doctor_reports_a_blocker_as_a_strict_failure(tmp_path, monkeypatch, capsys):
+    from codegraph.cli import commands_monitor
+
+    _legacy_repo(tmp_path)
+    _write(
+        mcp_name._home() / ".claude" / "settings.json",
+        {"permissions": {"deny": ["mcp__codegraph__scan_repo"]}},
+    )
+    monkeypatch.setattr(commands_monitor.console, "width", 250)
+
+    with pytest.raises(SystemExit):
+        commands_monitor.cmd_doctor(argparse.Namespace(root=str(tmp_path), strict=True))
+
+    out = capsys.readouterr().out
+    row = next(line for line in out.splitlines() if "MCP server name" in line)
+    assert "rename blocked" in row
+    strict = next(line for line in out.splitlines() if line.startswith("strict:"))
+    assert "MCP server name" in strict
+    assert "mcp__codegraph__scan_repo" in out

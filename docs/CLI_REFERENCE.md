@@ -155,7 +155,10 @@ cgh setup <target> [--root DIR]
 
 The server is registered as `cgh` in every client config, so its tools
 reach the agent as `mcp__cgh__<tool>`. Each target also renames an entry
-an older cgh wrote as `codegraph`, keeping its settings.
+an older cgh wrote as `codegraph`, keeping its settings. The rename is
+refused (and `setup migrate` exits 1) while a deny / ask rule or hook
+matcher keyed on `mcp__codegraph`, or an unreadable settings file, would
+stop applying; `cgh setup migrate --force` overrides.
 
 **Example:**
 

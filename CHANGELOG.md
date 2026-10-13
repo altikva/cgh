@@ -15,10 +15,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   one name everywhere. Migration: run `cgh setup migrate` once per repo
   (`cgh init` and `cgh setup <tool>` do it too). It moves the old entry in
   `.mcp.json`, `.cursor/mcp.json` and `.bob/mcp.json` with its settings
-  and rewrites the `mcp__codegraph` rules in `.claude/settings*.json`.
-  `cgh doctor` flags a repo still on the old name. Hook matchers, briefs
-  and global configs that cite `mcp__codegraph__` are yours to update:
-  see [docs/UPGRADING-0.19.md](docs/UPGRADING-0.19.md).
+  and renames the `mcp__codegraph` allow rules in `.claude/settings*.json`;
+  deny and ask rules keep the original and gain a `mcp__cgh` twin. The
+  rename is refused, and the repo stays on `codegraph`, while a deny / ask
+  rule in user or managed settings, a hook matcher, or an unreadable
+  settings file would stop applying to the new names (`--force`
+  overrides). `cgh doctor` flags a repo still on the old name, and fails
+  on a refused rename. See [docs/UPGRADING-0.19.md](docs/UPGRADING-0.19.md).
 
 - **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
   npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0

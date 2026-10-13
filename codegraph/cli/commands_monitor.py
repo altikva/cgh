@@ -1910,20 +1910,34 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     # 10. MCP server name: an older cgh registered "codegraph"; the server
     # still starts, but agents see mcp__codegraph__ tools and the allow
-    # rules drift from what this version writes.
-    from codegraph.integrations.mcp_name import MIGRATE_COMMAND, legacy_findings
-
-    legacy = legacy_findings(root)
-    fixable = sorted({rel for rel, _what, fix in legacy if fix})
-    checks.append(
-        (
-            "MCP server name",
-            not fixable,
-            "cgh"
-            if not fixable
-            else f'still on the "codegraph" name in {", ".join(fixable)}: run {MIGRATE_COMMAND}',
-        )
+    # rules drift from what this version writes. A rename blocker is worse:
+    # a deny / ask rule or a guard hook keyed on mcp__codegraph that the
+    # rename would void (or already voided), or a settings layer that cannot
+    # be read. That one is a failure, and blocks --strict.
+    from codegraph.integrations.mcp_name import (
+        MIGRATE_COMMAND,
+        legacy_findings,
+        rename_blockers,
     )
+
+    blockers = rename_blockers(root)
+    rename_blocked = bool(blockers)
+    pending = sorted({rel for rel, _what in legacy_findings(root)})
+    if blockers:
+        name_ok = False
+        name_msg = (
+            f"rename blocked by {len(blockers)} restriction(s) keyed on "
+            "mcp__codegraph, see below"
+        )
+    elif pending:
+        name_ok = False
+        name_msg = (
+            f'still on the "codegraph" name in {", ".join(pending)}: '
+            f"run {MIGRATE_COMMAND}"
+        )
+    else:
+        name_ok, name_msg = True, "cgh"
+    checks.append(("MCP server name", name_ok, name_msg))
 
     # Display results
     table = Table(
@@ -1950,13 +1964,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # Informational, not a failed check: the config still loads.
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")
-    # Team-owned entries cgh never rewrites, named so they get edited.
-    for rel, what, fix in legacy:
-        if not fix:
-            console.print(
-                f"[yellow]!![/yellow] {rel}: {what}, edit it by hand "
-                "(docs/UPGRADING-0.19.md)"
-            )
+    # What blocks the rename, each with its fix: cgh never edits these.
+    for b in blockers:
+        console.print(f"[red]!![/red] {_escape(str(b))}")
+    if blockers:
+        console.print(
+            f"[red]!![/red] then run {MIGRATE_COMMAND} (docs/UPGRADING-0.19.md)"
+        )
     # Informational too: an index from an older graph format still answers,
     # with fewer edges, until its one-time re-parse; never blocks --strict.
     # So is a store copied from another checkout: its answers point at that
@@ -2026,8 +2040,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             for name, ok, msg in checks
             if not ok
             and name != ".cghignore"
-            # The legacy name still works; it is reported, never blocking.
-            and name != "MCP server name"
+            # A repo merely not migrated yet still works and does not block;
+            # a rename blocker (a restriction keyed on the old tool names)
+            # is a failure.
+            and not (name == "MCP server name" and not rename_blocked)
             and "not created yet" not in msg
             and "(optional)" not in msg
         ]

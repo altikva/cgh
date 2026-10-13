@@ -8,7 +8,9 @@
 #              summary (row and column counts, the header, the first rows),
 #              so column names and sample values are searchable without the
 #              index growing with the file. Bounded by design:
-#                - at most _MAX_ROWS rows are read as CSV (summary + scanner
+#                - one read of at most _READ_CHARS characters feeds the CSV
+#                  reader (never a whole line of unbounded length), of which
+#                  at most _MAX_ROWS rows are parsed (summary + scanner
 #                  text), and the scanner text stops at _MAX_SCAN_CHARS;
 #                - rows are counted by scanning for newlines over at most
 #                  _COUNT_BYTES bytes; past that the count is a lower bound
@@ -19,7 +21,10 @@
 from __future__ import annotations
 
 import csv
+import io
 import logging
+import os
+import stat
 from pathlib import Path
 
 from . import register_parser
@@ -34,6 +39,7 @@ _PREVIEW_ROWS = 3  # data rows shown in the section preview
 _MAX_HEADER_CELLS = 30
 _COUNT_BYTES = 64 * 1024 * 1024  # newline counting stops here
 _SNIFF_BYTES = 8 * 1024
+_READ_CHARS = 4 * 1024 * 1024  # text read for the rows, whatever the file size
 
 
 @register_parser(".csv", ".tsv")
@@ -48,19 +54,36 @@ class CsvParser(BaseParser):
     def parse(self, path: Path) -> FileIndex:
         idx = FileIndex(path=str(path), lang=self.lang)
         try:
+            st = os.stat(path)
+        except OSError:
+            return idx
+        if not stat.S_ISREG(st.st_mode):
+            _log.warning("csv skipped, not a regular file: %s", path)
+            return idx
+        try:
+            # One bounded read: csv.reader pulls whole lines, and a file with
+            # no newline would otherwise be one line read entirely.
             with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
-                head = fh.read(_SNIFF_BYTES)
-                fh.seek(0)
-                delimiter = _delimiter(path, head)
-                rows: list[list[str]] = []
-                reader = csv.reader(fh, delimiter=delimiter)
-                for row in reader:
-                    rows.append(row)
-                    if len(rows) >= _MAX_ROWS:
-                        break
-        except (OSError, csv.Error) as exc:
+                text = fh.read(_READ_CHARS)
+                truncated = bool(fh.read(1))
+        except OSError as exc:
             _log.warning("csv parse failed, indexed empty: %s (%s)", path, exc)
             return idx
+        if truncated:
+            # Drop the row the read cut in half.
+            cut = max(text.rfind("\n"), text.rfind("\r"))
+            text = text[: cut + 1] if cut >= 0 else ""
+
+        delimiter = _delimiter(path, text[:_SNIFF_BYTES])
+        rows: list[list[str]] = []
+        try:
+            for row in csv.reader(io.StringIO(text), delimiter=delimiter):
+                rows.append(row)
+                if len(rows) >= _MAX_ROWS:
+                    break
+        except csv.Error as exc:
+            # A field over csv's own field size limit: keep the rows so far.
+            _log.info("csv %s: stopped at row %d (%s)", path, len(rows) + 1, exc)
 
         total, exact = _count_lines(path)
         header = [c.strip() for c in (rows[0] if rows else [])][:_MAX_HEADER_CELLS]

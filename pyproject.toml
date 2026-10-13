@@ -62,7 +62,8 @@ dependencies = [
     # Office and pdf documents are read out of the box (codegraph/parsers/
     # documents.py). python-docx and python-pptx pull lxml, a native wheel
     # published for every platform cgh supports, the binary targets included.
-    "pypdf>=4.0",
+    # 6.0 caps how far one compressed pdf stream may inflate.
+    "pypdf>=6.0",
     "python-docx>=1.1",
     "openpyxl>=3.1",
     "python-pptx>=1.0",

@@ -18,16 +18,37 @@
 #              lxml wheel) keeps every parser registered and skips that format
 #              with a single log line per process instead of crashing.
 #
-#              Big files stay cheap: the indexer's max_file_size_kb cap and
-#              ignore_patterns apply before any of this runs, and each parser
-#              bounds its own work (pages, rows, slides, extracted characters)
-#              so a large file that is allowed through costs a bounded parse.
+#              Resource bounds sit BEFORE the expensive step, never after it:
+#                - every file must be a regular file under _MAX_INPUT_BYTES,
+#                  whatever max_file_size_kb says (a forced index skips that
+#                  cap, and a device or fifo has no meaningful size);
+#                - docx, xlsx and pptx are zip containers, and python-docx /
+#                  python-pptx load every part on open: the zip directory is
+#                  checked first (member count, total uncompressed size,
+#                  per-member compression ratio) and a container over any cap
+#                  is skipped without the library ever seeing it. zipfile
+#                  stops inflating a member at its declared size, so a member
+#                  that lies about its size cannot inflate past the check;
+#                - pdf: the page count is read before any text is extracted,
+#                  only the first _MAX_PDF_PAGES pages are touched, each page's
+#                  text is cut at _MAX_PAGE_CHARS and extraction stops once
+#                  _MAX_PDF_TEXT_CHARS were extracted; pypdf >= 6 itself caps
+#                  how far one compressed stream may inflate;
+#                - xlsx streams rows (read_only) under a row and a cell budget
+#                  and never trusts the sheet's declared dimensions for work;
+#                - pptx walks slides lazily, under a slide and a shape budget,
+#                  with a nesting limit on group shapes;
+#                - docx walks at most _MAX_DOCX_PARAGRAPHS paragraphs and
+#                  _MAX_DOCX_TABLE_ROWS table rows.
 
 from __future__ import annotations
 
 import logging
+import os
 import re
+import stat
 import warnings
+import zipfile
 from pathlib import Path
 
 from . import register_parser
@@ -37,10 +58,28 @@ _log = logging.getLogger(__name__)
 
 _PREVIEW_CHARS = 400  # what lands in the FTS per section
 _MAX_SCAN_CHARS = 200_000  # extracted text handed to scanners, per file
-_MAX_PDF_PAGES = 500  # pages turned into sections; the rest is skipped
+
+# Input and container caps, checked before any library opens the file.
+_MAX_INPUT_BYTES = 256 * 1024 * 1024  # on-disk size, any format
+_MAX_ZIP_MEMBERS = 2_000
+_MAX_ZIP_UNCOMPRESSED = 64 * 1024 * 1024  # sum of declared member sizes
+_MAX_ZIP_RATIO = 100  # per member, uncompressed / compressed
+_ZIP_RATIO_FLOOR = 1024 * 1024  # members under 1 MB are exempt from the ratio
+
+# Work budgets, checked inside each walk.
+_MAX_PDF_PAGES = 500
+_MAX_PAGE_CHARS = 20_000  # extracted text kept per pdf page
+_MAX_PDF_TEXT_CHARS = 2_000_000  # extraction stops past this, per file
+_MAX_PDF_OUTLINE_ITEMS = 1_000
+_MAX_DOCX_PARAGRAPHS = 50_000
+_MAX_DOCX_TABLE_ROWS = 20_000
+_MAX_XLSX_SHEETS = 200
 _MAX_XLSX_ROWS = 50_000  # rows walked per workbook, empty rows included
+_MAX_XLSX_CELLS = 1_000_000  # cells walked per workbook, empty cells included
 _MAX_HEADER_CELLS = 30
 _MAX_SLIDES = 500
+_MAX_PPTX_SHAPES = 20_000  # shapes walked per deck, group members included
+_MAX_GROUP_DEPTH = 8
 _HEADING_RE = re.compile(r"heading\s*(\d)", re.IGNORECASE)
 
 _missing_logged: set[str] = set()
@@ -59,6 +98,80 @@ def _missing_dependency(fmt: str, module: str, exc: BaseException) -> None:
     )
 
 
+def _input_ok(path: Path, fmt: str) -> bool:
+    """A regular file under the hard input cap. Checked before any read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        _log.warning("%s skipped, not a regular file: %s", fmt, path)
+        return False
+    if st.st_size > _MAX_INPUT_BYTES:
+        _log.warning(
+            "%s skipped, %d bytes over the %d byte input cap: %s",
+            fmt,
+            st.st_size,
+            _MAX_INPUT_BYTES,
+            path,
+        )
+        return False
+    return True
+
+
+def zip_container_ok(path: Path, fmt: str) -> bool:
+    """Check a zip container's directory before any library opens it.
+
+    Reads the central directory only (no member is inflated) and rejects
+    the file, with one log line, when it has more than _MAX_ZIP_MEMBERS
+    members, when the declared uncompressed sizes add up to more than
+    _MAX_ZIP_UNCOMPRESSED, or when a member of at least _ZIP_RATIO_FLOOR
+    bytes compresses better than _MAX_ZIP_RATIO:1, the signature of a
+    decompression bomb. A file that is not a zip is rejected too: the
+    library would only fail on it later.
+    """
+    if not _input_ok(path, fmt):
+        return False
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+    except (zipfile.BadZipFile, OSError, ValueError):
+        _log.warning("%s parse failed, not a zip container: %s", fmt, path)
+        return False
+    if len(infos) > _MAX_ZIP_MEMBERS:
+        _log.warning(
+            "%s skipped, %d zip members over the %d cap: %s",
+            fmt,
+            len(infos),
+            _MAX_ZIP_MEMBERS,
+            path,
+        )
+        return False
+    total = 0
+    for info in infos:
+        total += info.file_size
+        if total > _MAX_ZIP_UNCOMPRESSED:
+            _log.warning(
+                "%s skipped, inflates past the %d byte cap: %s",
+                fmt,
+                _MAX_ZIP_UNCOMPRESSED,
+                path,
+            )
+            return False
+        if info.file_size >= _ZIP_RATIO_FLOOR and (
+            info.file_size > _MAX_ZIP_RATIO * max(info.compress_size, 1)
+        ):
+            _log.warning(
+                "%s skipped, member %s compresses over %d:1: %s",
+                fmt,
+                info.filename,
+                _MAX_ZIP_RATIO,
+                path,
+            )
+            return False
+    return True
+
+
 class _ScanText:
     """Bounded accumulator for the scanner text of one file."""
 
@@ -73,11 +186,30 @@ class _ScanText:
 
     def add(self, text: str) -> None:
         if text and not self.full:
+            text = text[: self.limit - self.size]
             self.parts.append(text)
             self.size += len(text) + 1
 
     def value(self) -> str:
         return "\n".join(self.parts)[: self.limit]
+
+
+class _Preview:
+    """Bounded accumulator for a section preview: stops keeping text once
+    the preview is full instead of joining everything and cutting."""
+
+    def __init__(self, limit: int = _PREVIEW_CHARS) -> None:
+        self.parts: list[str] = []
+        self.size = 0
+        self.limit = limit
+
+    def add(self, text: str) -> None:
+        if text and self.size < self.limit:
+            self.parts.append(text[: self.limit])
+            self.size += len(text) + 1
+
+    def value(self) -> str:
+        return " ".join(self.parts)[: self.limit]
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +232,8 @@ class PdfParser(BaseParser):
         # numbers: Read cannot open a pdf at a line, and a page is what a
         # human asks for.
         idx = FileIndex(path=str(path), lang=self.lang)
+        if not _input_ok(path, "pdf"):
+            return idx
         try:
             from pypdf import PdfReader
         except Exception as exc:
@@ -113,22 +247,26 @@ class PdfParser(BaseParser):
                 except Exception:
                     return idx
 
+            # The page count comes first: it decides how many pages are
+            # touched at all, before any text is extracted.
+            total = len(reader.pages)
+            pages = min(total, _MAX_PDF_PAGES)
+            if total > pages:
+                _log.info(
+                    "pdf %s: %d pages, only the first %d indexed", path, total, pages
+                )
             outline_titles = _pdf_outline_by_page(reader)
             scan = _ScanText()
-            total = len(reader.pages)
-            for page_no, page in enumerate(reader.pages, start=1):
-                if page_no > _MAX_PDF_PAGES:
-                    _log.info(
-                        "pdf %s: %d pages, only the first %d indexed",
-                        path,
-                        total,
-                        _MAX_PDF_PAGES,
-                    )
-                    break
-                try:
-                    text = (page.extract_text() or "").strip()
-                except Exception:
-                    text = ""
+            extracted = 0
+            for page_no in range(1, pages + 1):
+                text = ""
+                if extracted < _MAX_PDF_TEXT_CHARS:
+                    try:
+                        raw = reader.pages[page_no - 1].extract_text() or ""
+                    except Exception:
+                        raw = ""
+                    text = raw[:_MAX_PAGE_CHARS].strip()
+                    extracted += len(text)
                 scan.add(text)
                 title = outline_titles.get(page_no) or f"Page {page_no}"
                 idx.sections.append(
@@ -151,15 +289,18 @@ class PdfParser(BaseParser):
 
 
 def _pdf_outline_by_page(reader) -> dict[int, str]:
-    """Map page number to the first top-level outline title on it."""
+    """Map page number to the first top-level outline title on it, over at
+    most _MAX_PDF_OUTLINE_ITEMS entries."""
     titles: dict[int, str] = {}
     try:
-        for item in reader.outline:
+        for n, item in enumerate(reader.outline):
+            if n >= _MAX_PDF_OUTLINE_ITEMS:
+                break
             if isinstance(item, list):
                 continue  # nested outline levels, keep it flat
             try:
                 page_no = reader.get_destination_page_number(item) + 1
-                titles.setdefault(page_no, str(item.title))
+                titles.setdefault(page_no, str(item.title)[:_PREVIEW_CHARS])
             except Exception:
                 continue
     except Exception:
@@ -187,6 +328,8 @@ class DocxParser(BaseParser):
         # section's preview. "Lines" are paragraph indexes, the closest
         # stable anchor a docx has.
         idx = FileIndex(path=str(path), lang=self.lang)
+        if not zip_container_ok(path, "docx"):
+            return idx
         try:
             import docx
         except Exception as exc:
@@ -198,28 +341,27 @@ class DocxParser(BaseParser):
             _log.warning("docx parse failed, indexed empty: %s", path)
             return idx
 
-        paragraphs = document.paragraphs
         current: SectionDef | None = None
-        body: list[str] = []
-        preamble: list[str] = []
+        body = _Preview()
+        preamble = _Preview()
         scan = _ScanText()
+        last = 0
 
-        def _flush() -> None:
-            if current is not None:
-                current.body_preview = " ".join(body)[:_PREVIEW_CHARS]
-
-        for i, para in enumerate(paragraphs, start=1):
+        for i, para in enumerate(document.paragraphs, start=1):
+            if i > _MAX_DOCX_PARAGRAPHS:
+                break
+            last = i
             text = (para.text or "").strip()
             scan.add(text)
             style = getattr(getattr(para, "style", None), "name", "") or ""
             m = _HEADING_RE.search(style)
             if m and text:
-                _flush()
                 if current is not None:
+                    current.body_preview = body.value()
                     current.end_line = i - 1
                 current = SectionDef(
                     id=f"{path}::para{i}",
-                    title=text,
+                    title=text[:_PREVIEW_CHARS],
                     level=int(m.group(1)),
                     file_path=str(path),
                     start_line=i,
@@ -227,34 +369,40 @@ class DocxParser(BaseParser):
                     anchor=f"para-{i}",
                 )
                 idx.sections.append(current)
-                body = []
+                body = _Preview()
             elif text:
-                (body if current is not None else preamble).append(text)
+                (body if current is not None else preamble).add(text)
 
-        _flush()
         if current is not None:
-            current.end_line = len(paragraphs)
+            current.body_preview = body.value()
+            current.end_line = last
 
         # Table cells too: data often sits in tables, which the paragraph
         # walk above never visits.
-        table_text: list[str] = []
+        tables = _Preview()
+        rows = 0
         try:
             for table in document.tables:
                 for trow in table.rows:
+                    rows += 1
+                    if rows > _MAX_DOCX_TABLE_ROWS or scan.full:
+                        break
                     cells = [
                         c.text.strip() for c in trow.cells if (c.text or "").strip()
                     ]
                     if cells:
-                        line = "\t".join(cells)
-                        scan.add(line)
-                        table_text.append(" | ".join(cells))
+                        scan.add("\t".join(cells))
+                        tables.add(" | ".join(cells))
+                if rows > _MAX_DOCX_TABLE_ROWS or scan.full:
+                    break
         except Exception:
             pass
         idx.scan_text = scan.value()
 
         # A document with no heading styles still gets one section so its
         # text (or, failing any prose, its tables) is searchable.
-        if not idx.sections and (preamble or table_text):
+        fallback = preamble.value() or tables.value()
+        if not idx.sections and fallback:
             idx.sections.append(
                 SectionDef(
                     id=f"{path}::body",
@@ -262,8 +410,8 @@ class DocxParser(BaseParser):
                     level=1,
                     file_path=str(path),
                     start_line=1,
-                    end_line=max(len(paragraphs), 1),
-                    body_preview=" ".join(preamble or table_text)[:_PREVIEW_CHARS],
+                    end_line=max(last, 1),
+                    body_preview=fallback,
                     anchor="body",
                 )
             )
@@ -285,10 +433,14 @@ class XlsxParser(BaseParser):
     description = "Excel sheets with their header row as document sections"
 
     def parse(self, path: Path) -> FileIndex:
-        # One section per sheet: header row and sheet size in the preview
-        # so column names are searchable. Read-only, values only, and a
-        # row budget across the workbook, so a big file costs little.
+        # One section per sheet: the rows walked and the header row in the
+        # preview so column names are searchable. Read-only streaming, values
+        # only, under a row and a cell budget for the whole workbook. The
+        # sheet's declared dimensions are never used for work: they are
+        # whatever the file says.
         idx = FileIndex(path=str(path), lang=self.lang)
+        if not zip_container_ok(path, "xlsx"):
+            return idx
         try:
             import openpyxl
         except Exception as exc:
@@ -303,33 +455,47 @@ class XlsxParser(BaseParser):
                 wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
             scan = _ScanText()
             rows_left = _MAX_XLSX_ROWS
+            cells_left = _MAX_XLSX_CELLS
             for sheet_no, ws in enumerate(wb.worksheets, start=1):
+                if sheet_no > _MAX_XLSX_SHEETS:
+                    break
                 header: list[str] = []
-                if rows_left > 0 and not scan.full:
+                rows = 0
+                width = 0
+                complete = False
+                if rows_left > 0 and cells_left > 0:
                     scan.add(f"# {ws.title}")
                     try:
-                        for row_no, row in enumerate(ws.iter_rows(values_only=True)):
+                        complete = True
+                        for row in ws.iter_rows(values_only=True):
+                            if rows_left <= 0 or cells_left <= 0:
+                                complete = False
+                                break
                             rows_left -= 1
-                            cells = [str(c) for c in row if c is not None]
-                            if row_no == 0:
+                            cells_left -= len(row)
+                            rows += 1
+                            width = max(width, len(row))
+                            if rows == 1:
                                 header = [
-                                    str(c)
+                                    str(c)[:100]
                                     for c in row[:_MAX_HEADER_CELLS]
                                     if c is not None
                                 ]
-                            if cells:
-                                scan.add("\t".join(cells))
-                            if rows_left <= 0 or scan.full:
-                                break
+                            if not scan.full:
+                                cells = [str(c) for c in row if c is not None]
+                                if cells:
+                                    scan.add("\t".join(cells))
                     except Exception:
-                        pass
-                preview = f"{ws.max_row or 0} rows x {ws.max_column or 0} cols" + (
-                    f" | columns: {', '.join(header)}" if header else ""
-                )
+                        complete = False
+                if rows or complete:
+                    size = f"{rows}{'' if complete else '+'} rows x {width} cols"
+                else:
+                    size = "size not read (workbook budget spent)"
+                preview = size + (f" | columns: {', '.join(header)}" if header else "")
                 idx.sections.append(
                     SectionDef(
                         id=f"{path}::sheet{sheet_no}",
-                        title=ws.title,
+                        title=str(ws.title),
                         level=1,
                         file_path=str(path),
                         start_line=sheet_no,
@@ -347,7 +513,7 @@ class XlsxParser(BaseParser):
                 if wb is not None:
                     wb.close()
             except Exception:
-                pass
+                pass  # best-effort close of a read-only handle
         return idx
 
 
@@ -372,6 +538,8 @@ class PptxParser(BaseParser):
         # own so they stay searchable even when the slide text is long.
         # "Lines" are slide numbers.
         idx = FileIndex(path=str(path), lang=self.lang)
+        if not zip_container_ok(path, "pptx"):
+            return idx
         try:
             from pptx import Presentation
         except Exception as exc:
@@ -380,22 +548,22 @@ class PptxParser(BaseParser):
         try:
             prs = Presentation(str(path))
             scan = _ScanText()
-            slides = list(prs.slides)
-            for slide_no, slide in enumerate(slides, start=1):
+            budget = _ShapeBudget(_MAX_PPTX_SHAPES)
+            for slide_no, slide in enumerate(prs.slides, start=1):
                 if slide_no > _MAX_SLIDES:
                     _log.info(
-                        "pptx %s: %d slides, only the first %d indexed",
+                        "pptx %s: more than %d slides, the rest is skipped",
                         path,
-                        len(slides),
                         _MAX_SLIDES,
                     )
                     break
-                title, lines = _pptx_slide_text(slide)
+                title, lines = _pptx_slide_text(slide, budget)
                 notes = _pptx_notes(slide)
-                body = " ".join(lines)
                 scan.add(f"# Slide {slide_no}")
+                preview = _Preview()
                 for line in lines:
                     scan.add(line)
+                    preview.add(line)
                 idx.sections.append(
                     SectionDef(
                         id=f"{path}::slide{slide_no}",
@@ -404,7 +572,7 @@ class PptxParser(BaseParser):
                         file_path=str(path),
                         start_line=slide_no,
                         end_line=slide_no,
-                        body_preview=body[:_PREVIEW_CHARS],
+                        body_preview=preview.value(),
                         anchor=f"slide-{slide_no}",
                     )
                 )
@@ -429,22 +597,38 @@ class PptxParser(BaseParser):
         return idx
 
 
-def _pptx_slide_text(slide) -> tuple[str, list[str]]:
+class _ShapeBudget:
+    """Shapes left to walk across one deck."""
+
+    def __init__(self, limit: int) -> None:
+        self.left = limit
+
+    def take(self) -> bool:
+        self.left -= 1
+        return self.left >= 0
+
+
+def _pptx_slide_text(slide, budget: _ShapeBudget) -> tuple[str, list[str]]:
     """The slide's title and its other text, one entry per paragraph or
-    table row, in shape order. Group shapes are walked."""
+    table row, in shape order. Group shapes are walked down to
+    _MAX_GROUP_DEPTH; every shape visited spends the deck's budget."""
     title = ""
     try:
         if slide.shapes.title is not None:
             title = (slide.shapes.title.text_frame.text or "").strip()
+            title = title[:_PREVIEW_CHARS]
     except Exception:
         title = ""
     lines: list[str] = []
 
-    def _walk(shapes) -> None:
+    def _walk(shapes, depth: int) -> None:
         for shape in shapes:
+            if not budget.take():
+                return
             try:
                 if getattr(shape, "shape_type", None) == 6:  # MSO_SHAPE_TYPE.GROUP
-                    _walk(shape.shapes)
+                    if depth < _MAX_GROUP_DEPTH:
+                        _walk(shape.shapes, depth + 1)
                     continue
                 if getattr(shape, "has_table", False) and shape.has_table:
                     for row in shape.table.rows:
@@ -464,7 +648,7 @@ def _pptx_slide_text(slide) -> tuple[str, list[str]]:
             except Exception:
                 continue
 
-    _walk(slide.shapes)
+    _walk(slide.shapes, 0)
     return title, lines
 
 
@@ -473,6 +657,8 @@ def _pptx_notes(slide) -> str:
         if not slide.has_notes_slide:
             return ""
         frame = slide.notes_slide.notes_text_frame
-        return " ".join((frame.text or "").split()) if frame is not None else ""
+        if frame is None:
+            return ""
+        return " ".join((frame.text or "")[:_MAX_PAGE_CHARS].split())
     except Exception:
         return ""

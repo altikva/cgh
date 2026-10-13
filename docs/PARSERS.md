@@ -415,19 +415,34 @@ the raw zip or pdf bytes.
 
 | Format | Sections | `start_line` means | Bounds |
 |--------|----------|--------------------|--------|
-| pdf | one per page, titled by the top-level outline entry pointing at it, else `Page N` | page number | first 500 pages |
-| docx | one per Heading-styled paragraph, body text as preview; a document without headings gets one section; table cells go to `scan_text` | paragraph index | none needed (text only) |
-| xlsx / xlsm | one per sheet: `R rows x C cols`, then the header row | sheet number | 50,000 rows walked per workbook, read-only, values only |
-| pptx | one per slide, titled by its title placeholder else `Slide N`, with its text frames and table rows (`a \| b`); speaker notes as a level-2 `Notes: <title>` section | slide number | first 500 slides |
+| pdf | one per page, titled by the top-level outline entry pointing at it, else `Page N` | page number | page count read first, then only the first 500 pages are extracted; 20,000 characters kept per page, extraction stops after 2,000,000 characters; first 1,000 outline entries |
+| docx | one per Heading-styled paragraph, body text as preview; a document without headings gets one section; table cells go to `scan_text` | paragraph index | zip check; first 50,000 paragraphs and 20,000 table rows |
+| xlsx / xlsm | one per sheet: `R rows x C cols` as walked (`R+` when the budget ran out), then the header row | sheet number | zip check; first 200 sheets, streamed read-only, 50,000 rows and 1,000,000 cells walked per workbook; the declared sheet size is never used |
+| pptx | one per slide, titled by its title placeholder else `Slide N`, with its text frames and table rows (`a \| b`); speaker notes as a level-2 `Notes: <title>` section | slide number | zip check; first 500 slides, read one at a time; 20,000 shapes per deck, group shapes nested at most 8 deep |
 | csv / tsv | one per file: `R rows x C cols`, the header, then the first 3 data rows | 1 | see below |
 
 **CSV cap.** A CSV is data, not prose, so it is summarized rather than
-indexed whole: at most the first 1,000 rows are parsed (header, preview and
+indexed whole: one read of at most 4 MB of text feeds the CSV reader (a file
+with no newline is never read as one giant line), the row it cuts in half is
+dropped, and at most the first 1,000 rows are parsed (header, preview and
 `scan_text`, itself capped at 200,000 characters), and the row count comes
 from counting newlines over at most 64 MB, past which it is shown as a lower
 bound (`1048576+ rows`). The delimiter is a tab for `.tsv`, otherwise sniffed
 among `,` `;` `|` and tab. A multi-gigabyte export therefore costs one bounded
 read and one index row.
+
+**Zip check.** docx, xlsx and pptx are zip containers, and the size cap
+below only sees their compressed size: a 400 KB file can inflate to
+gigabytes, and python-docx and python-pptx load every part when they open a
+file. So before any library sees one, the parser reads the zip directory
+(nothing is inflated) and skips the file, with one log line, when it has
+more than 2,000 members, when its members add up to more than 64 MB
+uncompressed, or when a member of 1 MB or more compresses better than
+100:1, the shape of a decompression bomb. Inflating stops at each member's
+declared size, so a member that understates its size gets no further. Any
+document must also be a regular file of at most 256 MB, even when a forced
+index skips `max_file_size_kb`. pypdf 6 or newer caps how far one compressed
+pdf stream may inflate.
 
 **Big and broken files.** These limits come on top of the indexer's own:
 `max_file_size_kb` (500 KB by default, see
@@ -516,7 +531,7 @@ dependencies = [
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
     "tree-sitter-hcl>=1.2",
-    "pypdf>=4.0",
+    "pypdf>=6.0",
     "python-docx>=1.1",
     "openpyxl>=3.1",
     "python-pptx>=1.0",

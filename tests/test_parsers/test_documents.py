@@ -164,6 +164,38 @@ class TestPdfParser:
         monkeypatch.setattr(documents, "_MAX_PDF_PAGES", 2)
         assert len(PdfParser().parse(many).sections) == 2
 
+        # Pages past the cap are never extracted, not extracted then dropped.
+        from pypdf import PageObject
+
+        calls = []
+        real = PageObject.extract_text
+
+        def spy(self, *a, **k):
+            calls.append(1)
+            return real(self, *a, **k)
+
+        monkeypatch.setattr(PageObject, "extract_text", spy)
+        PdfParser().parse(many)
+        assert len(calls) == 2
+
+    def test_text_caps_per_page_and_per_file(self, tmp_path, monkeypatch):
+        from pypdf import PdfReader, PdfWriter
+
+        one = tmp_path / "one.pdf"
+        one.write_bytes(_mini_pdf("Hello cgh docs"))
+        writer = PdfWriter()
+        for _ in range(4):
+            writer.add_page(PdfReader(str(one)).pages[0])
+        many = tmp_path / "many.pdf"
+        with open(many, "wb") as fh:
+            writer.write(fh)
+
+        monkeypatch.setattr(documents, "_MAX_PAGE_CHARS", 5)
+        monkeypatch.setattr(documents, "_MAX_PDF_TEXT_CHARS", 10)
+        idx = PdfParser().parse(many)
+        previews = [s.body_preview for s in idx.sections]
+        assert previews == ["Hello", "Hello", "", ""]
+
 
 class TestDocxParser:
     def test_heading_tree_and_previews(self, tmp_path):
@@ -234,12 +266,43 @@ class TestXlsxParser:
         path = tmp_path / "big.xlsx"
         wb.save(str(path))
 
+        idx = XlsxParser().parse(path)
+        assert idx.sections[0].body_preview.startswith("201 rows x 2 cols")
+
         monkeypatch.setattr(documents, "_MAX_XLSX_ROWS", 10)
         idx = XlsxParser().parse(path)
         assert "row-5" in idx.scan_text
         assert "row-150" not in idx.scan_text
-        # The sheet still gets its section with the real size.
-        assert idx.sections[0].body_preview.startswith("201 rows x 2 cols")
+        # The size shown is what was walked, marked as a lower bound.
+        assert idx.sections[0].body_preview.startswith("10+ rows x 2 cols")
+
+    def test_declared_dimension_is_not_trusted(self, tmp_path, monkeypatch):
+        # A sheet declaring A1:XFD1048576 must not drive the walk: only the
+        # rows actually streamed count, and the cell budget stops wide rows.
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for i in range(50):
+            ws.append([f"c{i}-{j}" for j in range(40)])
+        path = tmp_path / "wide.xlsx"
+        wb.save(str(path))
+
+        monkeypatch.setattr(documents, "_MAX_XLSX_CELLS", 400)
+        idx = XlsxParser().parse(path)
+        assert idx.sections[0].body_preview.startswith("10+ rows x 40 cols")
+        assert "c9-0" in idx.scan_text and "c10-0" not in idx.scan_text
+
+    def test_sheet_count_cap(self, tmp_path, monkeypatch):
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        for i in range(6):
+            wb.create_sheet(f"S{i}")
+        path = tmp_path / "sheets.xlsx"
+        wb.save(str(path))
+        monkeypatch.setattr(documents, "_MAX_XLSX_SHEETS", 3)
+        assert len(XlsxParser().parse(path).sections) == 3
 
     def test_corrupt_xlsx_yields_empty_index(self, tmp_path):
         f = tmp_path / "bad.xlsx"
@@ -277,6 +340,38 @@ class TestPptxParser:
         monkeypatch.setattr(documents, "_MAX_SLIDES", 1)
         idx = PptxParser().parse(f)
         assert [s.start_line for s in idx.sections] == [1, 1]
+
+    def test_slides_past_the_cap_are_never_read(self, tmp_path, monkeypatch):
+        from pptx import Presentation
+
+        prs = Presentation()
+        for i in range(12):
+            prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = f"T{i}"
+        f = tmp_path / "long.pptx"
+        prs.save(str(f))
+
+        seen = []
+        real = documents._pptx_slide_text
+
+        def spy(slide, budget):
+            seen.append(slide)
+            return real(slide, budget)
+
+        monkeypatch.setattr(documents, "_pptx_slide_text", spy)
+        monkeypatch.setattr(documents, "_MAX_SLIDES", 4)
+        idx = PptxParser().parse(f)
+        assert [s.title for s in idx.sections] == ["T0", "T1", "T2", "T3"]
+        assert len(seen) == 4
+
+    def test_shape_budget_spans_the_deck(self, tmp_path, monkeypatch):
+        f = tmp_path / "deck.pptx"
+        _make_pptx(f)
+        monkeypatch.setattr(documents, "_MAX_PPTX_SHAPES", 2)
+        idx = PptxParser().parse(f)
+        # Slide 1 spends the budget (title + body), so the table on slide 2
+        # is never walked; its title still comes from the placeholder.
+        assert "platypus" not in idx.scan_text
+        assert "zebra importer" in idx.scan_text
 
     def test_corrupt_pptx_yields_empty_index(self, tmp_path):
         f = tmp_path / "bad.pptx"
@@ -332,12 +427,175 @@ class TestCsvParser:
         preview = CsvParser().parse(f).sections[0].body_preview
         assert preview.split(" ", 1)[0].endswith("+")
 
+    def test_a_line_without_newline_is_never_read_whole(self, tmp_path, monkeypatch):
+        f = tmp_path / "oneline.csv"
+        f.write_text("a,b\n1,2\n" + "x," * 600_000, encoding="utf-8")
+        monkeypatch.setattr(csv_table, "_READ_CHARS", 1024)
+        reads = []
+        real_open = open
+
+        class Spy:
+            def __init__(self, fh):
+                self.fh = fh
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.fh.close()
+
+            def read(self, n=-1):
+                assert n != -1, "unbounded read"
+                reads.append(n)
+                return self.fh.read(n)
+
+        def fake_open(p, *a, **k):
+            fh = real_open(p, *a, **k)
+            return Spy(fh) if "b" not in (a[0] if a else k.get("mode", "r")) else fh
+
+        monkeypatch.setattr("builtins.open", fake_open)
+        idx = CsvParser().parse(f)
+        assert reads and max(reads) <= 1024
+        # The cut row is dropped; the two complete ones are kept.
+        assert idx.scan_text == "a\tb\n1\t2"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="POSIX only")
+    def test_not_a_regular_file(self, tmp_path):
+        import os
+
+        fifo = tmp_path / "pipe.csv"
+        os.mkfifo(fifo)
+        assert CsvParser().parse(fifo).sections == []  # would block if opened
+
     def test_empty_and_unreadable(self, tmp_path):
         empty = tmp_path / "empty.csv"
         empty.write_text("", encoding="utf-8")
         idx = CsvParser().parse(empty)
         assert idx.sections[0].body_preview.startswith("0 rows")
         assert CsvParser().parse(tmp_path).sections == []  # a directory
+
+
+# ---------------------------------------------------------------------------
+# zip containers: the directory is checked before any library opens them
+# ---------------------------------------------------------------------------
+
+_ZIP_FORMATS = [
+    ("docx", "word/document.xml"),
+    ("xlsx", "xl/worksheets/sheet1.xml"),
+    ("pptx", "ppt/slides/slide1.xml"),
+]
+
+
+@pytest.fixture
+def library_calls(monkeypatch):
+    """Record every call into the three office libraries' openers."""
+    import docx
+    import openpyxl
+    import pptx
+
+    calls: list[str] = []
+
+    def recorder(name):
+        def _call(*a, **k):
+            calls.append(name)
+            raise AssertionError(f"{name} must not be reached")
+
+        return _call
+
+    monkeypatch.setattr(docx, "Document", recorder("docx"))
+    monkeypatch.setattr(openpyxl, "load_workbook", recorder("xlsx"))
+    monkeypatch.setattr(pptx, "Presentation", recorder("pptx"))
+    return calls
+
+
+def _parse(fmt, path):
+    return {"docx": DocxParser, "xlsx": XlsxParser, "pptx": PptxParser}[fmt]().parse(
+        path
+    )
+
+
+def _write_zip(path, members):
+    """members: name -> bytes, or name -> int for that many zero bytes,
+    streamed in 1 MB chunks so a bomb never sits in memory whole."""
+    import zipfile
+
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            if isinstance(data, int):
+                with zf.open(name, "w", force_zip64=True) as out:
+                    chunk = b"\0" * (1 << 20)
+                    for _ in range(data >> 20):
+                        out.write(chunk)
+            else:
+                zf.writestr(name, data)
+
+
+@pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
+def test_zip_bomb_is_skipped_before_the_library(
+    tmp_path, library_calls, caplog, fmt, member
+):
+    import time
+
+    bomb = tmp_path / f"bomb.{fmt}"
+    # 100 MB of zeros, about 100 KB on disk: well under max_file_size_kb.
+    _write_zip(bomb, {"[Content_Types].xml": b"<Types/>", member: 100 << 20})
+    assert bomb.stat().st_size < 500 * 1024
+
+    t0 = time.perf_counter()
+    with caplog.at_level(logging.WARNING, logger="codegraph.parsers.documents"):
+        idx = _parse(fmt, bomb)
+    assert time.perf_counter() - t0 < 1.0
+    assert idx.sections == [] and idx.scan_text == ""
+    assert library_calls == []
+    assert len([r for r in caplog.records if str(bomb) in r.getMessage()]) == 1
+
+
+@pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
+def test_high_ratio_member_is_skipped(tmp_path, library_calls, fmt, member):
+    # 2 MB of zeros: far under the 64 MB total, but about 1000:1.
+    f = tmp_path / f"ratio.{fmt}"
+    _write_zip(f, {"[Content_Types].xml": b"<Types/>", member: 2 << 20})
+    assert _parse(fmt, f).sections == []
+    assert library_calls == []
+
+
+@pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
+def test_too_many_members_is_skipped(tmp_path, library_calls, fmt, member):
+    f = tmp_path / f"many.{fmt}"
+    _write_zip(f, {f"x/{i}.xml": b"<a/>" for i in range(2_001)})
+    assert _parse(fmt, f).sections == []
+    assert library_calls == []
+
+
+@pytest.mark.parametrize(("fmt", "member"), _ZIP_FORMATS)
+def test_total_uncompressed_cap_without_a_ratio_signature(
+    tmp_path, library_calls, monkeypatch, fmt, member
+):
+    import os
+
+    # Incompressible members: no ratio alarm, only the total size cap.
+    monkeypatch.setattr(documents, "_MAX_ZIP_UNCOMPRESSED", 2 << 20)
+    f = tmp_path / f"big.{fmt}"
+    _write_zip(f, {f"m/{i}.bin": os.urandom(1 << 20) for i in range(3)})
+    assert _parse(fmt, f).sections == []
+    assert library_calls == []
+
+
+def test_real_documents_pass_the_zip_check(tmp_path):
+    for name, make in [
+        ("c.docx", _make_docx),
+        ("b.xlsx", _make_xlsx),
+        ("d.pptx", _make_pptx),
+    ]:
+        make(tmp_path / name)
+        assert documents.zip_container_ok(tmp_path / name, name[-4:])
+
+
+def test_hard_input_cap_applies_even_when_forced(tmp_path, monkeypatch):
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(_mini_pdf())
+    monkeypatch.setattr(documents, "_MAX_INPUT_BYTES", 100)
+    assert PdfParser().parse(f).sections == []
 
 
 # ---------------------------------------------------------------------------

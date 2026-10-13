@@ -21,8 +21,8 @@ def test_python_m_cgh_runs_and_shows_version():
         text=True,
     )
     assert out.returncode == 0
-    # The banner + "codegraph X.Y.Z" line both go to stdout.
-    assert "codegraph" in out.stdout
+    # The banner + "cgh X.Y.Z  context graph hub" line both go to stdout.
+    assert "context graph hub" in out.stdout
 
 
 def test_cgh_shim_version_matches_codegraph():

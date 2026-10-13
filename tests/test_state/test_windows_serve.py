@@ -62,5 +62,5 @@ class TestCrlfCommand:
             text=True,
         )
         assert out.returncode == 0
-        assert "codegraph" in out.stdout
+        assert "context graph hub" in out.stdout
         assert "invalid choice" not in (out.stdout + out.stderr)

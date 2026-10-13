@@ -321,7 +321,8 @@ from codegraph.integrations.tool_guide import SEARCH_GUIDE
 mcp = FastMCP(
     name="codegraph",
     instructions=(
-        "Local code graph + Claude Code memory/plan index.\n\n"
+        "cgh, the context graph hub: the project memory of your coding agents,\n"
+        "plus a code and document graph and the Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
         "and line numbers so you only read the specific lines you need.\n\n"
         + SEARCH_GUIDE

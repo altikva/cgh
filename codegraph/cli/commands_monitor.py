@@ -757,9 +757,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     # Freshness
     scan_line = _scan_line(payload["scan"], ss)
 
-    table = Table(
-        box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan"
-    )
+    table = Table(box=box.SIMPLE_HEAD, title="cgh status", title_style="bold cyan")
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
     table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
@@ -1371,7 +1369,7 @@ def cmd_tail(args: argparse.Namespace) -> None:
     def _build():
         entries = _act_tail(root, n=n)
         table = Table(
-            title="codegraph activity",
+            title="cgh activity",
             box=box.SIMPLE_HEAD,
             title_style="bold cyan",
         )

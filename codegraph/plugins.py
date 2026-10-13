@@ -12,6 +12,9 @@
 #              (active / disabled / incompatible / broken) for
 #              `cgh plugins`. First-party plugins older than the minimum
 #              this core needs are reported broken and never imported.
+#              First-party plugins whose work moved into the core are
+#              reported disabled and never imported either, so they
+#              cannot register a second copy of a core parser.
 #              A broken plugin is a warning, never a crash. Loading is
 #              once per process.
 
@@ -40,6 +43,17 @@ _FIRST_PARTY_MINIMUMS: dict[str, tuple[int, ...]] = {
     "cgh-summarize": (0, 3, 0),
     "cgh-classify": (0, 2, 0),
     "cgh-vision": (0, 6, 0),
+}
+
+# First-party plugins whose job the core now does itself. Never imported:
+# cgh-docs registered the pdf, docx and xlsx parsers, which core ships, and
+# loading it after core would replace the core parsers with its older ones.
+_ABSORBED_INTO_CORE: dict[str, str] = {
+    "cgh-docs": (
+        "cgh-docs is no longer needed: pdf, docx, xlsx and pptx are parsed by "
+        "cgh itself; the plugin is ignored, uninstall it "
+        "(uv tool install --force -U cgh, or pip uninstall cgh-docs)"
+    ),
 }
 
 _UPGRADE_HINT = 'uv tool install --force -U "cgh[plugins]"'
@@ -156,6 +170,13 @@ def load_plugins(repo_root: str | Path | None = None) -> list[LoadedPlugin]:
         if enabled is not None and name not in enabled:
             record.status = "disabled"
             record.reason = "not in [plugins] enabled allowlist"
+            continue
+
+        absorbed = _ABSORBED_INTO_CORE.get(_dist_name(ep))
+        if absorbed:
+            record.status = "disabled"
+            record.reason = absorbed
+            _warn(f"plugin {name}: {absorbed}")
             continue
 
         # Checked before import: a stale first-party plugin must not run

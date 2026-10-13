@@ -96,7 +96,9 @@ than reading.
      <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
      <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
      the no-MCP backup; `cgh papercut` lets the human read the list.
-- **About to inspect a file cgh can't parse** (pdf, image, office doc) and
+- **About to inspect a file cgh can't parse** (an image, a legacy office file
+  such as doc/xls/ppt; pdf, docx, xlsx, pptx and csv ARE parsed, use
+  `search_docs` / `doc_outline` for those) and
   **after** you do: it is opaque, so treat it as a cache.
   1. BEFORE reading: the Read hook surfaces any saved summary automatically;
      outside Claude Code, `cgh artifact recall <path>` first. Use a fresh

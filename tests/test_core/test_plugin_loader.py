@@ -422,6 +422,29 @@ class TestFirstPartyMinimums:
         assert "ZZZ_STALE_SUMMARIZE_IMPORTED" not in __import__("os").environ
         assert plugins.cli_registrars() == [] and plugins.scanners() == []
 
+    def test_cgh_docs_is_absorbed_and_never_imported(
+        self, fake_site, monkeypatch, capsys
+    ):
+        # The document parsers moved into core. An installed cgh-docs, any
+        # version, must not load: it would re-register .pdf/.docx/.xlsx over
+        # the core parsers.
+        monkeypatch.delenv("ZZZ_OLD_DOCS_IMPORTED", raising=False)
+        _fake_distribution(fake_site, "cgh-docs", "0.2.0", "docs", "zzz_old_docs")
+        _discovered_only(monkeypatch, "docs")
+
+        records = plugins.load_plugins(fake_site.parent / "repo")
+
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.status == "disabled"
+        assert "no longer needed" in rec.reason
+        assert "ZZZ_OLD_DOCS_IMPORTED" not in __import__("os").environ
+        assert capsys.readouterr().err.count("cgh-docs is no longer needed") == 1
+
+        from codegraph.parsers import get_parser
+
+        assert type(get_parser(".docx")).__module__ == "codegraph.parsers.documents"
+
     def test_current_and_third_party_distributions_load(self, fake_site, monkeypatch):
         _fake_distribution(fake_site, "cgh-pii", "0.4.0", "pii", "zzz_current_pii")
         # Third-party, even with an old version and a first-party-like

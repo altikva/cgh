@@ -119,7 +119,7 @@ def _dispatch(args, config: dict, repo_root=None) -> None:
         err.print(
             f"[yellow]{src.suffix} is not supported.[/yellow] cgh pii redact "
             "handles text, markdown and docx. Extract the text of a pdf first "
-            "(see cgh-docs), then redact that."
+            "(cgh indexes it, or use pypdf), then redact that."
         )
         raise SystemExit(2)
     if src.suffix.lower() not in _TEXT_SUFFIXES:

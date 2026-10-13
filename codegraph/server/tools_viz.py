@@ -192,6 +192,14 @@ def register(mcp) -> None:
         except Exception:
             pass
 
+        # [tools] exposure, for `cgh status`. None when it cannot be told.
+        tools = None
+        try:
+            if _srv.tool_exposure.registered_names is not None:
+                tools = _srv.tool_exposure.exposure().as_dict()
+        except Exception:
+            pass
+
         import time as _t
 
         return json.dumps(
@@ -201,6 +209,7 @@ def register(mcp) -> None:
                 "edges": edges,
                 "fts_symbols": fts_count,
                 "scan": ss,
+                "tools": tools,
                 "sampled_at": _t.time(),
             },
             indent=2,

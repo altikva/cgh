@@ -442,6 +442,14 @@ _register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
 _register_fetch(mcp)  # fetch_and_index, search_fetched
 _register_session(mcp)  # checkpoint / resume session continuity
 
+# [tools] expose: narrows the tools/list response only. tools/call does not
+# pass through it, so a hidden tool still answers by name. Lists every tool
+# until owner_main records which tools are cgh's own.
+from codegraph.server.tool_exposure import ToolExposureMiddleware
+
+tool_exposure = ToolExposureMiddleware()
+mcp.add_middleware(tool_exposure)
+
 
 # ---------------------------------------------------------------------------
 # Entrypoint
@@ -620,6 +628,15 @@ def owner_main(
     # them up), and each plugin's MCP registrar gets the FastMCP instance,
     # exactly like the internal tools_*.py modules. A broken plugin is a
     # logged warning, never a dead owner.
+    # The tools registered so far are cgh's own; whatever the plugin
+    # registrars add below is a plugin tool, which [tools] never hides.
+    from codegraph.server.tool_exposure import registered_tool_names
+
+    try:
+        _builtin_tools: frozenset[str] | None = registered_tool_names(mcp)
+    except Exception as exc:
+        _log.warning("[tools] could not list built-in tools: %s", exc)
+        _builtin_tools = None
     try:
         from codegraph.plugins import load_plugins, mcp_registrars
 
@@ -640,6 +657,13 @@ def owner_main(
                 )
     except Exception as exc:
         _log.warning("plugin loading failed: %s", exc)
+    if _builtin_tools is not None:
+        try:
+            tool_exposure.record(_builtin_tools, registered_tool_names(mcp))
+            _log.info("tools: %s", tool_exposure.exposure().label())
+        except Exception as exc:
+            # Unrecorded means the middleware lists every tool.
+            _log.warning("[tools] exposure not applied: %s", exc)
 
     # Reindex + watcher (if requested)
     if _startup_index_needed(_root, reindex):

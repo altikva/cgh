@@ -388,6 +388,7 @@ def _empty_status_source() -> dict:
         "endpoint_count": 0,
         "counts_source": "none",
         "fts_symbols": None,
+        "tools": None,
     }
 
 
@@ -408,6 +409,8 @@ def _status_via_owner(root: str, owner_alive: bool, owner_port: int | None) -> d
             src["file_count"] = int(nodes.get("File", 0))
             # endpoint count not in live_graph_stats, derive separately if 0
             src["fts_symbols"] = int(stats.get("fts_symbols", 0))
+            if isinstance(stats.get("tools"), dict):
+                src["tools"] = stats["tools"]
             src["counts_source"] = "owner"
     except Exception:
         pass
@@ -653,6 +656,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     endpoint_count = src["endpoint_count"]
     counts_source = src["counts_source"]
     fts_symbols = src["fts_symbols"]
+    tools_view = _tools_view(root, src.get("tools"))
     extra_dirs: list[str] = []
 
     try:
@@ -730,6 +734,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             "endpoints": endpoint_count,
         },
         "extra_dirs": extra_dirs,
+        "tools": tools_view,
         "subrepos": subrepos,
         "module_sources": _module_sources_view(root),
         "notices": notices,
@@ -782,6 +787,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         endpoints_cell = "[dim]unknown[/dim]"
     table.add_row("Files", files_cell)
     table.add_row("Endpoints", endpoints_cell)
+    table.add_row("Tools", _tools_cell(tools_view))
     table.add_row(
         "Extra dirs", ", ".join(extra_dirs) if extra_dirs else "[dim]none[/dim]"
     )
@@ -798,6 +804,47 @@ def cmd_status(args: argparse.Namespace) -> None:
     # --workers: detailed proxy list with tty + start time + cmdline
     if getattr(args, "workers", False):
         _print_workers_table(workers, owner_pid)
+
+
+def _tools_view(root: str | Path, from_owner: dict | None) -> dict:
+    """[tools] exposure for status. A live owner gives the real counts;
+    without one only the configured mode and extra names are known."""
+    if from_owner:
+        return {**from_owner, "source": "owner"}
+    view: dict = {"expose": "all", "extra": [], "source": "config"}
+    try:
+        from codegraph.core.config import load_config
+
+        cfg = load_config(root)
+        view["expose"] = cfg.tools_expose
+        view["extra"] = list(cfg.tools_extra)
+    except Exception:
+        pass
+    return view
+
+
+def _tools_cell(view: dict) -> str:
+    """The status line for [tools], counted by the owner when it runs."""
+    if view.get("source") == "owner":
+        cell = str(view.get("label") or view.get("expose"))
+        hidden = int(view.get("hidden") or 0)
+        if hidden:
+            cell += f"  [dim]{hidden} hidden, still callable by name[/dim]"
+        unknown = view.get("unknown_extra") or []
+        if unknown:
+            cell += (
+                f"\n[yellow]unknown in extra, ignored:[/yellow] {', '.join(unknown)}"
+            )
+        return cell
+    if view.get("expose") == "core":
+        from codegraph.core.tool_exposure import CORE_TOOLS
+
+        n = len(view.get("extra") or [])
+        return (
+            f"core ({len(CORE_TOOLS)} + {n} extra configured)  "
+            "[dim]counts need a running owner[/dim]"
+        )
+    return "all  [dim]counts need a running owner[/dim]"
 
 
 def _config_notices(root: str | Path) -> list[str]:

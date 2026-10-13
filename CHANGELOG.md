@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Shorter tool list on request.** `[tools] expose = "core"` in
+  `.codegraph/config.toml` makes `tools/list` show 15 core tools, the
+  names in `[tools] extra`, and every plugin tool. Some MCP clients load
+  every listed tool's schema into the context; this keeps that cost down.
+  Hidden tools still answer when called by name, so hooks and scripts are
+  unaffected. The default, `"all"`, changes nothing. `cgh status` shows
+  the result on a new `Tools` line.
 - **Packages and MCP servers in the graph.** The new `packages` MCP tool
   and `cgh packages` list the packages declared by `package.json` (npm,
   pnpm and yarn workspaces) and `pyproject.toml` (uv workspaces too), which

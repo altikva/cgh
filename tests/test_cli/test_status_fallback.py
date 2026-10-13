@@ -33,7 +33,13 @@ from codegraph.cli.commands_monitor import (
 from codegraph.core.db import reset_connection
 
 # The keys every status-source dict must carry, regardless of tier.
-_SOURCE_KEYS = {"file_count", "endpoint_count", "counts_source", "fts_symbols"}
+_SOURCE_KEYS = {
+    "file_count",
+    "endpoint_count",
+    "counts_source",
+    "fts_symbols",
+    "tools",
+}
 
 
 def _seed_graph(repo_root: Path) -> None:
@@ -73,6 +79,7 @@ def test_empty_source_shape():
         "endpoint_count": 0,
         "counts_source": "none",
         "fts_symbols": None,
+        "tools": None,
     }
 
 

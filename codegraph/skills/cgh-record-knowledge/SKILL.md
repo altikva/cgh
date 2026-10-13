@@ -13,7 +13,7 @@ survive context compaction and are surfaced automatically on future
 
 ## When to record (be proactive)
 
-Call `mcp__codegraph__knowledge_record` when you notice any of:
+Call `mcp__cgh__knowledge_record` when you notice any of:
 
 | Type | Example | `kind` |
 |---|---|---|

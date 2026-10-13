@@ -7,8 +7,8 @@ Add to `.mcp.json` at your repo root:
 ```json
 {
   "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
+    "cgh": {
+      "command": "cgh",
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   }
@@ -19,7 +19,7 @@ If codegraph is installed in a venv:
 ```json
 {
   "mcpServers": {
-    "codegraph": {
+    "cgh": {
       "command": "/path/to/venv/bin/codegraph",
       "args": ["serve", "--root", "/path/to/repo", "--watch", "--reindex"]
     }

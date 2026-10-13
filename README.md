@@ -123,7 +123,7 @@ AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
     |  search_docs("reconciliation")
     |  context_for_task("fix auth bug")
     v
-MCP server (codegraph)          <-- stdio, no network
+MCP server (cgh)                <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
 DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based

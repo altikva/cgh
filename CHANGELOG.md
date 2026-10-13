@@ -8,6 +8,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **The MCP server is named `cgh`.** `cgh init` and `cgh setup` register
+  it as `cgh` instead of `codegraph`, so agents see `mcp__cgh__<tool>` and
+  the Claude allow rules are `mcp__cgh` / `mcp__cgh__*`. The product has
+  one name everywhere. Migration: run `cgh setup migrate` once per repo
+  (`cgh init` and `cgh setup <tool>` do it too). It moves the old entry in
+  `.mcp.json`, `.cursor/mcp.json` and `.bob/mcp.json` with its settings
+  and rewrites the `mcp__codegraph` rules in `.claude/settings*.json`.
+  `cgh doctor` flags a repo still on the old name. Hook matchers, briefs
+  and global configs that cite `mcp__codegraph__` are yours to update:
+  see [docs/UPGRADING-0.19.md](docs/UPGRADING-0.19.md).
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

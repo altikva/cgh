@@ -12,7 +12,7 @@ that follow are surgical.
 
 ## Required sequence
 
-1. **`mcp__codegraph__context_for_task(task, session_id=<id>)`**
+1. **`mcp__cgh__context_for_task(task, session_id=<id>)`**
    Pass the user's full description. Returns the most-relevant symbols
    with their docstrings and relationships (callers, callees, inheritors),
    PLUS top Claude Code memory entries and related plan files in one
@@ -20,29 +20,29 @@ that follow are surgical.
    re-serve already-shown entities.
    If it returns empty code results, move on: don't block the plan.
 
-2. **`mcp__codegraph__architecture_overview()`**
+2. **`mcp__cgh__architecture_overview()`**
    Compact map of files grouped by layer + role (router / handler /
    manager / service / model / schema / component / store / ...). Use
    this to locate where the new feature should live.
 
-3. **`mcp__codegraph__domain_map(keyword)`**
+3. **`mcp__cgh__domain_map(keyword)`**
    For every noun the user mentions (e.g. "donors", "stats", "receipts"),
    call this to get every file touching that domain grouped by role.
    Do this in PARALLEL for multiple keywords.
 
-4. **`mcp__codegraph__endpoints(path_pattern)`**
+4. **`mcp__cgh__endpoints(path_pattern)`**
    If the feature involves HTTP (API calls, new routes, frontend/backend
    coupling), list existing endpoints matching the domain. Reveals the
    FastAPI ↔ Nuxt contract.
 
-5. **`mcp__codegraph__memory_search(query, kind="feedback")`**: only when
+5. **`mcp__cgh__memory_search(query, kind="feedback")`**: only when
    the user hints at preferences you might already know. Avoids asking
    the same question twice across sessions.
 
-6. **`mcp__codegraph__plan_search(query)`**: when the user mentions a
+6. **`mcp__cgh__plan_search(query)`**: when the user mentions a
    past plan ("the refactor we discussed"). Reuse rather than re-derive.
 
-7. **`mcp__codegraph__find_callers(fn_name)` / `find_callees(fn_name)`**
+7. **`mcp__cgh__find_callers(fn_name)` / `find_callees(fn_name)`**
    Only for symbols identified in steps 1-4 that you plan to change.
    Never blindly on arbitrary names.
 

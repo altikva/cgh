@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ALTIKVA. All rights reserved.
-# SPDX-License-Identifier: MIT AND CC-BY-NC-SA-4.0
+# SPDX-License-Identifier: Apache-2.0
 #
 # Project:     cgh (codegraph)
 # Description: The deferred scan worker writes findings from its own thread

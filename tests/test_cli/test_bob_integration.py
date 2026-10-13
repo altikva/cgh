@@ -65,7 +65,7 @@ class TestSetupWritesTheBobMcpJson:
         mcp = tmp_path / ".bob" / "mcp.json"
         assert mcp.is_file(), "the Bob agent reads .bob/mcp.json"
 
-        entry = json.loads(mcp.read_text())["mcpServers"]["codegraph"]
+        entry = json.loads(mcp.read_text())["mcpServers"]["cgh"]
         assert entry["command"] == "/opt/bin/cgh"
         assert entry["cwd"] == str(tmp_path.resolve())
 
@@ -78,7 +78,7 @@ class TestSetupWritesTheBobMcpJson:
         _install_integration(tmp_path, "bob")
 
         entry = json.loads((tmp_path / ".bob" / "mcp.json").read_text())
-        assert entry["mcpServers"]["codegraph"]["timeout"] == 120_000
+        assert entry["mcpServers"]["cgh"]["timeout"] == 120_000
 
     def test_always_allow_covers_safe_tools_only(self, tmp_path, monkeypatch):
         from codegraph.cli.commands_init import _install_integration
@@ -87,7 +87,7 @@ class TestSetupWritesTheBobMcpJson:
         _install_integration(tmp_path, "bob")
 
         allow = json.loads((tmp_path / ".bob" / "mcp.json").read_text())["mcpServers"][
-            "codegraph"
+            "cgh"
         ]["alwaysAllow"]
         assert {"context_for_task", "architecture_overview", "resume"} <= set(allow)
         assert not {"knowledge_forget", "fetch_and_index", "add_directory"} & set(allow)
@@ -117,8 +117,9 @@ class TestSetupWritesTheBobMcpJson:
 
         servers = json.loads((bob / "mcp.json").read_text())["mcpServers"]
         assert servers["other"] == {"command": "x"}
-        assert servers["codegraph"]["timeout"] == 300_000
-        assert "fetch_and_index" in servers["codegraph"]["alwaysAllow"]
+        assert servers["cgh"]["timeout"] == 300_000
+        assert "fetch_and_index" in servers["cgh"]["alwaysAllow"]
+        assert "codegraph" not in servers
 
 
 def test_bob_always_allow_matches_registered_tools():

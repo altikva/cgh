@@ -329,8 +329,11 @@ def _register_setup_and_serve(sub) -> None:
     p = sub.add_parser("setup", help="Generate integration files for AI tools")
     p.add_argument(
         "target",
-        choices=["claude", "cursor", "codex", "gemini", "bob", "all"],
-        help="Which AI tool to configure",
+        choices=["claude", "cursor", "codex", "gemini", "bob", "all", "migrate"],
+        help=(
+            "Which AI tool to configure; 'migrate' only renames an older "
+            "'codegraph' MCP server entry and its allow rules to 'cgh'"
+        ),
     )
     _add_root(p)
 

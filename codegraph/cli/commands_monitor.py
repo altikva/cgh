@@ -1908,6 +1908,23 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         mcp_msg = "fastmcp not installed"
     checks.append(("MCP server", mcp_ok, mcp_msg))
 
+    # 10. MCP server name: an older cgh registered "codegraph"; the server
+    # still starts, but agents see mcp__codegraph__ tools and the allow
+    # rules drift from what this version writes.
+    from codegraph.integrations.mcp_name import MIGRATE_COMMAND, legacy_findings
+
+    legacy = legacy_findings(root)
+    fixable = sorted({rel for rel, _what, fix in legacy if fix})
+    checks.append(
+        (
+            "MCP server name",
+            not fixable,
+            "cgh"
+            if not fixable
+            else f'still on the "codegraph" name in {", ".join(fixable)}: run {MIGRATE_COMMAND}',
+        )
+    )
+
     # Display results
     table = Table(
         title="Health Check",
@@ -1933,6 +1950,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # Informational, not a failed check: the config still loads.
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")
+    # Team-owned entries cgh never rewrites, named so they get edited.
+    for rel, what, fix in legacy:
+        if not fix:
+            console.print(
+                f"[yellow]!![/yellow] {rel}: {what}, edit it by hand "
+                "(docs/UPGRADING-0.19.md)"
+            )
     # Informational too: an index from an older graph format still answers,
     # with fewer edges, until its one-time re-parse; never blocks --strict.
     # So is a store copied from another checkout: its answers point at that
@@ -2002,6 +2026,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             for name, ok, msg in checks
             if not ok
             and name != ".cghignore"
+            # The legacy name still works; it is reported, never blocking.
+            and name != "MCP server name"
             and "not created yet" not in msg
             and "(optional)" not in msg
         ]
@@ -2033,6 +2059,7 @@ def _print_claude_audit(audit: dict) -> None:
         "partial": "[yellow]~~[/yellow]",
         "stale": "[yellow]~~[/yellow]",
         "misplaced": "[yellow]~~[/yellow]",
+        "legacy": "[yellow]~~[/yellow]",
     }
 
     tbl = Table(
@@ -2045,10 +2072,19 @@ def _print_claude_audit(audit: dict) -> None:
     tbl.add_column("Detail")
 
     m = audit["mcp_json"]
+    if m["status"] == "ok":
+        mcp_detail = "[green]present[/green]"
+    elif m["status"] == "legacy":
+        mcp_detail = (
+            '[yellow]still named "codegraph"[/yellow]  '
+            "[dim](run cgh setup migrate)[/dim]"
+        )
+    else:
+        mcp_detail = "[red]missing[/red]"
     tbl.add_row(
-        ".mcp.json (codegraph entry)",
+        ".mcp.json (cgh entry)",
         icon.get(m["status"], "[dim]?[/dim]"),
-        "[green]present[/green]" if m["status"] == "ok" else "[red]missing[/red]",
+        mcp_detail,
     )
 
     h = audit["hooks"]

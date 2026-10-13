@@ -123,11 +123,22 @@ def _settings(root: Path) -> dict:
 
 
 def _mcp_tool_name(tool: str, tool_input: dict) -> str | None:
-    """The cgh tool behind a Bob MCP call, or None for any other tool."""
+    """The cgh tool behind a Bob MCP call, or None for any other tool.
+
+    A host that reports the call as one flat id names it under either
+    server prefix, mcp__cgh__ or the legacy mcp__codegraph__, so a session
+    started before the rename still counts its saves."""
+    from codegraph.integrations.mcp_name import cgh_tool_name
+
+    flat = cgh_tool_name(tool)
+    if flat:
+        return flat
     if "mcp" not in tool.lower():
         return None
     name = tool_input.get("tool_name") or tool_input.get("name")
-    return str(name) if name else None
+    if not name:
+        return None
+    return cgh_tool_name(str(name)) or str(name)
 
 
 def _is_save(tool: str, tool_input: dict) -> bool:
@@ -146,7 +157,7 @@ def cmd_bob_session_start(args: argparse.Namespace) -> None:
         _save_state(root, session_id, {"calls": 0, "since_save": 0, "gated_at": 0})
         print(
             f"cgh session id for this Bob task: {session_id}. Pass it as "
-            "session_id to the codegraph checkpoint and compact_session tools. "
+            "session_id to the cgh checkpoint and compact_session tools. "
             "Bob compacts long tasks without warning, so checkpoint after each "
             "finished step."
         )
@@ -207,7 +218,7 @@ def cmd_bob_prompt(args: argparse.Namespace) -> None:
         if since >= _settings(root)["every"]:
             print(
                 f"cgh: {since} tool calls since this task last saved to cgh. "
-                "Before going on, call the codegraph checkpoint tool "
+                "Before going on, call the cgh checkpoint tool "
                 f'(session_id="{session_id}") with what is done, the decisions '
                 "made and what is still open: Bob may compact this task at any "
                 "point and drop the early details."
@@ -242,7 +253,7 @@ def cmd_bob_gate(args: argparse.Namespace) -> None:
         state["gated_at"] = since
         _save_state(root, session_id, state)
         reason = (
-            f"cgh: {since} tool calls without saving. Call the codegraph "
+            f"cgh: {since} tool calls without saving. Call the cgh "
             f'checkpoint tool (session_id="{session_id}") with the work done, '
             "decisions and open threads, then retry this call."
         )

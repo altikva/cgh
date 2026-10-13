@@ -27,11 +27,15 @@ from codegraph.cli import (
     status as phase_status,
 )
 from codegraph.core.utils import ensure_dir, quiet_subprocess_kwargs
-
-# Wildcards that cover every codegraph MCP tool (current + future). The
-# two-form shape matches what both older and current Claude Code builds
-# accept.
-_CODEGRAPH_ALLOW_PATTERNS = ("mcp__codegraph", "mcp__codegraph__*")
+from codegraph.integrations.mcp_name import (
+    ALLOW_PATTERNS as _CGH_ALLOW_PATTERNS,
+)
+from codegraph.integrations.mcp_name import (
+    SERVER_KEY as _MCP_SERVER_KEY,
+)
+from codegraph.integrations.mcp_name import (
+    TOOL_PREFIX as _CGH_TOOL_PREFIX,
+)
 
 
 def _configure_claude_auto_accept(root: Path) -> list[str]:
@@ -57,16 +61,26 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
 
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
 
+    # Rules an older cgh wrote under the legacy server name become their
+    # mcp__cgh equivalents first, so the cleanup below sees them.
+    from codegraph.integrations.mcp_name import migrate_settings_data
+
+    migrate_settings_data(data)
+
     # Drop redundant per-tool entries
     allow[:] = [
         item
         for item in allow
-        if not (item.startswith("mcp__codegraph__") and item != "mcp__codegraph__*")
+        if not (
+            isinstance(item, str)
+            and item.startswith(_CGH_TOOL_PREFIX)
+            and item != f"{_CGH_TOOL_PREFIX}*"
+        )
     ]
 
     # Add wildcards if missing
     added: list[str] = []
-    for pattern in _CODEGRAPH_ALLOW_PATTERNS:
+    for pattern in _CGH_ALLOW_PATTERNS:
         if pattern not in allow:
             allow.append(pattern)
             added.append(pattern)
@@ -391,7 +405,7 @@ def _detect_existing_state(root: Path) -> dict:
             import json as _json
 
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-            state["mcp_server_configured"] = "codegraph" in (
+            state["mcp_server_configured"] = _MCP_SERVER_KEY in (
                 data.get("mcpServers") or {}
             )
         except Exception:
@@ -770,12 +784,12 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
     if selected_keys:
         console.print()
 
-    # -- Step 3b: offer to auto-accept codegraph MCP tools in Claude Code --
+    # -- Step 3b: offer to auto-accept cgh MCP tools in Claude Code --
     if "claude" in selected_keys:
         auto_accept = (
             args.yes
             or questionary.confirm(
-                "Auto-accept codegraph MCP tool calls in Claude Code (skip the per-call permission prompt)?",
+                "Auto-accept cgh MCP tool calls in Claude Code (skip the per-call permission prompt)?",
                 default=True,
                 style=cg_style,
             ).ask()
@@ -789,7 +803,7 @@ def _setup_ai_tools(root: Path, args: argparse.Namespace, cg_style) -> None:
                 )
             else:
                 console.print(
-                    "    [dim]•[/dim] .claude/settings.local.json [dim](already allows codegraph)[/dim]"
+                    "    [dim]•[/dim] .claude/settings.local.json [dim](already allows cgh)[/dim]"
                 )
             console.print()
 
@@ -931,6 +945,10 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # -- Step 1b: git hooks that keep the graph fresh after pull/merge/checkout --
     _install_git_reindex_hooks(root)
+
+    # -- Step 1c: an older cgh registered the MCP server as "codegraph";
+    # rename it in every client config, whichever tools get picked below.
+    migrate_mcp_server_name(root)
 
     _setup_ai_tools(root, args, cg_style)
 
@@ -1789,17 +1807,24 @@ def audit_claude_integration(root: Path) -> dict:
 
     report: dict = {}
 
-    # .mcp.json, codegraph entry present?
+    # .mcp.json, cgh entry present? An entry still under the legacy
+    # "codegraph" name works but is reported, with its fix command.
+    from codegraph.integrations.mcp_name import LEGACY_SERVER_KEY
+
     mcp_path = root / ".mcp.json"
-    mcp_ok = False
+    mcp_status = "missing"
     if mcp_path.exists():
         try:
             data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-            mcp_ok = "codegraph" in (data.get("mcpServers") or {})
+            servers = data.get("mcpServers") or {}
+            if LEGACY_SERVER_KEY in servers:
+                mcp_status = "legacy"
+            elif _MCP_SERVER_KEY in servers:
+                mcp_status = "ok"
         except (OSError, _json.JSONDecodeError):
-            mcp_ok = False
+            mcp_status = "missing"
     report["mcp_json"] = {
-        "status": "ok" if mcp_ok else "missing",
+        "status": mcp_status,
         "path": str(mcp_path.relative_to(root)) if mcp_path.exists() else ".mcp.json",
     }
 
@@ -1907,6 +1932,50 @@ def audit_claude_integration(root: Path) -> dict:
     return report
 
 
+def _load_mcp_config(path: Path) -> dict:
+    """Read one client MCP config, with a legacy "codegraph" entry already
+    moved to the "cgh" key, so the caller never writes both."""
+    import json as _json
+
+    from codegraph.integrations.mcp_name import migrate_servers
+
+    data = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(data.get("mcpServers"), dict):
+        data["mcpServers"] = {}
+    migrate_servers(data["mcpServers"])
+    return data
+
+
+def _write_mcp_entry(path: Path, entry: dict) -> None:
+    """Register the cgh server in one client MCP config. Settings a user
+    added to the existing entry (env, a longer timeout) are kept; the
+    command and its arguments are refreshed. Other servers are untouched."""
+    import json as _json
+
+    data = _load_mcp_config(path)
+    previous = data["mcpServers"].get(_MCP_SERVER_KEY)
+    if not isinstance(previous, dict):
+        previous = {}
+    data["mcpServers"][_MCP_SERVER_KEY] = {**previous, **entry}
+    path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def migrate_mcp_server_name(root: Path) -> None:
+    """Move every config an older cgh wrote from the "codegraph" server
+    name to "cgh", and print what changed. Safe to run on any repo."""
+    from codegraph.integrations.mcp_name import migrate_repo
+
+    result = migrate_repo(root)
+    for rel in result.servers:
+        console.print(
+            f"    [yellow]~[/yellow] {rel} [dim](MCP server renamed codegraph to cgh)[/dim]"
+        )
+    for rel in result.settings:
+        console.print(
+            f"    [yellow]~[/yellow] {rel} [dim](mcp__codegraph rules now mcp__cgh)[/dim]"
+        )
+
+
 def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -> None:
     """Install MCP config + hooks for an AI tool."""
     import json as _json
@@ -1956,12 +2025,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 
     if tool == "claude":
         mcp_path = root / ".mcp.json"
-        if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-        else:
-            data = {"mcpServers": {}}
-        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _write_mcp_entry(mcp_path, mcp_entry)
         console.print("    [green]+[/green] .mcp.json [dim](MCP server)[/dim]")
 
         # Claude hooks, split across two settings files. Shared hooks
@@ -2028,19 +2092,13 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         cursor_dir = root / ".cursor"
         ensure_dir(cursor_dir)
         mcp_path = cursor_dir / "mcp.json"
-        data = {"mcpServers": {"codegraph": mcp_entry}}
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _write_mcp_entry(mcp_path, mcp_entry)
         console.print("    [green]+[/green] .cursor/mcp.json [dim](MCP server)[/dim]")
         _skills_line(".cursor/rules/", install_cursor(root))
 
     elif tool == "codex":
         mcp_path = root / ".mcp.json"
-        if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-        else:
-            data = {"mcpServers": {}}
-        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _write_mcp_entry(mcp_path, mcp_entry)
         console.print(
             "    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]"
         )
@@ -2048,12 +2106,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
 
     elif tool == "gemini":
         mcp_path = root / ".mcp.json"
-        if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-        else:
-            data = {"mcpServers": {}}
-        data.setdefault("mcpServers", {})["codegraph"] = mcp_entry
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _write_mcp_entry(mcp_path, mcp_entry)
         console.print(
             "    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]"
         )
@@ -2089,11 +2142,8 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         bob_dir = root / ".bob"
         ensure_dir(bob_dir)
         mcp_path = bob_dir / "mcp.json"
-        if mcp_path.exists():
-            data = _json.loads(mcp_path.read_text(encoding="utf-8"))
-        else:
-            data = {"mcpServers": {}}
-        previous = data.get("mcpServers", {}).get("codegraph") or {}
+        data = _load_mcp_config(mcp_path)
+        previous = data["mcpServers"].get(_MCP_SERVER_KEY) or {}
         timeout = previous.get("timeout")
         if not isinstance(timeout, int) or timeout < _BOB_MCP_TIMEOUT_MS:
             timeout = _BOB_MCP_TIMEOUT_MS
@@ -2108,7 +2158,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             "timeout": timeout,
             "alwaysAllow": always_allow,
         }
-        data.setdefault("mcpServers", {})["codegraph"] = bob_entry
+        data["mcpServers"][_MCP_SERVER_KEY] = {**previous, **bob_entry}
         mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         if command == sys.executable:
@@ -2184,6 +2234,33 @@ def cmd_parsers(args) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _setup_migrate(root: Path) -> None:
+    """`cgh setup migrate`: rename the MCP server entry and its allow rules
+    from "codegraph" to "cgh", and nothing else. No integration is
+    installed or refreshed, so a repo set up for one client is not handed
+    the others. Lists what is left for the team to edit by hand."""
+    from codegraph.integrations.mcp_name import legacy_findings, migrate_repo
+
+    console.print(
+        Panel("[bold]MCP server name: codegraph to cgh[/bold]", border_style="cyan")
+    )
+    result = migrate_repo(root)
+    for rel in result.servers:
+        console.print(f"    [yellow]~[/yellow] {rel} [dim](server key now cgh)[/dim]")
+    for rel in result.settings:
+        console.print(
+            f"    [yellow]~[/yellow] {rel} [dim](mcp__codegraph rules now mcp__cgh)[/dim]"
+        )
+    if not result.changed:
+        console.print("    [dim]nothing to migrate[/dim]")
+    for rel, what, _fixable in legacy_findings(root):
+        console.print(
+            f"    [yellow]!![/yellow] {rel}: {what} "
+            "[dim](edit by hand, see docs/UPGRADING-0.19.md)[/dim]"
+        )
+    console.print()
+
+
 def cmd_setup(args) -> None:
     """
     Generate integration files for AI tools.
@@ -2200,10 +2277,14 @@ def cmd_setup(args) -> None:
 
     console.print(LOGO)
 
-    valid = ("claude", "cursor", "codex", "gemini", "bob", "all")
+    valid = ("claude", "cursor", "codex", "gemini", "bob", "all", "migrate")
     if target not in valid:
         console.print(f"[dim]Unknown target: {target}[/dim]")
         console.print(f"[dim]Options: {', '.join(valid)}[/dim]")
+        return
+
+    if target == "migrate":
+        _setup_migrate(root)
         return
 
     targets = (
@@ -2214,6 +2295,7 @@ def cmd_setup(args) -> None:
     # The guard was removed in 0.15.0: drop the deny entries and guard
     # hooks an older cgh wrote here, whatever the target.
     _cleanup_guard_leftovers(root)
+    migrate_mcp_server_name(root)
 
     for tool_key in targets:
         console.print(f"\n[bold]{tool_key}[/bold]")

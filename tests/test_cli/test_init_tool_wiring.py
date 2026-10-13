@@ -68,7 +68,7 @@ def test_bob_mcp_server_uses_absolute_command_and_cwd(tmp_path):
     _install_integration(tmp_path, "bob")
     entry = json.loads((tmp_path / ".bob" / "mcp.json").read_text(encoding="utf-8"))[
         "mcpServers"
-    ]["codegraph"]
+    ]["cgh"]
 
     assert os.path.isabs(entry["command"]), entry["command"]
     assert entry["cwd"] == str(tmp_path.resolve())

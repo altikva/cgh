@@ -5,7 +5,8 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh artifact` verb: a read-through cache for files cgh cannot
-#              parse into the graph (pdf, images, office docs). An agent that
+#              parse into the graph (images, legacy and OpenDocument office
+#              files). An agent that
 #              inspects such a file records what it learned; the next session
 #              recalls it instead of paying the read again. Stored as a
 #              knowledge entry (kind "note", tag "artifact", file_refs the path)
@@ -31,7 +32,8 @@ _TAG = "artifact"
 # Extensions cgh does not parse into the graph: opaque binaries an agent has to
 # open with vision or an external extractor, which is exactly the expensive read
 # worth caching. Plain-text formats (.md, .csv, .json, source code) are left out
-# on purpose, cgh already indexes or greps those cheaply.
+# on purpose, cgh already indexes or greps those cheaply. So are the documents
+# cgh parses itself (PARSED_DOC_EXTS): their text is in the index.
 ARTIFACT_EXTS = frozenset(
     {
         # images
@@ -46,12 +48,8 @@ ARTIFACT_EXTS = frozenset(
         ".svg",
         ".ico",
         # documents
-        ".pdf",
-        ".docx",
         ".doc",
-        ".pptx",
         ".ppt",
-        ".xlsx",
         ".xls",
         ".odt",
         ".ods",
@@ -60,6 +58,11 @@ ARTIFACT_EXTS = frozenset(
         ".epub",
     }
 )
+
+# Documents cgh parses into sections (codegraph/parsers/documents.py). No
+# longer opaque: the Read hook points at doc_outline / search_docs for them,
+# and still surfaces a summary an agent saved back when they were opaque.
+PARSED_DOC_EXTS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})
 
 # A machine-readable line appended to the note body so recall (and the hook)
 # can compare the stored digest against the file on disk. Kept on its own line
@@ -108,7 +111,7 @@ def _relref(path: Path, root: Path) -> str:
 def register_artifact_parser(sub) -> None:
     p = sub.add_parser(
         "artifact",
-        help="Recall/record summaries of files cgh can't parse (pdf, images, office docs)",
+        help="Recall/record summaries of files cgh can't parse (images, legacy office docs)",
     )
     asub = p.add_subparsers(dest="artifact_cmd")
 

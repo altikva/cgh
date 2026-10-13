@@ -254,12 +254,19 @@ def _emit_artifact_recall(target: Path, rel_path: str, body: str) -> None:
 
 
 def _artifact_precheck(
-    repo_root: Path, target: Path, rel_path: str, abs_path: str
+    repo_root: Path,
+    target: Path,
+    rel_path: str,
+    abs_path: str,
+    nudge_record: bool = True,
 ) -> None:
-    """Read hook branch for files cgh cannot parse (pdf, images, office docs).
-    Surfaces a saved summary if one exists, else nudges to record one after the
-    inspection so the next read is free. Advisory and best-effort throughout: a
-    missing DB or a bad row must never break the Read."""
+    """Read hook branch for files cgh cannot parse (images, legacy office
+    docs). Surfaces a saved summary if one exists, else nudges to record one
+    after the inspection so the next read is free. ``nudge_record=False`` only
+    surfaces a saved summary and returns when there is none: used for the
+    documents cgh parses now, whose summaries were saved when they were still
+    opaque. Advisory and best-effort throughout: a missing DB or a bad row must
+    never break the Read."""
     db = repo_root / ".codegraph" / "call_log.db"
     hit_body: str | None = None
     if db.is_file():
@@ -284,6 +291,9 @@ def _artifact_precheck(
 
     if hit_body is not None:
         _emit_artifact_recall(target, rel_path, hit_body)
+        return
+
+    if not nudge_record:
         return
 
     # No saved summary. Only prompt to record for a file big enough that a
@@ -350,16 +360,26 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     except ValueError:
         sys.exit(0)
 
-    # Files cgh cannot parse into the graph (pdf, images, office docs) carry no
-    # symbols, so the outline hint below never fires for them. Give them their
-    # own treatment instead: surface a saved summary so an expensive re-read is
-    # skipped, or nudge to save one after the inspection. This replaces the
-    # symbol path for these files, it does not run in addition to it.
+    # Files cgh cannot parse into the graph (images, legacy office docs) carry
+    # no symbols, so the outline hint below never fires for them. Give them
+    # their own treatment instead: surface a saved summary so an expensive
+    # re-read is skipped, or nudge to save one after the inspection. This
+    # replaces the symbol path for these files, it does not run in addition to
+    # it. Documents cgh parses (pdf, docx, xlsx, pptx) take the outline path,
+    # after a summary saved back when they were opaque, if there is one.
     try:
-        from codegraph.cli.commands_artifact import ARTIFACT_EXTS
+        from codegraph.cli.commands_artifact import ARTIFACT_EXTS, PARSED_DOC_EXTS
     except Exception:
-        ARTIFACT_EXTS = frozenset()
-    if target.suffix.lower() in ARTIFACT_EXTS:
+        ARTIFACT_EXTS = PARSED_DOC_EXTS = frozenset()
+    suffix = target.suffix.lower()
+    if suffix in PARSED_DOC_EXTS:
+        try:
+            _artifact_precheck(
+                repo_root, target, rel_path, abs_path, nudge_record=False
+            )
+        except Exception:
+            pass  # advisory: fall through to the outline hint
+    if suffix in ARTIFACT_EXTS:
         try:
             _artifact_precheck(repo_root, target, rel_path, abs_path)
         except Exception:
@@ -385,11 +405,11 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT:
         sys.exit(0)
 
-    is_markdown = target.suffix.lower() in (".md", ".markdown")
+    is_markdown = suffix in (".md", ".markdown") or suffix in PARSED_DOC_EXTS
     if is_markdown:
         hint = (
             f"  - doc_outline('{rel_path}')   heading tree, cheap structural summary\n"
-            f"  - search_docs('<keyword>')    BM25 search across all indexed Markdown\n"
+            f"  - search_docs('<keyword>')    BM25 search across indexed docs\n"
         )
     else:
         hint = (

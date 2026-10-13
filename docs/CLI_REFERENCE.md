@@ -1037,8 +1037,10 @@ cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override 
 
 ### `artifact`
 
-A read-through cache for files cgh cannot parse into the graph: PDFs, images,
-office documents. Opening one costs vision or extractor tokens, so the finding
+A read-through cache for files cgh cannot parse into the graph: images, and
+legacy or OpenDocument office files (doc, xls, ppt, odt, ods, odp, rtf, epub).
+PDF, docx, xlsx, pptx and csv are parsed into sections and need no cache.
+Opening an opaque file costs vision or extractor tokens, so the finding
 is saved once and recalled after. A summary is a knowledge entry of kind `note`
 tagged `artifact`, with the file's SHA-256 in the body, so `recall` can tell a
 still-accurate summary from one whose file has changed. The Read pre-hook

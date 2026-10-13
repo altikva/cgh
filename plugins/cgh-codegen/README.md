@@ -97,5 +97,5 @@ connection.
 
 ## License
 
-MIT. Plugins that interact with cgh only through the documented plugin
-interfaces are not derivative works of cgh.
+Apache-2.0, the same as cgh itself. See [LICENSE](./LICENSE) and
+[NOTICE](./NOTICE).

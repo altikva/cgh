@@ -113,7 +113,7 @@ def _print_help():
     """Print a beautiful help screen when no command is given."""
     console.print(LOGO)
     console.print(
-        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  Local code graph index for AI coding assistants\n"
+        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  context graph hub: the project memory of your coding agents\n"
     )
 
     sections = [
@@ -923,10 +923,10 @@ def main() -> None:
         return
     if sys.argv[1] in ("--version", "-V"):
         console.print(LOGO)
-        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
+        console.print(f"  [bold cyan]cgh[/bold cyan] {VERSION}  [dim]context graph hub[/dim]")
         return
 
-    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
+    ap = _LogoArgumentParser(prog="cgh", add_help=False)
     _add_root(ap)
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")

@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%26%20CC%20BY--NC--SA-3DA639" alt="License: MIT and CC BY-NC-SA"></a>
 </p>
 
-**Local code graph and shared memory for AI coding assistants.**
+**cgh, the context graph hub: the project memory of your coding agents.**
 
 Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and scanner findings (PII, secrets, confidentiality labels) that plugins check before sending a file to a cloud model.
 

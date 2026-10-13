@@ -113,14 +113,14 @@ def _print_help():
     """Print a beautiful help screen when no command is given."""
     console.print(LOGO)
     console.print(
-        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  Local code graph index for AI coding assistants\n"
+        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  context graph hub: the project memory of your coding agents\n"
     )
 
     sections = [
         (
             "Getting Started",
             [
-                ("init", "Initialize codegraph in any project (interactive wizard)"),
+                ("init", "Initialize cgh in any project (interactive wizard)"),
                 ("index", "Build / rebuild the code graph"),
                 ("serve", "Start MCP server (for Claude, Cursor, Codex, Gemini)"),
                 ("stop", "Stop this repo's owner + worker (alias of serve --stop)"),
@@ -284,7 +284,7 @@ def _register_setup_and_serve(sub) -> None:
     """Register init, parsers, setup, index, watch, serve and the hidden precheck entry points."""
     # --- init ---
     p = sub.add_parser(
-        "init", help="Initialize codegraph in current directory (interactive wizard)"
+        "init", help="Initialize cgh in current directory (interactive wizard)"
     )
     _add_root(p)
     p.add_argument(
@@ -692,7 +692,7 @@ def _register_inspect(sub) -> None:
     _add_root(p)
 
     # --- doctor ---
-    p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
+    p = sub.add_parser("doctor", help="Health check: verify all cgh components")
     _add_root(p)
     p.add_argument(
         "--strict",
@@ -934,10 +934,12 @@ def main() -> None:
         return
     if sys.argv[1] in ("--version", "-V"):
         console.print(LOGO)
-        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
+        console.print(
+            f"  [bold cyan]cgh[/bold cyan] {VERSION}  [dim]context graph hub[/dim]"
+        )
         return
 
-    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
+    ap = _LogoArgumentParser(prog="cgh", add_help=False)
     _add_root(ap)
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
@@ -988,9 +990,7 @@ def main() -> None:
         if discovered is not None and discovered != Path(args.root).resolve():
             from rich.console import Console as _Console
 
-            _Console(stderr=True).print(
-                f"[dim]Using codegraph root: {discovered}[/dim]"
-            )
+            _Console(stderr=True).print(f"[dim]Using cgh root: {discovered}[/dim]")
             args.root = str(discovered)
 
     dispatch = {

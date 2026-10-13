@@ -45,7 +45,7 @@ def test_python_minus_p_ignores_a_shadowing_package(tmp_path):
         timeout=60,
     )
     assert "SHADOW" not in safe.stdout
-    assert "codegraph" in (safe.stdout + safe.stderr)
+    assert "context graph hub" in (safe.stdout + safe.stderr)
 
 
 def test_spawn_owner_runs_python_with_minus_p(tmp_path, monkeypatch):

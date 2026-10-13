@@ -1,6 +1,6 @@
 # Parser Plugin Architecture
 
-codegraph uses a plugin system for language support. Each parser is a Python class that extracts symbols from source files and produces a `FileIndex` -- a normalized data structure that the indexer stores in the graph DB.
+cgh uses a plugin system for language support. Each parser is a Python class that extracts symbols from source files and produces a `FileIndex` -- a normalized data structure that the indexer stores in the graph DB.
 
 ---
 
@@ -355,8 +355,6 @@ If using tree-sitter:
 
 ```bash
 pip install tree-sitter-rust
-# or
-uv pip install codegraph[rust]
 ```
 
 The parser works without tree-sitter (falls back to regex) but tree-sitter gives better results.

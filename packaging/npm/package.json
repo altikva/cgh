@@ -1,7 +1,7 @@
 {
   "name": "@altikva/cgh",
   "version": "0.18.0",
-  "description": "Local code graph + memory + plans + knowledge for AI coding agents. Downloads and runs the standalone cgh binary; no Python required.",
+  "description": "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Downloads and runs the standalone cgh binary; no Python required.",
   "bin": {
     "cgh": "bin/cgh.js"
   },
@@ -18,9 +18,10 @@
     "test": "node --test test/*.test.js"
   },
   "keywords": [
-    "code-graph",
     "cgh",
-    "codegraph",
+    "context-graph",
+    "code-graph",
+    "agent-memory",
     "mcp",
     "ai",
     "navigation"

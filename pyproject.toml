@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cgh"
 version = "0.18.0"
-description = "Local code graph for AI coding agents. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 62 MCP tools to Claude Code, Cursor, Codex, and Gemini. Federates across sibling repos."
+description = "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 62 MCP tools to Claude Code, Codex, Cursor, Gemini and IBM Bob. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 maintainers = [{ name = "ALTIKVA", email = "dev@altikva.com" }]
@@ -14,8 +14,9 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 # No upper cap: DuckDB is the default backend and ships cp3.14 wheels;
 # the standalone binary falls back to the bundled SQLite backend.
-keywords = ["code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor",
-            "code-index", "symbol-lookup", "call-graph", "ai-agents",
+keywords = ["context-graph", "code-graph", "mcp", "mcp-server", "claude", "claude-code", "cursor",
+            "code-index", "symbol-lookup", "call-graph", "ai-agents", "agents",
+            "memory", "agent-memory", "context", "knowledge-graph", "token-optimization",
             "python", "typescript", "javascript", "java", "go", "rust", "vue", "markdown"]
 classifiers = [
     "Development Status :: 4 - Beta",

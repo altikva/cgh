@@ -1,7 +1,8 @@
 # @altikva/cgh
 
-Run [**cgh**](https://github.com/altikva/cgh) — a local code graph + memory +
-plans + knowledge layer for AI coding agents — with no Python installed. This
+Run [**cgh**](https://github.com/altikva/cgh), the context graph hub, with no
+Python installed. cgh is the project memory of your coding agents, plus a code
+and document graph they query over MCP instead of reading whole files. This
 package is a thin launcher: on first use it downloads the standalone `cgh`
 binary for your OS from the matching GitHub Release, verifies its SHA-256,
 caches it, and runs it.

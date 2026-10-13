@@ -1,4 +1,4 @@
-# codegraph for Claude Code
+# cgh for Claude Code
 
 ## Setup (MCP server)
 

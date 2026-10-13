@@ -37,6 +37,20 @@ SEED = 1337
 # ---------------------------------------------------------------------------
 
 FIXTURE: dict[str, str] = {
+    # Package manifests: a dependency on a package whose manifest sits in a
+    # directory walked before (aa_lib) and after (zz_shared) the dependent,
+    # plus an MCP client config at the root (a dot file).
+    "package.json": (
+        '{"name": "fx-root", "workspaces": ["aa_lib", "web", "zz_shared"],\n'
+        ' "devDependencies": {"@fx/web": "workspace:*"}}\n'
+    ),
+    "aa_lib/package.json": '{"name": "@fx/lib", "dependencies": {"@fx/shared": "*"}}\n',
+    "web/package.json": (
+        '{"name": "@fx/web", "dependencies": {"@fx/lib": "workspace:*",\n'
+        ' "@fx/shared": "workspace:^", "left-pad": "^1.3.0"}}\n'
+    ),
+    "zz_shared/package.json": '{"name": "@fx/shared", "version": "1.0.0"}\n',
+    ".mcp.json": '{"mcpServers": {"graph": {"command": "cgh", "args": ["serve"]}}}\n',
     # One doc at the root (walked before every subdirectory) and one in a
     # subdirectory walked last, so some doc is ingested before the code it
     # references and some after.
@@ -428,6 +442,31 @@ def test_edges_independent_of_ingestion_order(graphs, kind):
 def test_edges_survive_resaving_every_file(graphs, kind):
     problems = _diff(graphs, kind, ("C",))
     assert not problems, "\n".join(problems)
+
+
+def test_package_dependencies_are_linked(graphs):
+    assert graphs["A"]["DEPENDS_ON"] == {
+        (
+            "aa_lib/package.json::package",
+            "zz_shared/package.json::package",
+            "runtime",
+            "*",
+        ),
+        (
+            "web/package.json::package",
+            "aa_lib/package.json::package",
+            "runtime",
+            "workspace:*",
+        ),
+        (
+            "web/package.json::package",
+            "zz_shared/package.json::package",
+            "runtime",
+            "workspace:^",
+        ),
+        ("package.json::package", "web/package.json::package", "dev", "workspace:*"),
+    }
+    assert graphs["A"]["DEFINES_MCP_SERVER"] == {(".mcp.json", ".mcp.json::mcp::graph")}
 
 
 def test_typescript_bases_are_linked(graphs):

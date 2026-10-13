@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+from codegraph.core.utils import short_path as _short_path
+
 
 def register(mcp) -> None:
     """Register meta tools on the given FastMCP instance."""
@@ -194,7 +196,10 @@ def register(mcp) -> None:
             include_shown: if true, ignore session dedup and return
                   everything. Useful to review what was previously served.
 
-        Returns structured markdown context + hit counts.
+        Returns structured markdown context + hit counts. When the served
+        functions and classes carry rationale comments (WHY:, NOTE:, HACK:,
+        ... or an ADR reference), a short `rationale` list gives them
+        ({file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}).
         """
         from codegraph.analysis.context_builder import context_for_task as _ctx
         from codegraph.analysis.context_builder import render_context_markdown
@@ -272,19 +277,65 @@ def register(mcp) -> None:
             )
 
         md = render_context_markdown(ctx)
-        return json.dumps(
-            {
-                "context_markdown": md,
-                "files_referenced": ctx.files_referenced,
-                "symbol_count": len(ctx.nodes),
-                "memory_docs_count": len(ctx.memory_docs),
-                "plan_docs_count": len(ctx.plan_docs),
-                "knowledge_docs_count": len(ctx.knowledge_docs),
-                "estimated_tokens": ctx.token_estimate,
-                "session_id": session_id or None,
-            },
-            indent=2,
-        )
+        payload = {
+            "context_markdown": md,
+            "files_referenced": ctx.files_referenced,
+            "symbol_count": len(ctx.nodes),
+            "memory_docs_count": len(ctx.memory_docs),
+            "plan_docs_count": len(ctx.plan_docs),
+            "knowledge_docs_count": len(ctx.knowledge_docs),
+            "estimated_tokens": ctx.token_estimate,
+            "session_id": session_id or None,
+        }
+        rationale = _rationale_of(ctx)
+        if rationale:
+            payload["rationale"] = rationale
+        subsystem = _subsystem_of(ctx)
+        if subsystem:
+            payload["subsystem"] = subsystem
+            payload["context_markdown"] = md + (
+                f"\n**Subsystem**: {subsystem['name']} ({subsystem['size']} files)"
+                + (
+                    f", also: {', '.join(subsystem['files'])}"
+                    if subsystem["files"]
+                    else ""
+                )
+            )
+        return json.dumps(payload, indent=2)
+
+    def _rationale_of(ctx) -> list[dict]:
+        """The rationale comments of the served symbols, flat and short, the
+        same items the context markdown lists under each symbol."""
+        from codegraph.analysis.rationale import RATIONALE_TEXT_CAP, item
+
+        return [
+            item(r, RATIONALE_TEXT_CAP, lambda p: _short_path(p, _srv._root))
+            for n in ctx.nodes
+            for r in n.rationale
+        ]
+
+    def _subsystem_of(ctx) -> dict | None:
+        """The community the best-matching symbols live in, with its central
+        files the context did not already list. Best effort: the context
+        answers without it on any failure."""
+        if not ctx.nodes:
+            return None
+        try:
+            from codegraph.analysis.communities import communities_for, subsystem_hint
+
+            result = communities_for(_get_conn())
+            seeds = [n.file_path for n in ctx.nodes]
+            hint = subsystem_hint(result, seeds, exclude=ctx.files_referenced)
+        except Exception:  # best effort, see the docstring
+            return None
+        if hint is None:
+            return None
+        full = next(c for c in result.communities if c.id == hint.id)
+        return {
+            "name": hint.name,
+            "size": full.size,
+            "files": [_short_path(f, _srv._root) for f in hint.files],
+        }
 
     @mcp.tool()
     @_logged_tool

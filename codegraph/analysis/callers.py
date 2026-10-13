@@ -31,14 +31,38 @@ def callers_of(conn, fn_name: str) -> list[dict]:
     call through the interface links to the interface's method, so its
     callers are listed too, each with `via` naming the interface method it
     was reached through. A caller that also calls the method directly has
-    no `via`."""
+    no `via`.
+
+    `resolution` says how the edge was obtained (analysis/provenance.py):
+    the most certain of the caller's direct edges, "interface" for a row
+    reached only through an interface method."""
     from codegraph.analysis.interfaces import (
         InterfaceResolver,
         label,
         qualified_methods,
     )
+    from codegraph.analysis.provenance import (
+        INTERFACE,
+        RESOLVED,
+        EdgeProvenance,
+        best,
+    )
     from codegraph.analysis.terraform import users_of
 
+    prov = EdgeProvenance(conn)
+    by_name = conn.find_neighbors(
+        "CALLS",
+        dst_where={"name": fn_name},
+        return_src=["id", "name", "file_path", "start_line"],
+        return_dst=["id", "file_path"],
+    )
+    # Every edge into the name: a caller's same-named targets are known.
+    same: dict[str, list[str]] = {}
+    for r in by_name:
+        same.setdefault(str(r.get("src_id") or ""), []).append(
+            str(r.get("dst_id") or "")
+        )
+    prov.prefetch(set(same) - {""})
     rows = [
         (
             r["src_name"],
@@ -46,22 +70,20 @@ def callers_of(conn, fn_name: str) -> list[dict]:
             r["src_start_line"],
             r["dst_file_path"],
             None,
+            _resolution(prov, r, same.get(str(r.get("src_id") or ""))),
         )
-        for r in conn.find_neighbors(
-            "CALLS",
-            dst_where={"name": fn_name},
-            return_src=["name", "file_path", "start_line"],
-            return_dst=["file_path"],
-        )
+        for r in by_name
     ]
     if "." in fn_name:
         resolver = InterfaceResolver(conn)
         for fn_id in qualified_methods(conn, fn_name):
             ifaces = resolver.interfaces_of(fn_id)
             keep = _receiver_filter(conn, resolver, fn_id, ifaces)
-            rows += _calls_into(conn, fn_id, None, keep=keep)
+            rows += _calls_into(conn, fn_id, None, keep=keep, prov=prov)
             for iface in ifaces:
-                rows += _calls_into(conn, iface, label(iface), skip=fn_id, keep=keep)
+                rows += _calls_into(
+                    conn, iface, label(iface), skip=fn_id, keep=keep, prov=prov
+                )
         rows += [
             (
                 r["src_address"],
@@ -69,13 +91,15 @@ def callers_of(conn, fn_name: str) -> list[dict]:
                 r["src_start_line"],
                 r["dst_file_path"],
                 None,
+                RESOLVED,  # a Terraform reference names its address exactly
             )
             for r in users_of(conn, fn_name)
         ]
     grouped: dict[tuple, dict] = {}
     vias: dict[tuple, list[str] | None] = {}
+    direct: dict[tuple, list[str]] = {}
     definitions: set[str] = set()
-    for name, file_path, line, target, via in rows:
+    for name, file_path, line, target, via, resolution in rows:
         key = (name, file_path, line)
         entry = grouped.setdefault(
             key,
@@ -83,6 +107,7 @@ def callers_of(conn, fn_name: str) -> list[dict]:
         )
         if via is None:
             vias[key] = None
+            direct.setdefault(key, []).append(resolution)
             definitions.add(target)
             if target not in entry["targets"]:
                 entry["targets"].append(target)
@@ -97,7 +122,19 @@ def callers_of(conn, fn_name: str) -> list[dict]:
             entry["targets"].sort()
         if vias.get(key):
             entry["via"] = ", ".join(sorted(vias[key]))
+        entry["resolution"] = best(direct[key]) if key in direct else INTERFACE
     return out
+
+
+def _resolution(prov, row: dict, same: list[str] | None) -> str:
+    """The resolution of the CALLS edge of a find_neighbors row."""
+    from codegraph.analysis.provenance import NAME
+
+    src = str(row.get("src_id") or "")
+    dst = str(row.get("dst_id") or "")
+    if not src or not dst:
+        return NAME
+    return prov.of(src, dst, same)
 
 
 def _calls_into(
@@ -106,26 +143,42 @@ def _calls_into(
     via: str | None,
     skip: str = "",
     keep: Callable[[str], bool] | None = None,
+    prov=None,
 ) -> list[tuple]:
     """Callers of the Function ``fn_id`` as callers_of rows; ``skip`` drops
     one caller (the queried method, reaching its own interface), ``keep``
-    the callers it rejects (by caller id)."""
-    return [
-        (
-            r["src_name"],
-            r["src_file_path"],
-            r["src_start_line"],
-            r["dst_file_path"],
-            via,
+    the callers it rejects (by caller id). A row reached ``via`` an
+    interface method reads "interface"; a direct one asks ``prov``."""
+    from codegraph.analysis.provenance import INTERFACE, NAME
+
+    out: list[tuple] = []
+    for r in conn.find_neighbors(
+        "CALLS",
+        dst_key=fn_id,
+        return_src=["id", "name", "file_path", "start_line"],
+        return_dst=["file_path"],
+    ):
+        if (skip and r["src_id"] == skip) or (
+            keep is not None and not keep(r["src_id"])
+        ):
+            continue
+        if via is not None:
+            resolution = INTERFACE
+        elif prov is not None:
+            resolution = _resolution(prov, {**r, "dst_id": fn_id}, None)
+        else:
+            resolution = NAME
+        out.append(
+            (
+                r["src_name"],
+                r["src_file_path"],
+                r["src_start_line"],
+                r["dst_file_path"],
+                via,
+                resolution,
+            )
         )
-        for r in conn.find_neighbors(
-            "CALLS",
-            dst_key=fn_id,
-            return_src=["id", "name", "file_path", "start_line"],
-            return_dst=["file_path"],
-        )
-        if (not skip or r["src_id"] != skip) and (keep is None or keep(r["src_id"]))
-    ]
+    return out
 
 
 def _receiver_filter(

@@ -5,12 +5,14 @@
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP query tools: symbol_lookup, callers, callees, imports_of,
-#              indexed_files, search_symbols, subgraph.
+#              indexed_files, search_symbols, subgraph, rationale.
 
 from __future__ import annotations
 
 import json
 import os
+
+from codegraph.core.utils import short_path as _short_path
 
 # Forward call-chain traversal bounds for find_callees(max_depth>1): the
 # hop ceiling, the per-node edge fan-out, and the total callees returned.
@@ -259,6 +261,77 @@ def register(mcp) -> None:
             indent=2,
         )
 
+    def _attach_rationale(conn, hits: list[dict]) -> None:
+        """Give each function / class hit the rationale comments attached to
+        it (at most RATIONALE_PER_SYMBOL, text cut short), as `rationale`;
+        drops the internal `_id`. A graph without the rationale table (a
+        child indexed by an older cgh) answers without them."""
+        from codegraph.analysis.rationale import (
+            RATIONALE_PER_SYMBOL,
+            RATIONALE_TEXT_CAP,
+            for_symbol_ids,
+            item,
+        )
+
+        ids = [h["_id"] for h in hits if h.get("_id")]
+        try:
+            by_id = for_symbol_ids(conn, ids)
+        except Exception:  # older graph without the table, see the docstring
+            by_id = {}
+        for hit in hits:
+            rows = by_id.get(hit.pop("_id", None) or "", [])
+            if rows:
+                hit["rationale"] = [
+                    item(r, RATIONALE_TEXT_CAP, with_symbol=False)
+                    for r in rows[:RATIONALE_PER_SYMBOL]
+                ]
+
+    @mcp.tool()
+    @_logged_tool
+    def rationale(target: str = "", tag: str = "", limit: int = 50) -> str:
+        """
+        Rationale comments: the comments that say WHY code is the way it
+        is, read from the source at index time. A comment counts when it
+        opens with WHY:, NOTE:, HACK:, SAFETY:, INVARIANT:, IMPORTANT:,
+        WARNING: or DECISION: (an owner in parentheses is fine, as in
+        HACK(joy):), or when it cites an ADR (ADR-0007, docs/adr/0007-x.md).
+        Each is attached to the function or class right below it, else the
+        innermost one around it, else the module. Read these before
+        changing code that looks odd: they record the constraint behind it.
+
+        Args:
+          target: a symbol name (bare, or Class.method; a class also lists
+                  its members'), a file path (absolute or a path suffix like
+                  "app/store.py"), or "" for every one in the index
+          tag:    keep one tag only (WHY, NOTE, ..., ADR for a comment that
+                  only cites an ADR); case-insensitive
+          limit:  max rows per scope (default 50, at most 200)
+
+        Returns {target, tag, total, truncated, rationale: [{scope, file,
+        line, tag, text, symbol, symbol_kind, adr?, adr_file?}]}; adr_file
+        is the indexed Markdown file the ADR reference resolves to.
+        Supported: Python, JavaScript / TypeScript, Vue, Go, Rust, Java,
+        C#, Ruby, Terraform, SQL. Federated, each row tagged with `scope`.
+        """
+        from codegraph.analysis.federation import federate_scoped
+        from codegraph.analysis.rationale import clamp_limit, payload, query
+
+        cap = clamp_limit(limit)
+        per_scope, warnings = federate_scoped(
+            _get_conn, _srv._root, lambda conn: query(conn, target, tag, cap + 1)
+        )
+        out = payload(
+            per_scope,
+            target,
+            tag,
+            cap,
+            short_path=lambda p: _short_path(p, _srv._root),
+        )
+        if warnings:
+            out["partial"] = True
+            out["warnings"] = warnings
+        return json.dumps(out, indent=2)
+
     @mcp.tool()
     @_logged_tool
     def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
@@ -276,6 +349,11 @@ def register(mcp) -> None:
 
         Terraform blocks are found by address too (var.region,
         google_x.y, module.m, local.l, data.t.n, output.o).
+
+        A function or class whose code carries rationale comments (WHY:,
+        NOTE:, HACK:, SAFETY:, INVARIANT:, ... or an ADR reference) lists
+        the first few in `rationale` ({tag, line, text, adr?, adr_file?});
+        the `rationale` tool returns them all.
         """
 
         def query(conn):
@@ -289,6 +367,7 @@ def register(mcp) -> None:
                     "start_line",
                     "end_line",
                     "docstring",
+                    "id",
                 ],
             ):
                 out.append(
@@ -298,6 +377,7 @@ def register(mcp) -> None:
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
+                        "_id": row["id"],
                     }
                 )
             for row in conn.find_nodes(
@@ -309,6 +389,7 @@ def register(mcp) -> None:
                     "start_line",
                     "end_line",
                     "docstring",
+                    "id",
                 ],
             ):
                 out.append(
@@ -318,6 +399,7 @@ def register(mcp) -> None:
                         "file": row["file_path"],
                         "lines": f"{row['start_line']}-{row['end_line']}",
                         "doc": (row["docstring"] or "")[:120],
+                        "_id": row["id"],
                     }
                 )
             # Terraform blocks, by address (var.region, google_x.y) or by
@@ -354,6 +436,7 @@ def register(mcp) -> None:
                         "anchor": row["anchor"],
                     }
                 )
+            _attach_rationale(conn, out)
             if role or layer:
                 cache: dict[str, tuple[str, str]] = {}
                 kept = []
@@ -417,6 +500,13 @@ def register(mcp) -> None:
         conforms to), since a call through the interface links to the
         interface's method; those rows carry `via` ("KmsClient.encrypt").
 
+        Each row carries `resolution`: "resolved" (the call's shape fixes
+        the target: same file, an import naming it, a known receiver
+        class), "name" (matched by name, one definition), "ambiguous"
+        (matched by name, several definitions) or "interface" (reached
+        only through an interface method). Treat name and ambiguous as
+        guesses.
+
         For a Terraform address (var.region, google_x.y, module.m) it
         returns each block that uses it.
         """
@@ -444,8 +534,18 @@ def register(mcp) -> None:
         Federated across subrepos; cross-repo CALLS edges are not inferred
         (each subrepo's graph is canonical for its own code). Like every
         name-matched CALLS reach it can over-count: a listed callee may
-        belong to a same-named function elsewhere. `truncated` is set when
-        the fan-out or total cap was hit.
+        belong to a same-named function elsewhere. Each callee carries
+        `resolution` ("resolved", "name", "ambiguous", see find_callers),
+        so the guessed rows are told apart. `truncated` is set when the
+        fan-out or total cap was hit.
+
+        A call to an interface method (a Protocol or ABC method) that has
+        exactly one implementation in the scope is followed to it: the
+        implementation is listed right after, at the same depth, with
+        `resolution` "interface" and `via` naming the interface method.
+        With several implementations the walk stops there and the row
+        carries `implementations` (their count). `Class.method` or
+        `module.function` starts from that definition only.
 
         For a Terraform address it returns the blocks that block references.
         """
@@ -453,20 +553,81 @@ def register(mcp) -> None:
         state = {"truncated": False}
 
         def query(conn):
+            from codegraph.analysis.interfaces import (
+                InterfaceResolver,
+                label,
+                qualified_methods,
+            )
+            from codegraph.analysis.provenance import (
+                INTERFACE,
+                RESOLVED,
+                EdgeProvenance,
+            )
+
+            prov = EdgeProvenance(conn)
+            resolver = InterfaceResolver(conn)
+            # `Class.method` / `module.function` starts from those functions.
+            start_ids = qualified_methods(conn, fn_name) if "." in fn_name else []
             seen: set[str] = {fn_name}  # names already expanded (cycle guard)
             frontier = [fn_name]
             out: list[dict] = []
             depth = 0
+
+            def dispatched(row: dict) -> dict | None:
+                """The implementation a call to an interface method lands
+                on, as a callee row, when the interface has exactly one in
+                this scope; the interface row gets `implementations` when
+                it has several."""
+                dst = str(row.get("dst_id") or "")
+                if not dst or not resolver.is_interface(dst):
+                    return None
+                impls = resolver.implementations(dst)
+                if len(impls) != 1:
+                    if impls:
+                        out[-1]["implementations"] = len(impls)
+                    return None
+                found = conn.find_nodes(
+                    "Function",
+                    where={"id": impls[0]},
+                    return_fields=["name", "file_path", "start_line"],
+                    limit=1,
+                )
+                if not found:
+                    return None
+                return {
+                    "callee": found[0]["name"],
+                    "file": found[0]["file_path"],
+                    "line": found[0]["start_line"],
+                    "depth": depth,
+                    "resolution": INTERFACE,
+                    "via": label(dst),
+                }
+
             while frontier and depth < depth_cap:
                 depth += 1
                 nxt: list[str] = []
                 for name in frontier:
-                    rows = conn.find_neighbors(
-                        "CALLS",
-                        src_where={"name": name},
-                        return_dst=["name", "file_path", "start_line"],
-                        limit=_CALLEE_FANOUT_CAP,
-                    )
+                    if depth == 1 and start_ids:
+                        rows = [
+                            r
+                            for sid in start_ids
+                            for r in conn.find_neighbors(
+                                "CALLS",
+                                src_key=sid,
+                                return_src=["id"],
+                                return_dst=["id", "name", "file_path", "start_line"],
+                                limit=_CALLEE_FANOUT_CAP,
+                            )
+                        ]
+                    else:
+                        rows = conn.find_neighbors(
+                            "CALLS",
+                            src_where={"name": name},
+                            return_src=["id"],
+                            return_dst=["id", "name", "file_path", "start_line"],
+                            limit=_CALLEE_FANOUT_CAP,
+                        )
+                    resolutions = prov.of_rows(rows)
                     if "." in name:
                         # A Terraform address: the blocks it references.
                         rows = rows + [
@@ -475,7 +636,7 @@ def register(mcp) -> None:
                         ]
                     if len(rows) >= _CALLEE_FANOUT_CAP:
                         state["truncated"] = True
-                    for row in rows:
+                    for i, row in enumerate(rows):
                         callee = row["dst_name"]
                         out.append(
                             {
@@ -483,11 +644,23 @@ def register(mcp) -> None:
                                 "file": row["dst_file_path"],
                                 "line": row["dst_start_line"],
                                 "depth": depth,
+                                # Terraform rows name their address exactly.
+                                "resolution": resolutions[i]
+                                if i < len(resolutions)
+                                else RESOLVED,
                             }
                         )
                         if callee not in seen:
                             seen.add(callee)
                             nxt.append(callee)
+                        impl = dispatched(row) if i < len(resolutions) else None
+                        if impl is not None:
+                            # Not a call of its own: the same hop, landing
+                            # on the interface's only implementation.
+                            out.append(impl)
+                            if impl["callee"] not in seen:
+                                seen.add(impl["callee"])
+                                nxt.append(impl["callee"])
                     if len(out) >= _CALLEE_TOTAL_CAP:
                         state["truncated"] = True
                         return out
@@ -509,19 +682,25 @@ def register(mcp) -> None:
         """
         Return all modules imported by `file_path`. Federated: the file may
         live in the parent or in any subrepo, we query all and aggregate.
-        Pass a path relative to the parent's repo root or absolute.
+        Pass a path relative to the parent's repo root or absolute. Each
+        row's `kind` is "" for a plain import, "reexport" (JS / TS
+        `export ... from`) or "dynamic" (`import('./x')`).
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
 
         def query(conn):
             return [
-                {"module": row["dst_path"], "symbol": row.get("edge_symbol", "")}
+                {
+                    "module": row["dst_path"],
+                    "symbol": row.get("edge_symbol", ""),
+                    "kind": row.get("edge_kind") or "",
+                }
                 for row in conn.find_neighbors(
                     "IMPORTS",
                     src_key=file_path,
                     return_dst=["path"],
-                    return_edge=["symbol"],
+                    return_edge=["symbol", "kind"],
                 )
             ]
 
@@ -725,12 +904,17 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def subgraph(file_path: str, depth: int = 1) -> str:
+    def subgraph(file_path: str, depth: int = 1, max_tokens: int = 0) -> str:
         """
         Return files related to `file_path` within `depth` import hops.
         Federated. Inter-repo edges are not modeled, each subrepo's IMPORTS
         graph is canonical for its own files. Useful for blast radius
         within a single scope; results are concatenated across scopes.
+
+        `max_tokens` (0 = no budget) caps the answer's approximate size
+        (about 4 characters per token of JSON): the farthest files go
+        first (with depth 1, from the longer of the two lists), and the
+        answer gets `truncated: true` and `dropped` (how many).
         """
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
@@ -777,11 +961,11 @@ def register(mcp) -> None:
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload, indent=2)
+            return _within_budget(payload, ["depends_on", "depended_by"], max_tokens)
 
         # depth >= 2, recursive traversal via the GraphDB helper
         def run_reach(conn):
-            return [
+            rows = [
                 {"file": row["path"], "lang": row["lang"]}
                 for row in conn.reach_via_edge(
                     "IMPORTS",
@@ -790,10 +974,40 @@ def register(mcp) -> None:
                     return_fields=["path", "lang"],
                 )
             ]
+            if max_tokens > 0:
+                # Nearest first, so a budget trims the farthest files.
+                hops = _import_hops(conn, file_path, int(depth))
+                rows.sort(key=lambda r: (hops.get(r["file"], depth + 1), r["file"]))
+            return rows
 
         deps, warnings = _federate(run_reach)
         payload = {"file": file_path, "depth": depth, "reachable": deps}
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
+        return _within_budget(payload, ["reachable"], max_tokens)
+
+    def _import_hops(conn, start: str, depth: int) -> dict[str, int]:
+        """{file: import hops from ``start``} within ``depth`` hops."""
+        hops: dict[str, int] = {}
+        frontier = [start]
+        for level in range(1, depth + 1):
+            nxt: list[str] = []
+            for key in frontier:
+                for row in conn.find_neighbors(
+                    "IMPORTS", src_key=key, return_dst=["path"]
+                ):
+                    path = row["dst_path"]
+                    if path not in hops and path != start:
+                        hops[path] = level
+                        nxt.append(path)
+            frontier = nxt
+        return hops
+
+    def _within_budget(payload: dict, keys: list[str], max_tokens: int) -> str:
+        """The payload as JSON, trimmed to ``max_tokens`` when one is set."""
+        if max_tokens > 0:
+            from codegraph.server._budget import fit_tokens
+
+            fit_tokens(payload, keys, max_tokens)
         return json.dumps(payload, indent=2)

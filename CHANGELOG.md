@@ -8,6 +8,121 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-13
+
+### Added
+- **Shorter tool list on request.** `[tools] expose = "core"` in
+  `.codegraph/config.toml` makes `tools/list` show 15 core tools, the
+  names in `[tools] extra`, and every plugin tool. Some MCP clients load
+  every listed tool's schema into the context; this keeps that cost down.
+  Hidden tools still answer when called by name, so hooks and scripts are
+  unaffected. The default, `"all"`, changes nothing. `cgh status` shows
+  the result on a new `Tools` line.
+- **Packages and MCP servers in the graph.** The new `packages` MCP tool
+  and `cgh packages` list the packages declared by `package.json` (npm,
+  pnpm and yarn workspaces) and `pyproject.toml` (uv workspaces too), which
+  ones depend on each other inside the repo, who depends on a given
+  package, internal dependency cycles, and external dependencies by name
+  and spec. They also list the MCP servers declared in `.mcp.json`,
+  `.cursor/mcp.json` and `.vscode/mcp.json`: env and header key names and
+  the argument count only, never a value. An agent sees how a monorepo's
+  packages and tools fit together without reading every manifest.
+  Existing indexes are re-parsed once.
+- **Rationale comments.** Comments opening with `WHY:`, `NOTE:`, `HACK:`,
+  `SAFETY:`, `INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:`, or
+  citing an ADR, are indexed with the function, class or module they
+  document, so an agent sees why odd-looking code is that way before it
+  changes it. `symbol_lookup` and `context_for_task` carry a short
+  `rationale` list, the new `rationale` MCP tool and `cgh why <symbol|file>`
+  list them all, and an ADR reference links to its indexed Markdown file.
+  Existing indexes are re-parsed once to fill it in.
+- **Overlapping open PRs.** `cgh prs overlap` (and the `pr_overlap` MCP
+  tool) reads the open pull requests through `gh` and lists the pairs that
+  change the same symbols, call into each other's changes, or only share
+  files, so collisions show up before review. A missing or logged-out `gh`
+  or a repo without a GitHub remote gives a clear message.
+- **GraphML export.** `cgh export --format graphml [--out FILE] [--scope
+  PATH]` writes the code graph (files, symbols, typed edges, call
+  resolution) for Gephi or yEd, on both graph backends.
+- **Architecture report.** `cgh report` (and the `architecture_report` MCP
+  tool) writes one Markdown page on how the code is put together: the
+  subsystems, the files everything leans on and whether tests reach them,
+  the single links between subsystems, imports that go up the layers, calls
+  with no import behind them, import cycles, and review questions drawn
+  from those findings. Deterministic, no LLM; `--out FILE` saves it.
+- **Subsystems from how the code connects.** The new `communities` MCP tool
+  and `cgh communities` cluster the file graph (imports and calls) into
+  communities and name each one from its own files, so an agent sees which
+  files form one unit even where the directories do not say. Widely shared
+  utility files are listed apart instead of gluing everything together.
+  The answer is deterministic, federated per scope and cached until the
+  index changes. `architecture_overview` gains a short `subsystems` list,
+  and `context_for_task` names the subsystem its best matches belong to.
+- **Call rows say how sure they are.** `find_callers`, `find_callees`,
+  `impact_of` and `path_between` (its new `hops` list) give each call edge
+  a `resolution`: `resolved` when the call's shape fixes the target (same
+  file, an import, a known receiver class), `name` for a match on the
+  callee's name, `ambiguous` when several definitions share it, `interface`
+  through an implemented interface method. An agent can tell the certain
+  callers from the guesses. `cgh callers` and `cgh callees` mark the
+  guessed rows with `?` / `??`. Works on existing indexes, no reindex.
+- **Traversals follow a single interface implementation.** `find_callees`,
+  `impact_of` and `path_between` no longer stop at a Protocol or ABC
+  method that has exactly one implementation in the scope: they continue
+  into it, the step marked `interface`. With several implementations they
+  still stop (`find_callees` gives their count). `find_callees` and
+  `cgh callees` accept `Class.method` / `module.function`.
+- **Token budget for `subgraph` and `impact_of`.** An optional
+  `max_tokens` trims the farthest rows first and reports `truncated` and
+  `dropped`. Without it the answers are unchanged.
+- **Exact doc mentions.** An inline code span naming one identifier
+  (`` `verify_token` ``) links the doc section to the symbol of that very
+  name; `doc_refs` marks each reference `match: exact` or `heuristic`.
+  Existing indexes pick it up as Markdown files are reindexed
+  (`cgh force-index` for all at once).
+- **Knowledge outcomes.** The new `knowledge_outcome` MCP tool (and `cgh
+  knowledge outcome` / `outcomes`) records whether relying on a knowledge
+  entry, or on some files, worked: `useful`, `dead_end` or `corrected`.
+  Verdicts fade with age (`[codegraph] knowledge_half_life_days`, 30 by
+  default). Search and list rank useful entries up and corrected ones down,
+  each rated hit shows its standing, and `resume` lists known dead ends so a
+  new session does not retry a path that already failed. Existing stores
+  gain a new table on open; nothing else changes for them.
+- **Shared types across federated repos.** The new `shared_types` MCP tool
+  and `cgh shared-types` list types defined under the same name in two
+  scopes whose fields agree, such as a backend Pydantic model and the
+  frontend TypeScript interface mirroring it, with the matched fields, a
+  confidence and the fields only one side has. The pairs are deduced at
+  query time and marked so: nothing is stored, subrepos are only read.
+
+### Changed
+- **`impact_of` follows JS / TS barrels and dynamic imports.** `export *
+  from`, `export { a as b } from` and `import('./x')` with a literal
+  specifier are now import edges, resolved like any import (tsconfig paths,
+  workspaces). A change behind an `index.ts` reaches the barrel's importers
+  without spending depth on the chain, each impacted file says `via` which
+  link reached it, and `imports_of` rows carry a `kind`. TypeScript
+  interfaces and object type aliases are indexed as classes. Existing
+  indexes are re-parsed once.
+- **Lookup verbs exit non-zero when the name is missing or ambiguous.**
+  `cgh lookup`, `cgh callers` and `cgh callees` exit 3 when nothing defines
+  the name, and `cgh callees` exits 4, listing the candidates on stderr,
+  when several functions share it. Scripts that read exit 0 as "nothing
+  found" must check for 3.
+- **Built-in filter rebuilt from the language references.** The Python list
+  is now the full built-in functions table of the Python docs, and the
+  JS/TS list the callable and namespace properties of the ECMAScript global
+  object plus the web globals common to browsers and Node (typed arrays,
+  `Function`, `eval`, `atob`, `WeakRef`...). A call to one of these no
+  longer produces a CALLS edge to a repo function that shadows the name.
+
+### Fixed
+- **Windows: no more `~gh-...` skills after an upgrade.** pip and uv can
+  leave a replaced folder behind under `~` plus its name minus the first
+  letter, and cgh listed and installed it as a skill (`~gh-papercuts` next
+  to `cgh-papercuts`). Bundled skills now need a valid name, and the next
+  `cgh init` or `cgh setup` removes the copies an older cgh installed.
+
 ## [0.17.1] - 2026-10-11
 
 ### Added
@@ -2331,7 +2446,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/altikva/cgh/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/altikva/cgh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/altikva/cgh/compare/v0.16.0...v0.16.1

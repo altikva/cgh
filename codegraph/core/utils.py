@@ -74,8 +74,6 @@ def normalize_identifier(text: str) -> str:
 
     Whitespace is preserved (callers strip it as needed); only Unicode
     canonical compatibility composition is applied.
-
-    Ported from graphify's _make_id normalization step.
     """
     if not text:
         return text

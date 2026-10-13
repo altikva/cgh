@@ -18,6 +18,19 @@
     },
     "required": []
   },
+  "architecture_report": {
+    "properties": {
+      "max_items": {
+        "default": 10,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
+  },
   "call_stats": {
     "properties": {},
     "required": []
@@ -39,6 +52,23 @@
       "digest",
       "session_id"
     ]
+  },
+  "communities": {
+    "properties": {
+      "max_communities": {
+        "default": 30,
+        "type": "integer"
+      },
+      "min_size": {
+        "default": 2,
+        "type": "integer"
+      },
+      "resolution": {
+        "default": 1.0,
+        "type": "number"
+      }
+    },
+    "required": []
   },
   "compact_session": {
     "properties": {
@@ -306,6 +336,10 @@
         "default": 3,
         "type": "integer"
       },
+      "max_tokens": {
+        "default": 0,
+        "type": "integer"
+      },
       "symbol_or_file": {
         "type": "string"
       }
@@ -408,6 +442,40 @@
     },
     "required": []
   },
+  "knowledge_outcome": {
+    "properties": {
+      "corrected_by": {
+        "default": 0,
+        "type": "integer"
+      },
+      "entry_id": {
+        "default": 0,
+        "type": "integer"
+      },
+      "file_refs": {
+        "default": "",
+        "type": "string"
+      },
+      "note": {
+        "default": "",
+        "type": "string"
+      },
+      "query": {
+        "default": "",
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      },
+      "verdict": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict"
+    ]
+  },
   "knowledge_record": {
     "properties": {
       "body": {
@@ -508,6 +576,23 @@
       "query"
     ]
   },
+  "packages": {
+    "properties": {
+      "include_external": {
+        "default": false,
+        "type": "boolean"
+      },
+      "limit": {
+        "default": 200,
+        "type": "integer"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "path_between": {
     "properties": {
       "dst": {
@@ -590,6 +675,32 @@
     "required": [
       "query"
     ]
+  },
+  "pr_overlap": {
+    "properties": {
+      "limit": {
+        "default": 30,
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
+  "rationale": {
+    "properties": {
+      "limit": {
+        "default": 50,
+        "type": "integer"
+      },
+      "tag": {
+        "default": "",
+        "type": "string"
+      },
+      "target": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
   },
   "resume": {
     "properties": {
@@ -693,6 +804,23 @@
       "session_id"
     ]
   },
+  "shared_types": {
+    "properties": {
+      "limit": {
+        "default": 100,
+        "type": "integer"
+      },
+      "min_confidence": {
+        "default": 0.5,
+        "type": "number"
+      },
+      "name": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "subgraph": {
     "properties": {
       "depth": {
@@ -701,6 +829,10 @@
       },
       "file_path": {
         "type": "string"
+      },
+      "max_tokens": {
+        "default": 0,
+        "type": "integer"
       }
     },
     "required": [

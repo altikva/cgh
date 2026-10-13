@@ -20,6 +20,8 @@ from tree_sitter import Language, Node, Parser
 
 from . import register_parser
 from .base import (
+    IMPORT_DYNAMIC,
+    IMPORT_REEXPORT,
     BaseParser,
     Bindings,
     ClassDef,
@@ -242,6 +244,93 @@ def _ts_attr_types(body: Node, src: bytes) -> dict[str, str]:
     }
 
 
+def _string_literal(node: Node | None, src: bytes) -> str:
+    """The value of a plain string literal, or "" for anything else (a
+    template string, a variable, a concatenation): only a literal names a
+    module the indexer can resolve."""
+    if node is None or node.type != "string":
+        return ""
+    return _text(node, src).strip("\"'")
+
+
+def _reexport(node: Node, src: bytes) -> ImportRef | None:
+    """The re-export an ``export ... from '<module>'`` statement makes:
+    ``export * from``, ``export * as ns from`` (whole module, no symbols)
+    and ``export { a as b } from`` (the source-side names). None for an
+    export without a ``from`` clause."""
+    module = _string_literal(node.child_by_field_name("source"), src)
+    if not module:
+        return None
+    symbols: list[str] = []
+    for child in node.children:
+        if child.type != "export_clause":
+            continue
+        for spec in child.children:
+            if spec.type == "export_specifier":
+                name = spec.child_by_field_name("name")
+                if name is not None:
+                    symbols.append(_ident(name, src))
+    return ImportRef(source_module=module, symbols=symbols, kind=IMPORT_REEXPORT)
+
+
+def _dynamic_imports(root: Node, src: bytes) -> list[ImportRef]:
+    """Every ``import('<literal>')`` in the file, wherever it sits (module
+    level or inside a function body). A specifier built at run time (a
+    template string, a variable) names no module the indexer can resolve
+    and is skipped."""
+    out: list[ImportRef] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "call_expression":
+            fn = node.child_by_field_name("function")
+            args = node.child_by_field_name("arguments")
+            if fn is not None and fn.type == "import" and args is not None:
+                named = args.named_children
+                module = _string_literal(named[0], src) if named else ""
+                if module:
+                    out.append(ImportRef(source_module=module, kind=IMPORT_DYNAMIC))
+        stack.extend(reversed(node.children))
+    return out
+
+
+def _type_decl(node: Node, src: bytes, path_str: str) -> ClassDef | None:
+    """A TypeScript ``interface`` or object ``type`` alias as a ClassDef
+    (kind "interface" / "type"), so shapes are found by name like classes.
+    A type alias of anything but an object literal type (a union, a
+    mapped type) declares no shape and is skipped."""
+    name_node = node.child_by_field_name("name")
+    if name_node is None:
+        return None
+    bases: list[str] = []
+    if node.type == "interface_declaration":
+        kind = "interface"
+        for clause in node.children:
+            if clause.type != "extends_type_clause":
+                continue
+            for t in clause.named_children:
+                if t.type == "generic_type":
+                    t = t.child_by_field_name("name") or t
+                if t.type in ("type_identifier", "nested_type_identifier"):
+                    bases.append(_ident(t, src))
+    else:
+        value = node.child_by_field_name("value")
+        if value is None or value.type != "object_type":
+            return None
+        kind = "type"
+    name = _ident(name_node, src)
+    return ClassDef(
+        id=f"{path_str}::{name}",
+        name=name,
+        file_path=path_str,
+        start_line=node.start_point[0] + 1,
+        end_line=node.end_point[0] + 1,
+        docstring="",
+        bases=bases,
+        kind=kind,
+    )
+
+
 def _fn_name(node: Node, src: bytes) -> str:
     """Best-effort function name extraction across declaration styles."""
     # function foo() / function* foo()
@@ -313,6 +402,25 @@ class TypeScriptParser(BaseParser):
                                 symbols.append(_ident(sub, src))
                 index.imports.append(ImportRef(source_module=module, symbols=symbols))
 
+            # --- re-export: export * / export { a as b } from '<module>' ---
+            elif node.type == "export_statement" and (
+                node.child_by_field_name("source") is not None
+            ):
+                ref = _reexport(node, src)
+                if ref is not None:
+                    index.imports.append(ref)
+                return
+
+            # --- interface / object type alias ---
+            elif (
+                node.type in ("interface_declaration", "type_alias_declaration")
+                and current_class is None
+            ):
+                decl = _type_decl(node, src, path_str)
+                if decl is not None:
+                    index.classes.append(decl)
+                return
+
             # --- class ---
             elif node.type == "class_declaration":
                 name_node = node.child_by_field_name("name")
@@ -378,6 +486,7 @@ class TypeScriptParser(BaseParser):
 
         for child in root.children:
             _visit(child)
+        index.imports.extend(_dynamic_imports(root, src))
 
         for fn, raw_calls in pending:
             if fn.class_name:

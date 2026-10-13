@@ -120,6 +120,8 @@ def _call_origin() -> str | None:
 _GRAPH_TOOLS = frozenset(
     {
         "architecture_overview",
+        "architecture_report",
+        "communities",
         "context_for_task",
         "doc_refs",
         "domain_map",
@@ -177,6 +179,8 @@ def _mark_stale(result, reason: str):
 _FEDERATED_TOOLS = frozenset(
     {
         "architecture_overview",
+        "architecture_report",
+        "communities",
         "doc_outline",
         "doc_refs",
         "domain_map",
@@ -358,6 +362,7 @@ mcp = FastMCP(
         "       1. symbol_lookup / find_callers / find_callees\n"
         "       2. search_symbols for a half-known name, fts_search for code\n"
         "          described in words (a sentence, French or English)\n"
+        "       Call rows carry `resolution`: name / ambiguous are guesses.\n"
         "  • Text/regex pattern search ('find every occurrence of X'):\n"
         "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
         "          Returns {file, line, text}. Then Read only those lines.\n"
@@ -413,15 +418,18 @@ from codegraph.server.tools_knowledge import (
 from codegraph.server.tools_memory import register as _register_memory
 from codegraph.server.tools_meta import register as _register_meta
 from codegraph.server.tools_plans import register as _register_plans
+from codegraph.server.tools_prs import register as _register_prs
 from codegraph.server.tools_query import register as _register_query
 from codegraph.server.tools_session import register as _register_session
 from codegraph.server.tools_tests import register as _register_tests
 from codegraph.server.tools_viz import register as _register_viz
 
-_register_arch(mcp)  # architecture_overview, domain_map, endpoints, use FIRST
+# architecture_overview / _report, domain_map, communities, endpoints: FIRST
+_register_arch(mcp)
 _register_query(mcp)
 _register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
 _register_tests(mcp)  # tests_for, impact_report, untested
+_register_prs(mcp)  # pr_overlap
 _register_docs(mcp)
 _register_index(mcp)
 _register_viz(mcp)
@@ -433,6 +441,14 @@ _register_history(mcp)  # hotspots, who_knows
 _register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
 _register_fetch(mcp)  # fetch_and_index, search_fetched
 _register_session(mcp)  # checkpoint / resume session continuity
+
+# [tools] expose: narrows the tools/list response only. tools/call does not
+# pass through it, so a hidden tool still answers by name. Lists every tool
+# until owner_main records which tools are cgh's own.
+from codegraph.server.tool_exposure import ToolExposureMiddleware
+
+tool_exposure = ToolExposureMiddleware()
+mcp.add_middleware(tool_exposure)
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +628,15 @@ def owner_main(
     # them up), and each plugin's MCP registrar gets the FastMCP instance,
     # exactly like the internal tools_*.py modules. A broken plugin is a
     # logged warning, never a dead owner.
+    # The tools registered so far are cgh's own; whatever the plugin
+    # registrars add below is a plugin tool, which [tools] never hides.
+    from codegraph.server.tool_exposure import registered_tool_names
+
+    try:
+        _builtin_tools: frozenset[str] | None = registered_tool_names(mcp)
+    except Exception as exc:
+        _log.warning("[tools] could not list built-in tools: %s", exc)
+        _builtin_tools = None
     try:
         from codegraph.plugins import load_plugins, mcp_registrars
 
@@ -632,6 +657,13 @@ def owner_main(
                 )
     except Exception as exc:
         _log.warning("plugin loading failed: %s", exc)
+    if _builtin_tools is not None:
+        try:
+            tool_exposure.record(_builtin_tools, registered_tool_names(mcp))
+            _log.info("tools: %s", tool_exposure.exposure().label())
+        except Exception as exc:
+            # Unrecorded means the middleware lists every tool.
+            _log.warning("[tools] exposure not applied: %s", exc)
 
     # Reindex + watcher (if requested)
     if _startup_index_needed(_root, reindex):

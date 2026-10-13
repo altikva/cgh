@@ -246,7 +246,7 @@ cgh stop [--root DIR]
 **Graph queries work while the owner runs.** A live owner keeps the graph DB
 open for writing, which blocks a read-only open from any other process. So
 `cgh impact`, `cgh callers`, `cgh callees`, `cgh outline`, `cgh endpoints`,
-`cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
+`cgh packages`, `cgh shared-types`, `cgh why`, `cgh communities`, `cgh report`, `cgh graph`, `cgh lookup`, `cgh search`, `cgh files` and `cgh stats` first ask the repo's
 running owner over its local HTTP port, and open the graph read-only
 themselves only when no owner answers (in CI, say). They never start an owner,
 and the output and `--json` shape are the same either way.
@@ -335,6 +335,17 @@ cgh lookup BaseHandler
 cgh lookup "Multi-tenancy"    # matches doc sections
 ```
 
+**Exit codes** of `lookup`, `callers` and `callees`, for scripts:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Answered: definitions found, or the callers / callees list (even an empty one for a name that is defined) |
+| 1 | Could not answer (an owner that timed out or is older than this cgh) |
+| 3 | Not found: nothing in the index defines the name (`lookup`: no symbol and no doc section; `callers` / `callees`: no function, class or Terraform block of that name) |
+| 4 | Ambiguous, `callees` only: a bare name defined by several functions. The candidates are listed on stderr; qualify the name as `Class.method` or `module.function` |
+
+A subrepo that could not be read leaves `lookup` at 0, since the name may live there.
+
 ---
 
 ### `callers`
@@ -362,6 +373,11 @@ declares). A call through `self._kms: KmsClient` links to
 `KmsClient.destroy_crypto_key`; those callers are shown with
 `via KmsClient.destroy_crypto_key`.
 
+A caller matched by the callee's name only is marked `?`, and `??` when
+several definitions share the name; unmarked rows are fixed by the call's
+shape (same file, an import, a known receiver class) or reached through an
+interface. `cgh callees` marks its rows the same way.
+
 ---
 
 ### `callees`
@@ -376,7 +392,11 @@ cgh callees <fn_name> [--root DIR]
 
 ```bash
 cgh callees get_current_user
+cgh callees UserService.get_current_user   # one definition of a shared name
 ```
+
+A name defined by several functions exits 4 with the candidates on stderr
+(see the exit codes under `lookup`): their callees would read as one list.
 
 ---
 
@@ -437,6 +457,195 @@ cgh endpoints --include-tests --json
 
 ---
 
+### `packages`
+
+List the packages the repo's manifests declare and how they depend on each
+other, plus the MCP servers its client configs declare. Same query as the MCP
+`packages` tool, federated across subrepos (a non-parent scope is shown next
+to the package).
+
+```
+cgh packages [NAME] [--external] [--limit N] [--json] [--root DIR]
+```
+
+- **Manifests**: every `package.json` (npm, pnpm and yarn workspaces, read
+  the way the import resolver reads them) and every `pyproject.toml` that
+  declares a package or dependencies (`[project]`, optional extras,
+  `[dependency-groups]`, Poetry tables, uv workspace members). A
+  `pyproject.toml` that only configures tools is skipped.
+- **Internal or external**: a dependency is internal (`->`) when it names a
+  package declared in the same repo, external otherwise, kept as name and
+  version spec only. Python names are compared normalized (`My_Lib` matches
+  `my-lib`). `<-` lines list the packages that depend on this one.
+- **Cycles**: internal dependency cycles are printed after the list.
+- **MCP servers**: `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`
+  (comments allowed) give each server's transport and command or url. Env
+  vars and headers are listed by key name only and arguments by their
+  count; none of their values reaches the index. A command keeps its first
+  word, a url its scheme, host and path.
+- **NAME**: show only that package (exact name first, else a substring),
+  with its external dependencies and its dependents.
+- `--external`: list external dependencies instead of a count.
+- `--limit N`: show the first N packages (default 200).
+- `--json`: `{total, internal_edges, truncated, packages, cycles,
+  mcp_servers, warnings?}`.
+
+### `shared-types`
+
+Types mirrored across federated repos: a class, interface or object type
+alias defined under the same name in two scopes (the parent and a subrepo, or
+two subrepos) whose field names agree, such as a backend Pydantic model and
+the frontend TypeScript interface that mirrors it. Same view as the MCP
+`shared_types` tool.
+
+```
+cgh shared-types [NAME] [--min-confidence F] [--limit N] [--json] [--root DIR]
+```
+
+- The pairs are **deduced** at query time, never stored: federation keeps no
+  cross-repo edge, and this verb adds none. Each subrepo's graph is opened
+  read-only, and fields are read from the declarations in the source files
+  (Python annotated attributes; TypeScript / JavaScript property signatures
+  and class fields).
+- Field names compare without case or underscores, so `created_at` matches
+  `createdAt`. `confidence` is the matched fields over all fields of the
+  pair; `only_in` lists the fields one side lacks (drift).
+- **NAME**: only that type name.
+- `--min-confidence F`: lowest confidence reported, 0 to 1 (default 0.5).
+- `--limit N`: most pairs, best first (default 100).
+- `--json`: `{shared_types, count, scopes, min_confidence, truncated, note,
+  warnings?}`, each pair `{name, scopes, matched_fields, confidence,
+  deduced, definitions, only_in}`.
+
+### `why`
+
+List the rationale comments of a symbol, a file, or the whole index: the
+comments that say why the code is the way it is. Same query as the MCP
+`rationale` tool, federated across subrepos.
+
+```
+cgh why [TARGET] [--tag T] [--limit N] [--json] [--root DIR]
+```
+
+A comment counts when it opens with `WHY:`, `NOTE:`, `HACK:`, `SAFETY:`,
+`INVARIANT:`, `IMPORTANT:`, `WARNING:` or `DECISION:` (upper case, colon
+required; an owner in parentheses is fine, as in `HACK(joy):`), or when it
+cites an ADR (`ADR-0007`, `docs/adr/0007-x.md`); one that only cites an ADR is
+listed under the `ADR` tag. The comment lines right after a tag continue it. It
+is attached to the function or class right below it (decorators in between are
+fine, a blank line is not), else the innermost one around it, else the module.
+An ADR reference that matches an indexed Markdown file (`ADR-7` finds
+`docs/adr/0007-*.md`) is shown with that file. Read from Python,
+JavaScript / TypeScript, Vue, Go, Rust, Java, C#, Ruby, Terraform and SQL;
+`TODO` and `FIXME` are not rationale and are left out.
+
+- **TARGET**: a symbol name (bare, or `Class.method`; a class also lists its
+  members' comments), a file path (absolute or a suffix like `app/store.py`),
+  or nothing for every comment in the index.
+- `--tag`, `-t`: keep one tag (any case).
+- `--limit`, `-n`: maximum rows per scope (default 50, at most 200).
+- `--json`: `{target, tag, total, truncated, rationale}`, each row being
+  `{scope, file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}`.
+
+**Example:**
+
+```bash
+cgh packages
+cgh packages @acme/core       # who depends on it, what it pulls in
+cgh packages --external --json
+cgh shared-types
+cgh shared-types UserOut --json
+cgh shared-types --min-confidence 0.8
+cgh why Store.get
+cgh why app/billing/refund.py --tag HACK
+cgh why --tag ADR --json
+```
+
+---
+
+### `communities`
+
+Subsystems found from how the code connects rather than from its
+directories. Imports and calls are folded into a weighted file graph,
+clustered by modularity, and each cluster is named from its own files: the
+directory most of them share, then the file-name words that recur in it and
+rarely elsewhere. Same query as the MCP `communities` tool, federated across
+subrepos (each scope clustered on its own graph, shown in a `scope` column).
+
+```
+cgh communities [--resolution R] [--min-size N] [--limit N] [--json] [--root DIR]
+```
+
+- One row per community: name, file count, cohesion (the share of its link
+  weight that stays inside it), most central file, and the ids of the
+  communities it links to most.
+- **Shared utilities**: files linked to so many others that they would glue
+  every subsystem together are left out of clustering and listed below the
+  table with their neighbour count.
+- Test files are left out; `tests_for` maps them to what they exercise.
+- `--resolution R`: above 1 gives more, smaller communities; below 1 fewer,
+  larger ones (default 1.0).
+- `--min-size N`: hide communities with fewer files (default 2).
+- `--limit N`: at most N communities per scope (default 30), biggest first.
+- `--json`: the MCP tool payload, `{communities, shared_utilities, scopes,
+  count, truncated, note}`.
+
+The same graph always gives the same communities. The result is cached until
+the index changes, so asking twice costs nothing.
+
+**Example:**
+
+```bash
+cgh communities
+cgh communities --resolution 1.5 --min-size 3
+cgh communities --json
+```
+
+---
+
+### `report`
+
+An architecture report in Markdown, assembled from the graph with no LLM.
+Same report as the MCP `architecture_report` tool. The same index gives the
+same page.
+
+```
+cgh report [--limit N] [--resolution R] [--json] [--out FILE] [--root DIR]
+```
+
+Sections, each capped at `--limit` rows (default 10):
+
+- **Overview**: files clustered, subsystems, modularity, counts of what follows.
+- **Subsystems**: the communities of `cgh communities`, with cohesion, central
+  file, strongest links, and the most called symbol of each at `file:line`.
+- **Shared utilities**: files linked to so many others that they were left out
+  of the clustering.
+- **Pivot files**: the change-risk hotspots (churn, importers, recency) when
+  the repo has commit history, else the most imported files; each says
+  whether any test imports it.
+- **Bridges**: pairs of subsystems joined by a single file link, and files
+  reaching three or more subsystems besides their own.
+- **Unexpected links**: imports that go up the layers (a domain file importing
+  presentation code), and calls into a file with no import behind them. A call
+  resolved into several files (one interface, several implementations) is not
+  counted.
+- **Import cycles**: those crossing subsystems first.
+- **Questions worth asking**: generated by fixed rules from the findings, for
+  example whether the only link between two subsystems is intended.
+
+In a federated project each scope gets its own section. `--out FILE` also
+writes the page to a file (stdout keeps it); `--json` prints the tool
+payload, `{markdown, questions, scopes}`.
+
+**Example:**
+
+```bash
+cgh report --out ARCHITECTURE.md
+cgh report --limit 5
+```
+
+---
+
 ### `graph`
 
 Generate and display interactive Mermaid graph visualizations in the browser.
@@ -466,6 +675,38 @@ cgh graph classes                   # class hierarchy
 cgh graph docs                      # documentation structure
 cgh graph calls --mermaid           # raw Mermaid output
 cgh graph imports --html graph.html # save to file
+```
+
+---
+
+### `export`
+
+Write the code graph to a file other graph tools open. GraphML opens in
+Gephi, yEd and Cytoscape.
+
+```
+cgh export [--format graphml] [--out FILE] [--scope PATH] [--root DIR]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `graphml` | Export format |
+| `--out` | stdout | Write to this file instead of stdout |
+| `--scope` | whole repo | Keep only the files under this repo-relative directory or file, their symbols, and the edges between kept nodes |
+
+Nodes are the files, functions, classes, endpoints, Terraform blocks and
+Markdown sections, with their kind, repo-relative file, line span, and
+role / layer for files. Edges carry their `type` (`IMPORTS`, `CALLS`,
+`DEFINES_FN`, `HAS_METHOD`, ...), the imported `symbol` on IMPORTS, and on
+CALLS the `resolution` (`resolved`, `name`, `ambiguous`) also shown by
+`cgh callers`. Parent scope only. The graph is opened read-only: when a
+running owner holds it, the command says so; stop the owner with
+`cgh stop` and retry.
+
+```bash
+cgh export --out graph.graphml
+cgh export --scope src/api --out api.graphml
+cgh export > graph.graphml
 ```
 
 ---
@@ -560,6 +801,44 @@ cgh diff [--since REF] [--root DIR]
 cgh diff
 cgh diff --since HEAD~5
 cgh diff --since main
+```
+
+---
+
+### `prs`
+
+Read the open pull requests through the GitHub CLI and report the pairs
+that collide.
+
+```
+cgh prs overlap [--limit N] [--json | --format md|json] [--out FILE] [--root DIR]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--limit` | 30 | Open PRs to read, newest first (max 100) |
+| `--json` / `--format` | `md` | Markdown summary or JSON |
+| `--out` | | Also write the report to this file |
+
+Each PR's diff is mapped onto the graph symbols it changes, the way
+`cgh impact` does, using the diff's base-side line numbers (keep the index
+fresh on the PRs' base branch). Pairs are ranked:
+
+| Level | Meaning |
+|-------|---------|
+| `strong` | Both PRs change the same function or class |
+| `indirect` | Code one PR changes calls a symbol the other PR changes (one CALLS hop) |
+| `weak` | Both PRs edit the same files, with no shared symbol |
+
+Only read-only `gh` calls are made (`gh pr list`, `gh pr diff`, and
+`gh pr view` when a diff is too large). When `gh` is missing, not
+authenticated, or the repo has no GitHub remote, the command prints a
+clear message and exits 1. Served by the `pr_overlap` MCP tool while an
+owner runs.
+
+```bash
+cgh prs overlap
+cgh prs overlap --json --limit 50 --out overlap.json
 ```
 
 ---
@@ -815,6 +1094,23 @@ checkpoints and superseded entries stay behind. For each entry:
 Each promoted entry keeps its original timestamp and records its branch,
 commit, pull request, source worktree, id in the source store and promotion
 time. `knowledge_list` and `knowledge_search` return these under `provenance`.
+Outcomes are not promoted: they stay in the store they were recorded in.
+
+Outcomes record whether relying on an entry, or on some files, worked. They
+are what the `knowledge_outcome` MCP tool writes, from the shell:
+
+```
+cgh knowledge outcome useful|dead_end|corrected [--id N | --query Q] \
+    [--file PATH ...] [--note TEXT] [--corrected-by N] [--json]
+cgh knowledge outcomes [--limit N] [--json]
+```
+
+`outcome` needs an entry (`--id`, or `--query` for the best search hit), one
+or more `--file`, or both; `corrected` needs an entry and takes the id of the
+entry that fixed it. `outcomes` lists the rated entries and files with their
+status (`preferred`, `useful`, `contested`, `dead_end`, `corrected`, `faded`),
+decayed score and verdict counts. Verdicts fade with a half-life set by
+`[codegraph] knowledge_half_life_days` (30 days by default).
 
 ### `guard`
 

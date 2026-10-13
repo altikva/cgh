@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: CLI commands: search, lookup, callers, callees, outline.
+# Description: CLI commands: search, lookup, callers, callees, outline, why.
 #              Queries go through the backend-neutral GraphDB protocol
 #              (find_nodes / find_neighbors), so they work on DuckDB and
 #              SQLite alike, and federate across subrepos with a scope tag.
@@ -584,6 +584,71 @@ def _owner_lookup_rows(data: dict) -> list[tuple] | None:
     return rows
 
 
+# Exit codes of the lookup verbs (lookup, callers, callees), on top of 0
+# (answered) and 1 (could not answer: locked store, older owner...).
+EXIT_NOT_FOUND = 3  # no definition of the name in any scope
+EXIT_AMBIGUOUS = 4  # several definitions, and the command needs one
+
+
+def _definitions(root: str, name: str) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) of the code definitions
+    of ``name`` (functions, classes, Terraform blocks; not doc sections),
+    every scope. None when the graph cannot be read to tell."""
+    served = _ask_owner(root, "lookup", "symbol_lookup", {"name": name})
+    if served is not None:
+        rows = _owner_lookup_rows(served)
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            return None
+        rows = [("parent", *r) for r in _lookup_conn(conn, name)]
+        child_rows, _warnings = _query_children(root, lambda c: _lookup_conn(c, name))
+        rows += child_rows
+    if rows is None:
+        return None
+    return [r for r in rows if r[1] != "md_section"]
+
+
+def _exit_if_unknown(root: str, name: str) -> None:
+    """Exit EXIT_NOT_FOUND, saying so on stderr, when nothing defines
+    ``name``. A ``Class.method`` / ``module.function`` name counts as known
+    when a function carries its last part. Returns when it is defined or
+    the graph cannot tell."""
+    import sys
+
+    defs = _definitions(root, name)
+    if defs is None or defs:
+        return
+    if "." in name:
+        tail = _definitions(root, name.rsplit(".", 1)[-1])
+        if tail is None or any(d[1] == "function" for d in tail):
+            return
+    print(f"cgh: no definition of '{name}' in the index", file=sys.stderr)
+    raise SystemExit(EXIT_NOT_FOUND)
+
+
+def _exit_if_ambiguous(root: str, name: str) -> None:
+    """Exit EXIT_AMBIGUOUS, listing the candidates on stderr, when the bare
+    function name ``name`` has several definitions."""
+    import sys
+
+    if "." in name:
+        return
+    defs = _definitions(root, name)
+    functions = [d for d in defs or () if d[1] == "function"]
+    if len(functions) < 2:
+        return
+    print(
+        f"cgh: '{name}' names {len(functions)} functions; qualify it as "
+        "Class.method or module.function:",
+        file=sys.stderr,
+    )
+    for scope, _kind, _n, fp, start, _end in functions:
+        where = f"  ({scope})" if scope != "parent" else ""
+        print(f"  {_short_path(fp, root)}:{start}{where}", file=sys.stderr)
+    raise SystemExit(EXIT_AMBIGUOUS)
+
+
 def cmd_lookup(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     name = args.name
@@ -630,6 +695,7 @@ def cmd_lookup(args: argparse.Namespace) -> None:
                 console.print(
                     f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
                 )
+                raise SystemExit(EXIT_NOT_FOUND)
             return
 
     # No owner: open the graph read-only. An older owner holds the graph
@@ -690,6 +756,9 @@ def cmd_lookup(args: argparse.Namespace) -> None:
         console.print(
             f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
         )
+        if not child_failures:
+            # A subrepo that could not be read may hold it: no verdict then.
+            raise SystemExit(EXIT_NOT_FOUND)
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +892,387 @@ def cmd_endpoints(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_shared_types
+# ---------------------------------------------------------------------------
+
+
+def cmd_shared_types(args: argparse.Namespace) -> None:
+    """Same-named types with agreeing fields in two federated scopes,
+    deduced at query time (the shared_types MCP tool)."""
+    from codegraph.analysis.shared_types import shared_types_report
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "min_confidence": float(args.min_confidence),
+        "limit": int(args.limit),
+    }
+    route, served = _route(root, "shared-types", "shared_types", arguments)
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'shared_types')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        payload = served or {}
+    else:
+        payload = shared_types_report(
+            lambda: _query_conn(root),
+            root,
+            name=arguments["name"],
+            min_confidence=arguments["min_confidence"],
+            limit=arguments["limit"],
+        )
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    pairs = payload.get("shared_types") or []
+    if not pairs:
+        console.print(f"[dim]No shared types. {escape(payload.get('note', ''))}[/dim]")
+        return
+    for p in pairs:
+        a, b = p["definitions"]
+        console.print(
+            f"  [bold]{escape(p['name'])}[/bold]  [dim]{p['confidence']:.2f}[/dim]"
+            f"  [cyan]{escape(a['scope'])}[/cyan] {escape(_short_path(a['file'], root))}"
+            f":{a['line']}  [cyan]{escape(b['scope'])}[/cyan]"
+            f" {escape(_short_path(b['file'], root))}:{b['line']}"
+        )
+        console.print(f"      [green]{escape(', '.join(p['matched_fields']))}[/green]")
+        for scope, missing in (p.get("only_in") or {}).items():
+            if missing:
+                console.print(
+                    f"      [dim]only in {escape(scope)}: {escape(', '.join(missing))}[/dim]"
+                )
+    more = " (truncated)" if payload.get("truncated") else ""
+    console.print(f"[dim]{len(pairs)} shared type(s), deduced{more}[/dim]")
+
+
+# cmd_why
+# ---------------------------------------------------------------------------
+
+
+def _why_payload(root: str, arguments: dict) -> dict:
+    """The rationale tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.rationale import clamp_limit, payload, query
+
+    data = _ask_owner(root, "why", "rationale", arguments)
+    if data is not None:
+        return data
+    cap = clamp_limit(arguments["limit"])
+    target, tag = arguments["target"], arguments["tag"]
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        try:
+            per_scope.append(("parent", query(conn, target, tag, cap + 1)))
+        except Exception as exc:  # an index from an older cgh has no table
+            warnings.append({"scope": "parent", "error": str(exc)})
+    buckets, failures = _query_children_scoped(
+        root, lambda c: query(c, target, tag, cap + 1)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    out = payload(per_scope, target, tag, cap, lambda p: _short_path(p, root))
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def cmd_why(args: argparse.Namespace) -> None:
+    """Rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) of a
+    symbol, a file, or the whole index."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "target": args.target or "",
+        "tag": args.tag or "",
+        "limit": args.limit,
+    }
+    data = _why_payload(root, arguments)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return
+    _print_scope_warnings(_owner_warnings(data))
+    rows = data.get("rationale") or []
+    if not rows:
+        what = f" for '{arguments['target']}'" if arguments["target"] else ""
+        console.print(f"[dim]No rationale comments{escape(what)}[/dim]")
+        return
+    federated = has_subrepos(root)
+    for r in rows:
+        where = f"{r['file']}:{r['line']}"
+        if federated and r.get("scope", "parent") != "parent":
+            where = f"{r['scope']}:{where}"
+        symbol = r.get("symbol") or "(module)"
+        console.print(
+            f"  [bold yellow]{escape(r['tag'])}[/bold yellow]  "
+            f"[green]{escape(symbol)}[/green]  [dim]{escape(where)}[/dim]"
+        )
+        console.print(f"      {escape(r['text'])}", soft_wrap=True)
+        if r.get("adr_file"):
+            console.print(f"      [cyan]-> {escape(r['adr_file'])}[/cyan]")
+        elif r.get("adr"):
+            console.print(f"      [dim]{escape(r['adr'])} (no indexed file)[/dim]")
+    more = ", more not shown (--limit)" if data.get("truncated") else ""
+    console.print(f"[dim]{len(rows)} rationale comment(s){more}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_packages
+# ---------------------------------------------------------------------------
+
+
+def _packages_payload(root: str, arguments: dict) -> dict:
+    """The packages tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from codegraph.analysis.packages import collect, packages_payload
+
+    route, served = _route(root, "packages", "packages", arguments)
+    if route == "older":
+        from codegraph.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'packages')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner" and served is not None:
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", collect(conn)))
+    buckets, failures = _query_children_scoped(root, collect)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = packages_payload(
+        per_scope, short_path=lambda p: _short_path(p, root), **arguments
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def _dep_text(dep: dict) -> str:
+    group = "" if dep.get("group") == "runtime" else f" [{dep['group']}]"
+    spec = f" {dep['spec']}" if dep.get("spec") else ""
+    return f"{dep['name']}{spec}{group}"
+
+
+def cmd_packages(args: argparse.Namespace) -> None:
+    """Packages declared by manifests, their internal dependencies, who
+    depends on them, internal cycles, and declared MCP servers."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "include_external": bool(args.external),
+        "limit": args.limit if args.limit and args.limit > 0 else 200,
+    }
+    payload = _packages_payload(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    rows = payload.get("packages") or []
+    if not rows:
+        what = f" matching '{arguments['name']}'" if arguments["name"] else ""
+        console.print(f"[dim]No packages{escape(what)}[/dim]")
+    for row in rows:
+        scope = (
+            f"  [dim]({escape(row['scope'])})[/dim]"
+            if federated and row.get("scope", "parent") != "parent"
+            else ""
+        )
+        version = f" {row['version']}" if row.get("version") else ""
+        console.print(
+            f"[bold]{escape(row['name'])}[/bold][dim]{escape(version)}"
+            f"  {row['ecosystem']}  {escape(row['file'])}:{row['line']}[/dim]{scope}"
+        )
+        if row.get("workspaces"):
+            members = ", ".join(row["workspaces"])
+            console.print(f"  [dim]workspace members:[/dim] {escape(members)}")
+        for dep in row.get("internal") or []:
+            console.print(f"  [green]->[/green] {escape(_dep_text(dep))}")
+        for dep in row.get("dependents") or []:
+            console.print(f"  [cyan]<-[/cyan] {escape(_dep_text(dep))}")
+        if "external" in row:
+            for dep in row["external"]:
+                console.print(f"  [dim]ext[/dim] {escape(_dep_text(dep))}")
+        elif row.get("external_count"):
+            console.print(
+                f"  [dim]{row['external_count']} external dependency(ies), "
+                "--external to list[/dim]"
+            )
+    if rows:
+        more = ", truncated (--limit)" if payload.get("truncated") else ""
+        console.print(
+            f"[dim]{payload.get('total', len(rows))} package(s), "
+            f"{payload.get('internal_edges', 0)} internal dependency edge(s)"
+            f"{more}[/dim]"
+        )
+    for cycle in payload.get("cycles") or []:
+        console.print(
+            f"[yellow]cycle[/yellow] {escape(' -> '.join(cycle['packages']))}"
+        )
+    servers = payload.get("mcp_servers") or []
+    if servers:
+        console.print("[bold]MCP servers[/bold]")
+    for srv in servers:
+        target = srv.get("command") or srv.get("url") or "?"
+        if srv.get("args"):
+            target = f"{target} {' '.join(srv['args'])}"
+        keys = srv.get("env_keys", []) + srv.get("header_keys", [])
+        extra = f"  [dim]keys: {escape(', '.join(keys))}[/dim]" if keys else ""
+        console.print(
+            f"  [bold]{escape(srv['name'])}[/bold] [dim]{escape(srv['transport'])}[/dim]"
+            f"  {escape(target)}  [dim]{escape(srv['file'])}:{srv['line']}[/dim]{extra}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# cmd_communities
+# ---------------------------------------------------------------------------
+
+
+def communities_payload_for(root: str, arguments: dict) -> dict:
+    """The communities tool payload, from the live owner or a local
+    read-only open (parent plus each subrepo), built by the same code either
+    way."""
+    from codegraph.analysis.communities import communities_for, communities_payload
+
+    served = _ask_owner(root, "communities", "communities", arguments)
+    if served is not None:
+        return served
+    resolution = arguments["resolution"]
+    per_scope: list[tuple[str, object]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", communities_for(conn, resolution)))
+    buckets, failures = _query_children_scoped(
+        root, lambda c: communities_for(c, resolution)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = communities_payload(
+        per_scope,  # type: ignore[arg-type]
+        lambda p: _short_path(p, root),
+        resolution=resolution,
+        min_size=arguments["min_size"],
+        max_communities=arguments["max_communities"],
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_communities(args: argparse.Namespace) -> None:
+    """Subsystems detected from the import and call graph, as a table."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "resolution": float(args.resolution),
+        "min_size": int(args.min_size),
+        "max_communities": int(args.limit),
+    }
+    payload = communities_payload_for(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    rows = payload.get("communities") or []
+    if not rows:
+        console.print("[dim]No communities: the graph has too few linked files.[/dim]")
+        return
+    federated = len(payload.get("scopes") or []) > 1
+    table = Table(box=box.SIMPLE_HEAD, pad_edge=False, padding=(0, 1))
+    table.add_column("#", justify="right", style="dim", no_wrap=True, min_width=2)
+    if federated:
+        table.add_column("scope", style="magenta")
+    table.add_column("name", style="bold", ratio=1)
+    table.add_column("files", justify="right", no_wrap=True)
+    table.add_column("cohesion", justify="right", no_wrap=True)
+    table.add_column("central", style="cyan", no_wrap=True)
+    table.add_column("links", style="dim", no_wrap=True)
+    for r in rows:
+        links = ", ".join(str(lk["id"]) for lk in r.get("links") or []) or "-"
+        cells = [str(r["id"])]
+        if federated:
+            cells.append(escape(r.get("scope", "parent")))
+        cells += [
+            escape(r["name"]),
+            str(r["size"]),
+            f"{r['cohesion']:.2f}",
+            escape(os.path.basename(r.get("central", ""))),
+            links,
+        ]
+        table.add_row(*cells)
+    console.print(table)
+    hubs = payload.get("shared_utilities") or []
+    if hubs:
+        shown = ", ".join(f"{escape(h['file'])} ({h['degree']})" for h in hubs[:6])
+        more = f" and {len(hubs) - 6} more" if len(hubs) > 6 else ""
+        console.print(f"[dim]Shared utilities, left out:[/dim] {shown}{more}")
+    for s in payload.get("scopes") or []:
+        label = f"{s['scope']}: " if federated else ""
+        console.print(
+            f"[dim]{label}{s['shown']} of {s['communities']} communities shown, "
+            f"{s['files_clustered']} files clustered, modularity {s['modularity']}"
+            + (", more with --limit" if payload.get("truncated") else "")
+            + "[/dim]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# cmd_report
+# ---------------------------------------------------------------------------
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    """The architecture report: Markdown on stdout, --out also saves it."""
+    import sys
+
+    from codegraph.cli.output import emit_result
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "max_items": int(args.limit),
+        "resolution": float(args.resolution),
+    }
+    payload = _ask_owner(root, "report", "architecture_report", arguments)
+    if payload is None:
+        from codegraph.analysis.arch_report import build_report
+
+        payload = build_report(
+            _query_conn(root),
+            root,
+            lambda p: _short_path(p, root),
+            resolution=arguments["resolution"],
+            max_items=max(1, arguments["max_items"]),
+        )
+    for w in payload.get("warnings") or []:
+        print(f"cgh: {w.get('scope')}: {w.get('error')}", file=sys.stderr)
+    if args.json:
+        emit_result(json.dumps(payload, indent=2), args.out, "architecture.json")
+        return
+    emit_result(payload.get("markdown", ""), args.out, "ARCHITECTURE.md")
+
+
+# ---------------------------------------------------------------------------
 # cmd_callers
 # ---------------------------------------------------------------------------
 
@@ -831,9 +1281,34 @@ def _callers_conn(conn, fn_name: str) -> list[tuple]:
     from codegraph.analysis.callers import callers_of
 
     return [
-        (c["caller"], c["file"], c["line"], c.get("targets", []), c.get("via", ""))
+        (
+            c["caller"],
+            c["file"],
+            c["line"],
+            c.get("targets", []),
+            c.get("via", ""),
+            c.get("resolution", ""),
+        )
         for c in callers_of(conn, fn_name)
     ]
+
+
+def _guess_tag(resolution: str) -> str:
+    """A compact marker for a row matched by name only: "?" for one
+    definition, "??" for several. Empty for a resolved or interface row
+    (and for an owner from an older cgh, which sends no resolution)."""
+    from codegraph.analysis.provenance import AMBIGUOUS, NAME
+
+    if resolution == NAME:
+        return "  [yellow]?[/yellow]"
+    if resolution == AMBIGUOUS:
+        return "  [yellow]??[/yellow]"
+    return ""
+
+
+_GUESS_LEGEND = (
+    "[dim]? matched by name only, ?? several definitions share the name[/dim]"
+)
 
 
 def cmd_callers(args: argparse.Namespace) -> None:
@@ -852,6 +1327,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 c["line"],
                 c.get("targets", []),
                 c.get("via", ""),
+                c.get("resolution", ""),
             )
             for c in served.get("callers") or []
         ]
@@ -874,6 +1350,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
     _print_scope_warnings(warnings)
 
     if not rows:
+        _exit_if_unknown(root, args.fn_name)
         console.print(
             f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]"
         )
@@ -885,8 +1362,10 @@ def cmd_callers(args: argparse.Namespace) -> None:
     # unreadable (thousands of lines), so callers are grouped under each
     # distinct list instead, printed once.
     groups: dict[tuple, list[tuple]] = {}
-    for scope, name, fp, line, targets, via in rows:
-        groups.setdefault(tuple(targets or ()), []).append((scope, name, fp, line, via))
+    for scope, name, fp, line, targets, via, resolution in rows:
+        groups.setdefault(tuple(targets or ()), []).append(
+            (scope, name, fp, line, via, resolution)
+        )
     for targets, members in groups.items():
         branch = tree
         if targets:
@@ -895,7 +1374,7 @@ def cmd_callers(args: argparse.Namespace) -> None:
                 + ", ".join(_short_path(t, root) for t in targets)
                 + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
             )
-        for scope, name, fp, line, via in members:
+        for scope, name, fp, line, via, resolution in members:
             short = _short_path(fp, root)
             scope_tag = (
                 f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
@@ -903,9 +1382,12 @@ def cmd_callers(args: argparse.Namespace) -> None:
             # Reached through an interface method the queried one implements.
             via_tag = f"  [dim]via {via}[/dim]" if via else ""
             branch.add(
-                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]{via_tag}{scope_tag}"
+                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]"
+                f"{via_tag}{_guess_tag(resolution)}{scope_tag}"
             )
     console.print(tree)
+    if any(_guess_tag(r[6]) for r in rows):
+        console.print(_GUESS_LEGEND)
 
 
 # ---------------------------------------------------------------------------
@@ -914,20 +1396,51 @@ def cmd_callers(args: argparse.Namespace) -> None:
 
 
 def _callees_conn(conn, fn_name: str) -> list[tuple]:
-    rows = [
-        (row["dst_name"], row["dst_file_path"], row["dst_start_line"])
+    from codegraph.analysis.interfaces import qualified_methods
+    from codegraph.analysis.provenance import RESOLVED, EdgeProvenance
+
+    # `Class.method` / `module.function` selects those definitions only.
+    start_ids = qualified_methods(conn, fn_name) if "." in fn_name else []
+    anchors = [{"src_key": i} for i in start_ids] or [{"src_where": {"name": fn_name}}]
+    found = [
+        row
+        for anchor in anchors
         for row in conn.find_neighbors(
             "CALLS",
-            src_where={"name": fn_name},
-            return_dst=["name", "file_path", "start_line"],
+            return_src=["id"],
+            return_dst=["id", "name", "file_path", "start_line"],
+            **anchor,
         )
     ]
+    from codegraph.analysis.interfaces import InterfaceResolver
+    from codegraph.analysis.provenance import INTERFACE
+
+    resolver = InterfaceResolver(conn)
+    rows: list[tuple] = []
+    for row, resolution in zip(found, EdgeProvenance(conn).of_rows(found), strict=True):
+        rows.append(
+            (row["dst_name"], row["dst_file_path"], row["dst_start_line"], resolution)
+        )
+        # A call to an interface method with a single implementation lands
+        # there, as find_callees reports it.
+        impl = resolver.sole_implementation(str(row.get("dst_id") or ""))
+        for r in (
+            conn.find_nodes(
+                "Function",
+                where={"id": impl},
+                return_fields=["name", "file_path", "start_line"],
+                limit=1,
+            )
+            if impl
+            else ()
+        ):
+            rows.append((r["name"], r["file_path"], r["start_line"], INTERFACE))
     if "." in fn_name:
         # A Terraform address: the blocks it references.
         from codegraph.analysis.terraform import used_by
 
         rows += [
-            (r["dst_address"], r["dst_file_path"], r["dst_start_line"])
+            (r["dst_address"], r["dst_file_path"], r["dst_start_line"], RESOLVED)
             for r in used_by(conn, fn_name)
         ]
     return rows
@@ -937,6 +1450,8 @@ def cmd_callees(args: argparse.Namespace) -> None:
     root = os.path.abspath(args.root)
     federated = has_subrepos(root)
     rows: list[tuple] = []
+    # The callees of several same-named functions would read as one list.
+    _exit_if_ambiguous(root, args.fn_name)
 
     served = _ask_owner(
         root, "callees", "find_callees", {"fn_name": args.fn_name, "max_depth": 1}
@@ -944,7 +1459,13 @@ def cmd_callees(args: argparse.Namespace) -> None:
     if served is not None:
         # The owner already federates, every row carries its scope.
         rows = [
-            (c.get("scope", "parent"), c["callee"], c["file"], c["line"])
+            (
+                c.get("scope", "parent"),
+                c["callee"],
+                c["file"],
+                c["line"],
+                c.get("resolution", ""),
+            )
             for c in served.get("callees") or []
         ]
         warnings = _owner_warnings(served)
@@ -966,15 +1487,21 @@ def cmd_callees(args: argparse.Namespace) -> None:
     _print_scope_warnings(warnings)
 
     if not rows:
+        _exit_if_unknown(root, args.fn_name)
         console.print(f"[dim]'{args.fn_name}' calls no indexed functions[/dim]")
         return
 
     tree = Tree(f"[bold green]{args.fn_name}[/bold green] [dim]calls:[/dim]")
-    for scope, name, fp, line in rows:
+    for scope, name, fp, line, resolution in rows:
         short = _short_path(fp, root)
         scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
-        tree.add(f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]{scope_tag}")
+        tree.add(
+            f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]"
+            f"{_guess_tag(resolution)}{scope_tag}"
+        )
     console.print(tree)
+    if any(_guess_tag(r[4]) for r in rows):
+        console.print(_GUESS_LEGEND)
 
 
 # ---------------------------------------------------------------------------

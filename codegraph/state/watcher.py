@@ -26,7 +26,7 @@ from watchdog.observers import Observer
 
 from codegraph.analysis.federation import child_paths_to_skip, is_under_any
 from codegraph.core.utils import quiet_subprocess_kwargs
-from codegraph.indexer import _IGNORE_DIRS, _is_cghignored, index_file
+from codegraph.indexer import _is_cghignored, index_file, skipped_path_parts
 from codegraph.parsers import is_supported
 
 _log = logging.getLogger(__name__)
@@ -66,10 +66,9 @@ class _CodeGraphHandler(FileSystemEventHandler):
         if not is_supported(p):
             return True
 
-        # 2. Hardcoded ignored dirs
-        for part in p.parts:
-            if part in _IGNORE_DIRS or part.startswith("."):
-                return True
+        # 2. Hardcoded ignored dirs and dot-names (MCP client configs kept)
+        if skipped_path_parts(p.parts):
+            return True
 
         # 3. .cghignore (fast, in-memory)
         if _is_cghignored(p, self._root):

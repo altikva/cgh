@@ -19,12 +19,14 @@
     "backend",
     "callees",
     "callers",
+    "communities",
     "compact",
     "diff",
     "doctor",
     "endpoints",
     "ensurepath",
     "examples",
+    "export",
     "federate",
     "fetch",
     "files",
@@ -44,19 +46,24 @@
     "memory",
     "memory-index",
     "outline",
+    "packages",
     "papercut",
     "parsers",
     "plan-index",
     "plugins",
+    "prs",
+    "report",
     "reset",
     "search",
     "serve",
     "setup",
+    "shared-types",
     "stats",
     "status",
     "stop",
     "tail",
-    "watch"
+    "watch",
+    "why"
   ],
   "tree": {
     "options": [
@@ -233,6 +240,19 @@
           "fn_name"
         ]
       },
+      "communities": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--min-size",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
+        ]
+      },
       "compact": {
         "options": [
           "--help",
@@ -292,6 +312,16 @@
         "positionals": [
           "example_action",
           "name"
+        ]
+      },
+      "export": {
+        "options": [
+          "--format",
+          "--help",
+          "--out",
+          "--root",
+          "--scope",
+          "-h"
         ]
       },
       "federate": {
@@ -473,6 +503,29 @@
           "-h"
         ],
         "verbs": {
+          "outcome": {
+            "options": [
+              "--corrected-by",
+              "--file",
+              "--help",
+              "--id",
+              "--json",
+              "--note",
+              "--query",
+              "-h"
+            ],
+            "positionals": [
+              "verdict"
+            ]
+          },
+          "outcomes": {
+            "options": [
+              "--help",
+              "--json",
+              "--limit",
+              "-h"
+            ]
+          },
           "promote": {
             "options": [
               "--archive",
@@ -548,6 +601,20 @@
           "file"
         ]
       },
+      "packages": {
+        "options": [
+          "--external",
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "-h",
+          "-n"
+        ],
+        "positionals": [
+          "name"
+        ]
+      },
       "papercut": {
         "options": [
           "--fix",
@@ -582,6 +649,33 @@
           "--json",
           "--root",
           "-h"
+        ]
+      },
+      "prs": {
+        "options": [
+          "--format",
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
+      "report": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--out",
+          "--resolution",
+          "--root",
+          "-h",
+          "-n",
+          "-r"
         ]
       },
       "reset": {
@@ -634,6 +728,20 @@
           "target"
         ]
       },
+      "shared-types": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--min-confidence",
+          "--root",
+          "-h",
+          "-n"
+        ],
+        "positionals": [
+          "name"
+        ]
+      },
       "stats": {
         "options": [
           "--help",
@@ -678,6 +786,21 @@
           "--verbose",
           "-h",
           "-v"
+        ]
+      },
+      "why": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--root",
+          "--tag",
+          "-h",
+          "-n",
+          "-t"
+        ],
+        "positionals": [
+          "target"
         ]
       }
     }

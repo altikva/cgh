@@ -28,9 +28,14 @@
 #   [mcp]
 #   auto_watch = true
 #   reindex_on_start = true
+#
+#   [tools]
+#   expose = "all"            # or "core": what tools/list shows, see
+#   extra = []                # codegraph/server/tool_exposure.py
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -65,6 +70,12 @@ DEAD_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
     ("plugin", "summarize", "gemini_model"),
 )
 
+_log = logging.getLogger(__name__)
+
+# Values [tools] expose accepts. Anything else falls back to "all", so a
+# typo never hides a tool.
+TOOL_EXPOSE_MODES: tuple[str, ...] = ("all", "core")
+
 _legacy_mode_warned = False
 _legacy_mode_suppressed = False
 
@@ -90,6 +101,11 @@ def config_notices(config: CodegraphConfig) -> list[str]:
         notices.append(LEGACY_SECURE_MODE_NOTICE)
     if config.dead_keys:
         notices.append(dead_keys_notice(config.dead_keys))
+    if config.tools_expose_invalid is not None:
+        notices.append(
+            f"[tools] expose = {config.tools_expose_invalid!r} is not one of "
+            f"{', '.join(TOOL_EXPOSE_MODES)}; every tool is listed"
+        )
     return notices
 
 
@@ -287,12 +303,26 @@ class CodegraphConfig:
     # is audited.
     allow_fetch: bool = False
 
+    # Half-life, in days, of a knowledge outcome: a verdict this old weighs
+    # half as much as a fresh one when entries and files are scored. Zero
+    # turns decay off.
+    knowledge_half_life_days: float = 30.0
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
     plugins_enabled: list[str] | None = None
     plugins_disabled: list[str] = field(default_factory=list)
     plugin_tables: dict[str, dict] = field(default_factory=dict)
+
+    # [tools]: which MCP tools tools/list shows. "all" (the default) lists
+    # every tool; "core" lists the core set plus tools_extra plus every
+    # plugin tool. Hidden tools stay callable by name. An unknown expose
+    # value loads as "all" and keeps the raw value in tools_expose_invalid
+    # for the notice.
+    tools_expose: str = "all"
+    tools_extra: list[str] = field(default_factory=list)
+    tools_expose_invalid: str | None = None
 
     @property
     def codegraph_dir(self) -> Path:
@@ -384,6 +414,13 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.legacy_secure_mode = str(cg["mode"]).strip().lower() == "secure"
     if "allow_fetch" in cg:
         config.allow_fetch = bool(cg["allow_fetch"])
+    if "knowledge_half_life_days" in cg:
+        try:
+            config.knowledge_half_life_days = max(
+                0.0, float(cg["knowledge_half_life_days"])
+            )
+        except (TypeError, ValueError):
+            pass  # a malformed value keeps the default rather than break loading
 
     terraform = data.get("terraform", {})
     sources = terraform.get("module_sources") if isinstance(terraform, dict) else None
@@ -404,6 +441,8 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     if "reindex_on_start" in mcp:
         config.reindex_on_start = mcp["reindex_on_start"]
 
+    _apply_tools_table(config, data.get("tools"))
+
     plugins = data.get("plugins", {})
     if "enabled" in plugins:
         config.plugins_enabled = list(plugins["enabled"])
@@ -415,6 +454,43 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
     for name, table in (data.get("plugin") or {}).items():
         if isinstance(table, dict):
             config.plugin_tables[name] = table
+
+
+def _apply_tools_table(config: CodegraphConfig, tools: object) -> None:
+    """Read [tools] expose / extra. Fails open: an unknown expose value
+    means "all", and a malformed extra is dropped, so a bad config can
+    only list more tools than intended, never fewer."""
+    if not isinstance(tools, dict):
+        return
+    if "expose" in tools:
+        raw = tools["expose"]
+        value = raw.strip().lower() if isinstance(raw, str) else ""
+        if value in TOOL_EXPOSE_MODES:
+            config.tools_expose = value
+            config.tools_expose_invalid = None
+        else:
+            _log.warning(
+                "[tools] expose = %r is not one of %s; listing every tool",
+                raw,
+                ", ".join(TOOL_EXPOSE_MODES),
+            )
+            config.tools_expose = "all"
+            config.tools_expose_invalid = str(raw)
+    if "extra" in tools:
+        raw_extra = tools["extra"]
+        if not isinstance(raw_extra, list):
+            _log.warning("[tools] extra must be a list of tool names; ignored")
+            config.tools_extra = []
+            return
+        names: list[str] = []
+        for item in raw_extra:
+            name = item.strip() if isinstance(item, str) else ""
+            if not name:
+                _log.warning("[tools] extra entry %r is not a tool name; ignored", item)
+                continue
+            if name not in names:
+                names.append(name)
+        config.tools_extra = names
 
 
 def _collect_dead_keys(config: CodegraphConfig, data: dict) -> None:
@@ -480,6 +556,9 @@ max_file_size_kb = 500
 # on their own shortly after the parent owner exits.
 # subrepos = ["./child-repo"]
 # federate_auto_up = true
+# Knowledge outcomes (knowledge_outcome) fade with age: a verdict this many
+# days old weighs half as much as a fresh one. 0 turns the decay off.
+# knowledge_half_life_days = 30
 
 [parsers]
 # Uncomment to restrict which parsers are active:
@@ -500,6 +579,14 @@ max_file_size_kb = 500
 auto_watch = true
 # Re-index before starting MCP server
 reindex_on_start = true
+
+[tools]
+# Which MCP tools tools/list shows. "all" lists every tool. "core" lists a
+# small core set plus the names in extra plus every plugin tool, for
+# clients that load every tool schema into the context. A hidden tool
+# stays callable by name, but an agent only calls what it sees listed.
+# expose = "all"
+# extra = ["find_callees", "impact_of"]
 
 [plugins]
 # Installed plugins (pip install "cgh[plugins]") register themselves;

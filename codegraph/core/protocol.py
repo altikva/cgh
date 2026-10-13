@@ -91,8 +91,9 @@ class GraphDB(Protocol):
         """Delete every node + edge associated with ``file_path``.
 
         Deletes across all node labels keyed on file_path, plus the
-        File-keyed IMPORTS edges, the file's call sites and its name
-        references. Used by the indexer before re-indexing a changed file.
+        File-keyed IMPORTS edges, the file's call sites, its name
+        references and its rationale comments. Used by the indexer before
+        re-indexing a changed file.
         """
 
     # --- Writer stamps ------------------------------------------------------
@@ -109,6 +110,31 @@ class GraphDB(Protocol):
         """(stale, orphans): indexed files whose stamp is missing or taken at
         another mtime, and paths holding references or a stamp but no
         indexed File node any more."""
+
+    # --- Rationale comments -------------------------------------------------
+    # Tagged or ADR-citing comments and the symbol each documents, read from
+    # the source at index time (analysis/rationale.py).
+
+    def replace_rationale(self, file_path: str, rows: list[tuple[Any, ...]]) -> None:
+        """Replace the rationale comments recorded for ``file_path`` with
+        ``rows`` of (line, tag, text, symbol_id, symbol, symbol_kind,
+        symbol_line, adr). purge_file_data drops them too."""
+
+    def rationale_rows(
+        self,
+        symbol: str = "",
+        file_suffix: str = "",
+        tag: str = "",
+        symbol_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Rationale rows as dicts over graph_model.RATIONALE_COLUMNS, by
+        file then line. ``symbol`` matches the qualified name, a bare name
+        of a member (Cls.f for "f") and a class's members (Cls.f for
+        "Cls"); ``file_suffix`` an absolute path or a path suffix; the
+        other filters are exact. Empty filters match everything; ``limit``
+        0 means no cap."""
 
     # --- Name references ----------------------------------------------------
     # INHERITS, MD_REFS_*, MD_LINKS_TO and cross-file IMPLEMENTED_BY edges
@@ -159,6 +185,11 @@ class GraphDB(Protocol):
         in ``ids``. Rows are (from_id, file_path, name, to_id, kind, hint,
         ctx).
         """
+
+    def call_sites_from(self, from_ids: list[str]) -> list[tuple[str, ...]]:
+        """The call sites recorded in the functions ``from_ids``, as
+        (from_id, file_path, name, to_id, kind, hint, ctx) rows. Read at
+        query time to tell how each CALLS edge of a caller was resolved."""
 
     def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
         """Every Function whose name is in ``names``, as (id, name, file_path)."""

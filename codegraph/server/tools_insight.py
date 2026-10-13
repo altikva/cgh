@@ -8,8 +8,10 @@
 #              protocol: file_summary (one-shot file orientation),
 #              impact_of (reverse blast radius over CALLS / IMPORTS),
 #              path_between (shortest path over an edge type), and
-#              import_cycles (SCC detection on the IMPORTS graph). All are
-#              federated across subrepos and return JSON strings.
+#              import_cycles (SCC detection on the IMPORTS graph) and
+#              shared_types (same-named types with agreeing fields in two
+#              federated scopes, deduced at query time). All are federated
+#              across subrepos and return JSON strings.
 
 from __future__ import annotations
 
@@ -193,13 +195,22 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def impact_of(symbol_or_file: str, max_depth: int = 3, focus: str = "") -> str:
+    def impact_of(
+        symbol_or_file: str, max_depth: int = 3, focus: str = "", max_tokens: int = 0
+    ) -> str:
         """
         Reverse blast radius: what depends on a symbol or file. If the
         argument looks like a path (or matches a File node) we walk IMPORTS
         backward to find every file that transitively imports it. Otherwise
         we resolve it as a function name and walk CALLS backward to find
         every transitive caller.
+
+        JS / TS: dynamic imports with a literal specifier (`import('./x')`)
+        count as imports, and a barrel that re-exports a file (`export *
+        from './x'`, `export { a } from './x'`) passes it on: the barrel's
+        importers are reached in the same hop. Each impacted file says
+        `via` which link reached it ("import", "reexport", "dynamic",
+        "interface", "terraform").
 
         Terraform: a .tf path or an address (var.region) walks back the
         blocks that reference it.
@@ -211,14 +222,25 @@ def register(mcp) -> None:
                           impacted nodes matching these term(s) (matched on
                           path, role and layer) instead of the first N, e.g.
                           focus="router" or focus="frontend api".
+          max_tokens:     approximate size budget of the answer (about 4
+                          characters per token of JSON); 0 (default) is no
+                          budget. Over it, the farthest impacted nodes go
+                          first, `truncated` is set and `dropped` counts them.
 
         Returns JSON with `direction` ("callers" or "importers"), the
         `impacted` set grouped by role / layer for files, any reaching
-        endpoints, a `count`, and `truncated`.
+        endpoints, a `count` (of the impacted nodes returned), and
+        `truncated`.
 
         Federated per scope. CALLS reverse reach over-counts (see `note`):
         edges are name-matched, so a listed caller may belong to a
-        same-named symbol elsewhere.
+        same-named symbol elsewhere. Each impacted function carries the
+        `resolution` of the call edge that reached it ("resolved", "name",
+        "ambiguous", "interface", see find_callers): the guessed ones are
+        where the over-count lives. A function that is the only
+        implementation of an interface method (Protocol or ABC) also counts
+        the callers of that interface method ("interface"); with several
+        implementations the walk does not guess.
         """
         arg = symbol_or_file
         as_path = _looks_like_path(arg)
@@ -238,6 +260,7 @@ def register(mcp) -> None:
         direction = "importers" if as_path else "callers"
         edge = "IMPORTS" if as_path else "CALLS"
 
+        from codegraph.analysis.impact import REEXPORT, import_edges_into
         from codegraph.analysis.terraform import dependent_files as tf_dependents
         from codegraph.analysis.terraform import impacted_files as tf_impacted_files
         from codegraph.analysis.terraform import nodes_named as tf_nodes_named
@@ -246,32 +269,50 @@ def register(mcp) -> None:
         tf_ids: set[str] = set()
 
         def reverse_bfs(
-            conn, start_keys: list[str], first_hop: list[str] | None = None
+            conn,
+            start_keys: list[str],
+            first_hop: list[str] | None = None,
+            reached_by: dict[str, str] | None = None,
+            dispatch=None,
+            via: dict[str, str] | None = None,
         ) -> tuple[list[str], bool]:
             """Bounded reverse BFS: collect source keys reachable into the
             start keys within max_depth hops. Returns (keys, truncated).
             ``first_hop`` keys count as reached in the first hop (the files
-            calling a file's methods through an interface).
+            calling a file's methods through an interface). ``reached_by``,
+            when given, maps each reached key to the key it was found
+            calling (the edge that brought it in). ``dispatch(key)``, when
+            given, names the interface methods whose only implementation is
+            the function ``key``: their callers reach it too. ``via``, when
+            given (file walks), maps each reached file to the link that
+            brought it in: "import", "reexport", "dynamic", "terraform" or
+            "interface". A barrel re-exporting a reached file passes it on
+            to its importers within the same hop.
 
             Terraform has no imports or calls: a .tf file's dependents are
             the files whose blocks reference its blocks, and a block's are
             the blocks referencing it (the TF reference edges)."""
             extra = [k for k in first_hop or () if k not in start_keys]
+            if via is None:
+                via = {}
+            via.update(dict.fromkeys(extra, "interface"))
             seen: set[str] = set(start_keys) | set(extra)
             frontier = list(start_keys) + extra
             ordered: list[str] = list(extra)
             truncated = False
             depth = 0
+            kinds: dict[str, str] = {}
             while frontier and depth < max(1, int(max_depth)):
                 depth += 1
                 next_frontier: list[str] = []
-                for key in frontier:
+                # Grows while it is walked: the importers of a barrel that
+                # re-exports a reached file are reached in the same hop.
+                queue = list(frontier)
+                for key in queue:
                     if as_path:
-                        rows = conn.find_neighbors(
-                            edge, dst_key=key, return_src=["path"], limit=_FANOUT_CAP
-                        )
-                        srcs = [r["src_path"] for r in rows]
-                        srcs += tf_dependents(conn, key, limit=_FANOUT_CAP)
+                        kinds = import_edges_into(conn, key, limit=_FANOUT_CAP)
+                        rows = srcs = list(kinds)
+                        srcs = srcs + tf_dependents(conn, key, limit=_FANOUT_CAP)
                     elif key in tf_ids:
                         rows = srcs = tf_referrers(conn, key, limit=_FANOUT_CAP)
                         tf_ids.update(srcs)
@@ -280,14 +321,30 @@ def register(mcp) -> None:
                             edge, dst_key=key, return_src=["id"], limit=_FANOUT_CAP
                         )
                         srcs = [r["src_id"] for r in rows]
+                    callee = dict.fromkeys(srcs, key)
+                    for iface in dispatch(key) if dispatch is not None else ():
+                        for r in conn.find_neighbors(
+                            edge, dst_key=iface, return_src=["id"], limit=_FANOUT_CAP
+                        ):
+                            if r["src_id"] not in callee:
+                                callee[r["src_id"]] = iface
+                                srcs.append(r["src_id"])
                     if len(rows) >= _FANOUT_CAP:
                         truncated = True
                     for s in srcs:
                         if s in seen:
                             continue
                         seen.add(s)
+                        if reached_by is not None:
+                            reached_by[s] = callee.get(s, key)
                         ordered.append(s)
-                        next_frontier.append(s)
+                        kind = kinds.get(s) if as_path else ""
+                        if as_path:
+                            via[s] = "terraform" if kind is None else kind or "import"
+                        if kind == REEXPORT:
+                            queue.append(s)
+                        else:
+                            next_frontier.append(s)
                         if len(ordered) >= _IMPACT_CAP:
                             return ordered, True
                 frontier = next_frontier
@@ -302,6 +359,24 @@ def register(mcp) -> None:
 
             # Resolve the starting key(s) within this scope.
             first_hop: list[str] = []
+            iface_keys: set[str] = set()
+            reached_by: dict[str, str] = {}
+            via: dict[str, str] = {}
+            resolver = InterfaceResolver(conn)
+
+            def dispatch(key: str) -> list[str]:
+                """Interface methods whose single implementation is ``key``:
+                a call through them can only land there."""
+                if key in tf_ids:
+                    return []
+                found = [
+                    i
+                    for i in resolver.interfaces_of(key)
+                    if i not in start_keys and resolver.sole_implementation(i) == key
+                ]
+                iface_keys.update(found)
+                return found
+
             if as_path:
                 start_keys = [_abs(arg)]
                 if not start_keys[0].endswith((".tf", ".tfvars")):
@@ -318,9 +393,11 @@ def register(mcp) -> None:
                 if "." in arg:
                     # Class.method: that method and the interface methods it
                     # implements (their callers reach it through them).
-                    resolver = InterfaceResolver(conn)
-                    for fid in qualified_methods(conn, arg):
-                        for key in (fid, *resolver.interfaces_of(fid)):
+                    own = qualified_methods(conn, arg)
+                    for fid in own:
+                        ifaces = resolver.interfaces_of(fid)
+                        iface_keys.update(i for i in ifaces if i not in own)
+                        for key in (fid, *ifaces):
                             if key not in start_keys:
                                 start_keys.append(key)
                     # A Terraform address (var.region, google_x.y).
@@ -340,7 +417,14 @@ def register(mcp) -> None:
                     cap=_IMPACT_CAP,
                 )
             else:
-                keys, trunc = reverse_bfs(conn, start_keys, first_hop)
+                keys, trunc = reverse_bfs(
+                    conn,
+                    start_keys,
+                    first_hop,
+                    None if as_path else reached_by,
+                    None if as_path else dispatch,
+                    via,
+                )
 
             out: list[dict] = []
             if as_path:
@@ -364,11 +448,30 @@ def register(mcp) -> None:
                             "role": role,
                             "layer": layer,
                             "lang": lang,
+                            "via": via.get(path, "import"),
                             "_trunc": trunc,
                         }
                     )
             else:
-                # Each impacted key is a Function id "file::name".
+                # Each impacted key is a Function id "file::name", carrying
+                # the resolution of the CALLS edge that brought it in.
+                from codegraph.analysis.provenance import (
+                    INTERFACE,
+                    RESOLVED,
+                    EdgeProvenance,
+                )
+
+                prov = EdgeProvenance(conn)
+                prov.prefetch([k for k in keys if k not in tf_ids])
+
+                def _resolution(fid: str) -> str:
+                    callee = reached_by.get(fid, "")
+                    if fid in tf_ids or not callee:
+                        return RESOLVED
+                    if callee in iface_keys:
+                        return INTERFACE
+                    return prov.of(fid, callee)
+
                 for fid in keys:
                     file_path = fid.rsplit("::", 1)[0] if "::" in fid else ""
                     role = layer = ""
@@ -389,6 +492,7 @@ def register(mcp) -> None:
                             "file": file_path,
                             "role": role,
                             "layer": layer,
+                            "resolution": _resolution(fid),
                             "_trunc": trunc,
                         }
                     )
@@ -485,6 +589,48 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
+        if max_tokens > 0:
+            from codegraph.server._budget import fit_tokens
+
+            # Impacted nodes come nearest first: the farthest go first.
+            if fit_tokens(payload, ["impacted"], max_tokens):
+                payload["count"] = len(payload["impacted"])
+        return json.dumps(payload, indent=2)
+
+    @mcp.tool()
+    @_logged_tool
+    def shared_types(
+        name: str = "", min_confidence: float = 0.5, limit: int = 100
+    ) -> str:
+        """
+        Types shared across federated repos, deduced at query time: a class,
+        interface or object type alias defined under the same name in two
+        scopes whose field names agree, such as a backend Pydantic model and
+        the frontend TypeScript interface mirroring it. Federation stores no
+        cross-repo edge; this view stores nothing either.
+
+        Args:
+          name:           only this type name (default: every shared name).
+          min_confidence: lowest share of matching fields to report, 0..1
+                          (default 0.5). snake_case and camelCase compare
+                          equal.
+          limit:          most pairs to return, best first (default 100).
+
+        Returns JSON `shared_types`: one `{name, scopes, matched_fields,
+        confidence, deduced: true, definitions, only_in}` per pair, with
+        `definitions` giving each side's scope, file, line and fields and
+        `only_in` the fields one side lacks (drift). Reads Python and
+        TypeScript / JavaScript declarations. Children are opened read-only.
+        """
+        from codegraph.analysis.shared_types import shared_types_report
+
+        payload = shared_types_report(
+            _get_conn,
+            _srv._root,
+            name=name,
+            min_confidence=float(min_confidence),
+            limit=int(limit),
+        )
         return json.dumps(payload, indent=2)
 
     @mcp.tool()
@@ -503,7 +649,13 @@ def register(mcp) -> None:
 
         Returns JSON `{src, dst, edge, path: [...], length}` or
         `{found: false}`. Per scope: a path is reported from the first scope
-        that contains one, so it never crosses repo boundaries.
+        that contains one, so it never crosses repo boundaries. Over CALLS,
+        `hops` lists each step as {from, to, resolution} ("resolved",
+        "name", "ambiguous", see find_callers), so a path resting on a
+        guessed edge shows it. A call to an interface method (Protocol or
+        ABC) with exactly one implementation in the scope continues into
+        that implementation, a hop marked "interface"; with several, the
+        path does not guess and stops there.
         """
         edge = (edge or "CALLS").upper()
         if edge not in {"CALLS", "IMPORTS"}:
@@ -537,7 +689,13 @@ def register(mcp) -> None:
             if not start_ids or not dst_ids:
                 return None
 
-            # Forward BFS with parent pointers for path reconstruction.
+            # Forward BFS with parent pointers for path reconstruction. Over
+            # CALLS, an interface method with a single implementation leads
+            # on to it (a dispatch step, not a call edge).
+            from codegraph.analysis.interfaces import InterfaceResolver
+
+            resolver = InterfaceResolver(conn) if is_calls else None
+            dispatched: set[tuple[str, str]] = set()
             visited: set[str] = set(start_ids)
             parent: dict[str, str | None] = {k: None for k in start_ids}
             frontier = list(start_ids)
@@ -560,6 +718,15 @@ def register(mcp) -> None:
                             hit = nxt
                             break
                         next_frontier.append(nxt)
+                        impl = resolver.sole_implementation(nxt) if resolver else ""
+                        if impl and impl not in visited:
+                            visited.add(impl)
+                            parent[impl] = nxt
+                            dispatched.add((nxt, impl))
+                            if impl in dst_ids:
+                                hit = impl
+                                break
+                            next_frontier.append(impl)
                     if hit is not None:
                         break
                 frontier = next_frontier
@@ -572,7 +739,23 @@ def register(mcp) -> None:
                 chain.append(node)
                 node = parent.get(node)
             chain.reverse()
-            return chain
+            if not is_calls:
+                return {"path": chain}
+            from itertools import pairwise
+
+            from codegraph.analysis.provenance import INTERFACE, EdgeProvenance
+
+            prov = EdgeProvenance(conn)
+            prov.prefetch(chain[:-1])
+            hops = [
+                {
+                    "from": a,
+                    "to": b,
+                    "resolution": INTERFACE if (a, b) in dispatched else prov.of(a, b),
+                }
+                for a, b in pairwise(chain)
+            ]
+            return {"path": chain, "hops": hops}
 
         results = None
         warnings: list[dict] = []
@@ -603,7 +786,8 @@ def register(mcp) -> None:
                 payload["warnings"] = warnings
             return json.dumps(payload, indent=2)
 
-        scope, chain = results
+        scope, found = results
+        chain = found["path"]
         payload = {
             "src": src,
             "dst": dst,
@@ -613,6 +797,8 @@ def register(mcp) -> None:
             "path": chain,
             "length": len(chain) - 1,
         }
+        if "hops" in found:
+            payload["hops"] = found["hops"]
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
@@ -634,26 +820,10 @@ def register(mcp) -> None:
         each cycle tagged inline with its scope via the file paths it holds.
         """
 
+        from codegraph.analysis.cycles import find_import_cycles
+
         def query(conn):
-            adj: dict[str, list[str]] = {}
-            for row in conn.find_neighbors(
-                "IMPORTS", return_src=["path"], return_dst=["path"]
-            ):
-                src = row["src_path"]
-                dst = row["dst_path"]
-                adj.setdefault(src, []).append(dst)
-                adj.setdefault(dst, [])
-            comps = _tarjan_scc(adj)
-            # Only components that are a real cycle: size > 1, or a self-loop.
-            cycles: list[dict] = []
-            for comp in comps:
-                if len(comp) > 1:
-                    cycles.append({"cycle": sorted(comp)})
-                elif len(comp) == 1:
-                    node = comp[0]
-                    if node in adj.get(node, []):
-                        cycles.append({"cycle": [node]})
-            return cycles
+            return [{"cycle": c} for c in find_import_cycles(conn)]
 
         results, warnings = _federate(query)
         cycles = [r["cycle"] for r in results]
@@ -668,51 +838,3 @@ def register(mcp) -> None:
             payload["partial"] = True
             payload["warnings"] = warnings
         return json.dumps(payload, indent=2)
-
-
-def _tarjan_scc(adj: dict[str, list[str]]) -> list[list[str]]:
-    """Tarjan strongly-connected components, iterative to avoid recursion
-    limits on large import graphs. Returns a list of components (each a list
-    of node keys)."""
-    index_counter = [0]
-    index: dict[str, int] = {}
-    lowlink: dict[str, int] = {}
-    on_stack: dict[str, bool] = {}
-    stack: list[str] = []
-    result: list[list[str]] = []
-
-    for start in list(adj.keys()):
-        if start in index:
-            continue
-        # Iterative DFS. work stack holds (node, neighbor_iterator_position).
-        work: list[tuple[str, int]] = [(start, 0)]
-        while work:
-            node, pi = work[-1]
-            if pi == 0:
-                index[node] = lowlink[node] = index_counter[0]
-                index_counter[0] += 1
-                stack.append(node)
-                on_stack[node] = True
-            neighbors = adj.get(node, [])
-            if pi < len(neighbors):
-                work[-1] = (node, pi + 1)
-                nxt = neighbors[pi]
-                if nxt not in index:
-                    work.append((nxt, 0))
-                elif on_stack.get(nxt):
-                    lowlink[node] = min(lowlink[node], index[nxt])
-            else:
-                if lowlink[node] == index[node]:
-                    comp: list[str] = []
-                    while True:
-                        w = stack.pop()
-                        on_stack[w] = False
-                        comp.append(w)
-                        if w == node:
-                            break
-                    result.append(comp)
-                work.pop()
-                if work:
-                    parent_node = work[-1][0]
-                    lowlink[parent_node] = min(lowlink[parent_node], lowlink[node])
-    return result

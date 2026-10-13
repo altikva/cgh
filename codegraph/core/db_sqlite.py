@@ -59,6 +59,15 @@ _NODE_TABLES = [
         start_line BIGINT, end_line BIGINT, body_preview TEXT, anchor TEXT,
         kind TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS package (
+        id TEXT PRIMARY KEY, name TEXT, pkg_key TEXT, ecosystem TEXT, version TEXT,
+        file_path TEXT, start_line BIGINT, workspaces TEXT, workspace_root TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS mcp_server (
+        id TEXT PRIMARY KEY, name TEXT, file_path TEXT, start_line BIGINT,
+        transport TEXT, command TEXT, url TEXT, arg_count BIGINT, env_keys TEXT,
+        header_keys TEXT
+    )""",
 ]
 
 # Columns added after a graph may already exist on disk, mirrored from the
@@ -78,11 +87,13 @@ _MIGRATIONS = [
     ("call_site", "ctx", "TEXT NOT NULL DEFAULT ''"),
     ("endpoint", "router", "TEXT"),
     ("endpoint", "is_test", "BOOLEAN"),
+    ("edge_imports", "kind", "TEXT DEFAULT ''"),
 ]
 
 _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_imports (
         from_path TEXT, to_path TEXT, symbol TEXT NOT NULL DEFAULT '',
+        kind TEXT DEFAULT '',
         PRIMARY KEY (from_path, to_path, symbol)
     )""",
     """CREATE TABLE IF NOT EXISTS edge_defines_fn (
@@ -142,6 +153,17 @@ _EDGE_TABLES = [
     """CREATE TABLE IF NOT EXISTS edge_implemented_by (
         from_id TEXT, to_id TEXT, PRIMARY KEY (from_id, to_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_package (
+        from_path TEXT, to_id TEXT, PRIMARY KEY (from_path, to_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_depends_on (
+        from_id TEXT, to_id TEXT, dep_group TEXT NOT NULL DEFAULT '',
+        spec TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (from_id, to_id, dep_group, spec)
+    )""",
+    """CREATE TABLE IF NOT EXISTS edge_defines_mcp_server (
+        from_path TEXT, to_id TEXT, PRIMARY KEY (from_path, to_id)
+    )""",
 ]
 
 # Mirrors schema_duckdb.SIDE_TABLES: call sites by callee name (or resolved
@@ -158,6 +180,12 @@ _SIDE_TABLES = [
         extra TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS file_stamp (path TEXT, mtime REAL)""",
+    """CREATE TABLE IF NOT EXISTS rationale (
+        file_path TEXT, line INTEGER, tag TEXT, text TEXT,
+        symbol_id TEXT NOT NULL DEFAULT '', symbol TEXT NOT NULL DEFAULT '',
+        symbol_kind TEXT NOT NULL DEFAULT '', symbol_line INTEGER,
+        adr TEXT NOT NULL DEFAULT ''
+    )""",
 ]
 
 _INDEXES = [
@@ -176,6 +204,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_name_ref_file ON name_ref(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_name_ref_from ON name_ref(from_id)",
     "CREATE INDEX IF NOT EXISTS idx_file_stamp_path ON file_stamp(path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_file ON rationale(file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_rationale_symbol ON rationale(symbol_id)",
     # These have no DuckDB equivalent: DuckDB's columnar scan needs no index,
     # but SQLite's nested-loop join does. Without idx_function_name, a
     # find_callers/find_callees join full-scans the edge table (measured 27 ms
@@ -195,6 +225,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_tf_refs_var_to ON edge_tf_refs_var(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_depends_to ON edge_tf_var_depends(to_id)",
     "CREATE INDEX IF NOT EXISTS idx_tf_var_refs_to ON edge_tf_var_refs(to_id)",
+    "CREATE INDEX IF NOT EXISTS idx_package_key ON package(pkg_key)",
+    "CREATE INDEX IF NOT EXISTS idx_depends_on_to ON edge_depends_on(to_id)",
 ]
 
 _NAMED_PARAM = re.compile(r"\$(\w+)")
@@ -407,6 +439,7 @@ class SQLiteGraphDB:
         self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
         self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
 
     # --- Writer stamps --------------------------------------------------
 
@@ -422,6 +455,51 @@ class SQLiteGraphDB:
         stale = self._conn.execute(STALE_FILES_SQL).fetchall()
         orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
         return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
+
+    # --- Rationale comments ---------------------------------------------
+
+    def replace_rationale(self, file_path: str, rows: list[tuple[Any, ...]]) -> None:
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 100):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for row in chunk for v in (file_path, *row)]
+            self._conn.execute(
+                "INSERT INTO rationale (file_path, line, tag, text, symbol_id, "
+                f"symbol, symbol_kind, symbol_line, adr) VALUES {values}",
+                params,
+            )
+
+    def rationale_rows(
+        self,
+        symbol: str = "",
+        file_suffix: str = "",
+        tag: str = "",
+        symbol_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        from codegraph.core.graph_model import RATIONALE_COLUMNS, rationale_rows_sql
+
+        if symbol_ids is not None or file_paths is not None:
+            # Chunk the longer IN list so a statement stays under the
+            # parameter limit; the other one is passed whole.
+            out: list[dict[str, Any]] = []
+            ids = None if symbol_ids is None else sorted(set(symbol_ids))
+            paths = None if file_paths is None else sorted(set(file_paths))
+            for chunk in _chunks(ids if ids is not None else paths or []):
+                chunk_ids, chunk_paths = (
+                    (chunk, paths) if ids is not None else (None, chunk)
+                )
+                sql, params = rationale_rows_sql(
+                    symbol, file_suffix, tag, chunk_ids, chunk_paths, 0
+                )
+                rows = self._conn.execute(sql, params).fetchall()
+                out.extend(dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows)
+            out.sort(key=lambda r: (r["file_path"], r["line"]))
+            return out[:limit] if limit and limit > 0 else out
+        sql, params = rationale_rows_sql(symbol, file_suffix, tag, None, None, limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows]
 
     # --- Name references ------------------------------------------------
 
@@ -512,6 +590,21 @@ class SQLiteGraphDB:
                     [*chunk, exclude_file],
                 ).fetchall()
                 out.extend(tuple("" if v is None else v for v in r) for r in rows)
+        return out
+
+    def call_sites_from(self, from_ids: list[str]) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for chunk in _chunks(sorted(set(from_ids)), 200):
+            # A Function id starts with its file path: filter on the indexed
+            # file column first, then on the exact ids.
+            files = sorted({i.rsplit("::", 1)[0] for i in chunk})
+            rows = self._conn.execute(
+                "SELECT from_id, file_path, name, to_id, kind, hint, ctx FROM call_site "
+                f"WHERE file_path IN ({', '.join('?' for _ in files)}) "
+                f"AND from_id IN ({', '.join('?' for _ in chunk)})",
+                [*files, *chunk],
+            ).fetchall()
+            out.extend(tuple("" if v is None else v for v in r) for r in rows)
         return out
 
     def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:

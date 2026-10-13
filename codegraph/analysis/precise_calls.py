@@ -25,7 +25,7 @@ def _import_jedi():
     """Import jedi + parso lazily, then restore the recursion limit.
 
     parso lowers sys.recursionlimit to 3000 on import, which would silently
-    undo the indexer's raised limit (it bumps to 10_000 so tree-sitter walks
+    undo the indexer's raised limit (it bumps to 8_192 so tree-sitter walks
     on deeply nested ASTs don't crash). Re-assert the higher value after the
     import so enabling this opt-in feature never weakens the core guard.
     Returns (jedi, parso) or None if either is missing.

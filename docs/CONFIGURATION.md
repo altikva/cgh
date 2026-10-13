@@ -68,6 +68,13 @@ log_backup_count = 3
 # parent owner exits. Set to false to opt out.
 # federate_auto_up = true
 
+# Knowledge outcomes (the knowledge_outcome tool, `cgh knowledge outcome`)
+# fade with age: a verdict this many days old weighs half as much as a
+# fresh one when entries and files are scored for search, list and the
+# resume bundle's known dead ends. Three half-lives on, a lone verdict no
+# longer steers anything; a correction never fades. 0 turns decay off.
+# knowledge_half_life_days = 30
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.
@@ -88,6 +95,12 @@ auto_watch = true
 
 # Rebuild the index before accepting MCP connections.
 reindex_on_start = true
+
+[tools]
+# Which MCP tools tools/list shows: "all" (default) or "core".
+# Hidden tools stay callable by name.
+# expose = "all"
+# extra = ["find_callees", "impact_of"]
 
 [bob]
 # IBM Bob session hooks: ask for a checkpoint after this many tool calls
@@ -228,6 +241,44 @@ module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modul
 |-----|------|---------|-------------|
 | `auto_watch` | `bool` | `true` | Start file watcher alongside MCP server |
 | `reindex_on_start` | `bool` | `true` | Rebuild index when `cgh serve` starts |
+
+#### `[tools]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `expose` | `str` | `"all"` | `"all"` lists every MCP tool in `tools/list`. `"core"` lists the core set, the names in `extra`, and every plugin tool. |
+| `extra` | `list[str]` | `[]` | Tool names added to the listed set when `expose = "core"`. |
+
+Some MCP clients load the schema of every listed tool into the model's
+context. `expose = "core"` keeps that list short:
+
+```toml
+[tools]
+expose = "core"
+extra = ["find_callees", "impact_of"]
+```
+
+The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
+`file_summary`, `tests_for`, `find_callers`, `endpoints`,
+`context_for_task`, `knowledge_record`, `knowledge_search`, `checkpoint`,
+`compact_session`, `resume`, `scan_status` and `file_at_ref`.
+
+- Only `tools/list` is narrowed. A hidden tool still answers `tools/call`
+  by name, so hooks (which call `incremental_reindex` and others over
+  HTTP), `cgh` commands and scripts keep working. An agent, though, can
+  only call what it sees listed: hide a tool and the agent stops using it.
+- Tools registered by plugins are always listed, whatever the setting.
+- The setting fails open. An unknown `expose` value lists every tool, with
+  a warning and a notice in `cgh status` / `cgh doctor`. Unknown names in
+  `extra` are ignored and logged in `owner.log`.
+- The owner reads the setting on every `tools/list`, so an edit applies
+  the next time the client lists tools (for most clients, a restart of the
+  MCP connection). Like other keys, a `[tools]` table in the global
+  `~/.codegraph/config.toml` applies to every repo unless the project
+  config sets its own.
+- `cgh status` shows the result on its `Tools` line, for example
+  `all (64 listed)` or `core (15 + 2 extra + 2 plugin)`, counted by the
+  running owner (`tools` in `--json`).
 
 #### `[bob]`
 

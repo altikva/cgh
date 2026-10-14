@@ -182,7 +182,8 @@ def register(mcp) -> None:
         graph relationships, plus Claude Code memory entries and related plan
         files, WITHOUT reading any files.
 
-        Use this before any file reads. It will cut exploration tokens by 60-90%.
+        Use this before any file reads: one call instead of several searches
+        and file reads.
 
         Args:
             task: description of what you need to do

@@ -73,10 +73,8 @@ that follow are surgical.
 - No parallel speculative Reads. Plan first, then Read only what you'll
   edit.
 
-## Token savings
+## Why
 
-A typical feature plan on this repo:
-- Without codegraph:  ~8-12 tool calls (ls, Grep, Read × 4-6) →
-  30k+ tokens just to locate files.
-- With this skill:    3-5 tool calls, < 5k tokens, more accurate
-  results.
+Locating the files for a plan through cgh takes fewer turns than listing,
+grepping and reading them: on navigation questions, a benchmark measured
+18 to 40% fewer turns, and 12 to 31% fewer billed tokens in most runs.

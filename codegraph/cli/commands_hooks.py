@@ -17,6 +17,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from codegraph.cli import hook_answers
+
 # Bare identifier: starts with a letter or underscore, followed by 2+ word
 # chars, no regex metachars. Matches names like `user_manager` or `MyClass`
 # but skips `.*`, `foo|bar`, `auth_.*`, etc., patterns that wouldn't map
@@ -73,6 +75,25 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
 
     tool_input = payload.get("tool_input") or {}
     pattern = tool_input.get("pattern")
+    if hook_answers.enabled():
+        cwd = Path(payload.get("cwd") or os.getcwd())
+        root = hook_answers.repo_root(cwd)
+        target = tool_input.get("path")
+        scopes = (
+            hook_answers.search_scopes([target], cwd, root)
+            if root and isinstance(target, str)
+            else []
+        )
+        answer = (
+            hook_answers.search_answer(root, pattern, scopes)
+            if root
+            and isinstance(pattern, str)
+            and not (isinstance(target, str) and hook_answers.files_only([target], cwd))
+            else None
+        )
+        if answer:
+            _emit_nudge(answer)
+        sys.exit(0)
     if not isinstance(pattern, str) or not _IDENTIFIER_RE.match(pattern):
         sys.exit(0)
 
@@ -180,6 +201,44 @@ def _shell_search_hint(command: str) -> str | None:
     return None
 
 
+# A heredoc body is data (a script fed to python, a file written by cat), not
+# commands: its lines must not be read as searches.
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
+def _shell_answer(command: str, cwd: Path) -> str | None:
+    """Answer mode for a shell line: the lookup a code search or a full read
+    of a source file was after, run here. A leading ``cd`` moves the base
+    for the relative paths that follow it. A search over files named one by
+    one gets no answer: the agent already knows where to look."""
+    command = _HEREDOC_RE.sub("", command)
+    for toks in _pipeline_heads(command):
+        prog, args = os.path.basename(toks[0]), toks[1:]
+        if prog == "cd" and args:
+            cwd = (cwd / args[0]).resolve()
+            continue
+        searching = (
+            (prog == "git" and args[:1] == ["grep"])
+            or prog in ("grep", "egrep", "fgrep")
+            or prog in _SHELL_SEARCHERS
+        )
+        root = hook_answers.repo_root(cwd)
+        if root is None:
+            return None
+        if searching:
+            pattern, paths = hook_answers.search_parts(prog, args)
+            if not pattern or hook_answers.files_only(paths, cwd):
+                return None
+            scopes = hook_answers.search_scopes(paths, cwd, root)
+            return hook_answers.search_answer(root, pattern, scopes)
+        # cat reads the whole file; sed -n, head and tail already pick a range.
+        if prog == "cat":
+            sources = [a for a in args if Path(a).suffix.lower() in _SOURCE_EXTS]
+            if sources:
+                return hook_answers.outline_answer(root, cwd / sources[0])
+    return None
+
+
 def _in_cgh_repo(start: Path) -> bool:
     return any((p / ".codegraph").is_dir() for p in (start, *start.parents))
 
@@ -203,6 +262,11 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     if not _in_cgh_repo(Path(cwd)):
         sys.exit(0)
 
+    if hook_answers.enabled():
+        answer = _shell_answer(command, Path(cwd))
+        if answer:
+            _emit_nudge(answer)
+        sys.exit(0)
     hint = _shell_search_hint(command)
     if hint:
         _emit_nudge(hint)
@@ -403,6 +467,12 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
 
     symbol_count = (row or [0])[0]
     if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT:
+        sys.exit(0)
+
+    if hook_answers.enabled():
+        answer = hook_answers.outline_answer(repo_root, target)
+        if answer:
+            _emit_nudge(answer)
         sys.exit(0)
 
     is_markdown = suffix in (".md", ".markdown") or suffix in PARSED_DOC_EXTS

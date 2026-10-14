@@ -1,0 +1,348 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-10-13
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Answer mode of the PreToolUse prechecks (CGH_HOOK_ANSWERS=1).
+#              Instead of pointing the agent at a cgh tool, the hook runs the
+#              lookup itself and hands over the result:
+#              search_answer   a grep for a name: its definitions, read from
+#                              the FTS, and its callers, asked of the live
+#                              owner when there is one
+#              outline_answer  a full read of an indexed source file: the
+#                              file's symbols with their line ranges
+#              Both return None when cgh has nothing to add, so the hook stays
+#              silent rather than nudging on a search cgh cannot answer.
+
+from __future__ import annotations
+
+import os
+import re
+import sqlite3
+from pathlib import Path
+
+# Words in a search pattern that are syntax, not a name worth looking up.
+_NOT_NAMES = frozenset(
+    {
+        "def", "class", "function", "const", "let", "var", "async", "await",
+        "import", "from", "return", "self", "this", "export", "interface",
+        "type", "public", "private", "protected", "static", "struct", "impl",
+        "func", "TODO", "FIXME", "None", "True", "False", "null", "true",
+        "false", "print",
+    }
+)  # fmt: skip
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
+_CAMEL_RE = re.compile(r"[a-z][A-Z]")
+# \b, \w, \s... would otherwise glue a letter onto the next word.
+_REGEX_ESCAPE_RE = re.compile(r"\\[A-Za-z]")
+# Options of grep, git grep and rg that take their value as the next token.
+_VALUED_OPTS = frozenset(
+    {
+        "-A", "-B", "-C", "-m", "-f", "-g", "-t", "-T", "--glob", "--type",
+        "--max-count", "--context", "--after-context", "--before-context",
+        "--include", "--exclude", "--exclude-dir", "-j", "--threads",
+    }
+)  # fmt: skip
+_MAX_NAMES = 3
+_MAX_DEFS = 4
+_MAX_CALLERS = 5
+_MAX_OUTLINE = 60
+_MIN_OUTLINE_SYMBOLS = 5
+# The hook runs before every search: an owner that does not answer fast is
+# skipped, the definitions alone still go out.
+_OWNER_TIMEOUT = 2.0
+
+
+def enabled() -> bool:
+    return os.environ.get("CGH_HOOK_ANSWERS") == "1"
+
+
+def repo_root(start: Path) -> Path | None:
+    """The nearest directory at or above ``start`` that holds a cgh FTS index."""
+    for p in (start, *start.parents):
+        if (p / ".codegraph" / "fts.db").is_file():
+            return p
+    return None
+
+
+def search_parts(prog: str, args: list[str]) -> tuple[str | None, list[str]]:
+    """The pattern of a grep, git grep or rg command line (args after the
+    program, and after ``grep`` for git grep), and the paths it searches."""
+    if prog == "git":
+        args = args[1:]
+    pattern: str | None = None
+    paths: list[str] = []
+    skip = False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a in ("-e", "--regexp"):
+            pattern = args[i + 1] if i + 1 < len(args) else None
+            skip = True
+            continue
+        if a.startswith("--regexp="):
+            pattern = a.split("=", 1)[1]
+            continue
+        if a in _VALUED_OPTS:
+            skip = True
+            continue
+        if a.startswith("-") and a != "-":
+            continue
+        if pattern is None:
+            pattern = a
+        else:
+            paths.append(a)
+    return pattern, paths
+
+
+def search_pattern(prog: str, args: list[str]) -> str | None:
+    return search_parts(prog, args)[0]
+
+
+def files_only(paths: list[str], cwd: Path) -> bool:
+    """True when a search names its files one by one: the agent already knows
+    where to look, and the definitions add nothing it does not have."""
+    return bool(paths) and all((cwd / p).is_file() for p in paths)
+
+
+def _looks_like_code(word: str) -> bool:
+    return "_" in word or bool(_CAMEL_RE.search(word))
+
+
+def names_in(pattern: str) -> list[str]:
+    """Candidate symbol names in a search pattern, longest first.
+
+    A one-word pattern is taken as a name. In a pattern of several words
+    ("some random text") a plain word is prose, not a name: only words shaped
+    like code (snake_case, camelCase) or following a keyword (``def foo``)
+    count."""
+    words = _WORD_RE.findall(_REGEX_ESCAPE_RE.sub(" ", pattern))
+    prose = len(words) > 1
+    seen: list[str] = []
+    for i, w in enumerate(words):
+        if w in _NOT_NAMES or w in seen:
+            continue
+        after_keyword = i > 0 and words[i - 1] in _NOT_NAMES
+        if prose and not (after_keyword or _looks_like_code(w)):
+            continue
+        seen.append(w)
+    return sorted(seen, key=len, reverse=True)[:_MAX_NAMES]
+
+
+def _fts(root: Path) -> sqlite3.Connection | None:
+    try:
+        from codegraph.core.utils import ro_sqlite_uri
+
+        return sqlite3.connect(
+            ro_sqlite_uri(root / ".codegraph" / "fts.db"), uri=True, timeout=0.5
+        )
+    except sqlite3.Error:
+        return None
+
+
+def _rel(path: str, root: Path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(root.resolve()))
+    except ValueError:
+        return path
+
+
+# Read this many definitions before filtering: a generic name (get_by_id on
+# every manager) is narrowed down by the search itself, not dropped.
+_MAX_CANDIDATES = 50
+_CALLABLE_KEYWORDS = frozenset({"def", "function", "func", "fn", "async"})
+_TYPE_KEYWORDS = frozenset({"class", "struct", "interface", "type", "enum"})
+_TEST_PATH_RE = re.compile(
+    r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|\.(test|spec)\.[^/]+$"
+)
+
+
+def _definitions(conn: sqlite3.Connection, name: str) -> list[tuple]:
+    # A method may be stored qualified ("Class.method"): match the bare name too.
+    return conn.execute(
+        "SELECT kind, name, file_path, start_line, end_line FROM symbols "
+        "WHERE (name = ? OR name LIKE ?) AND kind != 'md_section' "
+        "ORDER BY name = ? DESC, file_path LIMIT ?",
+        (name, f"%.{name}", name, _MAX_CANDIDATES),
+    ).fetchall()
+
+
+def _snake(word: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", word).lower()
+
+
+def narrow(
+    defs: list[tuple], name: str, pattern: str, root: Path, scopes: list[str]
+) -> list[tuple]:
+    """Keep the definitions the search itself points at, when it says enough.
+
+    Each filter but the first applies only when it leaves something: a hint
+    that matches nothing is ignored rather than turning the answer into
+    silence.
+    - scopes: the directories the search runs in (relative to the root);
+      when none of them defines the name, nothing is left;
+    - a keyword before the name: def/function keeps callables, class/type
+      keeps types;
+    - a CamelCase qualifier (WebhookManager.get_by_id): the symbol name or
+      its file name carries it;
+    - tests: dropped unless the search runs in tests."""
+
+    def keep(rows: list[tuple], test) -> list[tuple]:
+        kept = [r for r in rows if test(r)]
+        return kept or rows
+
+    def rel(r: tuple) -> str:
+        return _rel(r[2], root)
+
+    if scopes:
+        # A search confined to directories that define nothing of that name
+        # looks for its uses, not its definition: say nothing.
+        defs = [
+            r
+            for r in defs
+            if any(rel(r).startswith(s.rstrip("/") + "/") for s in scopes)
+        ]
+    m = re.search(rf"\b(\w+)\s+{re.escape(name)}\b", pattern)
+    if m and m.group(1) in _CALLABLE_KEYWORDS:
+        defs = keep(defs, lambda r: r[0] in ("function", "method", "arrow"))
+    elif m and m.group(1) in _TYPE_KEYWORDS:
+        defs = keep(defs, lambda r: r[0] not in ("function", "method", "arrow"))
+    q = re.search(rf"\b([A-Z]\w+)\\?\.{re.escape(name)}\b", pattern)
+    if q:
+        qual = q.group(1)
+        defs = keep(
+            defs,
+            lambda r: (
+                r[1].endswith(f"{qual}.{name}") or _snake(qual) in Path(r[2]).stem
+            ),
+        )
+    if not any(_TEST_PATH_RE.search(s + "/") for s in scopes):
+        defs = keep(defs, lambda r: not _TEST_PATH_RE.search(rel(r)))
+    return defs
+
+
+def search_scopes(paths: list[str], cwd: Path, root: Path) -> list[str]:
+    """The directories a search runs in, relative to the repo root."""
+    scopes = []
+    for p in paths:
+        d = (cwd / p).resolve()
+        if d.is_dir():
+            try:
+                rel = d.relative_to(root.resolve())
+            except ValueError:
+                continue
+            if str(rel) != ".":
+                scopes.append(str(rel))
+    return scopes
+
+
+def _callers(root: Path, name: str) -> list[dict] | None:
+    """Callers from the live owner, or None when no owner answers in time."""
+    try:
+        from codegraph.cli.owner_client import call_owner_tool
+
+        reply = call_owner_tool(
+            str(root), "find_callers", {"fn_name": name}, timeout=_OWNER_TIMEOUT
+        )
+    except Exception:
+        return None
+    if not reply.ok or not isinstance(reply.data, dict):
+        return None
+    callers = reply.data.get("callers")
+    return callers if isinstance(callers, list) else None
+
+
+def search_answer(
+    root: Path, pattern: str, scopes: list[str] | None = None
+) -> str | None:
+    conn = _fts(root)
+    if conn is None:
+        return None
+    blocks: list[str] = []
+    try:
+        names = names_in(pattern)
+        for name in names:
+            found = _definitions(conn, name)
+            if not found:
+                continue
+            defs = narrow(found, name, pattern, root, scopes or [])
+            if not defs:
+                continue
+            # A file that also defines another name of the same search is the
+            # likelier target: lock_subscription|get_for_org puts the manager
+            # that has both first.
+            others = {r[2] for n in names if n != name for r in _definitions(conn, n)}
+            defs.sort(key=lambda r: r[2] not in others)
+            lines = [f"`{name}`:"]
+            for kind, full, fp, sl, el in defs[:_MAX_DEFS]:
+                lines.append(f"  defined  {full} ({kind})  {_rel(fp, root)}:{sl}-{el}")
+            if len(defs) > _MAX_DEFS:
+                more = f"{len(defs) - _MAX_DEFS}" + (
+                    "+" if len(found) == _MAX_CANDIDATES else ""
+                )
+                lines.append(
+                    f"  ({more} more definitions: search in their directory "
+                    "or qualify the name, e.g. Class.method)"
+                )
+            # Callers only for a search on one name, and one that points at a
+            # single place: on an alternation they multiply the answer, and on
+            # a name defined in many files they mix every definition's callers.
+            if len(names) > 1 or len(found) > _MAX_DEFS:
+                blocks.append("\n".join(lines))
+                continue
+            callers = _callers(root, name)
+            if callers:
+                for c in callers[:_MAX_CALLERS]:
+                    lines.append(
+                        f"  called by {c.get('caller')}  "
+                        f"{_rel(str(c.get('file', '')), root)}:{c.get('line')}"
+                    )
+                if len(callers) > _MAX_CALLERS:
+                    lines.append(f"  ({len(callers) - _MAX_CALLERS} more callers)")
+            elif callers is not None:
+                lines.append("  no callers in the graph")
+            blocks.append("\n".join(lines))
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if not blocks:
+        return None
+    return (
+        "[cgh] Already looked up from the code graph:\n"
+        + "\n".join(blocks)
+        + "\nRead those line ranges directly; the search output adds the text matches."
+    )
+
+
+def outline_answer(root: Path, target: Path) -> str | None:
+    conn = _fts(root)
+    if conn is None:
+        return None
+    try:
+        abs_path = str(target.resolve())
+        rel_path = _rel(abs_path, root)
+        rows = conn.execute(
+            "SELECT kind, name, start_line, end_line FROM symbols "
+            "WHERE file_path IN (?, ?) AND kind != 'md_section' "
+            "ORDER BY start_line LIMIT ?",
+            (abs_path, rel_path, _MAX_OUTLINE + 1),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if len(rows) < _MIN_OUTLINE_SYMBOLS:
+        return None
+    lines = [
+        f"  {sl}-{el}  {kind}  {name}" for kind, name, sl, el in rows[:_MAX_OUTLINE]
+    ]
+    if len(rows) > _MAX_OUTLINE:
+        lines.append("  (more symbols: file_summary)")
+    return (
+        f"[cgh] Outline of {rel_path} from the code graph:\n"
+        + "\n".join(lines)
+        + "\nIf you need one part, Read it with offset/limit instead of the whole file."
+    )

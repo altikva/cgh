@@ -163,3 +163,99 @@ def test_answers_off_keeps_the_nudge(monkeypatch, capsys, repo):
     )
     assert "pattern_search" in ctx
     assert "billing.py" not in ctx
+
+
+def test_search_in_named_files_is_silent(monkeypatch, capsys, repo):
+    # The agent already knows the file: the definitions would add nothing.
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {
+            "tool_input": {"command": "grep -n charge_card app/billing.py"},
+            "cwd": str(repo),
+        },
+    )
+    assert ctx == ""
+
+
+def test_grep_tool_on_one_file_is_silent(monkeypatch, capsys, repo):
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {
+            "tool_input": {"pattern": "charge_card", "path": "app/billing.py"},
+            "cwd": str(repo),
+        },
+    )
+    assert ctx == ""
+
+
+def test_search_in_a_directory_still_answers(monkeypatch, capsys, repo):
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "grep -rn charge_card app/"}, "cwd": str(repo)},
+    )
+    assert "charge_card (function)" in ctx
+
+
+def test_heredoc_body_is_not_a_search(monkeypatch, capsys, repo):
+    command = "python3 - <<'EOF'\ngrep -rn charge_card .\nEOF"
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": command}, "cwd": str(repo)},
+    )
+    assert ctx == ""
+
+
+def test_callers_only_for_a_single_name(monkeypatch, capsys, repo):
+    monkeypatch.setattr(
+        ha,
+        "_callers",
+        lambda root, name: [{"caller": "checkout", "file": "app/x.py", "line": 3}],
+    )
+    single = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "charge_card"}, "cwd": str(repo)},
+    )
+    assert "called by checkout" in single
+    alternation = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "charge_card|settle_invoice"}, "cwd": str(repo)},
+    )
+    assert "Invoice.settle_invoice" in alternation
+    assert "called by" not in alternation
+
+
+def test_generic_name_with_many_definitions_is_skipped(monkeypatch, capsys, repo):
+    conn = sqlite3.connect(repo / ".codegraph" / "fts.db")
+    for i in range(ha._MAX_DEFS + 1):
+        conn.execute(
+            "INSERT INTO symbols VALUES (?, 'method', ?, 'app/m.py', ?, ?, '')",
+            (f"g{i}", f"Repo{i}.get_by_id", i * 10 + 1, i * 10 + 5),
+        )
+    conn.commit()
+    conn.close()
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "get_by_id"}, "cwd": str(repo)},
+    )
+    assert ctx == ""
+
+
+def test_search_parts_splits_pattern_and_paths():
+    assert ha.search_parts("grep", ["-n", "-e", "x_y", "a.py", "b.py"]) == (
+        "x_y",
+        ["a.py", "b.py"],
+    )

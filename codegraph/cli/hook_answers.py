@@ -46,7 +46,7 @@ _VALUED_OPTS = frozenset(
 )  # fmt: skip
 _MAX_NAMES = 3
 _MAX_DEFS = 4
-_MAX_CALLERS = 8
+_MAX_CALLERS = 5
 _MAX_OUTLINE = 60
 _MIN_OUTLINE_SYMBOLS = 5
 # The hook runs before every search: an owner that does not answer fast is
@@ -66,27 +66,45 @@ def repo_root(start: Path) -> Path | None:
     return None
 
 
-def search_pattern(prog: str, args: list[str]) -> str | None:
+def search_parts(prog: str, args: list[str]) -> tuple[str | None, list[str]]:
     """The pattern of a grep, git grep or rg command line (args after the
-    program, and after ``grep`` for git grep)."""
+    program, and after ``grep`` for git grep), and the paths it searches."""
     if prog == "git":
         args = args[1:]
+    pattern: str | None = None
+    paths: list[str] = []
     skip = False
     for i, a in enumerate(args):
         if skip:
             skip = False
             continue
         if a in ("-e", "--regexp"):
-            return args[i + 1] if i + 1 < len(args) else None
+            pattern = args[i + 1] if i + 1 < len(args) else None
+            skip = True
+            continue
         if a.startswith("--regexp="):
-            return a.split("=", 1)[1]
+            pattern = a.split("=", 1)[1]
+            continue
         if a in _VALUED_OPTS:
             skip = True
             continue
-        if a.startswith("-"):
+        if a.startswith("-") and a != "-":
             continue
-        return a
-    return None
+        if pattern is None:
+            pattern = a
+        else:
+            paths.append(a)
+    return pattern, paths
+
+
+def search_pattern(prog: str, args: list[str]) -> str | None:
+    return search_parts(prog, args)[0]
+
+
+def files_only(paths: list[str], cwd: Path) -> bool:
+    """True when a search names its files one by one: the agent already knows
+    where to look, and the definitions add nothing it does not have."""
+    return bool(paths) and all((cwd / p).is_file() for p in paths)
 
 
 def _looks_like_code(word: str) -> bool:
@@ -163,15 +181,21 @@ def search_answer(root: Path, pattern: str) -> str | None:
         return None
     blocks: list[str] = []
     try:
-        for name in names_in(pattern):
+        names = names_in(pattern)
+        for name in names:
             defs = _definitions(conn, name)
-            if not defs:
+            # No definition, or so many that the name is too generic to point
+            # anywhere: the text search is the better answer.
+            if not defs or len(defs) > _MAX_DEFS:
                 continue
             lines = [f"`{name}`:"]
-            for kind, full, fp, sl, el in defs[:_MAX_DEFS]:
+            for kind, full, fp, sl, el in defs:
                 lines.append(f"  defined  {full} ({kind})  {_rel(fp, root)}:{sl}-{el}")
-            if len(defs) > _MAX_DEFS:
-                lines.append("  (more definitions: search_symbols)")
+            # Callers only for a search on one name: on an alternation they
+            # multiply the answer and the agent rarely follows them.
+            if len(names) > 1:
+                blocks.append("\n".join(lines))
+                continue
             callers = _callers(root, name)
             if callers:
                 for c in callers[:_MAX_CALLERS]:

@@ -76,10 +76,14 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     tool_input = payload.get("tool_input") or {}
     pattern = tool_input.get("pattern")
     if hook_answers.enabled():
-        root = hook_answers.repo_root(Path(payload.get("cwd") or os.getcwd()))
+        cwd = Path(payload.get("cwd") or os.getcwd())
+        root = hook_answers.repo_root(cwd)
+        target = tool_input.get("path")
         answer = (
             hook_answers.search_answer(root, pattern)
-            if root and isinstance(pattern, str)
+            if root
+            and isinstance(pattern, str)
+            and not (isinstance(target, str) and hook_answers.files_only([target], cwd))
             else None
         )
         if answer:
@@ -192,10 +196,17 @@ def _shell_search_hint(command: str) -> str | None:
     return None
 
 
+# A heredoc body is data (a script fed to python, a file written by cat), not
+# commands: its lines must not be read as searches.
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
 def _shell_answer(command: str, cwd: Path) -> str | None:
     """Answer mode for a shell line: the lookup a code search or a full read
     of a source file was after, run here. A leading ``cd`` moves the base
-    for the relative paths that follow it."""
+    for the relative paths that follow it. A search over files named one by
+    one gets no answer: the agent already knows where to look."""
+    command = _HEREDOC_RE.sub("", command)
     for toks in _pipeline_heads(command):
         prog, args = os.path.basename(toks[0]), toks[1:]
         if prog == "cd" and args:
@@ -210,8 +221,10 @@ def _shell_answer(command: str, cwd: Path) -> str | None:
         if root is None:
             return None
         if searching:
-            pattern = hook_answers.search_pattern(prog, args)
-            return hook_answers.search_answer(root, pattern) if pattern else None
+            pattern, paths = hook_answers.search_parts(prog, args)
+            if not pattern or hook_answers.files_only(paths, cwd):
+                return None
+            return hook_answers.search_answer(root, pattern)
         # cat reads the whole file; sed -n, head and tail already pick a range.
         if prog == "cat":
             sources = [a for a in args if Path(a).suffix.lower() in _SOURCE_EXTS]

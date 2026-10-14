@@ -20,10 +20,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `CGH_HOOK_ANSWERS=1`, the Grep, Read and Bash prechecks run the lookup
   themselves. A search for a name gets its definitions and callers, and a
   full read of an indexed source file gets its outline. They stay silent
-  when cgh has nothing to add. Agents mostly ignored the advisory nudges.
-  On a three-ticket pilot, answers cut cost by 15% and time by two thirds
-  against the same setup with nudges. Off by default until a larger bench
-  confirms it.
+  when cgh has nothing to add, when the search names its files one by one,
+  and when a name is too generic to point anywhere. Agents mostly ignored
+  the advisory nudges. On a three-ticket pilot, answers cut cost by 15% and
+  time by two thirds against the same setup with nudges; over 54 runs, a
+  plain `cgh init` with answers matched the cost of the full sprint
+  tooling. Off by default for now.
 
 ### Changed
 - **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The

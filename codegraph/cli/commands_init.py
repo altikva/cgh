@@ -1388,7 +1388,7 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
         hooks that hard-require cgh on PATH, so they don't break teammates
         who haven't installed it.
     """
-    return [
+    specs = [
         {
             "event": "PostToolUse",
             "matcher": "Bash(git commit*)",
@@ -1463,6 +1463,37 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "async": False,
         },
     ]
+    # The context steward runs after every tool call, about 0.1 s each even
+    # when it has nothing to say: installed only where it was asked for, by
+    # running cgh init with CGH_CONTEXT_STEWARD=1. Not in _CLAUDE_HOOK_MARKERS
+    # for the same reason: its absence is not a missing hook.
+    from codegraph.cli import context_steward
+
+    if context_steward.enabled():
+        specs += [
+            {
+                # The sub-agent's brief gets cgh's locations before it starts.
+                "event": "PreToolUse",
+                "matcher": "Agent|Task",
+                "marker": "cgh-precheck-agent",
+                "label": "pre-Agent locations",
+                "target": "local",
+                "command": f"{cli_prefix} _hook_precheck_agent  # cgh-precheck-agent",
+                "async": False,
+            },
+            {
+                # Past a context threshold, ask for a checkpoint, then for a
+                # relay to a fresh session.
+                "event": "PostToolUse",
+                "matcher": "",
+                "marker": "cgh-context-gauge",
+                "label": "context gauge",
+                "target": "local",
+                "command": f"{cli_prefix} _hook_context_gauge  # cgh-context-gauge",
+                "async": False,
+            },
+        ]
+    return specs
 
 
 def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[str]:

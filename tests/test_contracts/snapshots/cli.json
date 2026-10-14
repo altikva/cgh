@@ -6,8 +6,10 @@
     "_bob_stop",
     "_bob_tool_log",
     "_hook_checkpoint",
+    "_hook_context_gauge",
     "_hook_guard",
     "_hook_guard_codex",
+    "_hook_precheck_agent",
     "_hook_precheck_bash",
     "_hook_precheck_grep",
     "_hook_precheck_read",
@@ -109,6 +111,12 @@
           "-h"
         ]
       },
+      "_hook_context_gauge": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
       "_hook_guard": {
         "options": [
           "--help",
@@ -116,6 +124,12 @@
         ]
       },
       "_hook_guard_codex": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_precheck_agent": {
         "options": [
           "--help",
           "-h"

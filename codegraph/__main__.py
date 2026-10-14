@@ -44,6 +44,8 @@ from codegraph.cli.commands_guard import (
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_hooks import (
+    cmd_hook_context_gauge,
+    cmd_hook_precheck_agent,
     cmd_hook_precheck_bash,
     cmd_hook_precheck_grep,
     cmd_hook_precheck_read,
@@ -413,6 +415,9 @@ def _register_setup_and_serve(sub) -> None:
     sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_bash", help=argparse.SUPPRESS)
+    # Context steward: inert unless CGH_CONTEXT_STEWARD=1.
+    sub.add_parser("_hook_precheck_agent", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_context_gauge", help=argparse.SUPPRESS)
 
 
 def _register_inspect(sub) -> None:
@@ -1005,6 +1010,8 @@ def main() -> None:
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
         "_hook_precheck_bash": cmd_hook_precheck_bash,
+        "_hook_precheck_agent": cmd_hook_precheck_agent,
+        "_hook_context_gauge": cmd_hook_context_gauge,
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,

@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Context steward (experimental, opt-in).** Run `cgh init` with
+  `CGH_CONTEXT_STEWARD=1` to install two hooks. A context gauge reads the
+  session's size after each tool call: past 100k tokens it asks for a
+  checkpoint, past 150k for a checkpoint and a fresh session, and leaves a
+  relay request a supervisor can act on, since an agent cannot clear its
+  own context. A sub-agent's brief gets the code locations cgh finds for
+  it. Thresholds: `CGH_CONTEXT_CHECKPOINT`, `CGH_CONTEXT_RELAY`. Off by
+  default until a bench with clears and session changes measures it.
 - **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
   store between checkouts as JSON Lines, filtered by time (`--before`,
   `--before-commit`), tag glob (`--exclude-tag`, provenance included as

@@ -495,3 +495,76 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         "Then Read with offset/limit on the range you actually need. "
         "If you really want the whole file, ignore this and proceed."
     )
+
+
+# Context steward (CGH_CONTEXT_STEWARD=1): both hooks below are installed by
+# cgh init and do nothing until the switch is on.
+
+
+def cmd_hook_context_gauge(args: argparse.Namespace) -> None:
+    """
+    PostToolUse hook, every tool. Reads the session's context size from its
+    transcript and, past a threshold, asks the agent to checkpoint, then to
+    hand over to a fresh session. Advisory: never blocks, always exits 0.
+    A sub-agent's calls are left alone: its context is not the session's.
+    """
+    from codegraph.cli import context_steward
+
+    if not context_steward.enabled():
+        sys.exit(0)
+    try:
+        payload = json.loads(sys.stdin.read())
+    except Exception:
+        sys.exit(0)
+    if payload.get("agent_id"):
+        sys.exit(0)
+    transcript = payload.get("transcript_path")
+    root = hook_answers.repo_root(Path(payload.get("cwd") or os.getcwd()))
+    if not isinstance(transcript, str) or root is None:
+        sys.exit(0)
+    message = context_steward.gauge_message(
+        root, str(payload.get("session_id") or ""), Path(transcript)
+    )
+    if message:
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": message,
+                }
+            },
+            sys.stdout,
+        )
+    sys.exit(0)
+
+
+def cmd_hook_precheck_agent(args: argparse.Namespace) -> None:
+    """
+    PreToolUse hook for the sub-agent tool (Agent, formerly Task). Appends to
+    the sub-agent's brief the code locations cgh finds for it, so it starts
+    from file:line instead of exploring the tree. Never blocks.
+    """
+    from codegraph.cli import context_steward
+
+    if not context_steward.enabled():
+        sys.exit(0)
+    try:
+        payload = json.loads(sys.stdin.read())
+    except Exception:
+        sys.exit(0)
+    tool_input = payload.get("tool_input")
+    root = hook_answers.repo_root(Path(payload.get("cwd") or os.getcwd()))
+    if not isinstance(tool_input, dict) or root is None:
+        sys.exit(0)
+    updated = context_steward.agent_brief(root, tool_input)
+    if updated:
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "updatedInput": updated,
+                }
+            },
+            sys.stdout,
+        )
+    sys.exit(0)

@@ -79,8 +79,13 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         cwd = Path(payload.get("cwd") or os.getcwd())
         root = hook_answers.repo_root(cwd)
         target = tool_input.get("path")
+        scopes = (
+            hook_answers.search_scopes([target], cwd, root)
+            if root and isinstance(target, str)
+            else []
+        )
         answer = (
-            hook_answers.search_answer(root, pattern)
+            hook_answers.search_answer(root, pattern, scopes)
             if root
             and isinstance(pattern, str)
             and not (isinstance(target, str) and hook_answers.files_only([target], cwd))
@@ -224,7 +229,8 @@ def _shell_answer(command: str, cwd: Path) -> str | None:
             pattern, paths = hook_answers.search_parts(prog, args)
             if not pattern or hook_answers.files_only(paths, cwd):
                 return None
-            return hook_answers.search_answer(root, pattern)
+            scopes = hook_answers.search_scopes(paths, cwd, root)
+            return hook_answers.search_answer(root, pattern, scopes)
         # cat reads the whole file; sed -n, head and tail already pick a range.
         if prog == "cat":
             sources = [a for a in args if Path(a).suffix.lower() in _SOURCE_EXTS]

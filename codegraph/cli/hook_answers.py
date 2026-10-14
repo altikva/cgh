@@ -149,14 +149,93 @@ def _rel(path: str, root: Path) -> str:
         return path
 
 
+# Read this many definitions before filtering: a generic name (get_by_id on
+# every manager) is narrowed down by the search itself, not dropped.
+_MAX_CANDIDATES = 50
+_CALLABLE_KEYWORDS = frozenset({"def", "function", "func", "fn", "async"})
+_TYPE_KEYWORDS = frozenset({"class", "struct", "interface", "type", "enum"})
+_TEST_PATH_RE = re.compile(
+    r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|\.(test|spec)\.[^/]+$"
+)
+
+
 def _definitions(conn: sqlite3.Connection, name: str) -> list[tuple]:
-    # A method is stored qualified ("Class.method"): match the bare name too.
+    # A method may be stored qualified ("Class.method"): match the bare name too.
     return conn.execute(
         "SELECT kind, name, file_path, start_line, end_line FROM symbols "
         "WHERE (name = ? OR name LIKE ?) AND kind != 'md_section' "
         "ORDER BY name = ? DESC, file_path LIMIT ?",
-        (name, f"%.{name}", name, _MAX_DEFS + 1),
+        (name, f"%.{name}", name, _MAX_CANDIDATES),
     ).fetchall()
+
+
+def _snake(word: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", word).lower()
+
+
+def narrow(
+    defs: list[tuple], name: str, pattern: str, root: Path, scopes: list[str]
+) -> list[tuple]:
+    """Keep the definitions the search itself points at, when it says enough.
+
+    Each filter but the first applies only when it leaves something: a hint
+    that matches nothing is ignored rather than turning the answer into
+    silence.
+    - scopes: the directories the search runs in (relative to the root);
+      when none of them defines the name, nothing is left;
+    - a keyword before the name: def/function keeps callables, class/type
+      keeps types;
+    - a CamelCase qualifier (WebhookManager.get_by_id): the symbol name or
+      its file name carries it;
+    - tests: dropped unless the search runs in tests."""
+
+    def keep(rows: list[tuple], test) -> list[tuple]:
+        kept = [r for r in rows if test(r)]
+        return kept or rows
+
+    def rel(r: tuple) -> str:
+        return _rel(r[2], root)
+
+    if scopes:
+        # A search confined to directories that define nothing of that name
+        # looks for its uses, not its definition: say nothing.
+        defs = [
+            r
+            for r in defs
+            if any(rel(r).startswith(s.rstrip("/") + "/") for s in scopes)
+        ]
+    m = re.search(rf"\b(\w+)\s+{re.escape(name)}\b", pattern)
+    if m and m.group(1) in _CALLABLE_KEYWORDS:
+        defs = keep(defs, lambda r: r[0] in ("function", "method", "arrow"))
+    elif m and m.group(1) in _TYPE_KEYWORDS:
+        defs = keep(defs, lambda r: r[0] not in ("function", "method", "arrow"))
+    q = re.search(rf"\b([A-Z]\w+)\\?\.{re.escape(name)}\b", pattern)
+    if q:
+        qual = q.group(1)
+        defs = keep(
+            defs,
+            lambda r: (
+                r[1].endswith(f"{qual}.{name}") or _snake(qual) in Path(r[2]).stem
+            ),
+        )
+    if not any(_TEST_PATH_RE.search(s + "/") for s in scopes):
+        defs = keep(defs, lambda r: not _TEST_PATH_RE.search(rel(r)))
+    return defs
+
+
+def search_scopes(paths: list[str], cwd: Path, root: Path) -> list[str]:
+    """The directories a search runs in, relative to the repo root."""
+    scopes = []
+    for p in paths:
+        d = (cwd / p).resolve()
+        if d.is_dir():
+            try:
+                rel = d.relative_to(root.resolve())
+            except ValueError:
+                continue
+            if str(rel) != ".":
+                scopes.append(str(rel))
+    return scopes
 
 
 def _callers(root: Path, name: str) -> list[dict] | None:
@@ -175,7 +254,9 @@ def _callers(root: Path, name: str) -> list[dict] | None:
     return callers if isinstance(callers, list) else None
 
 
-def search_answer(root: Path, pattern: str) -> str | None:
+def search_answer(
+    root: Path, pattern: str, scopes: list[str] | None = None
+) -> str | None:
     conn = _fts(root)
     if conn is None:
         return None
@@ -183,17 +264,32 @@ def search_answer(root: Path, pattern: str) -> str | None:
     try:
         names = names_in(pattern)
         for name in names:
-            defs = _definitions(conn, name)
-            # No definition, or so many that the name is too generic to point
-            # anywhere: the text search is the better answer.
-            if not defs or len(defs) > _MAX_DEFS:
+            found = _definitions(conn, name)
+            if not found:
                 continue
+            defs = narrow(found, name, pattern, root, scopes or [])
+            if not defs:
+                continue
+            # A file that also defines another name of the same search is the
+            # likelier target: lock_subscription|get_for_org puts the manager
+            # that has both first.
+            others = {r[2] for n in names if n != name for r in _definitions(conn, n)}
+            defs.sort(key=lambda r: r[2] not in others)
             lines = [f"`{name}`:"]
-            for kind, full, fp, sl, el in defs:
+            for kind, full, fp, sl, el in defs[:_MAX_DEFS]:
                 lines.append(f"  defined  {full} ({kind})  {_rel(fp, root)}:{sl}-{el}")
-            # Callers only for a search on one name: on an alternation they
-            # multiply the answer and the agent rarely follows them.
-            if len(names) > 1:
+            if len(defs) > _MAX_DEFS:
+                more = f"{len(defs) - _MAX_DEFS}" + (
+                    "+" if len(found) == _MAX_CANDIDATES else ""
+                )
+                lines.append(
+                    f"  ({more} more definitions: search in their directory "
+                    "or qualify the name, e.g. Class.method)"
+                )
+            # Callers only for a search on one name, and one that points at a
+            # single place: on an alternation they multiply the answer, and on
+            # a name defined in many files they mix every definition's callers.
+            if len(names) > 1 or len(found) > _MAX_DEFS:
                 blocks.append("\n".join(lines))
                 continue
             callers = _callers(root, name)

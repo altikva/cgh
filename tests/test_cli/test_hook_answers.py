@@ -236,22 +236,131 @@ def test_callers_only_for_a_single_name(monkeypatch, capsys, repo):
     assert "called by" not in alternation
 
 
-def test_generic_name_with_many_definitions_is_skipped(monkeypatch, capsys, repo):
+def _add_generic(repo, rows):
+    """Insert get_by_id definitions: (kind, name, relative path) per row."""
     conn = sqlite3.connect(repo / ".codegraph" / "fts.db")
-    for i in range(ha._MAX_DEFS + 1):
+    for i, (kind, name, rel) in enumerate(rows):
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x = 1\n")
         conn.execute(
-            "INSERT INTO symbols VALUES (?, 'method', ?, 'app/m.py', ?, ?, '')",
-            (f"g{i}", f"Repo{i}.get_by_id", i * 10 + 1, i * 10 + 5),
+            "INSERT INTO symbols VALUES (?, ?, ?, ?, ?, ?, '')",
+            (f"g{i}", kind, name, str(path), i * 10 + 1, i * 10 + 5),
         )
     conn.commit()
     conn.close()
+
+
+_MANAGERS = [
+    ("method", "get_by_id", f"app/managers/{m}_manager.py")
+    for m in ("webhook", "fiscal_year", "cerfa", "donation", "payment")
+]
+
+
+def test_generic_name_is_capped_not_dropped(monkeypatch, capsys, repo):
+    _add_generic(repo, _MANAGERS)
     ctx = _run(
         monkeypatch,
         capsys,
         h.cmd_hook_precheck_grep,
         {"tool_input": {"pattern": "get_by_id"}, "cwd": str(repo)},
     )
+    assert ctx.count("  defined  get_by_id") == ha._MAX_DEFS
+    assert "(1 more definitions" in ctx
+    # Callers of a name defined in many files would mix them all.
+    assert "callers" not in ctx
+
+
+def test_search_directory_narrows_the_definitions(monkeypatch, capsys, repo):
+    _add_generic(repo, [*_MANAGERS, ("function", "get_by_id", "app/routers/x.py")])
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "grep -rn get_by_id app/routers"}, "cwd": str(repo)},
+    )
+    assert "app/routers/x.py" in ctx
+    assert "managers" not in ctx
+
+
+def test_directory_without_the_definition_is_silent(monkeypatch, capsys, repo):
+    # Searching where the name is not defined looks for its uses.
+    _add_generic(repo, _MANAGERS)
+    (repo / "app" / "routers").mkdir()
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_bash,
+        {"tool_input": {"command": "grep -rn get_by_id app/routers"}, "cwd": str(repo)},
+    )
     assert ctx == ""
+
+
+def test_file_defining_another_searched_name_comes_first(monkeypatch, capsys, repo):
+    rows = [
+        *_MANAGERS,
+        ("method", "lock_subscription", "app/managers/payment_manager.py"),
+    ]
+    _add_generic(repo, rows)
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "lock_subscription|get_by_id"}, "cwd": str(repo)},
+    )
+    first = ctx.split("`get_by_id`:\n", 1)[1].splitlines()[0]
+    assert "payment_manager.py" in first
+
+
+def test_qualifier_narrows_to_its_class_file(monkeypatch, capsys, repo):
+    _add_generic(repo, _MANAGERS)
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": r"WebhookManager\.get_by_id"}, "cwd": str(repo)},
+    )
+    assert "webhook_manager.py" in ctx
+    assert "fiscal_year" not in ctx
+
+
+def test_tests_are_dropped_unless_searched(monkeypatch, capsys, repo):
+    rows = [
+        ("function", "get_by_id", "app/managers/base.py"),
+        ("function", "get_by_id", "tests/test_base.py"),
+    ]
+    _add_generic(repo, rows)
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "get_by_id"}, "cwd": str(repo)},
+    )
+    assert "app/managers/base.py" in ctx
+    assert "tests/test_base.py" not in ctx
+    in_tests = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "get_by_id", "path": "tests"}, "cwd": str(repo)},
+    )
+    assert "tests/test_base.py" in in_tests
+
+
+def test_keyword_keeps_the_matching_kind(monkeypatch, capsys, repo):
+    rows = [
+        ("class", "Ledger", "app/models/ledger.py"),
+        ("function", "Ledger", "app/factories.py"),
+    ]
+    _add_generic(repo, rows)
+    ctx = _run(
+        monkeypatch,
+        capsys,
+        h.cmd_hook_precheck_grep,
+        {"tool_input": {"pattern": "class Ledger"}, "cwd": str(repo)},
+    )
+    assert "app/models/ledger.py" in ctx
+    assert "factories" not in ctx
 
 
 def test_search_parts_splits_pattern_and_paths():

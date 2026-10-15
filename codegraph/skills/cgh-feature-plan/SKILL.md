@@ -1,12 +1,12 @@
 ---
 name: cgh-feature-plan
-description: Plan a new feature or architectural change by FIRST mapping the codebase through codegraph MCP tools instead of Read/Grep. Triggers when the user describes what they want to build or changes ("I want X", "can we add Y", "how should we implement Z", "refactor X to do Y").
+description: Plan a new feature or architectural change by FIRST mapping the codebase through cgh MCP tools instead of Read/Grep. Triggers when the user describes what they want to build or changes ("I want X", "can we add Y", "how should we implement Z", "refactor X to do Y").
 ---
 
 # Plan a feature through codegraph
 
 When the user describes a new feature, a refactor, or any broad change,
-resist the reflex to Read / Grep / ls files. Call codegraph MCP tools
+resist the reflex to Read / Grep / ls files. Call cgh MCP tools
 first: they return exact file paths + line numbers, so the Read calls
 that follow are surgical.
 

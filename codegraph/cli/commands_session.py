@@ -153,7 +153,7 @@ def previous_session_recap(root: Path, current_session: str) -> str:
     if auto:
         lines.append(clip(auto[0]["body"], 900))
     lines.append(
-        "To pick it up, call the codegraph `resume` tool with that task; if the "
+        "To pick it up, call the cgh `resume` tool with that task; if the "
         "user starts something new, ignore this."
     )
     return "\n".join(lines)
@@ -200,7 +200,7 @@ def print_resume_header(root: Path, payload: dict) -> str:
             print(
                 "This session was just compacted and cgh has NO "
                 "model-written digest for it, so the summary above is all "
-                "that survived. Call the codegraph `compact_session` tool "
+                "that survived. Call the cgh `compact_session` tool "
                 "now with what you did, the decisions you made, and the open "
                 "threads, so the next compaction does not lose them."
             )
@@ -230,7 +230,7 @@ def print_resume_header(root: Path, payload: dict) -> str:
         f"digest(s), {plans} plan(s)."
     )
     print(
-        "Call the codegraph `resume` tool (optionally with your task) "
+        "Call the cgh `resume` tool (optionally with your task) "
         "to load it before re-deriving anything."
     )
     if payload.get("session_id"):

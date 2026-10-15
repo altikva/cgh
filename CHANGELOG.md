@@ -30,6 +30,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`resume(session_id)` answers short.** For a session that wrote a
+  checkpoint, `resume` now returns that checkpoint, the standing
+  instructions, the known dead ends and up to 3 entries matching the task,
+  instead of the whole project bundle; `full=True` brings the bundle back.
+  The reload instructions no longer send the agent to `knowledge_list`
+  after such a resume. In a bench, a resumed agent re-read 10 KB and more of
+  other sessions' digests, and once launched a sub-agent to find its own
+  checkpoint.
 - **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
   pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
   joined by pptx (slide text, tables, speaker notes) and a CSV / TSV

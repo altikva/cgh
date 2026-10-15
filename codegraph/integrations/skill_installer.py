@@ -174,11 +174,12 @@ shrinks and reload it after.
   lifecycle hooks only record what changed, not why.
 
 - **Immediately after context compaction / session resume**:
-  1. `knowledge_list(limit=20)`, reload recent learnings
-  2. `knowledge_search(query)`, targeted reload for the current task
-  3. `memory_search(query)`, reload user preferences and feedback
-  4. `plan_search(query)`, reload any active plan
-  5. This is CRITICAL: without this step you restart from zero. With it,
+  1. `resume(session_id)`: when it answers with your session's checkpoint
+     (mode "session"), continue from its next step. Nothing else to reload.
+  2. Otherwise: `knowledge_list(limit=20)` for recent learnings,
+     `knowledge_search(query)` for the current task, `memory_search(query)`
+     for preferences and feedback, `plan_search(query)` for an active plan.
+  3. This is CRITICAL: without this step you restart from zero. With it,
      you resume with full cross-session continuity.
 
 - **Session start** (new conversation on this project):

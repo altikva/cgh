@@ -9,6 +9,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Code locations for sub-agents (opt-in).** Run `cgh init` with
+  `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
+  brief the code locations cgh finds for it, so it starts from file:line
+  instead of exploring the tree. Off by default until a bench measures it.
 - **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
   store between checkouts as JSON Lines, filtered by time (`--before`,
   `--before-commit`), tag glob (`--exclude-tag`, provenance included as

@@ -34,6 +34,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`pattern_search` answers stay small.** An answer now stops at about
+  8 KB, with each line cut at 200 characters, and `more` counts per file
+  the hits it leaves out. Every byte of an answer is re-read on each later
+  turn of the session: three answers of 16 to 30 KB used to fill 40k
+  tokens of context within a minute. Narrow the pattern or the glob to see
+  the rest.
 - **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
   pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
   joined by pptx (slide text, tables, speaker notes) and a CSV / TSV

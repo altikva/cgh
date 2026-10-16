@@ -708,6 +708,10 @@
         "default": 16,
         "type": "number"
       },
+      "full": {
+        "default": false,
+        "type": "boolean"
+      },
       "scope": {
         "default": "",
         "type": "string"

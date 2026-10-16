@@ -10,7 +10,10 @@
 #              instructions first, then recent digests, known dead ends,
 #              task-relevant knowledge, open plans, and recent file
 #              summaries. Clearing a context stops costing anything: what
-#              was learned survives outside the window.
+#              was learned survives outside the window. Given a session that
+#              wrote a checkpoint, resume answers short instead
+#              (session_resume): that checkpoint, the standing instructions,
+#              the dead ends and a few task-matched entries.
 
 from __future__ import annotations
 
@@ -227,6 +230,63 @@ def build_resume_bundle(
     return bundle
 
 
+# How many task-matched knowledge entries a session resume carries. The
+# checkpoint is the point of it; knowledge rides along only when it matches.
+_SESSION_KNOWLEDGE_LIMIT = 3
+
+_SESSION_NEXT = (
+    "This is your session's checkpoint: continue from its next step. "
+    "Nothing else to reload; knowledge_search(query) only if a step needs it. "
+    "For the whole project bundle, call resume(full=True)."
+)
+
+
+def session_resume(repo_root, session_id: str, task: str = "") -> dict | None:
+    """The short bundle for a session that wrote a checkpoint: its latest
+    digest, the standing instructions, the dead ends and up to
+    _SESSION_KNOWLEDGE_LIMIT task-matched entries. None when the session
+    has no checkpoint with content, so the caller falls back to the full
+    bundle. A bench saw the full one (50 digests of other sessions) make a
+    resumed agent spend 10 KB and more re-reading it, and once launch a
+    sub-agent just to find its own checkpoint."""
+    from codegraph.state.call_log import (
+        knowledge_dead_ends,
+        knowledge_list,
+        knowledge_search,
+    )
+
+    if not session_id:
+        return None
+    own = [
+        d
+        for d in knowledge_list(
+            tag="session-digest", session_id=session_id, limit=3, repo_root=repo_root
+        )
+        if not _is_auto_checkpoint(d)
+    ]
+    if not own:
+        return None
+    knowledge = [
+        k
+        for k in (
+            knowledge_search(task, limit=_SESSION_KNOWLEDGE_LIMIT, repo_root=repo_root)
+            if task
+            else []
+        )
+        if "session-digest" not in (k.get("tags") or [])
+    ]
+    return {
+        "mode": "session",
+        "checkpoint": own[0],
+        "standing_instructions": knowledge_list(
+            kind="standing_instruction", limit=20, repo_root=repo_root
+        ),
+        "known_dead_ends": knowledge_dead_ends(_DEAD_ENDS_LIMIT, repo_root=repo_root),
+        "knowledge": knowledge,
+        "next": _SESSION_NEXT,
+    }
+
+
 def register(mcp) -> None:
     """Register the session continuity tools."""
     import codegraph.server as _srv
@@ -266,6 +326,7 @@ def register(mcp) -> None:
         task: str = "",
         budget_kb: float = 16,
         scope: str = "",
+        full: bool = False,
     ) -> str:
         """
         ONE call to rehydrate after a context clear: standing
@@ -276,7 +337,17 @@ def register(mcp) -> None:
         the task for relevance ranking; pass scope="all" to also pull knowledge from
         federated subrepos (read-only, scope-tagged). Call this at
         session start when the header announces a bundle.
+
+        With the session_id of a session that wrote a checkpoint, the
+        answer is short (mode "session"): that checkpoint, the standing
+        instructions, the dead ends and up to 3 task-matched entries.
+        Continue from the checkpoint's next step; full=True returns the
+        whole bundle instead.
         """
+        if session_id and not full and scope != "all":
+            short = session_resume(_srv._root, session_id, task)
+            if short is not None:
+                return json.dumps(short, indent=2, default=str)
         bundle = build_resume_bundle(
             _srv._root,
             session_id=session_id,

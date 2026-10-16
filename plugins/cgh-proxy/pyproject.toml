@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cgh-proxy"
+version = "0.1.0"
+description = "Experimental local proxy between Claude Code and a LiteLLM gateway: mTLS to the gateway, a copy of the last exchanges, and PII observation on outbound requests"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
+# cgh is a peer dependency, deliberately not declared (same reason as
+# cgh-pii: the plugin only loads through cgh's entry point group).
+# PII observation uses the scanner cgh-pii publishes; without cgh-pii the
+# proxy still forwards and captures, and records that nothing was scanned.
+dependencies = [
+    "httpx>=0.27",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
+]
+
+[project.entry-points.cgh]
+proxy = "cgh_proxy"
+
+[tool.setuptools.packages.find]
+include = ["cgh_proxy*"]
+
+[tool.setuptools.package-data]
+cgh_proxy = ["py.typed"]

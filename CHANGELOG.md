@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **cgh-proxy, an experimental plugin.** `cgh proxy serve` runs a local
+  proxy between Claude Code and a LiteLLM gateway: TLS to the gateway,
+  with a client certificate for mTLS, and plain http refused for a
+  remote gateway. It keeps the last exchanges (raw, 0600, 20 by default)
+  and a journal of sizes, token usage and PII counts per request, without
+  values or credentials. `cgh proxy list` and `cgh proxy show` read them.
+  It observes only: nothing is masked or blocked yet.
 - **Code locations for sub-agents (opt-in).** Run `cgh init` with
   `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
   brief the code locations cgh finds for it, so it starts from file:line

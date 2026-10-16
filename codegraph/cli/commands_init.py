@@ -1388,7 +1388,7 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
         hooks that hard-require cgh on PATH, so they don't break teammates
         who haven't installed it.
     """
-    return [
+    specs = [
         {
             "event": "PostToolUse",
             "matcher": "Bash(git commit*)",
@@ -1463,6 +1463,25 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "async": False,
         },
     ]
+    # Sub-agent locations: installed only where asked for, by running cgh
+    # init with CGH_AGENT_LOCATIONS=1, until a bench measures them. Not in
+    # _CLAUDE_HOOK_MARKERS for the same reason: their absence is not a
+    # missing hook.
+    from codegraph.cli import agent_brief
+
+    if agent_brief.enabled():
+        specs.append(
+            {
+                "event": "PreToolUse",
+                "matcher": "Agent|Task",
+                "marker": "cgh-precheck-agent",
+                "label": "pre-Agent locations",
+                "target": "local",
+                "command": f"{cli_prefix} _hook_precheck_agent  # cgh-precheck-agent",
+                "async": False,
+            }
+        )
+    return specs
 
 
 def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[str]:

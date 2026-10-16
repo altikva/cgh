@@ -495,3 +495,36 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         "Then Read with offset/limit on the range you actually need. "
         "If you really want the whole file, ignore this and proceed."
     )
+
+
+def cmd_hook_precheck_agent(args: argparse.Namespace) -> None:
+    """
+    PreToolUse hook for the sub-agent tool (Agent, formerly Task). With
+    CGH_AGENT_LOCATIONS=1, appends to the sub-agent's brief the code
+    locations cgh finds for it, so it starts from file:line instead of
+    exploring the tree. Never blocks.
+    """
+    from codegraph.cli import agent_brief
+
+    if not agent_brief.enabled():
+        sys.exit(0)
+    try:
+        payload = json.loads(sys.stdin.read())
+    except Exception:
+        sys.exit(0)
+    tool_input = payload.get("tool_input")
+    root = hook_answers.repo_root(Path(payload.get("cwd") or os.getcwd()))
+    if not isinstance(tool_input, dict) or root is None:
+        sys.exit(0)
+    updated = agent_brief.agent_brief(root, tool_input)
+    if updated:
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "updatedInput": updated,
+                }
+            },
+            sys.stdout,
+        )
+    sys.exit(0)

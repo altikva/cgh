@@ -1,6 +1,6 @@
 ---
 name: cgh-checkpoint
-description: "Save the current task to cgh before a /clear or when a long session should be secured: what is done, the decisions and why, what is open, and the next step, written with the codegraph checkpoint tool so the next session can pick it up. Use when the user types /cgh-checkpoint, says they are about to clear the context, asks to save or wrap up the session, or before switching to an unrelated task."
+description: "Save the current task to cgh before a /clear or when a long session should be secured: what is done, the decisions and why, what is open, and the next step, written with the cgh checkpoint tool so the next session can pick it up. Use when the user types /cgh-checkpoint, says they are about to clear the context, asks to save or wrap up the session, or before switching to an unrelated task."
 ---
 
 # Checkpoint: write down the task before the context goes
@@ -11,7 +11,7 @@ from the transcript. Only you can record WHY. Do it now, in one call.
 
 ## Steps
 
-1. Call the codegraph `checkpoint` tool:
+1. Call the cgh `checkpoint` tool:
    - `session_id`: the id from the cgh SessionStart header (`cgh session id:`).
      If there is none, use a short slug of the task.
    - `title`: the task in a few words.

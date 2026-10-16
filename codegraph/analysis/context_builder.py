@@ -8,8 +8,8 @@
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Builds a compact, ranked context block from graph + FTS
-#              for a natural-language task description. Saves 60-90% of
-#              exploration tokens by pre-computing the relevant subgraph.
+#              for a natural-language task description, pre-computing the
+#              relevant subgraph so the agent skips several searches and reads.
 
 from __future__ import annotations
 

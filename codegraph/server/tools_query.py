@@ -22,6 +22,22 @@ _CALLEE_FANOUT_CAP = 500
 _CALLEE_TOTAL_CAP = 300
 
 
+def _hits_payload(hits: list[dict]) -> dict:
+    """total, hits and, when the list was cut to fit the answer budget, where
+    the rest is: `more` maps a file to its hits not shown."""
+    from codegraph.analysis.pattern import fit_to_budget
+
+    kept, more = fit_to_budget(hits)
+    out: dict = {"total": len(hits), "hits": kept}
+    if more:
+        out["more"] = more
+        out["note"] = (
+            f"{len(hits) - len(kept)} more hit(s) not shown, counted per file in "
+            "`more`. Narrow the pattern or the glob to see them."
+        )
+    return out
+
+
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
@@ -84,13 +100,14 @@ def register(mcp) -> None:
                 "ref": ref or None,
                 "commit": sha,
                 "backend": backend,
-                "total": len(hits),
-                "hits": [
-                    {"scope": scope, "file": h.file, "line": h.line, "text": h.text}
-                    for h in hits
-                ],
+                **_hits_payload(
+                    [
+                        {"scope": scope, "file": h.file, "line": h.line, "text": h.text}
+                        for h in hits
+                    ]
+                ),
             },
-            indent=2,
+            ensure_ascii=False,
         )
 
     @mcp.tool()
@@ -173,7 +190,9 @@ def register(mcp) -> None:
         then Read the exact line ranges that matter (never whole files).
 
         Respects .gitignore (via ripgrep / git-grep). Automatically scans
-        extra_dirs configured on this project. Caps output at max_results.
+        extra_dirs configured on this project. Caps output at max_results,
+        and at about 8 KB: past that, `more` counts the hits left out per
+        file, so narrow the pattern or the glob to see them.
 
         Args:
           pattern:        regex by default, literal when regex=False
@@ -255,10 +274,9 @@ def register(mcp) -> None:
                 "pattern": pattern,
                 "glob": glob or None,
                 "backend": backend,
-                "total": len(all_hits),
-                "hits": all_hits,
+                **_hits_payload(all_hits),
             },
-            indent=2,
+            ensure_ascii=False,
         )
 
     def _attach_rationale(conn, hits: list[dict]) -> None:

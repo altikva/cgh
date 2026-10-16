@@ -1,6 +1,6 @@
 ---
 name: cgh-use-codegraph
-description: Use codegraph MCP tools BEFORE reading files when navigating code. Triggers on symbol lookups ("where is X defined", "what calls Y"), multi-file exploration ("how does X work"), and task kickoff. Saves 60-90% of exploration tokens.
+description: Use codegraph MCP tools BEFORE reading files when navigating code. Triggers on symbol lookups ("where is X defined", "what calls Y"), multi-file exploration ("how does X work"), and task kickoff. Finds code in fewer turns than reading and grepping.
 ---
 
 # Use codegraph before reading files

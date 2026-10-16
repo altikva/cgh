@@ -9,6 +9,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Code locations for sub-agents (opt-in).** Run `cgh init` with
+  `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
+  brief the code locations cgh finds for it, so it starts from file:line
+  instead of exploring the tree. Off by default until a bench measures it.
 - **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
   store between checkouts as JSON Lines, filtered by time (`--before`,
   `--before-commit`), tag glob (`--exclude-tag`, provenance included as
@@ -30,6 +34,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`pattern_search` answers stay small.** An answer now stops at about
+  8 KB, with each line cut at 200 characters, and `more` counts per file
+  the hits it leaves out. Every byte of an answer is re-read on each later
+  turn of the session: three answers of 16 to 30 KB used to fill 40k
+  tokens of context within a minute. Narrow the pattern or the glob to see
+  the rest.
 - **`resume(session_id)` answers short.** For a session that wrote a
   checkpoint, `resume` now returns that checkpoint, the standing
   instructions, the known dead ends and up to 3 entries matching the task,

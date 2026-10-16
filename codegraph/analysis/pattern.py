@@ -7,9 +7,12 @@
 # Description: Regex/substring pattern search across the indexed repo.
 #              Replaces the need for Claude to call Grep / Read whole
 #              files: returns structured hits with file + line + text.
+#              fit_to_budget trims a hit list to a response size an agent
+#              can afford, and says where the hits it left out are.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -36,6 +39,12 @@ _IGNORE_DIR_NAMES = {
 }
 
 _MAX_LINE_LEN = 400  # truncate very long lines so JSON stays small
+# What an MCP answer shows of each line, and the size of the hit list. Every
+# byte of a tool answer is re-read on each later turn of the session: in a
+# bench, three pattern_search answers of 16 to 30 KB took a fresh session
+# from 61k to over 100k tokens within a minute.
+SHOWN_LINE_LEN = 200
+HITS_BUDGET_BYTES = 8_000
 
 
 @dataclass
@@ -333,3 +342,23 @@ def _run_python(
                 except OSError:
                     continue
     return out
+
+
+def fit_to_budget(
+    hits: list[dict], budget: int = HITS_BUDGET_BYTES
+) -> tuple[list[dict], dict[str, int]]:
+    """The hits that fit in ``budget`` bytes of JSON, each line stripped and
+    cut to SHOWN_LINE_LEN, and for the hits left out, how many per file.
+    The first hit is always kept."""
+    kept: list[dict] = []
+    more: dict[str, int] = {}
+    used = 0
+    for h in hits:
+        h = {**h, "text": str(h.get("text", "")).strip()[:SHOWN_LINE_LEN]}
+        size = len(json.dumps(h, ensure_ascii=False))
+        if kept and (more or used + size > budget):
+            more[h["file"]] = more.get(h["file"], 0) + 1
+            continue
+        kept.append(h)
+        used += size
+    return kept, more

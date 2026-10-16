@@ -73,7 +73,7 @@ Once connected, Claude Code can use:
 
 ## Best practices
 
-1. Use `context_for_task` FIRST before reading files: saves 60-90% tokens
+1. Use `context_for_task` FIRST before reading files: one call instead of several searches and reads
 2. Use `symbol_lookup` instead of grepping for definitions
 3. Use `find_callers`/`find_callees` instead of manual code navigation
 4. Use `search_docs` to find relevant documentation before diving into code

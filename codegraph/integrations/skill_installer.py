@@ -573,7 +573,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         _ensure_dir(target.parent)
         mdc = (
             "---\n"
-            "description: When and how to use the codegraph MCP tools for this repo.\n"
+            "description: When and how to use the cgh MCP tools for this repo.\n"
             "alwaysApply: true\n"
             "---\n\n" + _USAGE_BODY
         )
@@ -586,7 +586,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         target = project_root / ".bob" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
         target.write_text(
-            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
+            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY,
             encoding="utf-8",
         )
         return str(target)
@@ -597,7 +597,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         target = project_root / ".claude" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
         target.write_text(
-            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
+            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY,
             encoding="utf-8",
         )
         _remove_legacy_usage_block(project_root)

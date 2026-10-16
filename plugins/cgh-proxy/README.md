@@ -103,17 +103,27 @@ see no names. The counts tell you where to look, not what leaked.
 
 ## Settings
 
-Flags win over `[plugin.proxy]` in `.codegraph/config.toml`:
+Flags win over `CGH_PROXY_*` environment variables:
 
-```toml
-[plugin.proxy]
-upstream = "https://litellm.example.com"
-port = 8787
-keep = 20
-client_cert = "~/.config/cgh/proxy/client.crt"
-client_key = "~/.config/cgh/proxy/client.key"
-ca_cert = "~/.config/cgh/proxy/gateway-ca.crt"
+```bash
+export CGH_PROXY_UPSTREAM=https://litellm.example.com
+export CGH_PROXY_PORT=8787
+export CGH_PROXY_KEEP=20
+export CGH_PROXY_CERT=~/.config/cgh/proxy/client.crt
+export CGH_PROXY_KEY=~/.config/cgh/proxy/client.key
+export CGH_PROXY_CA=~/.config/cgh/proxy/gateway-ca.crt
 ```
+
+The proxy does not read `.codegraph/config.toml`. Otherwise a cloned repo
+could point it, and your gateway key, at its own server.
+
+## Who may call it
+
+Only Claude Code on this machine. A call is refused (403) when it carries
+an `Origin` or `Sec-Fetch-Site` header, which only browsers send, or when
+its `Host` is not a loopback address. Without this, any web page could
+use the proxy, and your client certificate with it, through a request to
+127.0.0.1 or through DNS rebinding.
 
 ## Not done yet
 

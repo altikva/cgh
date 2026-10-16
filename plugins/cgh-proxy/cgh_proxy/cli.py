@@ -9,11 +9,15 @@
 #              list   the last exchanges from the journal: size, tokens, PII
 #              show   one exchange: anatomy of the request, usage, PII
 #                     counts; --raw prints the captured bodies
-#              Flags win over [plugin.proxy] in .codegraph/config.toml.
+#              Settings come from flags and CGH_PROXY_* variables only,
+#              never from a repo's .codegraph/config.toml: a cloned repo
+#              could otherwise point the proxy, and your gateway key, at
+#              its own server.
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +29,11 @@ if TYPE_CHECKING:
 _EXAMPLE = "https://litellm.example.com"
 
 
-def make_cli_registrar(config: dict):
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(f"CGH_PROXY_{name}", default)
+
+
+def make_cli_registrar():
     def register_cli(subparsers) -> None:
         p = subparsers.add_parser(
             "proxy",
@@ -36,27 +44,27 @@ def make_cli_registrar(config: dict):
         p.add_argument("id", nargs="?", default="", help="show: the capture id")
         p.add_argument(
             "--upstream",
-            default=config.get("upstream", ""),
+            default=_env("UPSTREAM"),
             help=f"serve: the LiteLLM gateway URL, e.g. {_EXAMPLE}",
         )
-        p.add_argument("--port", type=int, default=int(config.get("port", 8787)))
+        p.add_argument("--port", type=int, default=int(_env("PORT", "8787")))
         p.add_argument(
             "--keep",
             type=int,
-            default=int(config.get("keep", 20)),
+            default=int(_env("KEEP", "20")),
             help="serve: full captures kept, raw bodies included (0: none, "
             "the journal still records sizes, tokens and PII counts)",
         )
         p.add_argument(
             "--dir",
-            default=config.get("dir", ""),
+            default=_env("DIR"),
             help="Where captures live (default ~/.cache/cgh/proxy)",
         )
-        p.add_argument("--cert", default=config.get("client_cert", ""),
+        p.add_argument("--cert", default=_env("CERT"),
                        help="serve: client certificate for mTLS (PEM)")  # fmt: skip
-        p.add_argument("--key", default=config.get("client_key", ""),
+        p.add_argument("--key", default=_env("KEY"),
                        help="serve: its private key (PEM)")  # fmt: skip
-        p.add_argument("--ca", default=config.get("ca_cert", ""),
+        p.add_argument("--ca", default=_env("CA"),
                        help="serve: CA that signed the gateway certificate")  # fmt: skip
         p.add_argument("--no-scan", action="store_true",
                        help="serve: do not scan outbound requests for PII")  # fmt: skip

@@ -77,7 +77,10 @@ class Gateway:
 
 def _client(tmp_path, gateway, keep: int = 20, scan: bool = False) -> TestClient:
     cfg = ProxyConfig(upstream=UPSTREAM, capture_dir=tmp_path, keep=keep, scan=scan)
-    return TestClient(build_app(cfg, transport=httpx.MockTransport(gateway)))
+    return TestClient(
+        build_app(cfg, transport=httpx.MockTransport(gateway)),
+        base_url="http://127.0.0.1:8787",
+    )
 
 
 def _post(client: TestClient, body: dict = REQUEST):
@@ -164,6 +167,39 @@ def test_gateway_down_gives_an_anthropic_error(tmp_path):
     assert resp.json()["type"] == "error"
     [row] = CaptureStore(tmp_path, keep=0).recent()
     assert row["status"] == 502 and row["error"] == "ConnectError"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "https://evil.example"},
+        {"sec-fetch-site": "cross-site"},
+        {"host": "rebound.evil.example:8787"},
+    ],
+)
+def test_browser_and_rebound_calls_are_refused(tmp_path, headers):
+    gateway = Gateway()
+    with _client(tmp_path, gateway) as client:
+        resp = client.post("/v1/messages", json=REQUEST, headers=headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["type"] == "permission_error"
+    assert gateway.seen == []  # nothing reached the gateway
+
+
+def test_repo_config_cannot_set_the_upstream(monkeypatch):
+    import argparse
+
+    from cgh_proxy.cli import make_cli_registrar
+
+    def parse(*argv):
+        parser = argparse.ArgumentParser()
+        make_cli_registrar()(parser.add_subparsers())
+        return parser.parse_args(["proxy", *argv])
+
+    monkeypatch.delenv("CGH_PROXY_UPSTREAM", raising=False)
+    assert parse("serve").upstream == ""
+    monkeypatch.setenv("CGH_PROXY_UPSTREAM", "https://gw.example.com")
+    assert parse("serve").upstream == "https://gw.example.com"
 
 
 def test_upstream_must_be_encrypted_unless_local():

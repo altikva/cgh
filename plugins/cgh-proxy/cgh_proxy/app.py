@@ -12,6 +12,8 @@
 #              anatomy, token usage, PII counts, and the raw capture.
 #              ProxyConfig     upstream, capture dir, keep, TLS material
 #              check_upstream  https only, plain http for loopback alone
+#              refusal         calls from a browser page or a non-loopback
+#                              Host are refused (DNS rebinding, CSRF)
 #              tls_context     the SSL context, client cert included
 #              build_app       the ASGI app (an httpx transport can be
 #                              injected for tests)
@@ -84,6 +86,25 @@ def check_upstream(url: str) -> str:
             "send the traffic in clear"
         )
     return url.strip().rstrip("/")
+
+
+def refusal(headers) -> str:
+    """Why a call must not go through, or "" when it may.
+
+    Listening on 127.0.0.1 is not enough: any web page in the browser can
+    POST to it, and with DNS rebinding read the answer, while the proxy
+    adds the client certificate on the way out. Claude Code sends neither
+    an Origin nor a Sec-Fetch header, and names the loopback host."""
+    if "origin" in headers or "sec-fetch-site" in headers:
+        return "the call comes from a browser page"
+    host = headers.get("host", "")
+    if host.startswith("["):
+        hostname = host[1 : host.find("]")]
+    else:
+        hostname = host.rsplit(":", 1)[0]
+    if not _is_loopback(hostname):
+        return f"Host {host[:64]!r} is not this machine"
+    return ""
 
 
 def tls_context(cfg: ProxyConfig) -> ssl.SSLContext:
@@ -173,6 +194,19 @@ def build_app(cfg: ProxyConfig, transport=None):
     )
 
     async def forward(request):
+        refused = refusal(request.headers)
+        if refused:
+            log.warning("refused a call: %s", refused)
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "permission_error",
+                        "message": f"cgh proxy: refused, {refused}",
+                    },
+                },
+                status_code=403,
+            )
         started = time.time()
         body = await request.body()
         path = "/" + request.path_params["path"]

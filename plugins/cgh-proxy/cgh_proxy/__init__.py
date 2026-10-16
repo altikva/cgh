@@ -20,4 +20,4 @@ class ProxyError(Exception):
 def register(api) -> None:
     from .cli import make_cli_registrar
 
-    api.register_cli(make_cli_registrar(api.config))
+    api.register_cli(make_cli_registrar())

@@ -14,7 +14,8 @@ doc search, and BM25 full-text search, exposed via MCP tools.
 ### Rules
 
 1. **Use `context_for_task(task)` FIRST** before any coding task: it returns
-   ranked symbols + docs + relationships in one call, saving 60-90% of tokens.
+   ranked symbols + docs + relationships in one call, instead of several
+   searches and file reads.
 2. **Use `symbol_lookup(name)` instead of grep/find**: returns exact file:line.
 3. **Use `search_docs(query)` before reading documentation files.**
 4. **Use `find_callers`/`find_callees` instead of manual code navigation.**

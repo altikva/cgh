@@ -49,12 +49,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   sessions the full text was followed by a cgh call one time in five.
   Codex, Gemini, Cursor and Bob keep the full guidance. Migration: run
   `cgh init` (or `cgh setup`) again in a repo to rewrite its rule.
-- **`pattern_search` answers stay small.** An answer now stops at about
-  8 KB, with each line cut at 200 characters, and `more` counts per file
-  the hits it leaves out. Every byte of an answer is re-read on each later
-  turn of the session: three answers of 16 to 30 KB used to fill 40k
-  tokens of context within a minute. Narrow the pattern or the glob to see
-  the rest.
+- **Tool answers stay small.** Every byte of an answer is re-read on each
+  later turn of the session, and real sessions measured `pattern_search`
+  at 4.4 KB a call, `file_at_ref` at 7.4 KB, `search_symbols` at 15.8 KB
+  and one `file_summary` at 43.7 KB. `pattern_search` now stops at about
+  4 KB, groups hits by file and clips each line to about 160 characters
+  around the match. `search_symbols` applies `limit` to all kinds together
+  (it used to apply it to each kind, up to four times the rows), an exact
+  name first. `file_summary`, `file_at_ref` and `search_symbols` stop at
+  about 10 KB. A cut answer says `truncated: true`, with `more` or
+  `dropped` and a hint on how to narrow. Answers are compact JSON, and rows
+  carry `scope` only when some come from a federated child.
+  Migration: `pattern_search` returns `files: [{file, hits: [[line,
+  text]]}]` instead of `hits: [{scope, file, line, text}]`, and its `note`
+  is now `hint`; `file_at_ref` adds `next_start_line` when it stops early.
 - **`resume(session_id)` answers short.** For a session that wrote a
   checkpoint, `resume` now returns that checkpoint, the standing
   instructions, the known dead ends and up to 3 entries matching the task,

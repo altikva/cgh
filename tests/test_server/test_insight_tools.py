@@ -192,3 +192,60 @@ def test_search_symbols_role_filter(insight_tools):
 
     out2 = json.loads(tools["search_symbols"]("widget", role="other"))
     assert any(r["name"] == "widget" for r in out2["results"])
+
+
+def test_file_summary_of_a_huge_file_stays_under_the_cap(insight_tools):
+    """Hundreds of documented functions: the answer is cut to about 10 KB,
+    stays valid JSON, and says it was cut and how to narrow."""
+    root = insight_tools
+    src = root / "huge.py"
+    src.write_text(
+        "".join(
+            f'def function_number_{i}():\n    """{"Doc " * 40}"""\n    return {i}\n\n'
+            for i in range(180)
+        ),
+        encoding="utf-8",
+    )
+    index_file(src, root)
+
+    raw = _register("insight")["file_summary"](str(src))
+    assert len(raw.encode()) <= 10_000
+    out = json.loads(raw)
+    assert out["truncated"] is True and out["dropped"] > 0
+    assert "hint" in out
+    assert out["functions"][0]["name"] == "function_number_0"
+    # No federated child: rows carry no scope tag.
+    assert "scope" not in out["functions"][0]
+
+
+def test_search_symbols_limit_counts_all_kinds(insight_tools):
+    """`limit` bounds the whole answer, an exact name ranked first, and the
+    rest is reported as truncated."""
+    root = insight_tools
+    body = "".join(f"def widget_{i}():\n    return {i}\n\n" for i in range(30))
+    body += "".join(f"class Widget{i}:\n    pass\n\n" for i in range(30))
+    body += "def widget():\n    return 0\n"
+    (root / "many.py").write_text(body, encoding="utf-8")
+    index_file(root / "many.py", root)
+
+    out = json.loads(_register("query")["search_symbols"]("widget", limit=10))
+    assert len(out["results"]) == 10
+    assert out["results"][0]["name"] == "widget"
+    assert out["total"] > 10 and out["truncated"] is True
+    assert "hint" in out
+    assert "scope" not in out["results"][0]
+
+
+def test_search_symbols_answer_is_capped(insight_tools):
+    root = insight_tools
+    body = "".join(
+        f"def widget_with_a_rather_long_name_number_{i}():\n    return {i}\n\n"
+        for i in range(300)
+    )
+    (root / "lots.py").write_text(body, encoding="utf-8")
+    index_file(root / "lots.py", root)
+
+    raw = _register("query")["search_symbols"]("widget", limit=300)
+    assert len(raw.encode()) <= 10_000
+    out = json.loads(raw)
+    assert out["truncated"] is True and out["dropped"] > 0

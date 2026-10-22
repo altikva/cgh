@@ -68,7 +68,7 @@ than reading.
      in words (a sentence is fine, French or English)
 - **Text/regex pattern search** (*"find every occurrence of X"*):
   1. `pattern_search(pattern, glob?, max_results?)`, INSTEAD of Grep.
-     Returns structured {file, line, text}. Then Read only those lines.
+     Returns hits grouped by file, with line numbers. Then Read only those lines.
   2. The same holds in the shell: `git grep`, `grep -r`, `rg`, `find -name`
      and `sed -n` / `cat` on a source file are Grep and Read by another
      route. Locate with cgh first; keep shell search for logs and files

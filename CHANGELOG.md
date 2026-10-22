@@ -34,6 +34,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **The Claude Code rule is short; the details load on demand.** The
+  `.claude/rules/cgh-usage.md` that `cgh init` writes drops from about
+  10 KB to 2.3 KB: the tool picker, locate-with-cgh-first, papercuts and
+  `resume()`, then the bundled skills by name. Claude Code loads a rules file
+  into every session but a skill only when its situation arises; on real
+  sessions the full text was followed by a cgh call one time in five.
+  Codex, Gemini, Cursor and Bob keep the full guidance. Migration: run
+  `cgh init` (or `cgh setup`) again in a repo to rewrite its rule.
 - **`pattern_search` answers stay small.** An answer now stops at about
   8 KB, with each line cut at 200 characters, and `more` counts per file
   the hits it leaves out. Every byte of an answer is re-read on each later

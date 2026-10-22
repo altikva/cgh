@@ -85,3 +85,26 @@ class TestVersionProbe:
 
     def test_garbage_output_falls_back(self, monkeypatch):
         assert self._probe(monkeypatch, stdout="not a version") is False
+
+
+def test_claude_rule_is_short_and_points_to_skills():
+    # Claude Code loads the rule into every session; the details live in
+    # skills, which load on demand. Other agents keep the full guidance.
+    import re
+    from pathlib import Path
+
+    from codegraph.integrations.skill_installer import (
+        _USAGE_BODY,
+        _USAGE_BODY_CLAUDE,
+        list_bundled_skills,
+    )
+    from codegraph.integrations.tool_guide import SEARCH_GUIDE
+
+    assert len(_USAGE_BODY_CLAUDE.encode()) < 3000 < len(_USAGE_BODY.encode())
+    assert SEARCH_GUIDE in _USAGE_BODY_CLAUDE
+    for must in ("papercut", "knowledge_search", "resume()", 'tags="artifact"'):
+        assert must in _USAGE_BODY_CLAUDE
+    named = re.findall(r"`(cgh-[a-z-]+)`", _USAGE_BODY_CLAUDE)
+    assert named and set(named) <= set(list_bundled_skills())
+    skill = Path(__file__).resolve().parents[2] / "codegraph" / "skills"
+    assert "scope" in (skill / "cgh-use-codegraph" / "SKILL.md").read_text()

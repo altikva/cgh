@@ -57,3 +57,17 @@ The graph reflects the last scan, not the live working tree. If the user
 mentions recent `git pull`, `checkout`, `rebase`, or major edits, call
 `mcp__cgh__scan_status` first. If `fresh=false`, call
 `mcp__cgh__scan_repo` before trusting symbol results.
+
+## Federated workspaces
+
+When `.codegraph/config.toml` declares `subrepos` (`cgh federate list`), the
+read tools fan out to each subrepo and tag every result with `scope`:
+`parent` or the subrepo's name. Read a child's files under the child's path.
+
+- Cross-repo calls and imports are not inferred: run a trace once per scope.
+- `find_dead_code` is per scope. A symbol dead in one scope may be called
+  from another, so never delete on a single-scope verdict.
+- `partial: true` with `warnings` means a child was locked or out of date:
+  the results are incomplete for that scope, so query again in a moment.
+- `knowledge_*`, `memory_*` and `plan_*` are not federated: each repo keeps
+  its own.

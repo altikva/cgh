@@ -551,6 +551,40 @@ def _remove_legacy_usage_block(project_root: Path) -> None:
             )
 
 
+# The Claude Code rule, short on purpose: Claude Code loads a rules file into
+# every session, while a skill's body loads only when its situation arises.
+# Measured on real sessions, the full guidance cost about 7 KB per session
+# start and was followed by a cgh call one time in five. Here only the tool
+# picker and the rules an agent must not miss; the rest lives in the bundled
+# skills named below. Agents without skills keep the full _USAGE_BODY.
+_USAGE_BODY_CLAUDE = (
+    """## cgh: use its MCP tools before Read and Grep
+
+This repo is indexed by cgh: code graph, docs, memory, plans and knowledge,
+over MCP. Tool calls run server-side; only their capped answer costs tokens.
+
+```
+"""
+    + SEARCH_GUIDE
+    + """```
+
+- Locate with cgh first. `git grep`, `rg`, `find` and `sed -n` on a source
+  file are Grep and Read by another route. Then Read only the lines cgh gave.
+- Tooling fails (a wedged process, a held lock, a stale token): first
+  `knowledge_search("papercut <symptom>")`; once fixed, record it with
+  `knowledge_record(kind="gotcha", tags="papercut, <tool>")`.
+- After a compaction or at session start: `resume()` reloads the last
+  session's decisions and knowledge.
+
+Details, loaded when the situation arises: the `cgh-use-codegraph`
+(navigation, federation), `cgh-use-memory` (preferences, plans, knowledge),
+`cgh-papercuts`, `cgh-artifacts` (opaque files, `tags="artifact"`),
+`cgh-checkpoint` (before /clear or a long sub-task) and
+`cgh-scan-after-pull` skills.
+"""
+)
+
+
 def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     """
     Inject a "when to use codegraph" block into the agent's root rules file.
@@ -597,7 +631,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         target = project_root / ".claude" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
         target.write_text(
-            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY,
+            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY_CLAUDE,
             encoding="utf-8",
         )
         _remove_legacy_usage_block(project_root)

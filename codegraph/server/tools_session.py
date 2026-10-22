@@ -5,19 +5,20 @@
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Session continuity in one call each. checkpoint persists a
-#              session digest before a clear or compaction; resume returns
-#              ONE composed, ranked, budgeted bundle: standing
-#              instructions first, then recent digests, known dead ends,
-#              task-relevant knowledge, open plans, and recent file
-#              summaries. Clearing a context stops costing anything: what
-#              was learned survives outside the window. Given a session that
-#              wrote a checkpoint, resume answers short instead
-#              (session_resume): that checkpoint, the standing instructions,
-#              the dead ends and a few task-matched entries.
+#              session digest before a clear or compaction; resume answers in
+#              two levels. By default a summary of about 2 KB: the standing
+#              instructions (short bodies in full, long ones clipped and
+#              flagged), the last session's goal and next step, the known dead
+#              ends and the counts of what is stored. On demand, detail=True
+#              returns the whole ranked, budgeted bundle (standing
+#              instructions, recent digests, known dead ends, task-relevant
+#              knowledge, open plans, recent file summaries), and section=
+#              returns one of its parts.
 
 from __future__ import annotations
 
 import json
+import re
 
 # The share of the post-instructions budget reserved for the knowledge bucket,
 # so earlier sections (digests, and especially contentless auto checkpoints)
@@ -32,6 +33,46 @@ _KNOWLEDGE_LIMIT = 8
 # did not work) the bundle carries, strongest and most recent first.
 _DEAD_ENDS_LIMIT = 5
 
+# The parts resume(section=...) returns, by the name the caller passes. The
+# bundle's own key names are accepted too.
+SECTIONS = {
+    "instructions": "standing_instructions",
+    "digests": "digests",
+    "dead_ends": "known_dead_ends",
+    "knowledge": "knowledge",
+    "plans": "open_plans",
+    "summaries": "recent_summaries",
+    "federated": "federated_knowledge",
+}
+
+# The summary's target size, in bytes of compact JSON. Every byte of a resume
+# answer is re-read on each later turn of the session; the whole bundle
+# measured 8 KB per call on real sessions.
+SUMMARY_BUDGET = 2048
+
+# A standing instruction body up to this length rides in full in the summary.
+# A longer one is cut to its lead and flagged, and the summary says to read
+# it in full before acting on it.
+_SHORT_BODY = 280
+_BODY_LEAD = 200
+_TITLE_MAX = 120
+
+# The checkpoint labels the summary reads the goal and the next step from,
+# in the order the cgh-checkpoint skill writes them, English or French.
+# A label ends its line or is followed by a colon or a dash, so "Next, the
+# portal" or "But it failed" in prose is not read as one.
+_END = r"\s*(?:[:\-\u2013]|$)"
+_GOAL_RE = re.compile(r"^(?:goal|objectif|but)" + _END, re.IGNORECASE)
+_NEXT_RE = re.compile(
+    r"^(?:next(?:\s+steps?)?|prochaines?\s+[ée]tapes?|suite)" + _END,
+    re.IGNORECASE,
+)
+_LABEL_RE = re.compile(
+    r"^(?:goal|objectif|but|done|decisions?|open|next(?:\s+steps?)?|"
+    r"prochaines?\s+[ée]tapes?|suite|fait|d[ée]cisions?|ouvert)" + _END,
+    re.IGNORECASE,
+)
+
 
 def _is_auto_checkpoint(entry: dict) -> bool:
     """A contentless automatic SessionEnd/PreCompact marker (tagged
@@ -40,29 +81,54 @@ def _is_auto_checkpoint(entry: dict) -> bool:
     return "auto-checkpoint" in (entry.get("tags") or "")
 
 
-def build_resume_bundle(
-    repo_root,
-    session_id: str = "",
-    task: str = "",
-    budget_kb: float = 16,
-    scope: str = "",
-) -> dict:
-    """The composed bundle, priority-ordered and budget-capped. Shared by
-    the resume MCP tool and the SessionStart header hook."""
-    from codegraph.core.fts import get_fts_conn, list_plan_entries
-    from codegraph.state.call_log import (
-        knowledge_dead_ends,
-        knowledge_list,
-        knowledge_search,
-    )
-    from codegraph.state.findings import query_findings
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
-    sections: list[tuple[str, list[dict]]] = []
 
-    instructions = knowledge_list(
-        kind="standing_instruction", limit=20, repo_root=repo_root
-    )
-    sections.append(("standing_instructions", instructions))
+def _strip_label_line(line: str) -> str:
+    """A digest line without its list number, bullets and bold markers, so
+    "1. **Goal**: x" and "## Next step" read as "Goal: x" and "Next step"."""
+    line = line.strip()
+    line = re.sub(r"^#+\s*", "", line)
+    line = re.sub(r"^(?:\d+[.)]|[-*+])\s+", "", line)
+    return line.replace("**", "").replace("__", "").strip()
+
+
+def digest_brief(body: str, limit: int = 300) -> dict:
+    """The goal and the next step of a checkpoint, read from its labels
+    ("Goal:", "Next step:", a "NEXT" heading, their French forms). A label
+    alone on its line takes the lines below it, up to the next label or a
+    blank line. Missing labels are left out; with neither, an excerpt of
+    the body stands in."""
+    lines = str(body or "").splitlines()
+    found: dict[str, str] = {}
+    for i, raw in enumerate(lines):
+        line = _strip_label_line(raw)
+        for key, pattern in (("goal", _GOAL_RE), ("next", _NEXT_RE)):
+            if key in found or not pattern.match(line):
+                continue
+            rest = re.sub(r"^[^:\-\u2013]*?[:\-\u2013]\s*", "", line, count=1)
+            text = rest if rest != line else ""
+            if not text:
+                tail = []
+                for nxt in lines[i + 1 :]:
+                    clean = _strip_label_line(nxt)
+                    if not clean or _LABEL_RE.match(clean):
+                        break
+                    tail.append(clean)
+                text = " ".join(tail)
+            if text:
+                found[key] = _clip(text, limit)
+    if not found:
+        found["excerpt"] = _clip(body, limit)
+    return found
+
+
+def _digests(repo_root, session_id: str = "") -> list[dict]:
+    """The digests a resume carries: the caller's session first, content
+    bearing ones before at most one contentless auto marker."""
+    from codegraph.state.call_log import knowledge_list
 
     raw_digests = []
     if session_id:
@@ -105,7 +171,29 @@ def build_resume_bundle(
             d for d in candidates if d["id"] not in known and not _is_auto_checkpoint(d)
         ][:3]
 
-    digests = content_digests + auto_digests[:1]
+    return content_digests + auto_digests[:1]
+
+
+def _collect_sections(
+    repo_root, session_id: str = "", task: str = "", scope: str = ""
+) -> list[tuple[str, list[dict]]]:
+    """Every section of the bundle, uncapped, in priority order."""
+    from codegraph.core.fts import get_fts_conn, list_plan_entries
+    from codegraph.state.call_log import (
+        knowledge_dead_ends,
+        knowledge_list,
+        knowledge_search,
+    )
+    from codegraph.state.findings import query_findings
+
+    sections: list[tuple[str, list[dict]]] = []
+
+    instructions = knowledge_list(
+        kind="standing_instruction", limit=20, repo_root=repo_root
+    )
+    sections.append(("standing_instructions", instructions))
+
+    digests = _digests(repo_root, session_id)
     sections.append(("digests", digests))
 
     # Paths an earlier session already found to go nowhere, so this one does
@@ -178,19 +266,25 @@ def build_resume_bundle(
         if r["key"] == "summary"
     ][:5]
     sections.append(("recent_summaries", summaries))
+    return sections
 
-    # Budget. Standing instructions are never dropped. Knowledge gets a
-    # reserved share of what's left so digests (and contentless checkpoints)
-    # cannot starve it, the reported failure where knowledge came back empty
-    # with only truncated:true as a signal. Every section that loses entries to
-    # the budget records the count under dropped_for_budget, so an empty section
-    # is never silently read as lost memory.
+
+def _size(entry) -> int:
+    return len(json.dumps(entry, default=str))
+
+
+def _fit_bundle(sections: list[tuple[str, list[dict]]], budget_kb: float) -> dict:
+    """Cap the sections at budget_kb.
+
+    Standing instructions are never dropped. Knowledge gets a reserved share
+    of what's left so digests (and contentless checkpoints) cannot starve it,
+    the reported failure where knowledge came back empty with only
+    truncated:true as a signal. Every section that loses entries to the
+    budget records the count under dropped_for_budget, so an empty section is
+    never silently read as lost memory."""
     budget = int(budget_kb * 1024)
     by_name = dict(sections)
     bundle: dict = {"truncated": False, "dropped_for_budget": {}}
-
-    def _size(entry) -> int:
-        return len(json.dumps(entry, default=str))
 
     def _fill(name: str, entries: list, cap: int, used: int) -> int:
         kept: list = []
@@ -230,61 +324,176 @@ def build_resume_bundle(
     return bundle
 
 
-# How many task-matched knowledge entries a session resume carries. The
-# checkpoint is the point of it; knowledge rides along only when it matches.
-_SESSION_KNOWLEDGE_LIMIT = 3
+def build_resume_bundle(
+    repo_root,
+    session_id: str = "",
+    task: str = "",
+    budget_kb: float = 16,
+    scope: str = "",
+) -> dict:
+    """The whole bundle, priority-ordered and budget-capped: what
+    resume(detail=True) returns."""
+    return _fit_bundle(_collect_sections(repo_root, session_id, task, scope), budget_kb)
 
-_SESSION_NEXT = (
-    "This is your session's checkpoint: continue from its next step. "
-    "Nothing else to reload; knowledge_search(query) only if a step needs it. "
-    "For the whole project bundle, call resume(full=True)."
-)
+
+def resume_section(
+    repo_root,
+    section: str,
+    session_id: str = "",
+    task: str = "",
+    budget_kb: float = 16,
+    scope: str = "",
+) -> dict:
+    """One part of the bundle, with the whole budget to itself. Standing
+    instructions come back in full whatever the budget. An unknown name
+    answers with the list of valid ones."""
+    key = SECTIONS.get(section, section)
+    if key not in SECTIONS.values():
+        return {
+            "error": f"unknown section {section!r}",
+            "sections": sorted(SECTIONS),
+        }
+    if key == "federated_knowledge":
+        scope = "all"
+    by_name = dict(_collect_sections(repo_root, session_id, task, scope))
+    entries = by_name.get(key, [])
+    out: dict = {"section": section, key: entries, "truncated": False}
+    if key == "standing_instructions":
+        return out
+    budget, used, kept = int(budget_kb * 1024), 0, []
+    for entry in entries:
+        used += _size(entry)
+        if used > budget:
+            break
+        kept.append(entry)
+    out[key] = kept
+    if len(kept) < len(entries):
+        out["truncated"] = True
+        out["dropped_for_budget"] = len(entries) - len(kept)
+    return out
 
 
-def session_resume(repo_root, session_id: str, task: str = "") -> dict | None:
-    """The short bundle for a session that wrote a checkpoint: its latest
-    digest, the standing instructions, the dead ends and up to
-    _SESSION_KNOWLEDGE_LIMIT task-matched entries. None when the session
-    has no checkpoint with content, so the caller falls back to the full
-    bundle. A bench saw the full one (50 digests of other sessions) make a
-    resumed agent spend 10 KB and more re-reading it, and once launch a
-    sub-agent just to find its own checkpoint."""
+def resume_counts(repo_root) -> dict:
+    """What the store holds, for the summary and the SessionStart header."""
+    from codegraph.core.fts import get_fts_conn, list_plan_entries
+    from codegraph.state.call_log import knowledge_count
+
+    instructions = knowledge_count(kind="standing_instruction", repo_root=repo_root)
+    digests = knowledge_count(tag="session-digest", repo_root=repo_root)
+    total = knowledge_count(repo_root=repo_root)
+    try:
+        plans = len(list_plan_entries(get_fts_conn(repo_root), limit=1000))
+    except Exception:
+        plans = 0
+    return {
+        "standing_instructions": instructions,
+        "digests": digests,
+        "knowledge": max(0, total - digests - instructions),
+        "plans": plans,
+    }
+
+
+def _instruction_line(entry: dict, lead: int | None) -> dict:
+    """A standing instruction for the summary. lead None keeps the body in
+    full; otherwise a long body is cut to lead characters (0 drops it) and
+    flagged clipped."""
+    out: dict = {"id": entry["id"], "title": _clip(entry["title"], _TITLE_MAX)}
+    body = " ".join(str(entry.get("body") or "").split())
+    if lead is None or len(body) <= _SHORT_BODY:
+        if body:
+            out["body"] = body
+    else:
+        if lead:
+            out["body"] = _clip(body, lead)
+        out["clipped"] = True
+    return out
+
+
+def resume_summary(repo_root, session_id: str = "", task: str = "") -> dict:
+    """The default resume answer, about SUMMARY_BUDGET bytes: the standing
+    instructions in a compact form, the last session's goal and next step,
+    the known dead ends, the counts, and how to get the detail.
+
+    Standing instructions ride in full while the summary fits the budget.
+    Past it, a short body stays whole and a long one keeps its title and the
+    lead of its body, flagged clipped, and the "more" line tells the agent to
+    read those in full before acting on them, so no rule is silently lost.
+    Titles are never dropped, even past the budget."""
     from codegraph.state.call_log import (
         knowledge_dead_ends,
         knowledge_list,
         knowledge_search,
     )
 
-    if not session_id:
-        return None
-    own = [
-        d
-        for d in knowledge_list(
-            tag="session-digest", session_id=session_id, limit=3, repo_root=repo_root
-        )
-        if not _is_auto_checkpoint(d)
+    instructions = knowledge_list(
+        kind="standing_instruction", limit=20, repo_root=repo_root
+    )
+    digests = [d for d in _digests(repo_root, session_id) if not _is_auto_checkpoint(d)]
+    last: dict = {}
+    if digests:
+        d = digests[0]
+        last = {
+            "id": d["id"],
+            "session_id": d.get("session_id") or "",
+            "title": _clip(d["title"], _TITLE_MAX),
+            **digest_brief(d["body"]),
+        }
+        if session_id:
+            last["own"] = (d.get("session_id") or "") == session_id
+
+    dead_ends = [
+        _clip(item.get("title") or item.get("file") or "", 100)
+        for item in knowledge_dead_ends(_DEAD_ENDS_LIMIT, repo_root=repo_root)
     ]
-    if not own:
-        return None
-    knowledge = [
-        k
-        for k in (
-            knowledge_search(task, limit=_SESSION_KNOWLEDGE_LIMIT, repo_root=repo_root)
-            if task
-            else []
+    matching = []
+    if task:
+        matching = [
+            {"id": k["id"], "title": _clip(k["title"], 100)}
+            for k in knowledge_search(task, limit=3, repo_root=repo_root)
+            if "session-digest" not in (k.get("tags") or [])
+            and k.get("kind") != "standing_instruction"
+        ]
+
+    def compose(lead: int | None, brief: int) -> dict:
+        lines = [_instruction_line(e, lead) for e in instructions]
+        clipped = sum(1 for line in lines if line.get("clipped"))
+        more = (
+            "Detail on demand: resume(detail=True) for everything, or "
+            "resume(section=...) with one of: instructions, digests, "
+            "dead_ends, knowledge, plans, summaries."
         )
-        if "session-digest" not in (k.get("tags") or [])
-    ]
-    return {
-        "mode": "session",
-        "checkpoint": own[0],
-        "standing_instructions": knowledge_list(
-            kind="standing_instruction", limit=20, repo_root=repo_root
-        ),
-        "known_dead_ends": knowledge_dead_ends(_DEAD_ENDS_LIMIT, repo_root=repo_root),
-        "knowledge": knowledge,
-        "next": _SESSION_NEXT,
-    }
+        if clipped:
+            more = (
+                f"{clipped} standing instruction(s) clipped: read them with "
+                "resume(section='instructions') before acting on them. " + more
+            )
+        out: dict = {"mode": "summary", "standing_instructions": lines}
+        if last:
+            out["last_session"] = {
+                k: _clip(v, brief) if k in ("goal", "next", "excerpt") else v
+                for k, v in last.items()
+            }
+        if dead_ends:
+            out["known_dead_ends"] = dead_ends
+        if matching:
+            out["matching_knowledge"] = matching
+        out["counts"] = {
+            **resume_counts(repo_root),
+            "known_dead_ends": len(dead_ends),
+        }
+        out["more"] = more
+        return out
+
+    # Shrink in steps until the summary fits: every body in full when there
+    # is room, then leads of the long ones, a shorter goal and next step, and
+    # last titles alone for the long instructions.
+    summary: dict = {}
+    steps: tuple = ((None, 300), (_BODY_LEAD, 300), (120, 200), (0, 160))
+    for lead, brief in steps:
+        summary = compose(lead, brief)
+        if _size(summary) <= SUMMARY_BUDGET:
+            break
+    return summary
 
 
 def register(mcp) -> None:
@@ -327,32 +536,44 @@ def register(mcp) -> None:
         budget_kb: float = 16,
         scope: str = "",
         full: bool = False,
+        detail: bool = False,
+        section: str = "",
     ) -> str:
         """
-        ONE call to rehydrate after a context clear: standing
-        instructions first (never truncated), then recent session
-        digests, known dead ends (entries and files recorded as not
-        working: do not retry them), task-relevant knowledge, open plans,
-        and recent file summaries, ranked and capped at budget_kb. Pass
-        the task for relevance ranking; pass scope="all" to also pull knowledge from
-        federated subrepos (read-only, scope-tagged). Call this at
-        session start when the header announces a bundle.
+        ONE call to rehydrate after a context clear. By default a short
+        summary (about 2 KB): the standing instructions (follow them;
+        any marked clipped must be read in full before acting), the last
+        session's goal and next step (your own checkpoint first when you
+        pass session_id), known dead ends (do not retry them), and the
+        counts of what is stored. Pass the task to list matching
+        knowledge titles.
 
-        With the session_id of a session that wrote a checkpoint, the
-        answer is short (mode "session"): that checkpoint, the standing
-        instructions, the dead ends and up to 3 task-matched entries.
-        Continue from the checkpoint's next step; full=True returns the
-        whole bundle instead.
+        Detail on demand: detail=True (or full=True) returns the whole
+        bundle, ranked and capped at budget_kb: standing instructions,
+        recent digests, dead ends, task-relevant knowledge, open plans
+        and file summaries. section= returns one part: instructions,
+        digests, dead_ends, knowledge, plans, summaries or federated.
+        scope="all" also pulls knowledge from federated subrepos and
+        returns the whole bundle.
         """
-        if session_id and not full and scope != "all":
-            short = session_resume(_srv._root, session_id, task)
-            if short is not None:
-                return json.dumps(short, indent=2, default=str)
-        bundle = build_resume_bundle(
-            _srv._root,
-            session_id=session_id,
-            task=task,
-            budget_kb=budget_kb,
-            scope=scope,
-        )
-        return json.dumps(bundle, indent=2)
+        if section:
+            out = resume_section(
+                _srv._root,
+                section,
+                session_id=session_id,
+                task=task,
+                budget_kb=budget_kb,
+                scope=scope,
+            )
+            return json.dumps(out, indent=2, default=str)
+        if detail or full or scope == "all":
+            bundle = build_resume_bundle(
+                _srv._root,
+                session_id=session_id,
+                task=task,
+                budget_kb=budget_kb,
+                scope=scope,
+            )
+            return json.dumps(bundle, indent=2, default=str)
+        summary = resume_summary(_srv._root, session_id=session_id, task=task)
+        return json.dumps(summary, ensure_ascii=False, default=str)

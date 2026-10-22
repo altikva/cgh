@@ -174,8 +174,9 @@ shrinks and reload it after.
   lifecycle hooks only record what changed, not why.
 
 - **Immediately after context compaction / session resume**:
-  1. `resume(session_id)`: when it answers with your session's checkpoint
-     (mode "session"), continue from its next step. Nothing else to reload.
+  1. `resume(session_id)`: a short summary. Follow its standing
+     instructions. When `last_session` is your own (`own: true`), continue
+     from its next step; `resume(section="digests")` has the full checkpoint.
   2. Otherwise: `knowledge_list(limit=20)` for recent learnings,
      `knowledge_search(query)` for the current task, `memory_search(query)`
      for preferences and feedback, `plan_search(query)` for an active plan.

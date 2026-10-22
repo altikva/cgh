@@ -34,6 +34,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`resume` answers with a summary by default.** It returns about 2 KB:
+  the standing instructions (a long one is clipped only when space runs
+  out, and the answer then says to read it in full before acting), the
+  last session's goal and next step, the known dead ends and the counts of
+  digests, knowledge and plans. The full bundle measured 8 KB per call on
+  real sessions, re-read on every later turn. Get the detail with
+  `resume(detail=True)` (`full=True` still works) or one part with
+  `resume(section="instructions" | "digests" | "dead_ends" | "knowledge" |
+  "plans" | "summaries")`. The answer for a session with a checkpoint
+  (mode "session") is folded into the summary, under `last_session` with
+  `own: true`. The `/clear` recap the SessionStart hook injects shrinks the
+  same way, to the checkpoint's goal and next step.
 - **Hook answers can be turned on from a config file.** `answers = true`
   under `[hooks]`, in a repo's `.codegraph/config.toml` or in
   `~/.codegraph/config.toml`, turns on the answer mode that only

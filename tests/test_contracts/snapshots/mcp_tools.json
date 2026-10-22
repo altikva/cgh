@@ -708,11 +708,19 @@
         "default": 16,
         "type": "number"
       },
+      "detail": {
+        "default": false,
+        "type": "boolean"
+      },
       "full": {
         "default": false,
         "type": "boolean"
       },
       "scope": {
+        "default": "",
+        "type": "string"
+      },
+      "section": {
         "default": "",
         "type": "string"
       },

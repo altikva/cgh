@@ -90,7 +90,7 @@ def fed(tmp_path, monkeypatch):
 def test_federated_answer_names_each_scope_commit(fed):
     _parent, child, t = fed
     out = json.loads(t["pattern_search"]("needle_fn"))
-    assert {h["scope"] for h in out["hits"]} == {"api"}
+    assert {g["scope"] for g in out["files"]} == {"api"}
     api = out["scopes"]["api"]
     assert api["head"] == _git(child, "rev-parse", "HEAD")
     assert api["branch"] == "develop"

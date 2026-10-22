@@ -96,10 +96,13 @@ def test_search_sibling_at_a_branch_not_checked_out(setup):
     )
     assert out["backend"] == "git-grep-ref"
     assert out["repo"] == "api" and len(out["commit"]) == 40
-    assert [(h["file"], h["line"]) for h in out["hits"]] == [("app/models.py", 5)]
+    assert [(g["file"], g["hits"]) for g in out["files"]] == [
+        ("app/models.py", [[5, "class Association:"]])
+    ]
+    assert "scope" not in out["files"][0]
     # The working tree (main) does not have it.
     out = json.loads(t["pattern_search"]("class Association", repo="api"))
-    assert out["hits"] == []
+    assert out["files"] == []
 
 
 def test_file_at_ref_reads_a_line_range(setup):
@@ -114,6 +117,27 @@ def test_file_at_ref_reads_a_line_range(setup):
         (6, "    name = 'x'"),
     ]
     assert out["total_lines"] == 6 and out["truncated"] is False
+
+
+def test_file_at_ref_stops_at_the_answer_cap(setup):
+    """A long file read whole: the answer stays under the byte cap, ends on
+    a whole line and says where to go on."""
+    proj, *_, t = setup
+    (proj / "big.py").write_text(
+        "".join(f"value_{i} = '{'v' * 90}'\n" for i in range(400))
+    )
+    _git(proj, "add", "big.py")
+    _git(proj, "commit", "-qm", "big")
+    raw = t["file_at_ref"]("big.py", "main")
+    assert len(raw.encode()) <= 10_000
+    out = json.loads(raw)
+    assert out["truncated"] is True and "hint" in out
+    assert out["end_line"] == out["lines"][-1]["line"] < 400
+    assert out["next_start_line"] == out["end_line"] + 1
+    nxt = json.loads(
+        t["file_at_ref"]("big.py", "main", start_line=out["next_start_line"])
+    )
+    assert nxt["lines"][0]["line"] == out["end_line"] + 1
 
 
 def test_own_repo_at_a_ref(setup):
@@ -136,7 +160,7 @@ def test_refusals(setup, kwargs, needle):
     *_, t = setup
     out = json.loads(t["pattern_search"]("x", **kwargs))
     assert needle in out["error"]
-    assert "hits" not in out
+    assert "files" not in out
 
 
 @pytest.mark.parametrize("path", ["../front/page.ts", "/etc/passwd", "app/../../x", ""])
@@ -195,4 +219,4 @@ def test_git_redirect_env_is_not_inherited(setup, monkeypatch, tmp_path):
     out = json.loads(
         t["pattern_search"]("class Association", repo="api", ref="develop")
     )
-    assert [h["file"] for h in out["hits"]] == ["app/models.py"]
+    assert [g["file"] for g in out["files"]] == ["app/models.py"]

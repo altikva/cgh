@@ -85,8 +85,17 @@ def register(mcp) -> None:
 
         Federated: the file may live in the parent or in any subrepo, so we
         query all scopes and aggregate. Each symbol / import row carries a
-        `scope` tag. Symbols are capped at 200 with a truncation note.
+        `scope` tag when some come from a federated child. Symbols are
+        capped at 200 with a truncation note, and the answer at about
+        10 KB: the longest lists lose their tail first, with `truncated`,
+        `dropped` and a `hint`.
         """
+        from codegraph.server._budget import (
+            cap_answer,
+            drop_parent_scope,
+            dumps_answer,
+        )
+
         target = _abs(file_path)
 
         def query(conn):
@@ -191,7 +200,16 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        drop_parent_scope(functions + classes + imports + imported_by)
+        # A file imported from hundreds of places, or defining hundreds of
+        # symbols, answered over 40 KB: trim the longest list first.
+        cap_answer(
+            payload,
+            ["imported_by", "imports", "functions", "classes"],
+            "Lists cut to fit: symbol_lookup / find_callers for one symbol, "
+            "imports_of for the import edges, or Read a line range.",
+        )
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool

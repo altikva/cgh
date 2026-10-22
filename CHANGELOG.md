@@ -9,6 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Hook hints that keep a session small.** The Bash precheck adds a
+  one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,
+  `--silent` installs, `--tail 50` on logs, `head` for a large `cat`), and a
+  new UserPromptSubmit hook says once per size threshold (0.5, 1.5 and 3 MB
+  of transcript since the last compaction) that `/compact`, or a checkpoint
+  then `/clear`, would help. Old tool output is about a fifth of every
+  request. Both are advisory and on by default; turn them off with
+  `[hooks] bash_advice = false` or `compact_hint = false`. Re-run
+  `cgh setup claude` to install the new hook.
 - **Code locations for sub-agents (opt-in).** Run `cgh init` with
   `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
   brief the code locations cgh finds for it, so it starts from file:line

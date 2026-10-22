@@ -6,6 +6,7 @@
     "_bob_stop",
     "_bob_tool_log",
     "_hook_checkpoint",
+    "_hook_compact_hint",
     "_hook_guard",
     "_hook_guard_codex",
     "_hook_precheck_agent",
@@ -105,6 +106,12 @@
         ]
       },
       "_hook_checkpoint": {
+        "options": [
+          "--help",
+          "-h"
+        ]
+      },
+      "_hook_compact_hint": {
         "options": [
           "--help",
           "-h"

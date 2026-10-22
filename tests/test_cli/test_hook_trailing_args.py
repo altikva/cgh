@@ -28,6 +28,7 @@ import codegraph.__main__ as cli
         ["_bob_tool_log", "#", "cgh-bob-log"],
         ["_hook_resume_header", "#", "cgh-resume-header"],
         ["_hook_checkpoint", "#", "cgh-auto-checkpoint"],
+        ["_hook_compact_hint", "#", "cgh-compact-hint"],
     ],
 )
 def test_hook_command_survives_its_marker_as_arguments(argv, monkeypatch, tmp_path):

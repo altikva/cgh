@@ -1454,6 +1454,17 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "async": False,
         },
         {
+            # One line, once per size threshold, when the session transcript
+            # grows large: every request resends it. Advisory, never blocks.
+            "event": "UserPromptSubmit",
+            "matcher": "",
+            "marker": "cgh-compact-hint",
+            "label": "large-session compaction hint",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_compact_hint  # cgh-compact-hint",
+            "async": False,
+        },
+        {
             "event": "SessionStart",
             "matcher": "",
             "marker": "cgh-resume-header",
@@ -1832,6 +1843,13 @@ _CLAUDE_HOOK_MARKERS = [
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
     ("cgh-precheck-bash", "PreToolUse", "Bash", "pre-Bash search hint", "local"),
+    (
+        "cgh-compact-hint",
+        "UserPromptSubmit",
+        "",
+        "large-session compaction hint",
+        "local",
+    ),
 ]
 
 

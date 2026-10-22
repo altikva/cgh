@@ -17,7 +17,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from codegraph.cli import hook_answers
+from codegraph.cli import hook_advice, hook_answers
 
 # Bare identifier: starts with a letter or underscore, followed by 2+ word
 # chars, no regex metachars. Matches names like `user_manager` or `MyClass`
@@ -266,10 +266,51 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
         answer = _shell_answer(command, Path(cwd))
         if answer:
             _emit_nudge(answer)
+    else:
+        hint = _shell_search_hint(command)
+        if hint:
+            _emit_nudge(hint)
+    # Nothing to say about locating code: maybe about the output size.
+    if hook_advice.bash_advice_enabled(Path(cwd)):
+        advice = hook_advice.bash_advice(command, Path(cwd))
+        if advice:
+            _emit_nudge(advice)
+    sys.exit(0)
+
+
+def cmd_hook_compact_hint(args: argparse.Namespace) -> None:
+    """
+    UserPromptSubmit hook. When the session transcript has grown past a size
+    threshold since its last compaction, says so once (to the user and the
+    model) and suggests /compact, or a cgh checkpoint then /clear. Never
+    blocks the prompt: every failure is silent and exits 0.
+    """
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+        transcript = payload.get("transcript_path")
+        session_id = payload.get("session_id")
+        if not isinstance(transcript, str) or not isinstance(session_id, str):
+            sys.exit(0)
+        from codegraph.core.config import find_codegraph_root
+
+        cwd = Path(payload.get("cwd") or os.getcwd())
+        root = find_codegraph_root(cwd)
+        if root is None or not hook_advice.compact_hint_enabled(cwd):
+            sys.exit(0)
+        hint = hook_advice.compact_hint(root, session_id, Path(transcript))
+    except Exception:
         sys.exit(0)
-    hint = _shell_search_hint(command)
     if hint:
-        _emit_nudge(hint)
+        json.dump(
+            {
+                "systemMessage": hint,
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": hint,
+                },
+            },
+            sys.stdout,
+        )
     sys.exit(0)
 
 

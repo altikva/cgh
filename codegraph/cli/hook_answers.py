@@ -62,23 +62,30 @@ def enabled(start: Path | None = None) -> bool:
     files are read on every hook call, so a session that is already running
     takes a change at its next search, where an environment variable only
     reaches sessions started after it was set."""
-    env = os.environ.get("CGH_HOOK_ANSWERS", "").strip()
-    if env in ("0", "1"):
-        return env == "1"
+    return hooks_setting("answers", "CGH_HOOK_ANSWERS", False, start)
+
+
+def hooks_setting(key: str, env: str, default: bool, start: Path | None) -> bool:
+    """A boolean of the ``[hooks]`` table. The environment variable ``env``
+    set to 1 or 0 wins; unset, the repo's .codegraph/config.toml decides,
+    then ~/.codegraph/config.toml, then ``default``."""
+    value = os.environ.get(env, "").strip()
+    if value in ("0", "1"):
+        return value == "1"
     from codegraph.core.config import GLOBAL_DIR
 
     root = repo_root(start or Path.cwd())
     paths = [root / ".codegraph" / "config.toml"] if root else []
     for path in (*paths, GLOBAL_DIR / "config.toml"):
-        value = _configured(path)
-        if value is not None:
-            return value
-    return False
+        configured = _configured(path, key)
+        if configured is not None:
+            return configured
+    return default
 
 
-def _configured(path: Path) -> bool | None:
-    """[hooks] answers from one config file, or None when it does not say.
-    A missing or unreadable file says nothing: answers stay off, as before."""
+def _configured(path: Path, key: str = "answers") -> bool | None:
+    """[hooks] ``key`` from one config file, or None when it does not say.
+    A missing or unreadable file says nothing: the default applies."""
     import tomllib
 
     try:
@@ -86,7 +93,7 @@ def _configured(path: Path) -> bool | None:
             hooks = tomllib.load(fh).get("hooks")
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    value = hooks.get("answers") if isinstance(hooks, dict) else None
+    value = hooks.get(key) if isinstance(hooks, dict) else None
     return value if isinstance(value, bool) else None
 
 

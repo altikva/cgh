@@ -11,11 +11,14 @@
 #              compact_hint  once per size threshold, a line saying the
 #                            session transcript is large: /compact, or a cgh
 #                            checkpoint then /clear
-#              Both only return text: they never block, never run a
+#              read_advice   before a full Read of a large file cgh does
+#                            not index, a line on reading only a part of it
+#              All only return text: they never block, never run a
 #              subprocess, and return None when they have nothing to say.
 #              Opt out with [hooks] bash_advice = false / compact_hint = false
-#              in a cgh config file, or CGH_HOOK_BASH_ADVICE=0 /
-#              CGH_HOOK_COMPACT_HINT=0.
+#              / read_advice = false in a cgh config file, or
+#              CGH_HOOK_BASH_ADVICE=0 / CGH_HOOK_COMPACT_HINT=0 /
+#              CGH_HOOK_READ_ADVICE=0.
 
 from __future__ import annotations
 
@@ -53,9 +56,13 @@ _INDEXED_EXTS = frozenset(
         ".cc", ".cpp", ".hpp", ".swift", ".scala", ".md",
     }
 )  # fmt: skip
-# A `cat` below this size is not worth a hint. Bash outputs averaged 3.8 KB
-# in a measured run; 32 KB is about 8k tokens kept in every later request.
-_LARGE_CAT = 32 * 1024
+# A `cat` or a full Read below this size is not worth a hint. Bash outputs
+# averaged 3.8 KB in a measured run; 32 KB is about 8k tokens kept in every
+# later request.
+LARGE_FILE = 32 * 1024
+# Lines are counted only up to this size: past it the size alone says enough.
+_COUNT_LINES_MAX = 4 * 1024 * 1024
+_NAME_MAX = 60
 _JS_PMS = frozenset({"npm", "pnpm", "yarn"})
 _JS_CHATTY = frozenset({"install", "i", "ci", "add", "build", "run"})
 _JS_QUIET = frozenset({"--silent", "-s", "--quiet", "-q", "--reporter=silent"})
@@ -73,9 +80,19 @@ def compact_hint_enabled(start: Path | None = None) -> bool:
     return hooks_flag("compact_hint", "CGH_HOOK_COMPACT_HINT", start)
 
 
+def read_advice_enabled(start: Path | None = None) -> bool:
+    return hooks_flag("read_advice", "CGH_HOOK_READ_ADVICE", start)
+
+
 def hooks_flag(key: str, env: str, start: Path | None) -> bool:
     """On by default; off with ``env``=0 or ``[hooks] key = false``."""
     return hook_answers.hooks_setting(key, env, True, start)
+
+
+def strip_heredocs(command: str) -> str:
+    """The shell line without its heredoc bodies: text written into a file
+    or fed to a program is data, never a command to advise on."""
+    return _HEREDOC_RE.sub("", command)
 
 
 def _segments(command: str) -> list[tuple[list[str], bool]]:
@@ -84,7 +101,7 @@ def _segments(command: str) -> list[tuple[list[str], bool]]:
     Wrappers, environment assignments and runners are stripped so the real
     program comes first."""
     out: list[tuple[list[str], bool]] = []
-    for chain in re.split(r"&&|\|\||;|\n", _HEREDOC_RE.sub("", command)):
+    for chain in re.split(r"&&|\|\||;|\n", strip_heredocs(command)):
         first, piped, _ = chain.partition("|")
         first = first.strip()
         if not first:
@@ -186,7 +203,7 @@ def _cat(args: list[str], cwd: Path) -> str | None:
             size = (cwd / a).stat().st_size
         except (OSError, ValueError):
             continue
-        if size >= _LARGE_CAT:
+        if size >= LARGE_FILE:
             return (
                 f"[cgh hook] `cat` of a {size // 1024} KB file stays in every "
                 "later request. Try `head -50`, `tail -50`, or `grep -n` for "
@@ -241,6 +258,52 @@ def bash_advice(command: str, cwd: Path) -> str | None:
         if hint:
             return hint
     return None
+
+
+# --- read advice ---------------------------------------------------------------
+
+
+def _human_size(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    return f"{size // 1024} KB"
+
+
+def _line_count(path: Path, size: int) -> int | None:
+    """Newlines in the file, read in chunks, or None past the size cap or
+    on a read error."""
+    if size > _COUNT_LINES_MAX:
+        return None
+    count = 0
+    try:
+        with path.open("rb") as fh:
+            while chunk := fh.read(_CHUNK):
+                count += chunk.count(b"\n")
+    except OSError:
+        return None
+    return count
+
+
+def read_advice(target: Path) -> str | None:
+    """A one-line hint for a full Read of a large file cgh does not index
+    (JSON, a lock file, a log, generated code), else None. The caller has
+    already checked that the read is not ranged and the file not indexed."""
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return None
+    if size < LARGE_FILE or not target.is_file():
+        return None
+    name = target.name
+    if len(name) > _NAME_MAX:
+        name = name[: _NAME_MAX - 3] + "..."
+    lines = _line_count(target, size)
+    what = _human_size(size) + (f", {lines:,} lines" if lines is not None else "")
+    return (
+        f"[cgh hook] {name} ({what}) is not indexed by cgh, and a full Read "
+        "stays in every later request. Read a range with offset/limit, Grep "
+        "for a pattern, or `head -n 50` it."
+    )
 
 
 # --- compaction hint ----------------------------------------------------------

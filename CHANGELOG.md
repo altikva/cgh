@@ -18,6 +18,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   request. Both are advisory and on by default; turn them off with
   `[hooks] bash_advice = false` or `compact_hint = false`. Re-run
   `cgh setup claude` to install the new hook.
+- **A hint before reading a large file cgh does not index.** A full Read
+  of a file of 32 KB or more that the index does not hold (JSON, lock
+  files, logs, generated code) now gets one line with its size and line
+  count, suggesting `offset`/`limit`, Grep or `head`. Turn it off with
+  `[hooks] read_advice = false` or `CGH_HOOK_READ_ADVICE=0`. The Bash
+  search nudge also stops firing on a heredoc whose text mentions grep.
 - **Code locations for sub-agents (opt-in).** Run `cgh init` with
   `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
   brief the code locations cgh finds for it, so it starts from file:line

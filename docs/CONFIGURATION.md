@@ -293,6 +293,7 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 |-----|------|---------|-------------|
 | `answers` | `bool` | `false` | The Grep, Read and Bash prechecks run the lookup themselves (definitions and callers of a searched name, the outline of a fully read indexed file) instead of pointing at a cgh tool. `CGH_HOOK_ANSWERS=1` or `0` overrides it. Read on every hook call, so sessions already running take a change at their next search |
 | `bash_advice` | `bool` | `true` | The Bash precheck adds a one-line narrower form for a command known to print a lot (`pytest` without `-q`, `git log` without `-n`, `npm install` without `--silent`, `find` or `ls -R` over the whole tree, `cat` of a large file, `docker`/`kubectl logs` without `--tail`). Silent when the command is already piped, redirected or limited. `CGH_HOOK_BASH_ADVICE=1` or `0` overrides it |
+| `read_advice` | `bool` | `true` | Before a full Read (no `offset`/`limit`) of a file of 32 KB or more that cgh does not index (JSON, a lock file, a log, generated code), the Read precheck adds a one-line hint with its size and line count: read a range, Grep for a pattern, or `head` it. Silent for ranged reads, smaller files and indexed files. `CGH_HOOK_READ_ADVICE=1` or `0` overrides it |
 | `compact_hint` | `bool` | `true` | A UserPromptSubmit hook says once, at 0.5, 1.5 and 3 MB of session transcript since the last compaction, that the session is large and suggests `/compact`, or a cgh checkpoint then `/clear`. `CGH_HOOK_COMPACT_HINT=1` or `0` overrides it |
 
 ---

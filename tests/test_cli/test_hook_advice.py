@@ -6,8 +6,9 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The token-saving hook hints: a narrower form for chatty Bash
 #              commands, and a once-per-threshold compaction hint for a
-#              large session transcript. Both advisory, both can be turned
-#              off.
+#              large session transcript, a hint before a full Read of a
+#              large file cgh does not index, and heredoc bodies kept out
+#              of the search nudge. All advisory, all can be turned off.
 
 from __future__ import annotations
 
@@ -24,7 +25,12 @@ from codegraph.cli import hook_advice as a
 @pytest.fixture(autouse=True)
 def _isolated_config(monkeypatch, tmp_path):
     monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-cg")
-    for env in ("CGH_HOOK_ANSWERS", "CGH_HOOK_BASH_ADVICE", "CGH_HOOK_COMPACT_HINT"):
+    for env in (
+        "CGH_HOOK_ANSWERS",
+        "CGH_HOOK_BASH_ADVICE",
+        "CGH_HOOK_COMPACT_HINT",
+        "CGH_HOOK_READ_ADVICE",
+    ):
         monkeypatch.delenv(env, raising=False)
 
 
@@ -283,3 +289,132 @@ def test_compact_hook_is_registered_in_init_and_the_plugin():
         for hook in group["hooks"]
     ]
     assert "cgh _hook_compact_hint" in commands
+
+
+# --- Read advice -------------------------------------------------------------
+
+
+@pytest.fixture
+def indexed_repo(tmp_path):
+    """A cgh repo whose FTS index holds one indexed source file."""
+    import sqlite3
+
+    (tmp_path / ".codegraph").mkdir()
+    src = tmp_path / "billing.py"
+    src.write_text("x = 1\n" * 8000)
+    conn = sqlite3.connect(tmp_path / ".codegraph" / "fts.db")
+    conn.execute(
+        "CREATE TABLE symbols (sym_id TEXT PRIMARY KEY, kind TEXT, name TEXT, "
+        "file_path TEXT, start_line INTEGER, end_line INTEGER, docstring TEXT)"
+    )
+    for i in range(6):
+        conn.execute(
+            "INSERT INTO symbols VALUES (?, 'function', ?, ?, ?, ?, '')",
+            (str(i), f"fn_{i}", str(src.resolve()), i * 10 + 1, i * 10 + 5),
+        )
+    conn.commit()
+    conn.close()
+    return tmp_path
+
+
+def _read(monkeypatch, capsys, repo, name, **extra) -> str:
+    payload = {"tool_input": {"file_path": str(repo / name), **extra}, "cwd": str(repo)}
+    return _run(monkeypatch, capsys, h.cmd_hook_precheck_read, payload)
+
+
+def _context(out: str) -> str:
+    return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_full_read_of_a_large_unindexed_file_gets_a_hint(
+    monkeypatch, capsys, indexed_repo
+):
+    (indexed_repo / "data.json").write_text('{"k": 1},\n' * 5000)
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, "data.json"))
+    assert "data.json" in hint and "48 KB" in hint and "5,000 lines" in hint
+    assert "offset/limit" in hint and "Grep" in hint and "head" in hint
+    assert len(hint.encode()) < 300
+
+
+def test_read_hint_stays_short_for_a_long_name(monkeypatch, capsys, indexed_repo):
+    name = "x" * 200 + ".log"
+    (indexed_repo / name).write_text("line\n" * 10000)
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, name))
+    assert len(hint.encode()) < 300
+
+
+def test_ranged_read_of_a_large_file_is_silent(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / "data.json").write_text("{}\n" * 20000)
+    assert _read(monkeypatch, capsys, indexed_repo, "data.json", limit=50) == ""
+    assert _read(monkeypatch, capsys, indexed_repo, "data.json", offset=10) == ""
+
+
+def test_read_of_a_small_unindexed_file_is_silent(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / "small.json").write_text("{}\n" * 100)
+    assert _read(monkeypatch, capsys, indexed_repo, "small.json") == ""
+
+
+def test_read_of_a_large_indexed_file_gets_no_size_hint(
+    monkeypatch, capsys, indexed_repo
+):
+    out = _read(monkeypatch, capsys, indexed_repo, "billing.py")
+    assert "not indexed" not in out
+
+
+def test_read_of_a_large_indexed_file_in_answer_mode_gets_the_outline_only(
+    monkeypatch, capsys, indexed_repo
+):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    out = _read(monkeypatch, capsys, indexed_repo, "billing.py")
+    assert "not indexed" not in out
+
+
+def test_read_advice_opt_out_by_env(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / "data.json").write_text("{}\n" * 20000)
+    monkeypatch.setenv("CGH_HOOK_READ_ADVICE", "0")
+    assert _read(monkeypatch, capsys, indexed_repo, "data.json") == ""
+
+
+def test_read_advice_opt_out_by_config(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / "data.json").write_text("{}\n" * 20000)
+    (indexed_repo / ".codegraph" / "config.toml").write_text(
+        "[hooks]\nread_advice = false\n"
+    )
+    assert _read(monkeypatch, capsys, indexed_repo, "data.json") == ""
+
+
+def test_read_advice_skips_the_line_count_on_a_huge_file(tmp_path, monkeypatch):
+    f = tmp_path / "big.log"
+    f.write_text("line\n" * 20000)
+    monkeypatch.setattr(a, "_COUNT_LINES_MAX", 1024)
+    hint = a.read_advice(f)
+    assert hint is not None and "lines" not in hint.split("is not")[0]
+
+
+# --- heredocs are data, not searches -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <<'EOF' > notes.md\nrun grep foo over the tree\ngit grep -n bar\nEOF",
+        "cat <<EOF > script.sh\ngrep -rn foo src\nrg bar\nEOF",
+        "python3 - <<'PY'\nimport os  # find . -name x\nPY",
+    ],
+)
+def test_search_hint_ignores_heredoc_bodies(command):
+    assert h._shell_search_hint(command) is None
+
+
+def test_search_hint_still_fires_after_a_heredoc():
+    command = "cat <<'EOF' > notes.md\nhello\nEOF\ngit grep -n foo"
+    assert h._shell_search_hint(command) is not None
+
+
+def test_bash_precheck_is_silent_on_a_heredoc_with_grep(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    payload = {
+        "tool_input": {"command": "cat <<'EOF' > notes.md\ngrep foo\nEOF"},
+        "cwd": str(tmp_path),
+    }
+    assert _run(monkeypatch, capsys, h.cmd_hook_precheck_bash, payload) == ""

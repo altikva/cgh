@@ -163,8 +163,10 @@ def _is_recursive_grep(args: list[str]) -> bool:
 
 
 def _shell_search_hint(command: str) -> str | None:
-    """The nudge for a shell command that locates or reads code, else None."""
-    for toks in _pipeline_heads(command):
+    """The nudge for a shell command that locates or reads code, else None.
+    Heredoc bodies are stripped first: a file written with ``cat <<EOF`` may
+    well mention grep without searching anything."""
+    for toks in _pipeline_heads(hook_advice.strip_heredocs(command)):
         prog, args = os.path.basename(toks[0]), toks[1:]
         searching = (
             (prog == "git" and args[:1] == ["grep"])
@@ -201,17 +203,12 @@ def _shell_search_hint(command: str) -> str | None:
     return None
 
 
-# A heredoc body is data (a script fed to python, a file written by cat), not
-# commands: its lines must not be read as searches.
-_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
-
-
 def _shell_answer(command: str, cwd: Path) -> str | None:
     """Answer mode for a shell line: the lookup a code search or a full read
     of a source file was after, run here. A leading ``cd`` moves the base
     for the relative paths that follow it. A search over files named one by
     one gets no answer: the agent already knows where to look."""
-    command = _HEREDOC_RE.sub("", command)
+    command = hook_advice.strip_heredocs(command)
     for toks in _pipeline_heads(command):
         prog, args = os.path.basename(toks[0]), toks[1:]
         if prog == "cd" and args:
@@ -419,13 +416,34 @@ def _artifact_precheck(
     )
 
 
+# Read handles these by page or cell, where offset/limit do not apply.
+_READ_ADVICE_SKIP = frozenset({".ipynb"})
+
+
+def _read_advice(target: Path, repo_root: Path) -> None:
+    """Emit the hint for a full Read of a large file cgh does not index, or
+    return when there is none. Advisory: any failure returns silently."""
+    if target.suffix.lower() in _READ_ADVICE_SKIP:
+        return
+    try:
+        if not hook_advice.read_advice_enabled(repo_root):
+            return
+        advice = hook_advice.read_advice(target)
+    except Exception:
+        return
+    if advice:
+        _emit_nudge(advice)
+
+
 def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
     Read is a full read (no offset/limit), suggest file_outline / symbols_in_file
     first, both return structured summaries for a fraction of the tokens of
-    a raw Read. The suggestion is delivered via
-    hookSpecificOutput.additionalContext. Advisory: always exits 0.
+    a raw Read. A full read of a large file the index does not hold (JSON,
+    a lock file, a log) gets a one-line hint to read a part of it instead.
+    The suggestion is delivered via hookSpecificOutput.additionalContext.
+    Advisory: always exits 0.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -507,6 +525,8 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     symbol_count = (row or [0])[0]
+    if symbol_count == 0 and suffix not in PARSED_DOC_EXTS:
+        _read_advice(target, repo_root)
     if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT:
         sys.exit(0)
 

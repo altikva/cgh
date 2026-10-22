@@ -4,6 +4,8 @@ When running as an MCP server (`cgh serve`), cgh exposes 62 tools, plus whatever
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
+Every answer an agent gets stays under a size ceiling: about 10 KB, 6 KB for `context_for_task`, 4 KB for `pattern_search`. A longer answer drops whole list items from its tail, so the JSON stays valid, and carries `truncated: true`, `dropped` and a `hint` on how to narrow the call. A tool given `max_tokens` or `budget_kb` keeps that budget instead, and calls from the `cgh` CLI and the hooks get the whole answer.
+
 ### Architecture Awareness (call these FIRST)
 
 | Tool | Description |

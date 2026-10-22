@@ -156,6 +156,7 @@ def register(mcp) -> None:
         unrated or contested, then dead ends, then corrected), newest
         first inside each tier, and carry an `outcome` summary.
         """
+        from codegraph.server._budget import TOOL_CAPS, cap_answer, dumps_answer
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list
 
@@ -177,22 +178,35 @@ def register(mcp) -> None:
         # Fewer than a full page back means the list is exhausted, whatever a
         # (now-aligned) count says, so require a full page AND more counted.
         has_more = len(entries) == limit and (offset + len(entries)) < total
-        return json.dumps(
-            {
-                "kind": kind or None,
-                "tag": tag or None,
-                "session_id": session_id or None,
-                "total": total,
-                "offset": offset,
-                "limit": limit,
-                "returned": len(entries),
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
-                "entries": entries,
-            },
-            indent=2,
-            default=str,
-        )
+        payload = {
+            "kind": kind or None,
+            "tag": tag or None,
+            "session_id": session_id or None,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "returned": len(entries),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+            "entries": json.loads(json.dumps(entries, default=str)),
+        }
+        # Cut here rather than in the shared wrapper so the page counters
+        # follow: the next page starts at the first entry left out.
+        spec = TOOL_CAPS["knowledge_list"]
+        hint = f"Answer cut to about {spec.max_bytes // 1000} KB. {spec.hint}"
+        first = payload["entries"][:1]
+        if cap_answer(payload, ["entries"], hint, spec.max_bytes):
+            if not payload["entries"] and first:
+                # One entry alone is over the ceiling: serve it with its body
+                # shortened rather than an empty page that never advances.
+                entry = dict(first[0])
+                entry["body"] = str(entry.get("body", ""))[: spec.max_bytes // 2]
+                entry["body_clipped"] = True
+                payload["entries"] = [entry]
+            payload["returned"] = len(payload["entries"])
+            payload["has_more"] = True
+            payload["next_offset"] = offset + payload["returned"]
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool

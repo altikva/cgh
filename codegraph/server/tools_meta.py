@@ -203,7 +203,7 @@ def register(mcp) -> None:
         ({file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}).
         """
         from codegraph.analysis.context_builder import context_for_task as _ctx
-        from codegraph.analysis.context_builder import render_context_markdown
+        from codegraph.server._budget import CONTEXT_MAX_BYTES, TOOL_CAPS, dumps_answer
         from codegraph.state.call_log import filter_unseen, record_mentions
 
         ctx = _ctx(
@@ -257,6 +257,18 @@ def register(mcp) -> None:
                 except Exception:
                     pass
 
+            # Recompute derived fields after filtering
+            ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
+            ctx.token_estimate = _token_estimate(ctx)
+
+        # Trimmed before the session record below: what the cut leaves out
+        # was not served, so the next call with this session_id gets it.
+        subsystem = _subsystem_of(ctx)
+        dropped = _fit_context(ctx, subsystem)
+        if dropped:
+            ctx.token_estimate = _token_estimate(ctx)
+
+        if session_id and not include_shown:
             # Record what we're about to serve
             now_served = (
                 [("symbol", f"{n.file_path}:{n.start_line}") for n in ctx.nodes]
@@ -267,15 +279,28 @@ def register(mcp) -> None:
             if now_served:
                 record_mentions(session_id, now_served, repo_root=_srv._root)
 
-            # Recompute derived fields after filtering
-            ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
-            ctx.token_estimate = (
-                sum(
-                    len(n.name) + len(n.docstring) + len(n.file_path) + 50
-                    for n in ctx.nodes
-                )
-                // 4
+        payload = _context_payload(ctx, session_id, subsystem)
+        if dropped:
+            payload["truncated"] = True
+            payload["dropped"] = dropped
+            payload["hint"] = (
+                f"Answer cut to about {CONTEXT_MAX_BYTES // 1000} KB. "
+                + TOOL_CAPS["context_for_task"].hint
             )
+        return dumps_answer(payload)
+
+    def _token_estimate(ctx) -> int:
+        return (
+            sum(
+                len(n.name) + len(n.docstring) + len(n.file_path) + 50
+                for n in ctx.nodes
+            )
+            // 4
+        )
+
+    def _context_payload(ctx, session_id: str, subsystem: dict | None) -> dict:
+        """The answer for ``ctx``, with the ``subsystem`` hint when one."""
+        from codegraph.analysis.context_builder import render_context_markdown
 
         md = render_context_markdown(ctx)
         payload = {
@@ -291,7 +316,6 @@ def register(mcp) -> None:
         rationale = _rationale_of(ctx)
         if rationale:
             payload["rationale"] = rationale
-        subsystem = _subsystem_of(ctx)
         if subsystem:
             payload["subsystem"] = subsystem
             payload["context_markdown"] = md + (
@@ -302,7 +326,46 @@ def register(mcp) -> None:
                     else ""
                 )
             )
-        return json.dumps(payload, indent=2)
+        return payload
+
+    # Trim order when the context overflows its ceiling: the lists are ranked
+    # best first, so items go from the tail. Plans, memory and knowledge are
+    # thinned to a few before the symbols, which are what the task is about,
+    # then the symbols down to five, then the rest, keeping one symbol.
+    _CONTEXT_TRIM = (
+        ("plan_docs", 1),
+        ("memory_docs", 2),
+        ("knowledge_docs", 2),
+        ("nodes", 5),
+        ("plan_docs", 0),
+        ("memory_docs", 0),
+        ("knowledge_docs", 0),
+        ("nodes", 1),
+    )
+
+    def _fit_context(ctx, subsystem: dict | None) -> int:
+        """Drop the lowest-ranked items of ``ctx`` until its answer fits
+        CONTEXT_MAX_BYTES; returns how many went."""
+        from codegraph.server._budget import (
+            CONTEXT_MAX_BYTES,
+            TOOL_CAPS,
+            answer_bytes,
+        )
+
+        # Room for the truncated, dropped and hint keys added when cut.
+        budget = CONTEXT_MAX_BYTES - len(TOOL_CAPS["context_for_task"].hint) - 80
+        dropped = 0
+        while answer_bytes(_context_payload(ctx, "", subsystem)) > budget:
+            for attr, floor in _CONTEXT_TRIM:
+                items = getattr(ctx, attr)
+                if len(items) > floor:
+                    items.pop()
+                    dropped += 1
+                    ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
+                    break
+            else:
+                break
+        return dropped
 
     def _rationale_of(ctx) -> list[dict]:
         """The rationale comments of the served symbols, flat and short, the

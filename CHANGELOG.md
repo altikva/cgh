@@ -81,6 +81,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   about 10 KB. A cut answer says `truncated: true`, with `more` or
   `dropped` and a hint on how to narrow. Answers are compact JSON, and rows
   carry `scope` only when some come from a federated child.
+  Every other tool now has a ceiling too, about 10 KB, and
+  `context_for_task` about 6 KB, its best symbols kept first; what it
+  leaves out comes back on the next call with the same `session_id`. On
+  this repo
+  `find_dead_code` went from 846 KB to 10 KB, `impact_of` on a hub function
+  from 150 KB, `knowledge_list` from 73 KB, `find_callees` from 43 KB and
+  `context_for_task` from 9 to 16 KB down to under 6. `knowledge_list`
+  sets `next_offset` to the first entry left out. A tool given
+  `max_tokens` (`impact_of`, `subgraph`) or `budget_kb` (`resume`) keeps
+  that budget, and calls from the `cgh` CLI and the hooks get the whole
+  answer.
   Migration: `pattern_search` returns `files: [{file, hits: [[line,
   text]]}]` instead of `hits: [{scope, file, line, text}]`, and its `note`
   is now `hint`; `file_at_ref` adds `next_start_line` when it stops early.

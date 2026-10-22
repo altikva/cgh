@@ -227,11 +227,16 @@ def _add_scopes(result, scopes: dict | None):
     return json.dumps(payload, indent=2)
 
 
+# Callers whose answers skip the size ceiling: they are programs, not agents.
+_UNCAPPED_ORIGINS = frozenset({"cli", "hook"})
+
+
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        from codegraph.server._budget import cap_tool_answer
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
@@ -255,6 +260,13 @@ def _logged_tool(fn):
                     result = _add_scopes(result, _scope_commits(_root))
                 except Exception:
                     pass  # best-effort note: never fail the answer on it
+            # The CLI and the hooks render or filter the full answer
+            # themselves; an agent re-reads every byte on each later turn.
+            if origin not in _UNCAPPED_ORIGINS:
+                try:
+                    result = cap_tool_answer(tool_name, result, kwargs)
+                except Exception:
+                    _log.debug("answer cap failed for %s", tool_name, exc_info=True)
             return result
         except Exception as exc:
             success = False

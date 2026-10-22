@@ -287,6 +287,12 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 | `checkpoint_every` | `int` | `40` | Tool calls without a cgh checkpoint before Bob's next prompt carries a reminder |
 | `checkpoint_gate` | `int` | `0` | When above 0, block one tool call past this many calls without a checkpoint, until the model saves. Re-run `cgh setup bob` after changing it |
 
+#### `[hooks]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `answers` | `bool` | `false` | The Grep, Read and Bash prechecks run the lookup themselves (definitions and callers of a searched name, the outline of a fully read indexed file) instead of pointing at a cgh tool. `CGH_HOOK_ANSWERS=1` or `0` overrides it. Read on every hook call, so sessions already running take a change at their next search |
+
 ---
 
 ## Global Config

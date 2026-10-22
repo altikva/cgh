@@ -75,8 +75,8 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
 
     tool_input = payload.get("tool_input") or {}
     pattern = tool_input.get("pattern")
-    if hook_answers.enabled():
-        cwd = Path(payload.get("cwd") or os.getcwd())
+    cwd = Path(payload.get("cwd") or os.getcwd())
+    if hook_answers.enabled(cwd):
         root = hook_answers.repo_root(cwd)
         target = tool_input.get("path")
         scopes = (
@@ -262,7 +262,7 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     if not _in_cgh_repo(Path(cwd)):
         sys.exit(0)
 
-    if hook_answers.enabled():
+    if hook_answers.enabled(Path(cwd)):
         answer = _shell_answer(command, Path(cwd))
         if answer:
             _emit_nudge(answer)
@@ -469,7 +469,7 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT:
         sys.exit(0)
 
-    if hook_answers.enabled():
+    if hook_answers.enabled(Path(repo_root)):
         answer = hook_answers.outline_answer(repo_root, target)
         if answer:
             _emit_nudge(answer)

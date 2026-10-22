@@ -34,6 +34,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Hook answers can be turned on from a config file.** `answers = true`
+  under `[hooks]`, in a repo's `.codegraph/config.toml` or in
+  `~/.codegraph/config.toml`, turns on the answer mode that only
+  `CGH_HOOK_ANSWERS=1` enabled before. Hooks read the file on every call, so
+  sessions already running pick it up at their next search, where the
+  variable only reached sessions started after it was set. The variable
+  still wins when set, to `1` or `0`.
 - **The Claude Code rule is short; the details load on demand.** The
   `.claude/rules/cgh-usage.md` that `cgh init` writes drops from about
   10 KB to 2.3 KB: the tool picker, locate-with-cgh-first, papercuts and

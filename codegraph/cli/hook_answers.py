@@ -4,7 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Answer mode of the PreToolUse prechecks (CGH_HOOK_ANSWERS=1).
+# Description: Answer mode of the PreToolUse prechecks (CGH_HOOK_ANSWERS=1,
+#              or `answers = true` under [hooks] in a cgh config file).
 #              Instead of pointing the agent at a cgh tool, the hook runs the
 #              lookup itself and hands over the result:
 #              search_answer   a grep for a name: its definitions, read from
@@ -54,8 +55,39 @@ _MIN_OUTLINE_SYMBOLS = 5
 _OWNER_TIMEOUT = 2.0
 
 
-def enabled() -> bool:
-    return os.environ.get("CGH_HOOK_ANSWERS") == "1"
+def enabled(start: Path | None = None) -> bool:
+    """Answer mode on or off. CGH_HOOK_ANSWERS=1 or 0 decides; unset, the
+    ``answers`` key of the ``[hooks]`` table does, in the repo's
+    .codegraph/config.toml first, then in ~/.codegraph/config.toml. The
+    files are read on every hook call, so a session that is already running
+    takes a change at its next search, where an environment variable only
+    reaches sessions started after it was set."""
+    env = os.environ.get("CGH_HOOK_ANSWERS", "").strip()
+    if env in ("0", "1"):
+        return env == "1"
+    from codegraph.core.config import GLOBAL_DIR
+
+    root = repo_root(start or Path.cwd())
+    paths = [root / ".codegraph" / "config.toml"] if root else []
+    for path in (*paths, GLOBAL_DIR / "config.toml"):
+        value = _configured(path)
+        if value is not None:
+            return value
+    return False
+
+
+def _configured(path: Path) -> bool | None:
+    """[hooks] answers from one config file, or None when it does not say.
+    A missing or unreadable file says nothing: answers stay off, as before."""
+    import tomllib
+
+    try:
+        with open(path, "rb") as fh:
+            hooks = tomllib.load(fh).get("hooks")
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    value = hooks.get("answers") if isinstance(hooks, dict) else None
+    return value if isinstance(value, bool) else None
 
 
 def repo_root(start: Path) -> Path | None:

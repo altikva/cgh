@@ -48,6 +48,8 @@ def repo(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
     monkeypatch.setattr(ha, "_callers", lambda root, name: None)
+    # Never the developer's own ~/.codegraph/config.toml.
+    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-codegraph")
     return tmp_path
 
 
@@ -368,3 +370,32 @@ def test_search_parts_splits_pattern_and_paths():
         "x_y",
         ["a.py", "b.py"],
     )
+
+
+def test_answers_from_config_reach_a_running_session(monkeypatch, capsys, repo):
+    # A session started without the variable still gets answers once the
+    # repo's config turns them on: hooks read the file on every call.
+    monkeypatch.delenv("CGH_HOOK_ANSWERS")
+    grep = {"tool_input": {"command": "grep -rn charge_card ."}, "cwd": str(repo)}
+    assert "billing.py" not in _run(monkeypatch, capsys, h.cmd_hook_precheck_bash, grep)
+    cfg = repo / ".codegraph" / "config.toml"
+    cfg.write_text("[codegraph]\nmax_file_size_kb = 500\n\n[hooks]\nanswers = true\n")
+    assert "billing.py" in _run(monkeypatch, capsys, h.cmd_hook_precheck_bash, grep)
+    # The variable still wins, both ways.
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "0")
+    assert "billing.py" not in _run(monkeypatch, capsys, h.cmd_hook_precheck_bash, grep)
+
+
+def test_answers_config_order_and_bad_files(monkeypatch, tmp_path, repo):
+    monkeypatch.delenv("CGH_HOOK_ANSWERS")
+    home = tmp_path / "home-codegraph"
+    home.mkdir()
+    (home / "config.toml").write_text("[hooks]\nanswers = true\n")
+    assert ha.enabled(repo)  # the global default applies
+    (repo / ".codegraph" / "config.toml").write_text("[hooks]\nanswers = false\n")
+    assert not ha.enabled(repo)  # the repo overrides it
+    (repo / ".codegraph" / "config.toml").write_text("[hooks\nbroken")
+    assert ha.enabled(repo)  # an unreadable repo file says nothing
+    (home / "config.toml").write_text('[hooks]\nanswers = "yes"\n')
+    assert not ha.enabled(repo)  # only a real boolean counts
+    assert not ha.enabled(tmp_path / "elsewhere")

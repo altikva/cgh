@@ -41,6 +41,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_compact_hint"
+          }
+        ]
+      }
     ]
   }
 }

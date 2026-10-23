@@ -378,7 +378,7 @@ def test_context_for_task_names_the_subsystem_of_its_matches(repo):
     sub = out["subsystem"]
     assert sub["name"].startswith("alpha") and sub["size"] == 6
     assert "**Subsystem**" in out["context_markdown"]
-    assert not set(sub["files"]) & set(out["files_referenced"])
+    assert not set(sub["files"]) & set(out["start_here"] + out["related"])
 
 
 def test_function_body_imports_link_files(repo):

@@ -101,8 +101,13 @@ def cmd_papercut(args: argparse.Namespace) -> None:
     # An empty query lists the papercuts; a query narrows within them. The tag
     # lives in the FTS-indexed tags column, so matching it returns papercuts.
     search_term = f"{_TAG} {query}".strip() if query else _TAG
+    # A symptom typed in other words than the entry's still finds it.
     rows = knowledge_search(
-        search_term, kind="gotcha", limit=max(args.limit * 3, 30), repo_root=root
+        search_term,
+        kind="gotcha",
+        limit=max(args.limit * 3, 30),
+        repo_root=root,
+        recall=bool(query),
     )
     hits = [r for r in rows if _TAG in (r.get("tags") or "")][: args.limit]
 

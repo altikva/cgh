@@ -419,6 +419,10 @@
   },
   "knowledge_list": {
     "properties": {
+      "entry_id": {
+        "default": 0,
+        "type": "integer"
+      },
       "kind": {
         "default": "",
         "type": "string"
@@ -517,7 +521,7 @@
         "type": "string"
       },
       "limit": {
-        "default": 10,
+        "default": 5,
         "type": "integer"
       },
       "query": {

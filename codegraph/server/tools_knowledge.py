@@ -26,6 +26,44 @@ def _digest_tags(caller_tags: str) -> str:
     return final
 
 
+# Byte target for a knowledge_search answer. Every byte is re-read on each
+# later turn of the session, so a search answers with what decides the next
+# step and leaves the rest one knowledge_list(entry_id=...) call away.
+SEARCH_TARGET_BYTES = 2_500
+
+
+def _fit_search_answer(
+    payload: dict, drop_hits: bool, target: int = SEARCH_TARGET_BYTES
+) -> None:
+    """Bring a shaped knowledge_search answer near ``target`` bytes: first
+    the body heads of the briefs go, from the last one up, then (with
+    ``drop_hits``, i.e. the caller kept the default limit) the last briefs,
+    then the first hit's body is clipped further. The first hit always stays."""
+    from codegraph.server._budget import answer_bytes
+    from codegraph.state.knowledge_recall import clip
+
+    hits: list[dict] = payload.get("hits") or []
+    for h in reversed(hits[1:]):
+        if answer_bytes(payload) <= target:
+            return
+        if h.pop("body", None):
+            h["body_clipped"] = True
+    dropped = 0
+    while drop_hits and len(hits) > 1 and answer_bytes(payload) > target:
+        hits.pop()
+        dropped += 1
+    if dropped:
+        payload["dropped"] = dropped
+        payload["hint"] = "Pass a larger limit for more hits."
+    excess = answer_bytes(payload) - target
+    if hits and excess > 0 and isinstance(hits[0].get("body"), str):
+        body = hits[0]["body"]
+        keep = max(300, len(body) - excess - 16)
+        if keep < len(body):
+            hits[0]["body"], _ = clip(body, keep)
+            hits[0]["body_clipped"] = True
+
+
 def register(mcp) -> None:
     import codegraph.server as _srv
     from codegraph.server import _logged_tool
@@ -87,7 +125,7 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def knowledge_search(
-        query: str, kind: str = "", limit: int = 10, scope: str = ""
+        query: str, kind: str = "", limit: int = 5, scope: str = ""
     ) -> str:
         """
         Search the NOTES saved by agents and people in earlier sessions
@@ -108,14 +146,30 @@ def register(mcp) -> None:
         that proved useful rank up, dead ends and corrected entries rank
         down, and every rated hit carries an `outcome` summary (status:
         preferred, useful, contested, dead_end, corrected or faded).
-        """
-        from codegraph.state.call_log import knowledge_search as _search
 
-        hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
+        A sentence is fine, French or English: words are matched on their
+        stem, without accents or case, and with common synonyms (lock and
+        verrou, stale and périmé, token and jeton). Every hit carries a
+        `confidence` (high, medium or low) and the answer a best
+        `confidence`. When nothing matches, `suggestion` gives the
+        knowledge_record kind and tags to use once the problem is solved.
+
+        To stay small, the first hit carries its body (clipped near 1.5 KB)
+        and the others a brief: id, title, tags, confidence and the start
+        of the body. Read any entry whole with knowledge_list(entry_id=<id>).
+        """
+        from codegraph.state import knowledge_recall as _kr
+        from codegraph.state.call_log import knowledge_search as _search
+        from codegraph.state.call_log import record_recall_outcome
+
+        hits = _search(
+            query, kind=kind or None, limit=limit, repo_root=_srv._root, recall=True
+        )
         if scope == "all" and _srv._root is not None:
             from codegraph.analysis.federation import resolve_children
             from codegraph.state.call_log import knowledge_search_ro
 
+            items = _kr.concepts(query)
             for child in resolve_children(_srv._root):
                 for row in knowledge_search_ro(
                     child / ".codegraph" / "call_log.db",
@@ -124,12 +178,36 @@ def register(mcp) -> None:
                     limit=limit,
                 ):
                     row["scope"] = child.name
+                    head = f"{row['title']} {' '.join(row['tags'])}"
+                    row["confidence"] = (
+                        _kr.confidence(*_kr.coverage(items, head, row["body"]))
+                        or "high"
+                    )
                     hits.append(row)
-        return json.dumps(
-            {"query": query, "kind": kind or None, "total": len(hits), "hits": hits},
-            indent=2,
-            default=str,
-        )
+        grades = [h.get("confidence") for h in hits]
+        best = next((g for g in _kr.CONFIDENCE_ORDER if g in grades), None)
+        payload: dict = {
+            "query": query,
+            "kind": kind or None,
+            "total": len(hits),
+            "hits": hits,
+            "confidence": best or "none",
+        }
+        if best is None:
+            payload["suggestion"] = _kr.suggest_record(query, kind or None)
+        if _kr.shape_hits(hits) or len(hits) > 1:
+            payload["read_more"] = (
+                "knowledge_list(entry_id=<id>) returns one entry whole."
+            )
+        try:
+            record_recall_outcome(best or "zero", repo_root=_srv._root)
+        except Exception:
+            pass  # a stats write must never fail the search
+        from codegraph.server._budget import dumps_answer
+
+        payload = json.loads(json.dumps(payload, default=str))
+        _fit_search_answer(payload, drop_hits=limit <= _kr.DEFAULT_LIMIT)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -139,10 +217,13 @@ def register(mcp) -> None:
         session_id: str = "",
         limit: int = 50,
         offset: int = 0,
+        entry_id: int = 0,
     ) -> str:
         """
         Browse the notes saved in earlier sessions (not the code), newest
-        first. Useful at session kickoff to see what's already known
+        first. Pass entry_id to read one entry whole, for instance a hit
+        knowledge_search returned as a brief; the other filters are then
+        ignored. Useful at session kickoff to see what's already known
         before re-deriving. To find code use the code tools (symbol_lookup,
         fts_search, pattern_search, context_for_task).
 
@@ -160,6 +241,16 @@ def register(mcp) -> None:
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list
 
+        if entry_id:
+            from codegraph.state.call_log import knowledge_get
+
+            entry = knowledge_get(entry_id, repo_root=_srv._root)
+            if entry is None:
+                return json.dumps({"error": f"no knowledge entry with id {entry_id}"})
+            return dumps_answer(
+                {"entry_id": entry_id, "total": 1, "returned": 1, "has_more": False,
+                 "entries": json.loads(json.dumps([entry], default=str))}
+            )  # fmt: skip
         entries = _list(
             kind=kind or None,
             tag=tag or None,

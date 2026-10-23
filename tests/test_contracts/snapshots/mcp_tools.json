@@ -621,6 +621,10 @@
         "default": false,
         "type": "boolean"
       },
+      "count_only": {
+        "default": false,
+        "type": "boolean"
+      },
       "glob": {
         "default": "",
         "type": "string"

@@ -9,6 +9,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Search tools understand a sentence.** `pattern_search`,
+  `search_symbols` and `symbol_lookup` given a question in French or
+  English ("where are webhooks retried") look up the identifiers it names
+  and search its words, plus built-in synonyms, over symbols, docstrings
+  and docs, and say so in `interpreted_as`. Each answer now carries
+  `confidence`, and a low or empty one says `why` and gives `next`, a call
+  to try instead. Definitions and widely imported files rank first. A cut
+  `pattern_search` names the directories holding most hits in `top_dirs`
+  and its hint, and `count_only=True` returns hits per file without the
+  lines. Existing fields are unchanged.
 - **`knowledge_search` understands a free-text symptom.** Two searches in
   three came back empty because agents describe a problem in other words
   than the entry. Words now match on their stem, without accents or case,

@@ -281,3 +281,90 @@ def test_old_store_gets_the_counter_table(tmp_path):
     record_recall_outcome("low", repo_root=tmp_path)
     assert get_stats(tmp_path)["knowledge_recall"]["by_confidence"]["low"] == 1
     reset_for_tests()
+
+
+# --- answer size ----------------------------------------------------------------
+
+
+def _bulky(store, n: int = 8) -> None:
+    for i in range(n):
+        body = "\n".join(
+            f"line {j} about the stale lock in the owner" for j in range(80)
+        )
+        knowledge_record(
+            f"Stale lock case {i}",
+            body,
+            kind="gotcha",
+            tags="papercut,lock,stale,owner",
+            repo_root=store,
+        )
+
+
+def test_first_hit_keeps_its_body_others_are_briefs(tool, store):
+    _bulky(store)
+    out = json.loads(tool(query="stale lock owner", limit=20))
+    first, rest = out["hits"][0], out["hits"][1:]
+    assert len(first["body"]) <= kr.FIRST_BODY + len(" [...]")
+    assert first["body_clipped"] is True
+    assert "file_refs" in first and "score" in first
+    assert rest
+    for h in rest:
+        assert set(h) <= {
+            "id", "title", "kind", "tags", "confidence", "body",
+            "body_clipped", "outcome", "scope",
+        }  # fmt: skip
+        assert len(h.get("body", "")) <= kr.BRIEF_BODY + len(" [...]")
+    assert "knowledge_list(entry_id=" in out["read_more"]
+
+
+def test_default_answer_stays_under_the_target(tool, store):
+    from codegraph.server._budget import answer_bytes
+    from codegraph.server.tools_knowledge import SEARCH_TARGET_BYTES
+
+    _bulky(store)
+    raw = tool(query="stale lock owner")
+    out = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= SEARCH_TARGET_BYTES
+    assert answer_bytes(out) <= SEARCH_TARGET_BYTES
+    assert 1 <= len(out["hits"]) <= kr.DEFAULT_LIMIT
+    assert out["hits"][0]["title"].startswith("Stale lock")
+
+
+def test_default_limit_is_five(store):
+    import inspect
+
+    from codegraph.server.tools_knowledge import register
+
+    m = _FakeMcp()
+    register(m)
+    params = inspect.signature(m.tools["knowledge_search"]).parameters
+    assert params["limit"].default == kr.DEFAULT_LIMIT == 5
+
+
+def test_clip_cuts_at_a_line_end():
+    text = "first line\n" + "x" * 50 + "\nthird line"
+    head, clipped = kr.clip(text, 40)
+    # No break in the second half: a hard cut at the limit.
+    assert clipped and head == text[:40] + " [...]"
+    assert kr.clip("short", 40) == ("short", False)
+    head, _ = kr.clip("a" * 30 + "\n" + "b" * 30, 50)
+    assert head == "a" * 30 + " [...]"
+
+
+def test_a_brief_hit_is_read_whole_by_id(store, monkeypatch):
+    import codegraph.server as _srv
+    from codegraph.server.tools_knowledge import register
+
+    _bulky(store, 3)
+    monkeypatch.setattr(_srv, "_root", store)
+    m = _FakeMcp()
+    register(m)
+    out = json.loads(m.tools["knowledge_search"](query="stale lock owner"))
+    brief = next(h for h in out["hits"][1:] if "case" in h["title"])
+    whole = json.loads(m.tools["knowledge_list"](entry_id=brief["id"]))
+    assert whole["returned"] == 1
+    entry = whole["entries"][0]
+    assert entry["id"] == brief["id"]
+    assert entry["body"].count("\n") == 79
+    missing = json.loads(m.tools["knowledge_list"](entry_id=99999))
+    assert "error" in missing

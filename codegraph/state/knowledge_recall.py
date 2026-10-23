@@ -283,3 +283,61 @@ def suggest_record(query: str, kind: str | None = None) -> dict:
             "these tags so the next session finds it."
         ),
     }
+
+
+# How much of each hit a search answer carries. The first hit keeps its body
+# up to FIRST_BODY characters; the others keep their title, tags, confidence
+# and the first BRIEF_BODY characters, the rest being one call away.
+FIRST_BODY = 1500
+BRIEF_BODY = 200
+DEFAULT_LIMIT = 5
+
+
+def clip(text: str, limit: int) -> tuple[str, bool]:
+    """``text`` cut to at most ``limit`` characters, at a line end when one
+    is in the second half, else at a word end. Returns (text, clipped)."""
+    text = text or ""
+    if len(text) <= limit:
+        return text, False
+    head = text[:limit]
+    cut = head.rfind("\n")
+    if cut < limit // 2:
+        cut = head.rfind(" ")
+    if cut >= limit // 2:
+        head = head[:cut]
+    return head.rstrip() + " [...]", True
+
+
+def shape_hits(hits: list[dict]) -> bool:
+    """Trim search hits in place to what an answer needs: the first keeps
+    every field with its body clipped to FIRST_BODY, the others become a
+    brief (id, title, kind, tags, confidence, outcome status, scope, body
+    head). Returns True when any body was clipped."""
+    clipped_any = False
+    for i, h in enumerate(hits):
+        body, clipped = clip(
+            str(h.get("body") or ""), FIRST_BODY if i == 0 else BRIEF_BODY
+        )
+        clipped_any |= clipped
+        if i == 0:
+            h["body"] = body
+            if clipped:
+                h["body_clipped"] = True
+            continue
+        brief: dict = {
+            "id": h.get("id"),
+            "title": h.get("title"),
+            "kind": h.get("kind"),
+            "tags": h.get("tags"),
+            "confidence": h.get("confidence"),
+            "body": body,
+        }
+        if clipped:
+            brief["body_clipped"] = True
+        if isinstance(h.get("outcome"), dict) and h["outcome"].get("status"):
+            brief["outcome"] = {"status": h["outcome"]["status"]}
+        if "scope" in h:
+            brief["scope"] = h["scope"]
+        h.clear()
+        h.update(brief)
+    return clipped_any

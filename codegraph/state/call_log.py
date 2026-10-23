@@ -938,6 +938,23 @@ def knowledge_search_ro(
 
 
 @_locked
+def knowledge_get(entry_id: int, repo_root: str | Path | None = None) -> dict | None:
+    """One entry by id, whole, superseded or not; None when no such id."""
+    conn = _get_conn(repo_root)
+    row = conn.execute(
+        f"SELECT {_k_cols()} FROM knowledge WHERE id = ?", (int(entry_id),)
+    ).fetchone()
+    if row is None:
+        return None
+    out = _knowledge_row_to_dict(row)
+    out.pop("score", None)
+    if _has_outcomes(conn):
+        entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
+        _attach_outcomes([out], entries)
+    return out
+
+
+@_locked
 def knowledge_list(
     kind: str | None = None,
     tag: str | None = None,

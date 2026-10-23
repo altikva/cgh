@@ -18,7 +18,10 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   matches, the answer suggests the `knowledge_record` kind and tags to use
   once the problem is solved. `cgh stats` shows the zero-hit and
   low-confidence rates, from local counts that never store the query.
-  Existing fields are unchanged; `cgh papercut <query>` gets the same
+  To keep answers near 2.5 KB, the default limit drops from 10 to 5. The
+  first hit keeps its body (clipped near 1.5 KB) and the others come as
+  briefs (id, title, tags, confidence, body start); read one whole with the
+  new `knowledge_list(entry_id=...)`. `cgh papercut <query>` gets the same
   matching.
 - **Hook hints that keep a session small.** The Bash precheck adds a
   one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,

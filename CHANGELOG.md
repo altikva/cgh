@@ -9,6 +9,17 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`knowledge_search` understands a free-text symptom.** Two searches in
+  three came back empty because agents describe a problem in other words
+  than the entry. Words now match on their stem, without accents or case,
+  and through a small French and English synonym table (lock and verrou,
+  stale and périmé, token and jeton). Every hit carries a `confidence`
+  (high, medium or low) and weak matches still come back. When nothing
+  matches, the answer suggests the `knowledge_record` kind and tags to use
+  once the problem is solved. `cgh stats` shows the zero-hit and
+  low-confidence rates, from local counts that never store the query.
+  Existing fields are unchanged; `cgh papercut <query>` gets the same
+  matching.
 - **Hook hints that keep a session small.** The Bash precheck adds a
   one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,
   `--silent` installs, `--tail 50` on logs, `head` for a large `cat`), and a

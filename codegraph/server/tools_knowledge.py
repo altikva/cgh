@@ -108,14 +108,26 @@ def register(mcp) -> None:
         that proved useful rank up, dead ends and corrected entries rank
         down, and every rated hit carries an `outcome` summary (status:
         preferred, useful, contested, dead_end, corrected or faded).
-        """
-        from codegraph.state.call_log import knowledge_search as _search
 
-        hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
+        A sentence is fine, French or English: words are matched on their
+        stem, without accents or case, and with common synonyms (lock and
+        verrou, stale and périmé, token and jeton). Every hit carries a
+        `confidence` (high, medium or low) and the answer a best
+        `confidence`. When nothing matches, `suggestion` gives the
+        knowledge_record kind and tags to use once the problem is solved.
+        """
+        from codegraph.state import knowledge_recall as _kr
+        from codegraph.state.call_log import knowledge_search as _search
+        from codegraph.state.call_log import record_recall_outcome
+
+        hits = _search(
+            query, kind=kind or None, limit=limit, repo_root=_srv._root, recall=True
+        )
         if scope == "all" and _srv._root is not None:
             from codegraph.analysis.federation import resolve_children
             from codegraph.state.call_log import knowledge_search_ro
 
+            items = _kr.concepts(query)
             for child in resolve_children(_srv._root):
                 for row in knowledge_search_ro(
                     child / ".codegraph" / "call_log.db",
@@ -124,12 +136,28 @@ def register(mcp) -> None:
                     limit=limit,
                 ):
                     row["scope"] = child.name
+                    head = f"{row['title']} {' '.join(row['tags'])}"
+                    row["confidence"] = (
+                        _kr.confidence(*_kr.coverage(items, head, row["body"]))
+                        or "high"
+                    )
                     hits.append(row)
-        return json.dumps(
-            {"query": query, "kind": kind or None, "total": len(hits), "hits": hits},
-            indent=2,
-            default=str,
-        )
+        grades = [h.get("confidence") for h in hits]
+        best = next((g for g in _kr.CONFIDENCE_ORDER if g in grades), None)
+        payload: dict = {
+            "query": query,
+            "kind": kind or None,
+            "total": len(hits),
+            "hits": hits,
+            "confidence": best or "none",
+        }
+        if best is None:
+            payload["suggestion"] = _kr.suggest_record(query, kind or None)
+        try:
+            record_recall_outcome(best or "zero", repo_root=_srv._root)
+        except Exception:
+            pass  # a stats write must never fail the search
+        return json.dumps(payload, indent=2, default=str)
 
     @mcp.tool()
     @_logged_tool

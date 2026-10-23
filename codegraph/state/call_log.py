@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -246,6 +247,16 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_knowledge_outcome_entry "
         "ON knowledge_outcome(entry_id)"
     )
+    # How well knowledge_search answered, as daily counts per confidence
+    # (high, medium, low, zero). Counts only: no query text, no entry ids.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_recall_stats (
+            day      TEXT NOT NULL,
+            outcome  TEXT NOT NULL,
+            count    INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, outcome)
+        )
+    """)
     # Who triggered each call (agent, hook, cli, internal) and which repo it
     # served, so usage data separates agent choices from hook traffic and can
     # be aggregated per repo. Rows logged before these columns stay NULL,
@@ -657,6 +668,7 @@ def knowledge_search(
     limit: int = 10,
     repo_root: str | Path | None = None,
     rank_outcomes: bool = True,
+    recall: bool = False,
 ) -> list[dict]:
     """BM25 search over knowledge entries. Graceful LIKE fallback.
 
@@ -664,16 +676,23 @@ def knowledge_search(
     set is fetched, each relevance score is multiplied by the entry's outcome
     factor (useful up, dead ends and corrected entries down), and every rated
     hit carries an ``outcome`` summary.
+
+    With recall, a free-text query also matches entries worded differently
+    (stems, folded accents and case, French and English synonyms, close
+    spellings as a last resort), and every hit carries a ``confidence`` of
+    high, medium or low. When only weak matches exist, at most three come
+    back.
     """
     conn = _get_conn(repo_root)
+    search = _knowledge_recall if recall else _knowledge_search
     if not (rank_outcomes and _has_outcomes(conn)):
-        return _knowledge_search(conn, query, kind, limit)
+        return _cap_weak(search(conn, query, kind, limit), limit, recall)
     from codegraph.state.knowledge_outcomes import rank_factor
 
     entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
     # Room for a well-rated entry just under the cut to move up.
     raw: list[float] = []
-    hits = _knowledge_search(conn, query, kind, max(limit * 3, limit + 10), raw)
+    hits = search(conn, query, kind, max(limit * 3, limit + 10), raw)
     # Rank on the unrounded relevance: on a small store BM25 scores are tiny
     # and round to zero, which would erase the outcome factor.
     adjusted = [
@@ -682,7 +701,158 @@ def knowledge_search(
     order = sorted(range(len(hits)), key=lambda i: -adjusted[i])  # stable on ties
     hits = [hits[i] | {"score": round(adjusted[i], 4)} for i in order[:limit]]
     _attach_outcomes(hits, entries)
-    return hits
+    return _cap_weak(hits, limit, recall)
+
+
+# Most weak (low confidence) hits a recall search returns when it found
+# nothing better: enough to show what is close, few enough to stay cheap.
+_WEAK_HITS = 3
+
+
+def _cap_weak(hits: list[dict], limit: int, recall: bool) -> list[dict]:
+    """Weak hits only fill an answer that has nothing better: dropped next
+    to a high or medium hit, at most _WEAK_HITS when they are all there is."""
+    if not (recall and hits):
+        return hits
+    strong = [h for h in hits if h.get("confidence") != "low"]
+    return strong or hits[: min(limit, _WEAK_HITS)]
+
+
+def _fts_rows(
+    conn: sqlite3.Connection, expr: str, kind: str | None, limit: int
+) -> list[dict]:
+    """Live entries matching an FTS5 expression, best BM25 first."""
+    sql = (
+        f"SELECT {_k_cols('k.')}, rank AS score "
+        "FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
+        "WHERE knowledge_fts MATCH ? AND k.superseded_by IS NULL "
+    )
+    params: list = [expr]
+    if kind:
+        sql += "AND k.kind = ? "
+        params.append(kind)
+    sql += "ORDER BY rank LIMIT ?"
+    params.append(limit)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [_knowledge_row_to_dict(row, score=-row[-1]) for row in rows]
+
+
+def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
+    """Every folded word of the live entries, for close-spelling lookups."""
+    from codegraph.state.knowledge_recall import fold
+
+    sql = "SELECT title, body, tags FROM knowledge WHERE superseded_by IS NULL"
+    params: list = []
+    if kind:
+        sql += " AND kind = ?"
+        params.append(kind)
+    out: set[str] = set()
+    for title, body, tags in conn.execute(sql, params).fetchall():
+        out.update(re.findall(r"[a-z0-9_]+", fold(f"{title} {tags} {body}")))
+    return out
+
+
+def _knowledge_recall(
+    conn: sqlite3.Connection,
+    query: str,
+    kind: str | None,
+    limit: int,
+    raw_scores: list[float] | None = None,
+) -> list[dict]:
+    """Free-text search behind knowledge_search(recall=True). Caller holds
+    the lock.
+
+    The query as written runs first, so FTS syntax keeps working. Then the
+    query's concepts (stems and synonyms) are ORed, and when that finds
+    nothing either, close spellings of the query words are tried. Each hit is
+    graded by the share of concepts its title, tags and body cover; the
+    relevance score orders by that grade first, BM25 inside a grade.
+    """
+    from codegraph.state import knowledge_recall as kr
+
+    raw = raw_scores if raw_scores is not None else []
+    raw.clear()
+    items = kr.concepts(query)
+    pool = max(limit * 3, 30)
+    strict = _knowledge_search(conn, query, kind, limit) if query.strip() else []
+    strict_ids = {h["id"] for h in strict}
+    candidates: dict[int, dict] = {h["id"]: h for h in strict}
+    expr = kr.fts_expression(items)
+    if expr:
+        for h in _fts_rows(conn, expr, kind, pool):
+            candidates.setdefault(h["id"], h)
+    fuzzy = False
+    if not candidates and items:
+        close = kr.close_words(items, _store_words(conn, kind))
+        if close:
+            fuzzy = True
+            expr = " OR ".join(f'"{w}"' for w in close)
+            for h in _fts_rows(conn, expr, kind, pool):
+                candidates.setdefault(h["id"], h)
+
+    graded: list[tuple[int, float, float, dict]] = []
+    for h in candidates.values():
+        matched, counted = kr.coverage(
+            items, f"{h['title']} {' '.join(h['tags'])}", h["body"]
+        )
+        ratio = matched / counted if counted else 0.0
+        conf = "low" if fuzzy else kr.confidence(matched, counted)
+        if conf is None:
+            if h["id"] not in strict_ids:
+                continue
+            conf, ratio = "high", 1.0  # matched as written, no word to grade on
+        bm25 = max(float(h.get("score") or 0.0), 0.0)
+        tier = kr.CONFIDENCE_ORDER.index(conf)
+        graded.append((tier, ratio, bm25, h | {"confidence": conf}))
+    graded.sort(key=lambda g: (g[0], -g[1], -g[2]))  # stable on ties
+    out: list[dict] = []
+    for tier, ratio, bm25, h in graded[:limit]:
+        # Grade first, then coverage, then BM25: each term stays under 1.
+        relevance = (
+            (len(kr.CONFIDENCE_ORDER) - tier) + 0.5 * ratio + 0.49 * bm25 / (1.0 + bm25)
+        )
+        raw.append(relevance)
+        out.append(h | {"score": round(relevance, 4)})
+    return out
+
+
+@_locked
+def record_recall_outcome(outcome: str, repo_root: str | Path | None = None) -> None:
+    """Count one knowledge search by how well it answered: high, medium,
+    low or zero. Only the day and the count are stored."""
+    if outcome not in ("high", "medium", "low", "zero"):
+        return
+    conn = _get_conn(repo_root)
+    conn.execute(
+        "INSERT INTO knowledge_recall_stats (day, outcome, count) VALUES (?, ?, 1) "
+        "ON CONFLICT(day, outcome) DO UPDATE SET count = count + 1",
+        (time.strftime("%Y-%m-%d"), outcome),
+    )
+    conn.commit()
+
+
+def _recall_stats(conn: sqlite3.Connection) -> dict:
+    """Totals of knowledge_recall_stats with the zero-hit and weak rates."""
+    counts = {"high": 0, "medium": 0, "low": 0, "zero": 0}
+    for outcome, n in conn.execute(
+        "SELECT outcome, SUM(count) FROM knowledge_recall_stats GROUP BY outcome"
+    ).fetchall():
+        if outcome in counts:
+            counts[outcome] = int(n or 0)
+    searches = sum(counts.values())
+
+    def rate(n: int) -> str:
+        return f"{n / searches * 100:.1f}%" if searches else "0%"
+
+    return {
+        "searches": searches,
+        "by_confidence": counts,
+        "zero_hit_rate": rate(counts["zero"]),
+        "low_confidence_rate": rate(counts["low"]),
+    }
 
 
 def _knowledge_search(
@@ -1211,6 +1381,7 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
             "period": None,
             "by_origin": {},
             "repo_root": _cache_key(repo_root),
+            "knowledge_recall": _recall_stats(conn),
         }
 
     # Per-tool stats
@@ -1293,6 +1464,7 @@ def get_stats(repo_root: str | Path | None = None) -> dict:
         "recent_calls": recent_calls,
         "by_origin": by_origin,
         "repo_root": _cache_key(repo_root),
+        "knowledge_recall": _recall_stats(conn),
     }
 
 

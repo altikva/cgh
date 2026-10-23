@@ -19,6 +19,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `pattern_search` names the directories holding most hits in `top_dirs`
   and its hint, and `count_only=True` returns hits per file without the
   lines. Existing fields are unchanged.
+- **`knowledge_search` understands a free-text symptom.** Two searches in
+  three came back empty because agents describe a problem in other words
+  than the entry. Words now match on their stem, without accents or case,
+  and through a small French and English synonym table (lock and verrou,
+  stale and périmé, token and jeton). Every hit carries a `confidence`
+  (high, medium or low) and weak matches still come back. When nothing
+  matches, the answer suggests the `knowledge_record` kind and tags to use
+  once the problem is solved. `cgh stats` shows the zero-hit and
+  low-confidence rates, from local counts that never store the query.
+  To keep answers near 2.5 KB, the default limit drops from 10 to 5. The
+  first hit keeps its body (clipped near 1.5 KB) and the others come as
+  briefs (id, title, tags, confidence, body start); read one whole with the
+  new `knowledge_list(entry_id=...)`. `cgh papercut <query>` gets the same
+  matching.
 - **Hook hints that keep a session small.** The Bash precheck adds a
   one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,
   `--silent` installs, `--tail 50` on logs, `head` for a large `cat`), and a
@@ -59,6 +73,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`context_for_task` answers can be acted on without reading files.**
+  Paths are repo-relative, each symbol carries its line range and one to
+  three short lines saying why it was picked (the matching docstring
+  sentence, a call site or a source line), the files come as `start_here`
+  (three at most) and `related`, and `next` names the one call or ranged
+  Read to make next. Federated subrepos are searched too, their files
+  written `<scope>:<path>`. Agents explored after nearly every call, since
+  the answer said where to look but not what was there. `files_referenced`
+  is replaced by `start_here` plus `related`.
 - **`resume` answers with a summary by default.** It returns about 2 KB:
   the standing instructions (a long one is clipped only when space runs
   out, and the answer then says to read it in full before acting), the

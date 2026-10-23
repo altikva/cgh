@@ -197,9 +197,17 @@ def register(mcp) -> None:
             include_shown: if true, ignore session dedup and return
                   everything. Useful to review what was previously served.
 
-        Returns structured markdown context + hit counts. When the served
-        functions and classes carry rationale comments (WHY:, NOTE:, HACK:,
-        ... or an ADR reference), a short `rationale` list gives them
+        Returns structured markdown context + hit counts. Paths are relative
+        to the repo root. Each symbol comes with its line range and one to
+        three lines saying why it was picked (the docstring sentence that
+        matches, a call site, or the matching source line), often enough to
+        act without reading the file. `start_here` lists the best entry
+        files (at most 3), `related` the others, and `next` the one call or
+        ranged Read to make next. In a federated workspace the subrepos are
+        searched too: their symbols show their scope, and their files read
+        `<scope>:<path>`, the path relative to that subrepo's root. When the
+        served functions and classes carry rationale comments (WHY:, NOTE:,
+        HACK:, ... or an ADR reference), a short `rationale` list gives them
         ({file, line, tag, text, symbol, symbol_kind, adr?, adr_file?}).
         """
         from codegraph.analysis.context_builder import context_for_task as _ctx
@@ -211,7 +219,9 @@ def register(mcp) -> None:
             graph_conn=_get_conn(),
             fts_conn=_get_fts(),
             max_nodes=max_nodes,
+            root=_srv._root,
         )
+        warnings = _federate_nodes(ctx, task, max_nodes)
 
         # Session-scoped dedup
         if session_id and not include_shown:
@@ -279,7 +289,10 @@ def register(mcp) -> None:
             if now_served:
                 record_mentions(session_id, now_served, repo_root=_srv._root)
 
-        payload = _context_payload(ctx, session_id, subsystem)
+        payload = _context_payload(ctx, session_id, subsystem, task)
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
         if dropped:
             payload["truncated"] = True
             payload["dropped"] = dropped
@@ -289,23 +302,62 @@ def register(mcp) -> None:
             )
         return dumps_answer(payload)
 
+    def _federate_nodes(ctx, task: str, max_nodes: int) -> list[dict]:
+        """Add the best symbols of each federated subrepo to ``ctx``, ranked
+        with the parent's; returns a warning per subrepo that failed."""
+        if _srv._root is None:
+            return []
+        from codegraph.analysis.context_builder import code_nodes, merge_nodes
+        from codegraph.analysis.federation import for_each_child_graphdb, open_fts_ro
+
+        def one(graph, child_root):
+            with open_fts_ro(child_root) as fts:
+                if fts is None:
+                    raise RuntimeError("fts index unavailable")
+                return code_nodes(
+                    task,
+                    graph,
+                    fts,
+                    max_nodes=max_nodes,
+                    root=child_root,
+                    scope=child_root.name,
+                )
+
+        warnings: list[dict] = []
+        extra = []
+        for scoped in for_each_child_graphdb(_srv._root, one):
+            if scoped.error:
+                warnings.append({"scope": scoped.scope, "error": scoped.error})
+                continue
+            extra.extend(scoped.payload or [])
+        if extra:
+            ctx.nodes = merge_nodes(ctx.nodes, extra, max_nodes)
+            ctx.files_referenced = sorted(set(n.file_path for n in ctx.nodes))
+            ctx.token_estimate = _token_estimate(ctx)
+        return warnings
+
     def _token_estimate(ctx) -> int:
-        return (
-            sum(
-                len(n.name) + len(n.docstring) + len(n.file_path) + 50
-                for n in ctx.nodes
-            )
-            // 4
+        from codegraph.analysis.context_builder import token_estimate
+
+        return token_estimate(ctx.nodes)
+
+    def _context_payload(
+        ctx, session_id: str, subsystem: dict | None, task: str = ""
+    ) -> dict:
+        """The answer for ``ctx``, with the ``subsystem`` hint when one."""
+        from codegraph.analysis.context_builder import (
+            file_tiers,
+            next_step,
+            render_context_markdown,
         )
 
-    def _context_payload(ctx, session_id: str, subsystem: dict | None) -> dict:
-        """The answer for ``ctx``, with the ``subsystem`` hint when one."""
-        from codegraph.analysis.context_builder import render_context_markdown
-
         md = render_context_markdown(ctx)
+        start_here, related = file_tiers(ctx.nodes)
         payload = {
             "context_markdown": md,
-            "files_referenced": ctx.files_referenced,
+            "start_here": start_here,
+            "related": related,
+            "next": next_step(ctx.nodes, start_here, task or ctx.task, _srv._root),
             "symbol_count": len(ctx.nodes),
             "memory_docs_count": len(ctx.memory_docs),
             "plan_docs_count": len(ctx.plan_docs),
@@ -319,7 +371,7 @@ def register(mcp) -> None:
         if subsystem:
             payload["subsystem"] = subsystem
             payload["context_markdown"] = md + (
-                f"\n**Subsystem**: {subsystem['name']} ({subsystem['size']} files)"
+                f"\n\n**Subsystem**: {subsystem['name']} ({subsystem['size']} files)"
                 + (
                     f", also: {', '.join(subsystem['files'])}"
                     if subsystem["files"]
@@ -372,11 +424,17 @@ def register(mcp) -> None:
         same items the context markdown lists under each symbol."""
         from codegraph.analysis.rationale import RATIONALE_TEXT_CAP, item
 
-        return [
-            item(r, RATIONALE_TEXT_CAP, lambda p: _short_path(p, _srv._root))
-            for n in ctx.nodes
-            for r in n.rationale
-        ]
+        out = []
+        for n in ctx.nodes:
+            root = n.scope_root or _srv._root
+            for r in n.rationale:
+                row = item(
+                    r, RATIONALE_TEXT_CAP, lambda p, root=root: _short_path(p, root)
+                )
+                if n.scope != "parent":
+                    row["scope"] = n.scope
+                out.append(row)
+        return out
 
     def _subsystem_of(ctx) -> dict | None:
         """The community the best-matching symbols live in, with its central

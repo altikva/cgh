@@ -313,8 +313,37 @@ def _stats_content(root: str) -> Group:
         renderables.append(
             Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
         )
+    recall = _recall_table(call_stats.get("knowledge_recall") or {})
+    if recall is not None:
+        renderables.append(recall)
 
     return Group(*renderables)
+
+
+def _recall_table(recall: dict) -> Table | None:
+    """How well knowledge_search answered: searches by confidence, and the
+    zero-hit and low-confidence rates. None before the first search."""
+    searches = int(recall.get("searches") or 0)
+    if not searches:
+        return None
+    counts = recall.get("by_confidence") or {}
+    table = Table(
+        title="Knowledge search recall", box=box.SIMPLE_HEAD, title_style="bold cyan"
+    )
+    table.add_column("Answer", style="bold")
+    table.add_column("Searches", justify="right")
+    for key, label in (
+        ("high", "high confidence"),
+        ("medium", "medium confidence"),
+        ("low", "low confidence"),
+        ("zero", "no hit"),
+    ):
+        table.add_row(label, f"{int(counts.get(key) or 0):,}")
+    table.add_section()
+    table.add_row("[bold]Total[/bold]", f"[bold]{searches:,}[/bold]")
+    table.add_row("Zero-hit rate", str(recall.get("zero_hit_rate", "0%")))
+    table.add_row("Low-confidence rate", str(recall.get("low_confidence_rate", "0%")))
+    return table
 
 
 _ORIGIN_LABELS = {

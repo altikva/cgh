@@ -49,6 +49,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`context_for_task` answers can be acted on without reading files.**
+  Paths are repo-relative, each symbol carries its line range and one to
+  three short lines saying why it was picked (the matching docstring
+  sentence, a call site or a source line), the files come as `start_here`
+  (three at most) and `related`, and `next` names the one call or ranged
+  Read to make next. Federated subrepos are searched too, their files
+  written `<scope>:<path>`. Agents explored after nearly every call, since
+  the answer said where to look but not what was there. `files_referenced`
+  is replaced by `start_here` plus `related`.
 - **`resume` answers with a summary by default.** It returns about 2 KB:
   the standing instructions (a long one is clipped only when space runs
   out, and the answer then says to read it in full before acting), the

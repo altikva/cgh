@@ -9,6 +9,16 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Search tools understand a sentence.** `pattern_search`,
+  `search_symbols` and `symbol_lookup` given a question in French or
+  English ("where are webhooks retried") look up the identifiers it names
+  and search its words, plus built-in synonyms, over symbols, docstrings
+  and docs, and say so in `interpreted_as`. Each answer now carries
+  `confidence`, and a low or empty one says `why` and gives `next`, a call
+  to try instead. Definitions and widely imported files rank first. A cut
+  `pattern_search` names the directories holding most hits in `top_dirs`
+  and its hint, and `count_only=True` returns hits per file without the
+  lines. Existing fields are unchanged.
 - **Hook hints that keep a session small.** The Bash precheck adds a
   one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,
   `--silent` installs, `--tail 50` on logs, `head` for a large `cat`), and a

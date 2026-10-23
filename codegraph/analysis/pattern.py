@@ -51,6 +51,9 @@ HITS_BUDGET_BYTES = 3_600
 PATTERN_ANSWER_BYTES = 4_096
 # Files listed in `more` at most; the rest are only counted.
 MORE_FILES_SHOWN = 10
+# Hits a count_only search reads at least: it answers counts, not lines,
+# so it can afford to look further than max_results.
+COUNT_ONLY_MAX_RESULTS = 2_000
 
 
 @dataclass

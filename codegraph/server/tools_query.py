@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from codegraph.core.utils import short_path as _short_path
 
@@ -22,16 +23,59 @@ _CALLEE_FANOUT_CAP = 500
 _CALLEE_TOTAL_CAP = 300
 
 
+def _dirs_text(dirs: list[dict]) -> str:
+    return ", ".join(f"{d['glob']} ({d['hits']})" for d in dirs)
+
+
+def _counts_payload(
+    hits: list[dict], with_scope: bool, roots: list | None, limit: int
+) -> dict:
+    """count_only: hits per file, the busiest first, without the lines, and
+    the directories holding most of them."""
+    from collections import Counter
+
+    from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
+    from codegraph.analysis.query_intent import top_dirs
+    from codegraph.server._budget import cap_answer
+
+    counts = Counter((h.get("scope", "parent"), h["file"]) for h in hits)
+    files = []
+    for (scope, file), n in counts.most_common():
+        row: dict = {"scope": scope} if with_scope else {}
+        row.update({"file": file, "count": n})
+        files.append(row)
+    out: dict = {"total": len(hits), "count_only": True, "files": files}
+    dirs = top_dirs([h["file"] for h in hits], roots)
+    if dirs:
+        out["top_dirs"] = dirs
+    if len(hits) >= limit:
+        out["limit_reached"] = True
+    cap_answer(
+        out,
+        ["files"],
+        "File list cut to fit: pass one of `top_dirs` as glob.",
+        max_bytes=PATTERN_ANSWER_BYTES - 400,
+    )
+    return out
+
+
 def _hits_payload(
     hits: list[dict],
     pattern: str = "",
     regex: bool = True,
     case_sensitive: bool = False,
     with_scope: bool = False,
+    roots: list | None = None,
+    count_only: bool = False,
+    reserve: int = 0,
+    limit: int = 0,
 ) -> dict:
     """total, the hits grouped by file under `files` and, when the list was
     cut to fit the answer budget, `truncated`, where the rest is (`more` maps
-    a file to its hits not shown, for the first few files) and a hint."""
+    a file to its hits not shown, for the first few files), `top_dirs` (the
+    directories holding most hits, as globs) and a hint naming them.
+    ``count_only`` answers hits per file instead of the lines. ``reserve``
+    is room kept for keys the tool adds next to these."""
     from codegraph.analysis.pattern import (
         HITS_BUDGET_BYTES,
         MORE_FILES_SHOWN,
@@ -39,10 +83,14 @@ def _hits_payload(
         group_hits,
         match_finder,
     )
+    from codegraph.analysis.query_intent import top_dirs
     from codegraph.server._budget import answer_bytes
 
+    if count_only:
+        return _counts_payload(hits, with_scope, roots, limit or len(hits) + 1)
     find = match_finder(pattern, regex, case_sensitive) if pattern else None
-    budget = HITS_BUDGET_BYTES
+    budget = HITS_BUDGET_BYTES - reserve
+    dirs: list[dict] | None = None
     # The hit budget leaves out `more` and the hint: when they push the
     # answer past its ceiling, take the excess off the hits and group again.
     for _ in range(4):
@@ -55,12 +103,25 @@ def _hits_payload(
         out["more"] = dict(list(more.items())[:MORE_FILES_SHOWN])
         if len(more) > MORE_FILES_SHOWN:
             out["more_files"] = len(more)
-        out["hint"] = (
-            f"{len(hits) - shown} more hit(s) not shown, counted per file in "
-            '`more`. Narrow the pattern, or pass a glob such as "src/**/*.py".'
+        if dirs is None:
+            dirs = top_dirs([h["file"] for h in hits], roots)
+        if dirs:
+            out["top_dirs"] = dirs
+            out["hint"] = (
+                f"{len(hits) - shown} more hit(s) not shown, counted per file in "
+                f"`more`. Most hits are under {_dirs_text(dirs)}. Narrow the "
+                "pattern, pass one of these as `glob`, or use count_only=True."
+            )
+        else:
+            out["hint"] = (
+                f"{len(hits) - shown} more hit(s) not shown, counted per file in "
+                '`more`. Narrow the pattern, or pass a glob such as "src/**/*.py".'
+            )
+        # About 300 bytes, plus the pattern, for the keys the tool adds
+        # (pattern, glob, backend, confidence, next).
+        excess = (
+            answer_bytes(out) + 300 + reserve + 2 * len(pattern) - PATTERN_ANSWER_BYTES
         )
-        # About 120 bytes, plus the pattern, for the keys the tool adds.
-        excess = answer_bytes(out) + 120 + len(pattern) - PATTERN_ANSWER_BYTES
         if excess <= 0 or shown <= 1:
             break
         budget -= excess
@@ -78,7 +139,7 @@ def register(mcp) -> None:
     from codegraph.analysis.terraform import lookup as tf_lookup
     from codegraph.analysis.terraform import search as tf_search
     from codegraph.analysis.terraform import used_by as tf_used_by
-    from codegraph.server import _get_conn, _logged_tool
+    from codegraph.server import _get_conn, _get_fts, _logged_tool
 
     def _federate(query_fn):
         """Parent + federated children fan-out, flattened. Returns
@@ -86,7 +147,7 @@ def register(mcp) -> None:
         return federate_flat(_get_conn, _srv._root, query_fn)
 
     def _search_repo_at_ref(
-        pattern, glob, max_results, regex, case_sensitive, repo, ref
+        pattern, glob, max_results, regex, case_sensitive, repo, ref, count_only=False
     ) -> str:
         """pattern_search on one repo (this one or a declared sibling): its
         tree at ``ref`` read from git, or its working tree when no ref."""
@@ -120,23 +181,157 @@ def register(mcp) -> None:
                 )
         except RefError as exc:
             return json.dumps({"pattern": pattern, "error": str(exc)}, indent=2)
-        return json.dumps(
-            {
-                "pattern": pattern,
-                "glob": glob or None,
-                "repo": name or None,
-                "ref": ref or None,
-                "commit": sha,
-                "backend": backend,
-                **_hits_payload(
-                    [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
-                    pattern,
-                    regex,
-                    case_sensitive,
-                ),
-            },
-            ensure_ascii=False,
-        )
+        payload = {
+            "pattern": pattern,
+            "glob": glob or None,
+            "repo": name or None,
+            "ref": ref or None,
+            "commit": sha,
+            "backend": backend,
+            **_hits_payload(
+                [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
+                pattern,
+                regex,
+                case_sensitive,
+                roots=None if ref else [top],
+                count_only=count_only,
+                limit=max_results,
+            ),
+        }
+        payload.update(_grep_verdict(payload, pattern, glob, regex))
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _central() -> dict[str, int]:
+        """Import in-degree per file of the parent graph (hotspots' term)."""
+        from codegraph.analysis.query_intent import importers
+
+        try:
+            return importers(_get_conn(), _srv._root)
+        except Exception:  # no graph yet: rank on recency alone
+            return {}
+
+    def _fts_scoped(text: str, limit: int, prose: bool = True) -> list[tuple]:
+        """[(scope, FTSResult)] from the FTS of the parent and each child,
+        scanner findings left out (they are not definitions)."""
+        from codegraph.analysis.federation import for_each_child_fts
+        from codegraph.core.fts import fts_search as _fts
+
+        out: list[tuple] = []
+        if not text.strip():
+            return out
+        try:
+            out += [
+                ("parent", r) for r in _fts(_get_fts(), text, limit=limit, prose=prose)
+            ]
+        except Exception:  # an FTS that cannot answer adds nothing
+            pass
+        if _srv._root is not None:
+            for scoped in for_each_child_fts(
+                _srv._root, lambda c, _r: _fts(c, text, limit=limit, prose=prose)
+            ):
+                if not scoped.error:
+                    out += [(scoped.scope, r) for r in scoped.payload or []]
+        return [(s, r) for s, r in out if r.kind != "finding"]
+
+    def _near_names(name: str, limit: int = 3) -> list[str]:
+        """Symbol names close to ``name`` (fused BM25 and trigram FTS), for
+        a lookup that found nothing."""
+        names: list[str] = []
+        for _scope, r in _fts_scoped(name, limit * 4, prose=False):
+            if r.kind == "md_section" or r.name == name or r.name in names:
+                continue
+            names.append(r.name)
+            if len(names) >= limit:
+                break
+        return names
+
+    def _understand(intent, limit: int = 8) -> tuple[list[dict], list[tuple]]:
+        """For a sentence: the definitions its identifiers name exactly, and
+        the FTS hits on its words and their synonyms as (coverage, scope,
+        FTSResult), tests last, then the hits touching the most ideas of
+        the question, then the FTS order."""
+        from codegraph.analysis.query_intent import coverage, is_test_path
+
+        exact: list[dict] = []
+        for ident in intent.identifiers[:4]:
+            names = [ident]
+            if "." in ident:
+                names.append(ident.rsplit(".", 1)[-1])
+            for n in names:
+                rows, _warnings = _federate(_definitions_query(n))
+                if rows:
+                    exact.extend(rows)
+                    break
+        hits = _fts_scoped(intent.fts_text, max(limit * 3, 24))
+        scored = [
+            (coverage(intent, r.name, r.docstring), i, scope, r)
+            for i, (scope, r) in enumerate(hits)
+        ]
+        scored.sort(key=lambda t: (is_test_path(t[3].file_path), -t[0], t[1]))
+        return exact, [(c, s, r) for c, _i, s, r in scored]
+
+    def _sentence_verdict(intent, exact: int, scored: list[tuple]) -> dict:
+        """confidence, and why / next when it is low, for a sentence."""
+        from codegraph.analysis.query_intent import call, sentence_confidence
+
+        best = scored[0][0] if scored else 0
+        conf = sentence_confidence(intent, exact, best, len(scored))
+        out: dict = {"confidence": conf}
+        if conf != "low":
+            return out
+        words = intent.interpreted_as
+        if not words:
+            out["why"] = "Only stopwords in the question: nothing left to search for."
+            out["next"] = "Name the function, class or file you are after."
+            return out
+        if scored:
+            out["why"] = (
+                "Only weak matches: no result touches more than one idea of "
+                f"the question ({', '.join(words)})."
+            )
+        else:
+            out["why"] = (
+                f"No symbol name, docstring or doc section matches {', '.join(words)}, "
+                "nor their synonyms."
+            )
+        longest = max(words, key=len)
+        out["next"] = call("pattern_search", longest, regex=False)
+        return out
+
+    def _grep_verdict(payload: dict, pattern: str, glob: str, regex: bool) -> dict:
+        """confidence, and why / next, for a literal or regex search."""
+        from codegraph.analysis.query_intent import call
+
+        if payload.get("count_only"):
+            return {"confidence": "high"}
+        if payload.get("truncated"):
+            out: dict = {"confidence": "medium"}
+            dirs = payload.get("top_dirs") or []
+            if dirs:
+                out["next"] = call("pattern_search", pattern, glob=dirs[0]["glob"])
+            return out
+        if payload.get("total"):
+            return {"confidence": "high"}
+        kind = "regex" if regex else "literal"
+        where = f" in {glob}" if glob else ""
+        out = {
+            "confidence": "low",
+            "why": f"No line matches the {kind} {pattern!r}{where}.",
+        }
+        if glob:
+            out["next"] = call("pattern_search", pattern)
+        elif re.fullmatch(r"[A-Za-z_][\w.]*", pattern or ""):
+            near = _near_names(pattern)
+            out["next"] = (
+                call("symbol_lookup", near[0]) if near else call("fts_search", pattern)
+            )
+            if near:
+                out["candidates"] = near
+        elif regex and re.search(r"[\\^$*+\[\]{}|()]", pattern or ""):
+            out["next"] = call("pattern_search", pattern, regex=False)
+        else:
+            out["next"] = call("fts_search", pattern)
+        return out
 
     @mcp.tool()
     @_logged_tool
@@ -223,6 +418,7 @@ def register(mcp) -> None:
         case_sensitive: bool = False,
         repo: str = "",
         ref: str = "",
+        count_only: bool = False,
     ) -> str:
         """
         Regex / substring pattern search across the indexed repo. Use this
@@ -231,14 +427,25 @@ def register(mcp) -> None:
         exact line ranges that matter (never whole files).
 
         Returns {pattern, glob, backend, total, files: [{file, hits:
-        [[line, text], ...]}]}. Each line is clipped to about 160
-        characters around the match, an ellipsis marking a cut side.
+        [[line, text], ...]}], confidence}. Each line is clipped to about
+        160 characters around the match, an ellipsis marking a cut side.
+        Files holding a definition come first, then the most imported and
+        the most recently changed ones.
 
         Respects .gitignore (via ripgrep / git-grep). Automatically scans
         extra_dirs configured on this project. Caps output at max_results,
         and at about 4 KB: past that, the answer has `truncated: true`,
-        `shown`, and `more` counting the hits left out per file, so narrow
-        the pattern or the glob to see them.
+        `shown`, `more` counting the hits left out per file, and
+        `top_dirs`, the directories holding most hits as globs with their
+        counts, to pass back as `glob`. `count_only=True` answers hits per
+        file ({file, count}, busiest first) without the lines.
+
+        A sentence ("where are webhooks retried") is understood rather
+        than grepped: the identifiers it names are searched, its words and
+        their French / English synonyms go through the symbol and doc
+        FTS, and the answer adds `interpreted_as`, `expanded`, `symbols`
+        and `docs`. `confidence` is high, medium or low; a low or empty
+        answer says `why` and gives `next`, a call to try instead.
 
         Args:
           pattern:        regex by default, literal when regex=False
@@ -265,72 +472,162 @@ def register(mcp) -> None:
         or ref set, only that one repo is searched.
         """
         from codegraph.analysis.federation import resolve_children
+        from codegraph.analysis.pattern import COUNT_ONLY_MAX_RESULTS
         from codegraph.analysis.pattern import pattern_search as _search
+        from codegraph.analysis.query_intent import (
+            interpret,
+            plain_words,
+            rank_hits,
+        )
+        from codegraph.server._budget import answer_bytes
 
+        if count_only:
+            max_results = max(max_results, COUNT_ONLY_MAX_RESULTS)
         if repo or ref:
             return _search_repo_at_ref(
-                pattern, glob, max_results, regex, case_sensitive, repo, ref
+                pattern, glob, max_results, regex, case_sensitive, repo, ref, count_only
             )
 
-        all_hits: list[dict] = []
-        backend = ""
-        # Parent scope
-        hits, backend = _search(
-            _srv._root,
-            pattern=pattern,
-            glob=glob,
-            max_results=max_results,
-            regex=regex,
-            case_sensitive=case_sensitive,
-        )
-        for h in hits:
-            all_hits.append(
-                {"scope": "parent", "file": h.file, "line": h.line, "text": h.text}
-            )
-
-        # Each federated subrepo. Resolve children once and reuse for the cap
-        # below (this used to read + parse config.toml twice per query).
+        # Resolve children once and reuse for the cap below (this used to
+        # read + parse config.toml twice per query).
         children = resolve_children(_srv._root) if _srv._root else []
-        for child in children:
-            try:
-                child_hits, _ = _search(
-                    child,
-                    pattern=pattern,
-                    glob=glob,
-                    max_results=max_results,
-                    regex=regex,
-                    case_sensitive=case_sensitive,
-                )
-            except Exception:
-                continue
-            for h in child_hits:
-                all_hits.append(
+
+        def grep(pat: str, rx: bool) -> tuple[list[dict], str]:
+            """Hits of ``pat`` over the parent, then each federated child."""
+            found: list[dict] = []
+            hits, used = _search(
+                _srv._root,
+                pattern=pat,
+                glob=glob,
+                max_results=max_results,
+                regex=rx,
+                case_sensitive=case_sensitive,
+            )
+            found += [
+                {"scope": "parent", "file": h.file, "line": h.line, "text": h.text}
+                for h in hits
+            ]
+            for child in children:
+                try:
+                    child_hits, _ = _search(
+                        child,
+                        pattern=pat,
+                        glob=glob,
+                        max_results=max_results,
+                        regex=rx,
+                        case_sensitive=case_sensitive,
+                    )
+                except Exception:
+                    continue
+                found += [
                     {
                         "scope": child.name,
                         "file": h.file,
                         "line": h.line,
                         "text": h.text,
                     }
-                )
+                    for h in child_hits
+                ]
+            return found, used
 
+        all_hits, backend = grep(pattern, regex)
+
+        # A sentence is understood, not only grepped. A plain-word query
+        # that matched nothing literally gets the same second chance.
+        intent = interpret(pattern)
+        if not intent.sentence and not all_hits and plain_words(pattern) >= 2:
+            intent = interpret(pattern, force=True)
+        extra: dict = {}
+        if intent.sentence and not count_only:
+            if intent.identifiers:
+                alternation = "|".join(re.escape(i) for i in intent.identifiers[:6])
+                seen = {(h["scope"], h["file"], h["line"]) for h in all_hits}
+                more_hits, _ = grep(rf"\b(?:{alternation})\b", True)
+                all_hits += [
+                    h
+                    for h in more_hits
+                    if (h["scope"], h["file"], h["line"]) not in seen
+                ]
+            exact, scored = _understand(intent)
+            extra.update(intent.describe())
+            symbols: list[dict] = []
+            docs: list[dict] = []
+            keys: set[tuple] = set()
+            for row in exact:
+                key = (row.get("scope", "parent"), row["file"], row["lines"])
+                if key not in keys:
+                    keys.add(key)
+                    symbols.append(
+                        {
+                            "scope": row.get("scope", "parent"),
+                            "kind": row["kind"],
+                            "name": row["name"],
+                            "file": row["file"],
+                            "lines": row["lines"],
+                        }
+                    )
+            for _cover, scope, r in scored:
+                lines = (
+                    f"{r.start_line}-{r.end_line}" if r.end_line else str(r.start_line)
+                )
+                key = (scope, r.file_path, lines)
+                if key in keys:
+                    continue
+                keys.add(key)
+                row = {
+                    "scope": scope,
+                    "kind": r.kind,
+                    "name": r.name,
+                    "file": r.file_path,
+                    "lines": lines,
+                }
+                if r.kind == "md_section":
+                    if len(docs) < 3:
+                        docs.append(row)
+                elif len(symbols) < 8:
+                    row["doc"] = (r.docstring or "")[:100]
+                    symbols.append(row)
+            from codegraph.server._budget import drop_parent_scope
+
+            drop_parent_scope(symbols)
+            drop_parent_scope(docs)
+            extra["symbols"] = symbols
+            extra["docs"] = docs
+            extra.update(_sentence_verdict(intent, len(exact), scored))
+
+        # Most useful first, so the cut keeps definitions and central files.
+        all_hits = rank_hits(all_hits, _central())
         # Apply max_results across the whole federation as a soft cap
         all_hits = all_hits[: max_results * (1 + len(children))]
 
-        return json.dumps(
-            {
-                "pattern": pattern,
-                "glob": glob or None,
-                "backend": backend,
-                **_hits_payload(
-                    all_hits,
-                    pattern,
-                    regex,
-                    case_sensitive,
-                    with_scope=any(h["scope"] != "parent" for h in all_hits),
-                ),
-            },
-            ensure_ascii=False,
-        )
+        roots = [p for p in [_srv._root, *children] if p is not None]
+        payload: dict = {
+            "pattern": pattern,
+            "glob": glob or None,
+            "backend": backend,
+            **_hits_payload(
+                all_hits,
+                pattern,
+                regex,
+                case_sensitive,
+                with_scope=any(h["scope"] != "parent" for h in all_hits),
+                roots=roots,
+                count_only=count_only,
+                reserve=answer_bytes(extra) if extra else 0,
+                limit=max_results,
+            ),
+        }
+        if intent.sentence and not count_only:
+            # A sentence's own verdict stands. Lines matching it literally
+            # (often a comment quoting it) lift a low verdict to medium.
+            if payload.get("total") and extra.get("confidence") == "low":
+                for k in ("why", "next"):
+                    extra.pop(k, None)
+                extra["confidence"] = "medium"
+            payload.update(extra)
+        else:
+            payload.update(_grep_verdict(payload, pattern, glob, regex))
+        return json.dumps(payload, ensure_ascii=False)
 
     def _attach_rationale(conn, hits: list[dict]) -> None:
         """Give each function / class hit the rationale comments attached to
@@ -403,29 +700,10 @@ def register(mcp) -> None:
             out["warnings"] = warnings
         return json.dumps(out, indent=2)
 
-    @mcp.tool()
-    @_logged_tool
-    def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
-        """
-        Find where a symbol (function, class, TF resource) is defined.
-        Returns file path, line range, type, and docstring snippet, plus
-        a `scope` tag (parent / <subrepo-name>) when federation is on.
-        Use this instead of grepping files.
-
-        Optional `role` / `layer` filters keep only definitions whose File
-        node carries that exact role / layer (empty = no filter).
-
-        Each definition carries its `name` (the section title for a
-        markdown section, which matches on a title substring).
-
-        Terraform blocks are found by address too (var.region,
-        google_x.y, module.m, local.l, data.t.n, output.o).
-
-        A function or class whose code carries rationale comments (WHY:,
-        NOTE:, HACK:, SAFETY:, INVARIANT:, ... or an ADR reference) lists
-        the first few in `rationale` ({tag, line, text, adr?, adr_file?});
-        the `rationale` tool returns them all.
-        """
+    def _definitions_query(name: str, role: str = "", layer: str = ""):
+        """The graph query symbol_lookup runs for one name: functions,
+        classes, Terraform blocks and Markdown sections, with the
+        rationale attached and the role / layer filters applied."""
 
         def query(conn):
             out = []
@@ -526,7 +804,41 @@ def register(mcp) -> None:
                 return kept
             return out
 
-        results, warnings = _federate(query)
+        return query
+
+    @mcp.tool()
+    @_logged_tool
+    def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
+        """
+        Find where a symbol (function, class, TF resource) is defined.
+        Returns file path, line range, type, and docstring snippet, plus
+        a `scope` tag (parent / <subrepo-name>) when federation is on.
+        Use this instead of grepping files.
+
+        Optional `role` / `layer` filters keep only definitions whose File
+        node carries that exact role / layer (empty = no filter).
+
+        Each definition carries its `name` (the section title for a
+        markdown section, which matches on a title substring).
+
+        Terraform blocks are found by address too (var.region,
+        google_x.y, module.m, local.l, data.t.n, output.o).
+
+        A function or class whose code carries rationale comments (WHY:,
+        NOTE:, HACK:, SAFETY:, INVARIANT:, ... or an ADR reference) lists
+        the first few in `rationale` ({tag, line, text, adr?, adr_file?});
+        the `rationale` tool returns them all.
+
+        Code definitions come before Markdown sections and tests, then
+        the most imported and most recently changed files. A sentence
+        ("where are webhooks retried") is understood: the identifiers it
+        names are looked up, and its words and their synonyms go through
+        the FTS; `interpreted_as` and `expanded` say what was searched.
+        Every answer has `confidence` (high, medium, low); a low or empty
+        one says `why` and gives `next` (a call to try) and, for a near
+        miss, `candidates` (close names).
+        """
+        results, warnings = _federate(_definitions_query(name, role, layer))
         if warnings and not (role or layer):
             # Same fallback as search_symbols: a child whose owner holds the
             # graph write lock still resolves the name through its FTS index.
@@ -543,17 +855,89 @@ def register(mcp) -> None:
                     "scope": scope,
                 },
             )
+        from codegraph.analysis.query_intent import (
+            call,
+            interpret,
+            plain_words,
+            rank_definitions,
+        )
+
+        intent = interpret(name)
+        if not intent.sentence and not results and plain_words(name) >= 2:
+            intent = interpret(name, force=True)
+        verdict: dict
+        if intent.sentence and not (role or layer):
+            exact, scored = _understand(intent)
+            seen = {(r.get("scope", "parent"), r["file"], r["lines"]) for r in results}
+            added: list[dict] = []
+            for row in exact:
+                key = (row.get("scope", "parent"), row["file"], row["lines"])
+                if key not in seen:
+                    seen.add(key)
+                    added.append(row)
+            for _cover, scope, r in scored:
+                if len(added) >= 8 + len(exact):
+                    break
+                lines = (
+                    f"{r.start_line}-{r.end_line}" if r.end_line else str(r.start_line)
+                )
+                key = (scope, r.file_path, lines)
+                if key in seen:
+                    continue
+                seen.add(key)
+                added.append(
+                    {
+                        "kind": r.kind,
+                        "name": r.name,
+                        "file": r.file_path,
+                        "lines": lines,
+                        "doc": (r.docstring or "")[:120],
+                        "scope": scope,
+                    }
+                )
+            results = [*results, *added]
+            verdict = {
+                **intent.describe(),
+                **_sentence_verdict(intent, len(exact), scored),
+            }
+        else:
+            results = rank_definitions(results, _central())
+            if any(r.get("kind") != "md_section" for r in results):
+                verdict = {"confidence": "high"}
+            elif results:
+                # Only section titles holding the name: no code defines it.
+                verdict = {"confidence": "medium"}
+            else:
+                verdict = {
+                    "confidence": "low",
+                    "why": (
+                        f"No function, class, Terraform block or Markdown section "
+                        f"is named {name!r}"
+                        + (" with that role / layer." if role or layer else ".")
+                    ),
+                }
+            if verdict["confidence"] != "high":
+                near = [n for n in _near_names(name) if n != name]
+                if near:
+                    verdict["candidates"] = near
+                    verdict["next"] = call("symbol_lookup", near[0])
+                elif not results:
+                    verdict["next"] = (
+                        call("search_symbols", name)
+                        if re.fullmatch(r"[\w.]+", name or "")
+                        else call("fts_search", name)
+                    )
         if not results:
-            payload = {"found": False, "name": name}
+            payload = {"found": False, "name": name, **verdict}
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload)
-        out = {"found": True, "name": name, "definitions": results}
+            return json.dumps(payload, ensure_ascii=False)
+        out = {"found": True, "name": name, "definitions": results, **verdict}
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return json.dumps(out, indent=2, ensure_ascii=False)
 
     @mcp.tool()
     @_logged_tool
@@ -858,6 +1242,10 @@ def register(mcp) -> None:
         Terraform kinds for `kinds`: tf_resource, tf_data, tf_module,
         tf_module_arg (a module call's input, module.m.<arg>), tf_local,
         tf_provider, tf_moved, tf_import, tf_removed, tf_var.
+
+        A sentence instead of a name is understood like in symbol_lookup
+        (`interpreted_as`, `expanded`). Every answer has `confidence`; a
+        low one says `why` and gives `next`.
         """
         wanted = {k.strip() for k in kinds.split(",") if k.strip()}
 
@@ -979,16 +1367,77 @@ def register(mcp) -> None:
                     "scope": scope,
                 },
             )
+        from codegraph.analysis.query_intent import (
+            call,
+            interpret,
+            plain_words,
+            rank_definitions,
+        )
         from codegraph.server._budget import cap_answer, drop_parent_scope, dumps_answer
 
         # Each kind used to bring its own `limit` rows, so one query could
         # answer four times `limit` rows per scope: keep the best `limit` of
         # them, an exact name first, then a name starting with the query.
+        # Then code before sections and tests, the most imported files and
+        # the most recently changed ones (rank_definitions, a stable sort).
+
         q = query.lower()
 
         def _rank(hit: dict) -> int:
             name = str(hit.get("name") or "").lower()
             return 0 if name == q else 1 if name.startswith(q) else 2
+
+        # A sentence finds nothing by substring: understand it instead.
+        intent = interpret(query)
+        if not intent.sentence and not results and plain_words(query) >= 2:
+            intent = interpret(query, force=True)
+        understood = intent.sentence and not (role or layer)
+        verdict: dict = {}
+        if understood:
+            exact, scored = _understand(intent, limit=max(limit, 8))
+            seen = {
+                (h.get("scope", "parent"), h["file"], h.get("line")) for h in results
+            }
+            added: list[dict] = []
+            for row in exact:
+                line = int(str(row["lines"]).split("-")[0] or 0)
+                key = (row.get("scope", "parent"), row["file"], line)
+                if key not in seen:
+                    seen.add(key)
+                    added.append(
+                        {
+                            "kind": row["kind"],
+                            "name": row["name"],
+                            "file": row["file"],
+                            "line": line,
+                            "scope": row.get("scope", "parent"),
+                        }
+                    )
+            for _cover, scope, r in scored:
+                if wanted and r.kind not in wanted:
+                    continue
+                key = (scope, r.file_path, r.start_line)
+                if key in seen:
+                    continue
+                seen.add(key)
+                added.append(
+                    {
+                        "kind": r.kind,
+                        "name": r.name,
+                        "file": r.file_path,
+                        "line": r.start_line,
+                        "scope": scope,
+                    }
+                )
+            results = [*results, *added]
+            verdict = {
+                **intent.describe(),
+                **_sentence_verdict(intent, len(exact), scored),
+            }
+            order = None  # keep the understanding's own order
+        else:
+            results = rank_definitions(results, _central())
+            order = _rank
 
         by_scope: dict[str, list[dict]] = {}
         for hit in results:
@@ -997,8 +1446,26 @@ def register(mcp) -> None:
         results = [
             hit
             for hits in by_scope.values()
-            for hit in sorted(hits, key=_rank)[: max(0, limit)]
+            for hit in (sorted(hits, key=order) if order else hits)[: max(0, limit)]
         ]
+        if not understood:
+            best = min((_rank(h) for h in results), default=None)
+            if best is not None and best <= 1:
+                verdict = {"confidence": "high"}
+            elif best is not None:
+                verdict = {"confidence": "medium"}
+            else:
+                verdict = {
+                    "confidence": "low",
+                    "why": f"No symbol name contains {query!r}"
+                    + (" with these filters." if role or layer or kinds else "."),
+                }
+                near = _near_names(query)
+                if near:
+                    verdict["candidates"] = near
+                    verdict["next"] = call("symbol_lookup", near[0])
+                else:
+                    verdict["next"] = call("fts_search", query)
         drop_parent_scope(results)
         payload: dict = {"query": query, "total": total, "results": results}
         if len(results) < total:
@@ -1018,6 +1485,7 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
+        payload.update(verdict)
         cap_answer(
             payload,
             ["results"],

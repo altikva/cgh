@@ -88,6 +88,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Less cgh text in each session's context.** On a Claude Code without
+  the rules directory, `cgh init` wrote the full 10 KB guidance into
+  `CLAUDE.md`; it now writes the same 2.3 KB rule as the rules directory.
+  `cgh doctor` marks an older, longer copy, or a rule doubled by a leftover
+  `CLAUDE.md` block, as `stale`. The Grep and shell-search hints are given
+  in full once per session, then as one line. Migration: run `cgh setup
+  claude` where doctor says `stale`. `docs/INTEGRATIONS.md` explains what a
+  repo's own rules weigh and how to trim them.
 - **`pattern_search` and `file_summary` answers weigh less than a Read.**
   A token study found broad searches at their 4 KB ceiling and summaries
   of large files up to 7.5 KB, when a Read averaged 3.5 KB. `pattern_search`

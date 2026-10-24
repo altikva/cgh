@@ -585,6 +585,61 @@ Details, loaded when the situation arises: the `cgh-use-codegraph`
 """
 )
 
+# What `.claude/rules/cgh-usage.md` holds once written by this version.
+CLAUDE_RULE_TEXT = "# When to use the cgh MCP tools\n\n" + _USAGE_BODY_CLAUDE
+
+
+def _usage_block(tool: str) -> str:
+    """The marker block for a root rules file. Claude Code gets the short
+    body even here, on a version without the rules directory: its skills are
+    installed either way, and the root CLAUDE.md is loaded into every session
+    just like a rules file. Codex and Gemini have no skills and keep the full
+    text."""
+    body = _USAGE_BODY_CLAUDE if tool == "claude" else _USAGE_BODY
+    return (
+        _USAGE_BLOCK_START + "\n\n" + body.rstrip() + "\n\n" + _USAGE_BLOCK_END + "\n"
+    )
+
+
+def claude_usage_status(project_root: Path) -> dict[str, object]:
+    """Where the Claude Code usage guidance sits and whether it is current.
+
+    status is "ok" (one current copy), "missing", or "stale": the rules file
+    or the CLAUDE.md block differs from what this version writes (an older,
+    longer text), or both are present and the guidance is paid twice per
+    session. bytes is what the session start pays for it today."""
+    rules_file = project_root / ".claude" / "rules" / "cgh-usage.md"
+    block_re = re.compile(
+        re.escape(_USAGE_BLOCK_START) + r".*?" + re.escape(_USAGE_BLOCK_END) + r"\n?",
+        re.DOTALL,
+    )
+    block = None
+    claude_md = project_root / "CLAUDE.md"
+    if claude_md.is_file():
+        try:
+            # errors="replace": a user CLAUDE.md may not be UTF-8; we only
+            # look for our marker block, so never crash on it.
+            m = block_re.search(claude_md.read_text(encoding="utf-8", errors="replace"))
+            block = m.group(0) if m else None
+        except OSError:
+            block = None
+    rule = None
+    if rules_file.is_file():
+        try:
+            rule = rules_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            rule = None
+    paid = len((rule or "").encode()) + len((block or "").encode())
+    if rule is None and block is None:
+        return {"status": "missing", "path": ".claude/rules/cgh-usage.md", "bytes": 0}
+    if rule is not None:
+        current = rule == CLAUDE_RULE_TEXT and block is None
+        path = ".claude/rules/cgh-usage.md" + (" + CLAUDE.md" if block else "")
+    else:
+        current = block == _usage_block("claude")
+        path = "CLAUDE.md"
+    return {"status": "ok" if current else "stale", "path": path, "bytes": paid}
+
 
 def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     """
@@ -631,10 +686,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         # Claude Code, versioned with the repo, overwritten on update.
         target = project_root / ".claude" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
-        target.write_text(
-            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY_CLAUDE,
-            encoding="utf-8",
-        )
+        target.write_text(CLAUDE_RULE_TEXT, encoding="utf-8")
         _remove_legacy_usage_block(project_root)
         return str(target)
 
@@ -648,14 +700,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     else:
         return None
 
-    block = (
-        _USAGE_BLOCK_START
-        + "\n\n"
-        + _USAGE_BODY.rstrip()
-        + "\n\n"
-        + _USAGE_BLOCK_END
-        + "\n"
-    )
+    block = _usage_block(tool)
 
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="replace")

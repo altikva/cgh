@@ -64,6 +64,41 @@ def _fit_search_answer(
             hits[0]["body_clipped"] = True
 
 
+# Byte target for a knowledge_list answer at the default limit, for the same
+# reason. A caller who asks for a larger page only meets the 10 KB ceiling.
+LIST_TARGET_BYTES = 2_500
+
+
+def _fit_list_answer(payload: dict, target: int = LIST_TARGET_BYTES) -> int:
+    """Bring a knowledge_list answer near ``target`` bytes: first the body
+    heads of the briefs go, from the last one up (the first keeps its head),
+    then the last briefs. Sets ``dropped`` and a paging hint and points
+    ``next_offset`` at the first brief left out. Returns how many briefs
+    went."""
+    from codegraph.server._budget import answer_bytes
+
+    entries: list[dict] = payload.get("entries") or []
+    hint = "Page with offset=next_offset, or pass a larger limit for more."
+    # Room for the hint and the dropped counter, should briefs have to go.
+    room = target - len(hint) - 32
+    for e in reversed(entries[1:]):
+        if answer_bytes(payload) <= target:
+            return 0
+        if e.pop("body", None):
+            e["body_clipped"] = True
+    dropped = 0
+    while len(entries) > 1 and answer_bytes(payload) > room:
+        entries.pop()
+        dropped += 1
+    if dropped:
+        payload["dropped"] = dropped
+        payload["hint"] = hint
+        payload["returned"] = len(entries)
+        payload["has_more"] = True
+        payload["next_offset"] = payload["offset"] + len(entries)
+    return dropped
+
+
 def register(mcp) -> None:
     import codegraph.server as _srv
     from codegraph.server import _logged_tool
@@ -215,31 +250,37 @@ def register(mcp) -> None:
         kind: str = "",
         tag: str = "",
         session_id: str = "",
-        limit: int = 50,
+        limit: int = 10,
         offset: int = 0,
         entry_id: int = 0,
     ) -> str:
         """
         Browse the notes saved in earlier sessions (not the code), newest
-        first. Pass entry_id to read one entry whole, for instance a hit
-        knowledge_search returned as a brief; the other filters are then
-        ignored. Useful at session kickoff to see what's already known
+        first. Useful at session kickoff to see what's already known
         before re-deriving. To find code use the code tools (symbol_lookup,
         fts_search, pattern_search, context_for_task).
 
+        Each entry comes as a brief: id, title, kind, tags, `recorded`
+        (UTC), outcome status when rated, and the first 200 characters of
+        the body. Pass entry_id to read one entry whole, body, file_refs and
+        `provenance` included (for instance a brief from here or from
+        knowledge_search); the other filters are then ignored.
+
         Pagination: pass `offset` to page through results. Response includes
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
-        follow up without counting locally. An entry promoted from another
-        worktree (`cgh knowledge promote`) carries a `provenance` object:
-        source branch, PR, worktree, origin id, promoted_at.
+        follow up without counting locally. At the default limit the answer
+        stays near 2.5 KB: the last briefs past it are left out, counted in
+        `dropped`, and `next_offset` points at the first one. A larger
+        explicit limit is only cut at the 10 KB ceiling.
 
         Entries with recorded outcomes are tiered first (useful, then
         unrated or contested, then dead ends, then corrected), newest
-        first inside each tier, and carry an `outcome` summary.
+        first inside each tier.
         """
         from codegraph.server._budget import TOOL_CAPS, cap_answer, dumps_answer
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list
+        from codegraph.state.knowledge_recall import LIST_DEFAULT_LIMIT, list_brief
 
         if entry_id:
             from codegraph.state.call_log import knowledge_get
@@ -279,8 +320,16 @@ def register(mcp) -> None:
             "returned": len(entries),
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
-            "entries": json.loads(json.dumps(entries, default=str)),
+            "entries": json.loads(
+                json.dumps([list_brief(e) for e in entries], default=str)
+            ),
         }
+        if entries:
+            payload["read_more"] = (
+                "knowledge_list(entry_id=<id>) returns one entry whole."
+            )
+        if limit <= LIST_DEFAULT_LIMIT:
+            _fit_list_answer(payload)
         # Cut here rather than in the shared wrapper so the page counters
         # follow: the next page starts at the first entry left out.
         spec = TOOL_CAPS["knowledge_list"]

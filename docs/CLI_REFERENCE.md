@@ -1103,7 +1103,8 @@ checkpoints and superseded entries stay behind. For each entry:
 
 Each promoted entry keeps its original timestamp and records its branch,
 commit, pull request, source worktree, id in the source store and promotion
-time. `knowledge_list` and `knowledge_search` return these under `provenance`.
+time. `knowledge_list(entry_id=...)` and `knowledge_search` return these under
+`provenance`; a `knowledge_list` brief marks the entry `promoted`.
 Outcomes are not promoted: they stay in the store they were recorded in.
 
 Outcomes record whether relying on an entry, or on some files, worked. They

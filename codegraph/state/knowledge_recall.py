@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import time
 import unicodedata
 from bisect import bisect_left
 from collections.abc import Iterable
@@ -291,6 +292,8 @@ def suggest_record(query: str, kind: str | None = None) -> dict:
 FIRST_BODY = 1500
 BRIEF_BODY = 200
 DEFAULT_LIMIT = 5
+# knowledge_list answers with briefs only, so a page holds more entries.
+LIST_DEFAULT_LIMIT = 10
 
 
 def clip(text: str, limit: int) -> tuple[str, bool]:
@@ -341,3 +344,33 @@ def shape_hits(hits: list[dict]) -> bool:
         h.clear()
         h.update(brief)
     return clipped_any
+
+
+def list_brief(entry: dict) -> dict:
+    """A knowledge_list row as a brief: id, title, kind, tags, when it was
+    recorded (UTC, to the minute), the outcome status when rated, a
+    ``promoted`` flag for an entry copied from another checkout, and the
+    first BRIEF_BODY characters of the body. The whole entry is one
+    knowledge_list(entry_id=...) call away."""
+    body, clipped = clip(str(entry.get("body") or ""), BRIEF_BODY)
+    brief: dict = {
+        "id": entry.get("id"),
+        "title": entry.get("title"),
+        "kind": entry.get("kind"),
+        "tags": entry.get("tags"),
+    }
+    try:
+        ts = float(entry.get("ts") or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts > 0:
+        brief["recorded"] = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(ts))
+    outcome = entry.get("outcome")
+    if isinstance(outcome, dict) and outcome.get("status"):
+        brief["outcome"] = {"status": outcome["status"]}
+    if entry.get("provenance"):
+        brief["promoted"] = True
+    brief["body"] = body
+    if clipped:
+        brief["body_clipped"] = True
+    return brief

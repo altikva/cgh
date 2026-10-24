@@ -432,7 +432,7 @@
         "type": "string"
       },
       "limit": {
-        "default": 50,
+        "default": 10,
         "type": "integer"
       },
       "offset": {

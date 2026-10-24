@@ -95,6 +95,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`knowledge_list` answers with briefs.** One default call answered
+  about 10 KB: 50 entries, each with its body. The default limit is now
+  10 and each entry a brief (id, title, kind, tags, `recorded`, outcome
+  status, start of the body), the answer staying near 2.5 KB with
+  `dropped` and `next_offset` when briefs are left out. Read an entry
+  whole with `entry_id`; pass a larger `limit` for a bigger page, still
+  capped at 10 KB.
 - **Less cgh text in each session's context.** On a Claude Code without
   the rules directory, `cgh init` wrote the full 10 KB guidance into
   `CLAUDE.md`; it now writes the same 2.3 KB rule as the rules directory.

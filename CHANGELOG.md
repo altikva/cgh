@@ -88,6 +88,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`knowledge_list` answers with briefs.** One default call answered
+  about 10 KB: 50 entries, each with its body. The default limit is now
+  10 and each entry a brief (id, title, kind, tags, `recorded`, outcome
+  status, start of the body), the answer staying near 2.5 KB with
+  `dropped` and `next_offset` when briefs are left out. Read an entry
+  whole with `entry_id`; pass a larger `limit` for a bigger page, still
+  capped at 10 KB.
 - **`pattern_search` and `file_summary` answers weigh less than a Read.**
   A token study found broad searches at their 4 KB ceiling and summaries
   of large files up to 7.5 KB, when a Read averaged 3.5 KB. `pattern_search`

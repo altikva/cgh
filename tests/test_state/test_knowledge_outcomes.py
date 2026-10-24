@@ -407,7 +407,9 @@ def test_tool_search_and_list_show_outcome(store, tools):
     hits = json.loads(tools["knowledge_search"](query="flaky"))["hits"]
     assert hits[0]["outcome"]["status"] == "dead_end"
     listed = json.loads(tools["knowledge_list"]())["entries"]
-    assert listed[0]["outcome"]["dead_end"] == 1
+    assert listed[0]["outcome"] == {"status": "dead_end"}  # a brief: status only
+    whole = json.loads(tools["knowledge_list"](entry_id=eid))["entries"]
+    assert whole[0]["outcome"]["dead_end"] == 1
 
 
 # --- CLI ----------------------------------------------------------------------

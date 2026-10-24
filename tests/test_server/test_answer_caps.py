@@ -262,7 +262,7 @@ _CALLS = [
     ("doc_outline", {"file_path": "GUIDE.md"}),
     ("architecture_overview", {"max_files_per_role": 500}),
     ("untested", {}),
-    ("knowledge_list", {}),
+    ("knowledge_list", {"limit": 60}),
 ]
 
 
@@ -282,10 +282,12 @@ def test_impact_of_with_max_tokens_keeps_its_own_budget(big_repo):
 
 
 def test_knowledge_list_pages_from_the_first_entry_left_out(big_repo):
-    first = _assert_capped(big_repo["knowledge_list"]())
+    first = _assert_capped(big_repo["knowledge_list"](limit=60))
     assert first["has_more"] is True
     assert first["next_offset"] == first["returned"] == len(first["entries"])
-    second = json.loads(big_repo["knowledge_list"](offset=first["next_offset"]))
+    second = json.loads(
+        big_repo["knowledge_list"](limit=60, offset=first["next_offset"])
+    )
     seen = {e["id"] for e in first["entries"]}
     assert not seen & {e["id"] for e in second["entries"]}
     assert len(seen) + len(second["entries"]) <= 60

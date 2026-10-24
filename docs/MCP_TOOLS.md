@@ -117,7 +117,7 @@ queried name keeps the most certain one.
 |------|-------------|
 | `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions |
 | `knowledge_search(query, kind?, limit?, scope?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes |
-| `knowledge_list(kind?, tag?, session_id?, limit?, offset?)` | Browse saved notes: useful entries first, corrected ones last, newest first inside each tier |
+| `knowledge_list(kind?, tag?, session_id?, limit?, offset?, entry_id?)` | Browse saved notes as briefs, 10 per page near 2.5 KB: useful entries first, corrected ones last, newest first inside each tier. `entry_id` reads one entry whole |
 | `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[codegraph] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
 | `knowledge_terms(min_count?)` | Every tag with its count: the glossary of captured topics |
 | `knowledge_forget(entry_id)` | Delete one entry and its outcomes |

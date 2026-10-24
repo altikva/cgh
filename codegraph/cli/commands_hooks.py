@@ -104,14 +104,19 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
             _emit_nudge(advice)
         sys.exit(0)
 
-    nudge = (
+    # The identifier nudge is the same paragraph every time: full once per
+    # session, then one line. The size advice is about this call, so it stays.
+    nudge = _once_per_session(
+        payload,
+        cwd,
+        "Grep on a bare identifier",
         f"[cgh hook] Grep pattern '{pattern}' looks like a bare identifier. "
         "Prefer cgh MCP tools for symbol search (zero-token server-side execution):\n"
         f"  - symbol_lookup('{pattern}')   exact definition (functions, classes, sections)\n"
         f"  - search_symbols('{pattern}')  fuzzy across the graph\n"
         f"  - find_callers('{pattern}')    incoming CALLS edges (functions only)\n"
         "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
-        "to confirm a raw text search is what you want."
+        "to confirm a raw text search is what you want.",
     )
     _emit_nudge(nudge + (f"\n{advice}" if advice else ""))
 
@@ -257,6 +262,27 @@ def _in_cgh_repo(start: Path) -> bool:
     return any((p / ".codegraph").is_dir() for p in (start, *start.parents))
 
 
+_HINT_LABEL_RE = re.compile(r"`([^`]+)`")
+
+
+def _once_per_session(payload: dict, cwd: Path, kind: str, full: str) -> str:
+    """The full static hint the first time a session meets it, a one-line
+    reminder afterwards. Without a session id or a cgh root, always the full
+    hint."""
+    from codegraph.core.config import find_codegraph_root
+
+    session_id = payload.get("session_id")
+    root = find_codegraph_root(cwd)
+    if not isinstance(session_id, str) or not session_id or root is None:
+        return full
+    if not hook_advice.seen_before(root, session_id, kind):
+        return full
+    return (
+        f"[cgh hook] {kind} again: locate code with symbol_lookup / "
+        "pattern_search first (full hint earlier in this session)."
+    )
+
+
 def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Bash. When the command searches or reads code through
@@ -283,7 +309,9 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     else:
         hint = _shell_search_hint(command)
         if hint:
-            _emit_nudge(hint)
+            m = _HINT_LABEL_RE.search(hint)
+            kind = f"`{m.group(1)}`" if m else "shell search"
+            _emit_nudge(_once_per_session(payload, Path(cwd), kind, hint))
     # Nothing to say about locating code: maybe about the output size.
     if hook_advice.bash_advice_enabled(Path(cwd)):
         advice = hook_advice.bash_advice(command, Path(cwd))

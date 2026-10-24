@@ -2166,10 +2166,19 @@ def _print_claude_audit(audit: dict) -> None:
     tbl.add_row(".claude/skills/", icon.get(s["status"], "[dim]?[/dim]"), detail)
 
     u = audit["usage_block"]
+    if u["status"] == "ok":
+        usage_detail = f"[green]present[/green] ({u.get('path')})"
+    elif u["status"] == "stale":
+        usage_detail = (
+            f"[yellow]stale: {u.get('path')}, {u.get('bytes', 0)} B per session"
+            "[/yellow]"
+        )
+    else:
+        usage_detail = "[red]missing[/red]"
     tbl.add_row(
         "CLAUDE.md usage block",
         icon.get(u["status"], "[dim]?[/dim]"),
-        "[green]present[/green]" if u["status"] == "ok" else "[red]missing[/red]",
+        usage_detail,
     )
 
     console.print()

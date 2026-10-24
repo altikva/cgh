@@ -29,6 +29,28 @@ recap of that previous session, and the model can continue it through the
 `/cgh-checkpoint` before clearing: the skill has the model write the goal,
 what is done, the decisions, what is open and the next step.
 
+**What cgh adds to every session.** cgh writes one file Claude Code loads at
+session start, `.claude/rules/cgh-usage.md` (about 2.3 KB; older versions
+wrote 6 to 10 KB, and before the rules directory a block inside `CLAUDE.md`).
+`cgh doctor` shows it as `stale` when the copy is an older, longer text, or
+when the rule and a leftover `CLAUDE.md` block are both there; `cgh setup
+claude` rewrites it. The hooks add a header of a few hundred bytes at
+session start, a one-line compaction hint per size threshold, and a full
+hint on the first Grep or shell search for code (a one-line reminder after
+that, in the same session).
+
+The rest of what a session carries is the repo's own. Measured on ondonne
+and wedbridge lots, a ticket session starts with 25 to 48 KB of `CLAUDE.md`,
+rules and memory, then loads path-scoped rules (a `paths:` frontmatter, in
+`~/.claude/rules/` or the repo's `.claude/rules/`) the first time it touches
+a matching file: 1 to 33 KB more per session. Each one rides on every later
+request. To trim it, keep a path-scoped rule to the few lines an edit must
+not miss and move the rest into a skill, which loads only when invoked; keep
+the root `CLAUDE.md` to what every task needs. Nested `CLAUDE.md` files also
+load on demand: `terraform init` copies a module repo's `CLAUDE.md` into each
+`.terraform/modules/<name>/`, so do not read module sources there; read the
+module repo itself.
+
 ### Cursor
 
 Add to `.cursor/mcp.json`:

@@ -108,3 +108,52 @@ def test_claude_rule_is_short_and_points_to_skills():
     assert named and set(named) <= set(list_bundled_skills())
     skill = Path(__file__).resolve().parents[2] / "codegraph" / "skills"
     assert "scope" in (skill / "cgh-use-codegraph" / "SKILL.md").read_text()
+
+
+class TestShortGuidanceEverywhere:
+    """Claude Code gets the short body on both paths, and the audit flags an
+    older, longer copy or a copy paid twice."""
+
+    def test_legacy_block_is_the_short_body(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(installer, "_claude_supports_rules", lambda: False)
+        install_usage_guidelines(tmp_path, "claude")
+        text = (tmp_path / "CLAUDE.md").read_text()
+        assert len(text.encode()) < 3000
+        assert "cgh-use-codegraph" in text
+
+    def test_codex_keeps_the_full_body(self, tmp_path):
+        install_usage_guidelines(tmp_path, "codex")
+        assert (
+            "Federation, multi-repo workspaces" in (tmp_path / "AGENTS.md").read_text()
+        )
+
+    def test_status_ok_after_install(self, tmp_path, monkeypatch):
+        for supported in (True, False):
+            root = tmp_path / str(supported)
+            root.mkdir()
+            monkeypatch.setattr(
+                installer, "_claude_supports_rules", lambda s=supported: s
+            )
+            install_usage_guidelines(root, "claude")
+            assert installer.claude_usage_status(root)["status"] == "ok"
+
+    def test_status_missing(self, tmp_path):
+        assert installer.claude_usage_status(tmp_path)["status"] == "missing"
+
+    def test_status_stale_for_an_old_rule(self, tmp_path):
+        rule = tmp_path / ".claude" / "rules" / "cgh-usage.md"
+        rule.parent.mkdir(parents=True)
+        rule.write_text("# old\n\n" + installer._USAGE_BODY, encoding="utf-8")
+        status = installer.claude_usage_status(tmp_path)
+        assert status["status"] == "stale"
+        assert status["bytes"] > 9000
+
+    def test_status_stale_when_paid_twice(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(installer, "_claude_supports_rules", lambda: True)
+        install_usage_guidelines(tmp_path, "claude")
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Mine\n\n" + installer._usage_block("codex"), encoding="utf-8"
+        )
+        status = installer.claude_usage_status(tmp_path)
+        assert status["status"] == "stale"
+        assert "CLAUDE.md" in status["path"]

@@ -477,6 +477,33 @@ def _state_path(root: Path, session_id: str) -> Path:
     return path / f"compact-{safe}.json"
 
 
+def seen_before(root: Path, session_id: str, kind: str) -> bool:
+    """True when this session already got the full hint of this kind; marks
+    it seen otherwise. A nudge rides in the transcript for the rest of the
+    session, so repeating the same paragraph on every Grep pays for it again
+    on every later request. Any failure counts as not seen: the full hint is
+    the safe fallback."""
+    try:
+        from codegraph.core.utils import ensure_dir
+
+        path = root / ".codegraph" / "sessions"
+        ensure_dir(path)
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
+        path = path / f"hints-{safe}.json"
+        try:
+            seen = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(seen, list):
+                seen = []
+        except (OSError, ValueError):
+            seen = []
+        if kind in seen:
+            return True
+        path.write_text(json.dumps([*seen, kind]), encoding="utf-8")
+    except OSError:
+        pass
+    return False
+
+
 def _last_boundary(transcript: Path, start: int, end: int) -> int | None:
     """Offset of the last compaction marker written between start and end,
     read in chunks so a large transcript is never loaded at once."""

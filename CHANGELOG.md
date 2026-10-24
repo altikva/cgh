@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **`file_at_ref` answers an outline for a large file.** Read with no
+  range, a file past about 4 KB came back whole, up to 10 KB per call. It
+  now comes back as its symbols with line ranges, parsed from the file at
+  that ref (or its first 30 lines for a language cgh does not parse), with
+  a hint to ask for a part. The new `symbol` argument reads one definition,
+  and a bad range is refused. Small files and explicit ranges are
+  unchanged; `start_line` now defaults to 0, meaning not set.
 - **Sub-agents get the cgh rule.** Exploration sub-agents had the MCP
   tools but not the session's rule, so they fell back to Read and Grep. A
   PreToolUse hook on Agent now appends one line to each sub-agent brief:

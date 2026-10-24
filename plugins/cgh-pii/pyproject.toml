@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh-pii"
-version = "0.4.0"
+version = "0.4.1"
 description = "Secret scanning and PII redaction for cgh: cgh pii scan finds private keys and credentials on demand, cgh pii redact anonymizes documents"
 readme = "README.md"
 requires-python = ">=3.11"

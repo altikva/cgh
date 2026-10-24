@@ -57,6 +57,13 @@ cgh pii scan || { echo "secret in the tree"; exit 1; }
 |---|---|---|---|
 | `secret.aws_key` | AWS access key ids | block | on |
 | `secret.private_key` | PEM private key blocks | block | on |
+| `secret.anthropic_key` | Anthropic API keys (`sk-ant-...`) | block | on |
+| `secret.openai_key` | OpenAI project, service account and admin keys | block | on |
+| `secret.github_token` | GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) | block | on |
+| `secret.gitlab_token` | GitLab personal access tokens (`glpat-`) | block | on |
+| `secret.slack_token` | Slack tokens (`xoxb-`, `xoxp-`, ...) | block | on |
+| `secret.google_api_key` | Google API keys (`AIza...`) | block | on |
+| `secret.stripe_key` | Stripe live secret and restricted keys | block | on |
 | `secret.assignment` | `password = "..."` style hardcoded credentials | warn | on |
 | `pii.email` | email addresses | warn | `--pii` |
 | `pii.phone` | international-format phone numbers | warn | `--pii` |

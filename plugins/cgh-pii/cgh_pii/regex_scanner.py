@@ -27,6 +27,33 @@ _IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
 _PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+# Provider API tokens. Each pattern is a fixed prefix followed by a single
+# character class, so a match is linear in the input and cannot backtrack
+# catastrophically; keep new entries to that shape. The lookbehind makes
+# the prefix start a word, so a token embedded in a longer identifier does
+# not match.
+_WORD_START = r"(?<![A-Za-z0-9_-])"
+_API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
+    (
+        "secret.anthropic_key",
+        re.compile(_WORD_START + r"sk-ant-[a-z]{3,5}[0-9]{2}-[A-Za-z0-9_-]{32,}"),
+    ),
+    (
+        "secret.openai_key",
+        re.compile(_WORD_START + r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}"),
+    ),
+    (
+        "secret.github_token",
+        re.compile(
+            _WORD_START + r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})"
+        ),
+    ),
+    ("secret.gitlab_token", re.compile(_WORD_START + r"glpat-[A-Za-z0-9_-]{20,}")),
+    ("secret.slack_token", re.compile(_WORD_START + r"xox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("secret.google_api_key", re.compile(_WORD_START + r"AIza[0-9A-Za-z_-]{35}")),
+    ("secret.stripe_key", re.compile(_WORD_START + r"[rs]k_live_[A-Za-z0-9]{24,}")),
+)
 _ASSIGNMENT = re.compile(
     r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b\s*[:=]\s*[\"'][^\"']{8,}[\"']"
 )
@@ -103,6 +130,8 @@ class RegexPiiScanner:
             )
         _emit("secret.aws_key", "block", _match_lines(_AWS_KEY, text))
         _emit("secret.private_key", "block", _match_lines(_PRIVATE_KEY, text))
+        for key, pattern in _API_TOKENS:
+            _emit(key, "block", _match_lines(pattern, text))
         _emit("secret.assignment", "warn", _match_lines(_ASSIGNMENT, text))
         return found
 

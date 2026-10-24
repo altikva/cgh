@@ -16,12 +16,15 @@
 #              ranges_advice before a full Read of a large indexed file, a
 #                            line naming its main symbols and their line
 #                            ranges, so only the needed range gets read
+#              grep_advice   before a Grep in content mode with no
+#                            head_limit over a wide scope, a line on bounding
+#                            its output
 #              All only return text: they never block, never run a
 #              subprocess, and return None when they have nothing to say.
 #              Opt out with [hooks] bash_advice = false / compact_hint = false
-#              / read_advice = false in a cgh config file, or
-#              CGH_HOOK_BASH_ADVICE=0 / CGH_HOOK_COMPACT_HINT=0 /
-#              CGH_HOOK_READ_ADVICE=0.
+#              / read_advice = false / grep_advice = false in a cgh config
+#              file, or CGH_HOOK_BASH_ADVICE=0 / CGH_HOOK_COMPACT_HINT=0 /
+#              CGH_HOOK_READ_ADVICE=0 / CGH_HOOK_GREP_ADVICE=0.
 
 from __future__ import annotations
 
@@ -92,6 +95,10 @@ def compact_hint_enabled(start: Path | None = None) -> bool:
 
 def read_advice_enabled(start: Path | None = None) -> bool:
     return hooks_flag("read_advice", "CGH_HOOK_READ_ADVICE", start)
+
+
+def grep_advice_enabled(start: Path | None = None) -> bool:
+    return hooks_flag("grep_advice", "CGH_HOOK_GREP_ADVICE", start)
 
 
 def hooks_flag(key: str, env: str, start: Path | None) -> bool:
@@ -268,6 +275,73 @@ def bash_advice(command: str, cwd: Path) -> str | None:
         if hint:
             return hint
     return None
+
+
+# --- grep advice ---------------------------------------------------------------
+
+# A pattern whose longest literal run is shorter than this matches nearly
+# every file: `\bid\b`, `.*`, `[a-z]+\(`.
+_GREP_MIN_LITERAL = 4
+# From this many alternatives on, an alternation casts a wide net.
+_GREP_MAX_BRANCHES = 3
+_GREP_CONTEXT_KEYS = ("-A", "-B", "-C", "context")
+# Words found on most lines of code: a glob does not make them narrow.
+_GREP_COMMON = frozenset(
+    {
+        "import", "from", "return", "self", "this", "def", "class", "const",
+        "function", "export", "async", "await", "print", "TODO", "None",
+        "True", "False", "null", "true", "false", "type", "public", "private",
+    }
+)  # fmt: skip
+_GREP_LITERAL_RE = re.compile(r"\\[A-Za-z]|[^A-Za-z0-9_]+")
+
+
+def broad_pattern(pattern: str) -> bool:
+    """True when a search pattern is likely to match broadly: no literal of
+    a few characters, an alternation of several branches, or a word found on
+    most lines of code."""
+    branches = [b for b in pattern.split("|") if b.strip()]
+    if len(branches) >= _GREP_MAX_BRANCHES:
+        return True
+    literals = [w for w in _GREP_LITERAL_RE.split(pattern) if w]
+    if not literals or max(len(w) for w in literals) < _GREP_MIN_LITERAL:
+        return True
+    return all(w in _GREP_COMMON for w in literals if len(w) >= _GREP_MIN_LITERAL)
+
+
+def grep_advice(tool_input: dict, cwd: Path) -> str | None:
+    """A one-line hint for a Grep tool call whose output is unbounded: content
+    mode, no head_limit (0 means none), and a wide scope, meaning no glob,
+    type or subdirectory, or a pattern likely to match broadly. None when the
+    call is already bounded. Pure: no file is read, only ``path`` is stat'd."""
+    if tool_input.get("output_mode") != "content":
+        return None
+    limit = tool_input.get("head_limit")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        return None
+    pattern = tool_input.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        return None
+    target = tool_input.get("path")
+    narrowed = bool(tool_input.get("glob") or tool_input.get("type"))
+    if isinstance(target, str) and target:
+        p = Path(target) if Path(target).is_absolute() else cwd / target
+        try:
+            if p.is_file():
+                return None  # one file's matches are bounded by the file
+            narrowed = narrowed or p.resolve() != cwd.resolve()
+        except OSError:
+            pass
+    if narrowed and not broad_pattern(pattern):
+        return None
+    context = any(tool_input.get(k) for k in _GREP_CONTEXT_KEYS)
+    return (
+        "[cgh hook] Grep in content mode without head_limit returns every "
+        f"matching line{' with its context' if context else ''}. Set "
+        "head_limit (e.g. 50), narrow glob/type, or use output_mode "
+        "files_with_matches/count; pattern_search(pattern, count_only=True) "
+        "gives hits per file first."
+    )
 
 
 # --- read advice ---------------------------------------------------------------

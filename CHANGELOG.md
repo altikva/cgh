@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **A hint before an unbounded content Grep.** A Grep in content mode
+  with no `head_limit` over the whole tree, or with a pattern that matches
+  broadly, returned every matching line, even with hook answers on (the
+  hook ignored the output mode). It now gets one line suggesting
+  `head_limit`, a narrower glob, `files_with_matches`/`count`, or
+  `pattern_search(count_only=True)`. Turn it off with
+  `[hooks] grep_advice = false` or `CGH_HOOK_GREP_ADVICE=0`.
 - **`file_at_ref` answers an outline for a large file.** Read with no
   range, a file past about 4 KB came back whole, up to 10 KB per call. It
   now comes back as its symbols with line ranges, parsed from the file at

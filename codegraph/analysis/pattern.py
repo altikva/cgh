@@ -46,11 +46,17 @@ _MAX_LINE_LEN = 400  # truncate very long lines so JSON stays small
 # bench, three pattern_search answers of 16 to 30 KB took a fresh session
 # from 61k to over 100k tokens within a minute.
 SHOWN_LINE_LEN = 160
-HITS_BUDGET_BYTES = 3_600
-# Ceiling for the whole answer, hits, `more` and hint together.
-PATTERN_ANSWER_BYTES = 4_096
+HITS_BUDGET_BYTES = 2_200
+# Ceiling for the whole answer, hits, `more` and hint together. A token
+# study found broad searches answering 4 KB, more than the Read they were
+# meant to replace (3.5 KB on average): a cut answer names `top_dirs` and
+# count_only instead of carrying more lines.
+PATTERN_ANSWER_BYTES = 2_560
+# Room a sentence's own fields (symbols, docs, interpreted_as, expanded)
+# may take in that answer, so some grep lines still fit next to them.
+SENTENCE_EXTRA_BYTES = 1_000
 # Files listed in `more` at most; the rest are only counted.
-MORE_FILES_SHOWN = 10
+MORE_FILES_SHOWN = 5
 # Hits a count_only search reads at least: it answers counts, not lines,
 # so it can afford to look further than max_results.
 COUNT_ONLY_MAX_RESULTS = 2_000

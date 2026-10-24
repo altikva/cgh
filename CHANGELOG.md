@@ -73,6 +73,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **The Read hint fires on mid-size files.** Whole-file Reads of 4 to 30
+  KB were the largest token cost and no hint reached them. A full Read of
+  an indexed file of 12 KB or more now gets one line with its main symbols
+  and their line ranges, unless answer mode already printed the outline.
+  The unindexed-file hint and the `cat` advice now start at 12 KB instead
+  of 32 KB. Same opt-out: `[hooks] read_advice = false`.
 - **`context_for_task` answers can be acted on without reading files.**
   Paths are repo-relative, each symbol carries its line range and one to
   three short lines saying why it was picked (the matching docstring

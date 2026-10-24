@@ -204,8 +204,12 @@
         "type": "string"
       },
       "start_line": {
-        "default": 1,
+        "default": 0,
         "type": "integer"
+      },
+      "symbol": {
+        "default": "",
+        "type": "string"
       }
     },
     "required": [

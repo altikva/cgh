@@ -128,6 +128,85 @@ def _hits_payload(
     return out
 
 
+# file_at_ref with no range: a file up to this size comes back whole, a
+# larger one as an outline of at most _AT_REF_OUTLINE_BYTES, or its first
+# _AT_REF_HEAD_LINES lines when cgh does not parse its language.
+_AT_REF_WHOLE_BYTES = 4_000
+_AT_REF_OUTLINE_BYTES = 4_000
+_AT_REF_HEAD_LINES = 30
+
+
+def _symbol_range(
+    rel: str, text: str, symbol: str, start_line: int, end_line: int
+) -> tuple[int, int, dict]:
+    """(start, end, keys to add) of ``symbol`` in the file. A start_line
+    inside the symbol goes on from there (the next page of a long one); an
+    end_line inside it stops there."""
+    from codegraph.analysis.refs import RefError, find_symbol, outline_of
+
+    outline = outline_of(rel, text)
+    if outline is None:
+        raise RefError(
+            f"cgh cannot parse {rel} for symbols: pass start_line / end_line"
+        )
+    found = find_symbol(outline, symbol)
+    if not found:
+        near = [e["name"] for e in outline if symbol.lower() in e["name"].lower()]
+        tip = f" Close names: {', '.join(near[:5])}." if near else ""
+        raise RefError(
+            f"no symbol {symbol!r} in {rel}.{tip} The outline holds top-level "
+            "definitions and methods only: for a nested one, find its line "
+            "with pattern_search(ref=...) and pass start_line / end_line."
+        )
+    hit = found[0]
+    start, end = hit["start_line"], hit["end_line"]
+    if start < start_line <= end:
+        start = start_line
+    if start <= end_line < end:
+        end = end_line
+    extra: dict = {"symbol": hit["name"], "kind": hit["kind"]}
+    if len(found) > 1:
+        extra["other_matches"] = [
+            {"name": e["name"], "lines": f"{e['start_line']}-{e['end_line']}"}
+            for e in found[1:6]
+        ]
+    return start, end, extra
+
+
+def _outline_answer(head: dict, rel: str, text: str) -> str:
+    """The answer for a large file read with no range: its outline, or its
+    first lines when there is none, and how to ask for a part."""
+    from codegraph.analysis.refs import outline_of, slice_lines
+    from codegraph.server._budget import cap_answer, dumps_answer
+
+    total = len(text.splitlines())
+    size = len(text.encode("utf-8"))
+    payload: dict = {**head, "path": rel, "total_lines": total, "bytes": size}
+    outline = outline_of(rel, text)
+    ask = "call again with start_line / end_line, or symbol=<name> for one definition."
+    if outline:
+        payload["outline"] = [
+            {"name": e["name"], "kind": e["kind"], "lines": _lines(e)} for e in outline
+        ]
+        payload["hint"] = f"File of {size} bytes, outline only: {ask}"
+        cut = f"{payload['hint']} Outline cut to fit: more entries follow the last one."
+        cap_answer(payload, ["outline"], cut, max_bytes=_AT_REF_OUTLINE_BYTES)
+    else:
+        part = slice_lines(rel, text, 1, _AT_REF_HEAD_LINES)
+        payload["head"] = part["lines"]
+        payload["hint"] = (
+            f"File of {size} bytes with no outline (language not parsed or no "
+            f"definitions), first {len(part['lines'])} lines only: {ask}"
+        )
+        cut = f"{payload['hint']} Head cut to fit."
+        cap_answer(payload, ["head"], cut, max_bytes=_AT_REF_OUTLINE_BYTES)
+    return dumps_answer(payload)
+
+
+def _lines(entry: dict) -> str:
+    return f"{entry['start_line']}-{entry['end_line']}"
+
+
 def register(mcp) -> None:
     """Register query tools on the given FastMCP instance."""
     import codegraph.server as _srv
@@ -339,8 +418,9 @@ def register(mcp) -> None:
         path: str,
         ref: str,
         repo: str = "",
-        start_line: int = 1,
+        start_line: int = 0,
         end_line: int = 0,
+        symbol: str = "",
     ) -> str:
         """
         Read a file as it is at a branch, tag or commit, straight from git:
@@ -353,26 +433,50 @@ def register(mcp) -> None:
           path:       path inside the repo, as pattern_search(ref=...) returns
           ref:        branch, tag, remote-tracking branch or commit id
           repo:       a declared sibling repo (directory name); "" = this repo
-          start_line: first line, 1-based (default 1)
+          start_line: first line, 1-based (0 = not set)
           end_line:   last line, inclusive; 0 = to the end. At most 400
                       lines per call (`truncated` says when it stopped)
+          symbol:     a function, class or method (Class.method) defined in
+                      the file at that ref: answers its lines only
+
+        With no range and no symbol, a file up to about 4 KB comes back
+        whole. A larger one comes back as an `outline`: its symbols with
+        their line ranges, parsed from the file at that ref ({name, kind,
+        start_line, end_line}), or `head`, its first lines, for a language
+        cgh does not parse; then call again with start_line / end_line or
+        symbol.
 
         Returns {repo, ref, commit, path, total_lines, start_line, end_line,
         truncated, lines: [{line, text}]}, or {error} for an unknown repo,
-        ref or path. The answer also stops at about 10 KB: then `truncated`
-        is true, end_line is the last line shown and `next_start_line`
-        says where to go on. Never fetches: run `git fetch` there for a
-        fresh remote branch.
+        ref, path, symbol or a bad range. The answer also stops at about
+        10 KB: then `truncated` is true, end_line is the last line shown
+        and `next_start_line` says where to go on. Never fetches: run
+        `git fetch` there for a fresh remote branch.
         """
-        from codegraph.analysis.refs import RefError, read_at_ref, resolve_target
+        from codegraph.analysis.refs import (
+            RefError,
+            blob_at_ref,
+            resolve_target,
+            slice_lines,
+        )
         from codegraph.server._budget import cap_answer, dumps_answer
 
         try:
             target = resolve_target(_srv._root, repo, ref)
-            out = read_at_ref(target, path, start_line, end_line)
+            rel, text = blob_at_ref(target, path)
+            head = {"repo": target.name or None, "ref": ref, "commit": target.sha}
+            if symbol:
+                start_line, end_line, extra = _symbol_range(
+                    rel, text, symbol, start_line, end_line
+                )
+                head.update(extra)
+            elif not start_line and not end_line:
+                if len(text.encode("utf-8")) > _AT_REF_WHOLE_BYTES:
+                    return _outline_answer(head, rel, text)
+            out = slice_lines(rel, text, start_line, end_line)
         except RefError as exc:
             return json.dumps({"path": path, "ref": ref, "error": str(exc)}, indent=2)
-        payload = {"repo": target.name or None, "ref": ref, "commit": target.sha, **out}
+        payload = {**head, **out}
         if cap_answer(
             payload,
             ["lines"],

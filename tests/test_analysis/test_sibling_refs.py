@@ -128,7 +128,7 @@ def test_file_at_ref_stops_at_the_answer_cap(setup):
     )
     _git(proj, "add", "big.py")
     _git(proj, "commit", "-qm", "big")
-    raw = t["file_at_ref"]("big.py", "main")
+    raw = t["file_at_ref"]("big.py", "main", start_line=1)
     assert len(raw.encode()) <= 10_000
     out = json.loads(raw)
     assert out["truncated"] is True and "hint" in out
@@ -138,6 +138,103 @@ def test_file_at_ref_stops_at_the_answer_cap(setup):
         t["file_at_ref"]("big.py", "main", start_line=out["next_start_line"])
     )
     assert nxt["lines"][0]["line"] == out["end_line"] + 1
+
+
+def _commit(proj: Path, name: str, text: str) -> None:
+    (proj / name).write_text(text)
+    _git(proj, "add", name)
+    _git(proj, "commit", "-qm", name)
+
+
+_BIG_PY = (
+    '"""A module long enough to be outlined."""\n\n\n'
+    + "".join(
+        f"def fn_{i}(x):\n    return x + {i}  # {'p' * 120}\n\n\n" for i in range(40)
+    )
+    + "class Box:\n    def open(self):\n        return 1\n\n    def shut(self):\n"
+    "        return 0\n"
+)
+
+
+def test_large_file_without_range_answers_an_outline(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    raw = t["file_at_ref"]("mod.py", "main")
+    out = json.loads(raw)
+    assert "lines" not in out and "hint" in out
+    assert len(raw.encode()) < len(_BIG_PY.encode()) / 2
+    names = {e["name"]: e for e in out["outline"]}
+    assert names["fn_0"] == {"name": "fn_0", "kind": "function", "lines": "4-5"}
+    assert names["Box.shut"]["kind"] == "method"
+    assert out["total_lines"] == len(_BIG_PY.splitlines())
+
+
+def test_large_file_in_an_unparsed_language_answers_its_head(setup):
+    proj, *_, t = setup
+    _commit(proj, "notes.xyz", "".join(f"row {i} {'q' * 80}\n" for i in range(200)))
+    out = json.loads(t["file_at_ref"]("notes.xyz", "main"))
+    assert "outline" not in out and "lines" not in out
+    assert [x["line"] for x in out["head"]] == list(range(1, 31))
+    assert out["total_lines"] == 200 and "start_line" in out["hint"]
+
+
+def test_small_file_stays_whole(setup):
+    proj, *_, t = setup
+    _commit(proj, "small.py", "def a():\n    return 1\n")
+    out = json.loads(t["file_at_ref"]("small.py", "main"))
+    assert "outline" not in out
+    assert [x["text"] for x in out["lines"]] == ["def a():", "    return 1"]
+
+
+def test_symbol_answers_its_lines_only(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="Box.open"))
+    assert out["symbol"] == "Box.open" and out["kind"] == "method"
+    assert [x["text"].strip() for x in out["lines"]] == ["def open(self):", "return 1"]
+    # A bare method name finds it too.
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="shut"))
+    assert out["symbol"] == "Box.shut"
+    assert out["lines"][0]["text"].strip() == "def shut(self):"
+
+
+def test_symbol_on_a_sibling_branch(setup):
+    *_, t = setup
+    out = json.loads(
+        t["file_at_ref"]("app/models.py", "develop", repo="api", symbol="Association")
+    )
+    assert out["repo"] == "api"
+    assert (out["start_line"], out["end_line"]) == (5, 6)
+
+
+def test_unknown_symbol_is_refused(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="fn_9x"))
+    assert "no symbol 'fn_9x'" in out["error"]
+    out = json.loads(t["file_at_ref"]("notes.xyz", "main", symbol="a"))
+    assert "error" in out
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "needle"),
+    [(9, 3, "before start_line"), (50, 0, "past the end"), (-2, 0, "positive")],
+)
+def test_bad_range_is_refused(setup, start, end, needle):
+    *_, t = setup
+    out = json.loads(
+        t["file_at_ref"](
+            "app/models.py", "develop", repo="api", start_line=start, end_line=end
+        )
+    )
+    assert needle in out["error"]
+
+
+def test_end_line_alone_reads_from_the_top(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", end_line=2))
+    assert [x["line"] for x in out["lines"]] == [1, 2]
 
 
 def test_own_repo_at_a_ref(setup):

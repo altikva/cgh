@@ -9,6 +9,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **A hint before an unbounded content Grep.** A Grep in content mode
+  with no `head_limit` over the whole tree, or with a pattern that matches
+  broadly, returned every matching line, even with hook answers on (the
+  hook ignored the output mode). It now gets one line suggesting
+  `head_limit`, a narrower glob, `files_with_matches`/`count`, or
+  `pattern_search(count_only=True)`. Turn it off with
+  `[hooks] grep_advice = false` or `CGH_HOOK_GREP_ADVICE=0`.
 - **`file_at_ref` answers an outline for a large file.** Read with no
   range, a file past about 4 KB came back whole, up to 10 KB per call. It
   now comes back as its symbols with line ranges, parsed from the file at
@@ -95,6 +102,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `dropped` and `next_offset` when briefs are left out. Read an entry
   whole with `entry_id`; pass a larger `limit` for a bigger page, still
   capped at 10 KB.
+- **Less cgh text in each session's context.** On a Claude Code without
+  the rules directory, `cgh init` wrote the full 10 KB guidance into
+  `CLAUDE.md`; it now writes the same 2.3 KB rule as the rules directory.
+  `cgh doctor` marks an older, longer copy, or a rule doubled by a leftover
+  `CLAUDE.md` block, as `stale`. The Grep and shell-search hints are given
+  in full once per session, then as one line. Migration: run `cgh setup
+  claude` where doctor says `stale`. `docs/INTEGRATIONS.md` explains what a
+  repo's own rules weigh and how to trim them.
 - **`pattern_search` and `file_summary` answers weigh less than a Read.**
   A token study found broad searches at their 4 KB ceiling and summaries
   of large files up to 7.5 KB, when a Read averaged 3.5 KB. `pattern_search`

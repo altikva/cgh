@@ -1963,25 +1963,10 @@ def audit_claude_integration(root: Path) -> dict:
         "modified": modified_skills,
     }
 
-    # CLAUDE.md usage block, present?
-    claude_md = root / "CLAUDE.md"
-    has_block = False
-    if claude_md.exists():
-        try:
-            # errors="replace": a user CLAUDE.md may not be UTF-8 (a CP1252
-            # em dash, say); we only scan for a marker, so never crash on it.
-            text = claude_md.read_text(encoding="utf-8", errors="replace")
-            has_block = "<!-- codegraph-usage:start -->" in text
-        except OSError:
-            has_block = False
-    rules_file = root / ".claude" / "rules" / "cgh-usage.md"
-    if rules_file.exists():
-        report["usage_block"] = {"status": "ok", "path": ".claude/rules/cgh-usage.md"}
-    else:
-        report["usage_block"] = {
-            "status": "ok" if has_block else "missing",
-            "path": "CLAUDE.md",
-        }
+    # Usage guidance: present, current, and paid only once per session?
+    from codegraph.integrations.skill_installer import claude_usage_status
+
+    report["usage_block"] = claude_usage_status(root)
 
     report["overall"] = (
         "ok"

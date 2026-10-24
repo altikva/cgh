@@ -233,6 +233,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Versions 0.18.x and earlier keep their original license.
 
 ### Fixed
+- **`cgh pii scan` now finds provider API tokens** (cgh-pii 0.4.1). It
+  caught AWS keys but missed Anthropic, OpenAI, GitHub, GitLab, Slack,
+  Google and Stripe live keys. Each is now a `secret.*` finding at block
+  severity, so `cgh pii scan` exits 1 on them and a guard that blocks on
+  secrets stops them.
 - **A file moved or deleted during `cgh index` no longer aborts the scan.**
   It is skipped. Before, a file that disappeared between the directory walk
   and its turn, for example a ticket another tool was moving, stopped the

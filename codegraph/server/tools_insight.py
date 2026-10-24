@@ -34,6 +34,78 @@ _CALLS_NOTE = (
 )
 
 
+# What file_summary keeps of a docstring once the answer is over its ceiling,
+# and of the lists of import edges, before the symbol list itself is cut.
+_SUMMARY_DOC_CLIP = 60
+_SUMMARY_MODULE_DOC_CLIP = 160
+_SUMMARY_EDGES_KEPT = 3
+# Room kept for the hint and the counts added when the symbol list is cut.
+_SUMMARY_HINT_ROOM = 300
+
+
+def _first_line(row: dict) -> int:
+    """Start line of a symbol row, from its "start-end" range."""
+    try:
+        return int(str(row.get("lines", "")).split("-", 1)[0])
+    except ValueError:
+        return 0
+
+
+def _fit_summary(payload: dict, max_bytes: int) -> None:
+    """Bring a file_summary answer under ``max_bytes``, keeping each symbol's
+    name and line range. Docstring heads go first (clipped, then dropped from
+    the last symbol up), then the module doc is clipped and the import lists
+    shortened to a few rows, then to their totals, and only then the symbol list
+    loses its tail, with `symbols_total`, `dropped` and a hint saying where
+    the rest starts."""
+    from codegraph.server._budget import answer_bytes
+
+    symbols = payload["functions"] + payload["classes"]
+    for row in symbols:
+        if not row.get("doc"):
+            row.pop("doc", None)
+    if answer_bytes(payload) <= max_bytes:
+        return
+    budget = max_bytes - _SUMMARY_HINT_ROOM
+    for row in symbols:
+        if len(row.get("doc", "")) > _SUMMARY_DOC_CLIP:
+            row["doc"] = row["doc"][:_SUMMARY_DOC_CLIP]
+    for row in reversed(symbols):
+        if answer_bytes(payload) <= budget:
+            return
+        row.pop("doc", None)
+    payload["module_doc"] = payload["module_doc"][:_SUMMARY_MODULE_DOC_CLIP]
+    # The symbols matter more here than the import edges imports_of lists:
+    # the edges shrink to a few rows, then to their totals alone.
+    for kept in (_SUMMARY_EDGES_KEPT, 0):
+        for key in ("imported_by", "imports"):
+            rows = payload[key]
+            if len(rows) > kept and answer_bytes(payload) > budget:
+                payload.setdefault(f"{key}_total", len(rows))
+                del rows[kept:]
+                payload["truncated"] = True
+                payload["hint"] = "Import lists cut to fit: imports_of for every edge."
+    if answer_bytes(payload) <= budget:
+        return
+    total = len(symbols)
+    functions, classes = payload["functions"], payload["classes"]
+    cut: list[dict] = []
+    while answer_bytes(payload) > budget and len(functions) + len(classes) > 1:
+        longest = functions if len(functions) >= len(classes) else classes
+        cut.append(longest.pop())
+    if not cut:
+        return
+    start = min(_first_line(r) for r in cut)
+    payload["truncated"] = True
+    payload["symbols_total"] = total
+    payload["dropped"] = (payload.get("dropped") or 0) + len(cut)
+    payload["hint"] = (
+        f"Symbol list cut to fit: {total - len(cut)} of {total} shown, the "
+        f"others start at line {start} or later. symbol_lookup(name) for one "
+        "symbol, imports_of for the import edges, or Read a line range."
+    )
+
+
 def register(mcp) -> None:
     """Register graph-insight tools on the given FastMCP instance."""
     import codegraph.server as _srv
@@ -87,11 +159,14 @@ def register(mcp) -> None:
         query all scopes and aggregate. Each symbol / import row carries a
         `scope` tag when some come from a federated child. Symbols are
         capped at 200 with a truncation note, and the answer at about
-        10 KB: the longest lists lose their tail first, with `truncated`,
-        `dropped` and a `hint`.
+        2 KB: past that, docstring heads are clipped then dropped, the
+        import lists keep a few rows (`imports_total`, `imported_by_total`),
+        and last the symbol list loses its tail, with `truncated`,
+        `symbols_total`, `dropped` and a `hint` naming the line the rest
+        starts at. Each symbol keeps its name and line range.
         """
         from codegraph.server._budget import (
-            cap_answer,
+            FILE_SUMMARY_MAX_BYTES,
             drop_parent_scope,
             dumps_answer,
         )
@@ -201,14 +276,7 @@ def register(mcp) -> None:
             payload["partial"] = True
             payload["warnings"] = warnings
         drop_parent_scope(functions + classes + imports + imported_by)
-        # A file imported from hundreds of places, or defining hundreds of
-        # symbols, answered over 40 KB: trim the longest list first.
-        cap_answer(
-            payload,
-            ["imported_by", "imports", "functions", "classes"],
-            "Lists cut to fit: symbol_lookup / find_callers for one symbol, "
-            "imports_of for the import edges, or Read a line range.",
-        )
+        _fit_summary(payload, FILE_SUMMARY_MAX_BYTES)
         return dumps_answer(payload)
 
     @mcp.tool()

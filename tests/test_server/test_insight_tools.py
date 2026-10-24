@@ -18,6 +18,7 @@ import pytest
 import codegraph.server as _srv
 from codegraph.core.db import reset_connection
 from codegraph.indexer import index_file
+from codegraph.server._budget import FILE_SUMMARY_MAX_BYTES
 from codegraph.server.tools_insight import register as register_insight
 from codegraph.server.tools_query import register as register_query
 
@@ -195,8 +196,9 @@ def test_search_symbols_role_filter(insight_tools):
 
 
 def test_file_summary_of_a_huge_file_stays_under_the_cap(insight_tools):
-    """Hundreds of documented functions: the answer is cut to about 10 KB,
-    stays valid JSON, and says it was cut and how to narrow."""
+    """Hundreds of documented functions: the answer is cut to about 2 KB,
+    stays valid JSON, and says it was cut, how many symbols there are and
+    where the ones left out start."""
     root = insight_tools
     src = root / "huge.py"
     src.write_text(
@@ -209,10 +211,16 @@ def test_file_summary_of_a_huge_file_stays_under_the_cap(insight_tools):
     index_file(src, root)
 
     raw = _register("insight")["file_summary"](str(src))
-    assert len(raw.encode()) <= 10_000
+    assert len(raw.encode()) <= FILE_SUMMARY_MAX_BYTES
     out = json.loads(raw)
     assert out["truncated"] is True and out["dropped"] > 0
-    assert "hint" in out
+    assert out["symbols_total"] == 180
+    assert out["dropped"] == 180 - len(out["functions"])
+    first_cut = 4 * len(out["functions"]) + 1
+    assert f"start at line {first_cut} or later" in out["hint"]
+    assert "symbol_lookup" in out["hint"]
+    # Docstrings go before any symbol: the ones shown keep no doc.
+    assert all("doc" not in f for f in out["functions"])
     assert out["functions"][0]["name"] == "function_number_0"
     # No federated child: rows carry no scope tag.
     assert "scope" not in out["functions"][0]
@@ -249,3 +257,36 @@ def test_search_symbols_answer_is_capped(insight_tools):
     assert len(raw.encode()) <= 10_000
     out = json.loads(raw)
     assert out["truncated"] is True and out["dropped"] > 0
+
+
+def test_file_summary_clips_docstrings_before_cutting_symbols(insight_tools):
+    """A file whose docstrings alone push it past the ceiling keeps every
+    symbol with its line range; only the docstrings shrink."""
+    root = insight_tools
+    src = root / "documented.py"
+    src.write_text(
+        "".join(
+            f'def fn_{i}():\n    """{"Explains a lot. " * 12}"""\n    return {i}\n\n'
+            for i in range(20)
+        ),
+        encoding="utf-8",
+    )
+    index_file(src, root)
+
+    raw = _register("insight")["file_summary"](str(src))
+    assert len(raw.encode()) <= FILE_SUMMARY_MAX_BYTES
+    out = json.loads(raw)
+    assert [f["name"] for f in out["functions"]] == [f"fn_{i}" for i in range(20)]
+    assert all(f["lines"] for f in out["functions"])
+    assert all(len(f.get("doc", "")) <= 60 for f in out["functions"])
+    assert "symbols_total" not in out
+
+
+def test_file_summary_without_docstrings_carries_no_doc_key(insight_tools):
+    root = insight_tools
+    src = root / "bare.py"
+    src.write_text("def bare():\n    return 1\n", encoding="utf-8")
+    index_file(src, root)
+
+    out = json.loads(_register("insight")["file_summary"](str(src)))
+    assert out["functions"] == [{"name": "bare", "lines": "1-2"}]

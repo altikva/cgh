@@ -27,6 +27,27 @@ def _dirs_text(dirs: list[dict]) -> str:
     return ", ".join(f"{d['glob']} ({d['hits']})" for d in dirs)
 
 
+def _fit_extra(extra: dict, max_bytes: int) -> None:
+    """Shrink a sentence's own fields to about ``max_bytes``: the docstring
+    heads go first, from the last symbol up, then the last symbols, doc
+    sections and synonyms (a few of each stay). ``symbols_more`` counts the
+    symbols left out."""
+    from codegraph.server._budget import answer_bytes
+
+    symbols = extra.get("symbols") or []
+    for row in reversed(symbols):
+        if answer_bytes(extra) <= max_bytes:
+            return
+        row.pop("doc", None)
+    for key, keep in (("symbols", 3), ("docs", 1), ("expanded", 3)):
+        rows = extra.get(key) or []
+        while len(rows) > keep and answer_bytes(extra) > max_bytes:
+            rows.pop()
+            if key == "symbols":
+                # Counted as it goes, so the count is part of the size.
+                extra["symbols_more"] = extra.get("symbols_more", 0) + 1
+
+
 def _counts_payload(
     hits: list[dict], with_scope: bool, roots: list | None, limit: int
 ) -> dict:
@@ -434,7 +455,7 @@ def register(mcp) -> None:
 
         Respects .gitignore (via ripgrep / git-grep). Automatically scans
         extra_dirs configured on this project. Caps output at max_results,
-        and at about 4 KB: past that, the answer has `truncated: true`,
+        and at about 2.5 KB: past that, the answer has `truncated: true`,
         `shown`, `more` counting the hits left out per file, and
         `top_dirs`, the directories holding most hits as globs with their
         counts, to pass back as `glob`. `count_only=True` answers hits per
@@ -444,7 +465,8 @@ def register(mcp) -> None:
         than grepped: the identifiers it names are searched, its words and
         their French / English synonyms go through the symbol and doc
         FTS, and the answer adds `interpreted_as`, `expanded`, `symbols`
-        and `docs`. `confidence` is high, medium or low; a low or empty
+        and `docs` (`symbols_more` counts the symbols cut to fit the
+        answer). `confidence` is high, medium or low; a low or empty
         answer says `why` and gives `next`, a call to try instead.
 
         Args:
@@ -472,7 +494,11 @@ def register(mcp) -> None:
         or ref set, only that one repo is searched.
         """
         from codegraph.analysis.federation import resolve_children
-        from codegraph.analysis.pattern import COUNT_ONLY_MAX_RESULTS
+        from codegraph.analysis.pattern import (
+            COUNT_ONLY_MAX_RESULTS,
+            PATTERN_ANSWER_BYTES,
+            SENTENCE_EXTRA_BYTES,
+        )
         from codegraph.analysis.pattern import pattern_search as _search
         from codegraph.analysis.query_intent import (
             interpret,
@@ -585,7 +611,8 @@ def register(mcp) -> None:
                     if len(docs) < 3:
                         docs.append(row)
                 elif len(symbols) < 8:
-                    row["doc"] = (r.docstring or "")[:100]
+                    if r.docstring:
+                        row["doc"] = r.docstring[:100]
                     symbols.append(row)
             from codegraph.server._budget import drop_parent_scope
 
@@ -594,6 +621,11 @@ def register(mcp) -> None:
             extra["symbols"] = symbols
             extra["docs"] = docs
             extra.update(_sentence_verdict(intent, len(exact), scored))
+            # With no grep line to show, the sentence's fields get the room.
+            _fit_extra(
+                extra,
+                SENTENCE_EXTRA_BYTES if all_hits else PATTERN_ANSWER_BYTES - 500,
+            )
 
         # Most useful first, so the cut keeps definitions and central files.
         all_hits = rank_hits(all_hits, _central())

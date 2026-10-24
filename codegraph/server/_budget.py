@@ -156,6 +156,9 @@ class ToolCap:
 
 # A summary by nature, or a tool already cut tighter in its own body.
 CONTEXT_MAX_BYTES = 6_000
+# file_summary is the cheap step before a Read, so it must weigh less than
+# one: a token study measured Reads at 3.5 KB on average.
+FILE_SUMMARY_MAX_BYTES = 2_048
 
 _GENERIC_HINT = "Narrow the query: a path, a filter or a smaller limit."
 
@@ -181,6 +184,10 @@ TOOL_CAPS: dict[str, ToolCap] = {
     "find_callees": ToolCap(hint="Lower max_depth."),
     "find_callers": ToolCap(
         hint="Use a qualified name (Class.method) or check symbol_lookup first."
+    ),
+    "file_summary": ToolCap(
+        max_bytes=FILE_SUMMARY_MAX_BYTES,
+        hint="symbol_lookup(name) for one symbol, or Read a line range.",
     ),
     "find_dead_code": ToolCap(hint="Scope it with file_path (a file or a directory)."),
     "findings": ToolCap(

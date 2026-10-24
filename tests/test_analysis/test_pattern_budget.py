@@ -6,7 +6,8 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: pattern_search's answer budget: hits grouped by file, lines
 #              clipped around the match, the hit list trimmed to a byte
-#              budget, and the hits left out counted per file.
+#              budget, and the hits left out counted per file; a
+#              sentence's own fields shrunk to their share of the answer.
 
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ from codegraph.analysis.pattern import (
     group_hits,
     match_finder,
 )
-from codegraph.server.tools_query import _hits_payload
+from codegraph.server._budget import answer_bytes
+from codegraph.server.tools_query import _fit_extra, _hits_payload
 
 
 def _hits(
@@ -109,3 +111,69 @@ def test_oversized_answer_stays_near_the_budget():
     assert out["truncated"] is True
     assert len(out["more"]) == MORE_FILES_SHOWN
     assert out["more_files"] > MORE_FILES_SHOWN
+
+
+def test_cut_answer_keeps_the_narrowing_fields():
+    """At about 2.5 KB a broad search still names where its hits are and
+    how to narrow."""
+    hits = [
+        {"scope": "parent", "file": f"/repo/{d}/m{i}.py", "line": i, "text": "q" * 120}
+        for d in ("api", "web")
+        for i in range(60)
+    ]
+    out = _hits_payload(hits, "q", roots=["/repo"])
+    assert answer_bytes(out) + 300 <= PATTERN_ANSWER_BYTES
+    assert out["top_dirs"] and out["more"]
+    assert "count_only=True" in out["hint"] and "glob" in out["hint"]
+
+
+def _sentence_extra(n: int) -> dict:
+    return {
+        "interpreted_as": ["webhooks", "retry"],
+        "expanded": ["hook", "callback", "retries", "backoff", "rejouer", "relancer"],
+        "symbols": [
+            {
+                "kind": "function",
+                "name": f"symbol_{i}",
+                "file": f"/repo/pkg/module_{i}.py",
+                "lines": f"{i}-{i + 9}",
+                "doc": "d" * 100,
+            }
+            for i in range(n)
+        ],
+        "docs": [
+            {
+                "kind": "md_section",
+                "name": f"s{i}",
+                "file": "/repo/README.md",
+                "lines": "1-9",
+            }
+            for i in range(3)
+        ],
+        "confidence": "medium",
+    }
+
+
+def test_sentence_fields_lose_docstrings_before_symbols():
+    extra = _sentence_extra(6)
+    _fit_extra(extra, 1_000)
+    assert answer_bytes(extra) <= 1_000
+    assert len(extra["symbols"]) == 6
+    assert "doc" not in extra["symbols"][-1]
+    assert "symbols_more" not in extra
+
+
+def test_sentence_fields_cut_symbols_with_a_count():
+    extra = _sentence_extra(8)
+    _fit_extra(extra, 700)
+    assert answer_bytes(extra) <= 700
+    assert len(extra["symbols"]) >= 3
+    assert extra["symbols_more"] == 8 - len(extra["symbols"])
+    assert extra["confidence"] == "medium"
+
+
+def test_small_sentence_fields_are_left_alone():
+    extra = _sentence_extra(2)
+    before = json.dumps(extra)
+    _fit_extra(extra, 2_000)
+    assert json.dumps(extra) == before

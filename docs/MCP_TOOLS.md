@@ -4,7 +4,7 @@ When running as an MCP server (`cgh serve`), cgh exposes 62 tools, plus whatever
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
-Every answer an agent gets stays under a size ceiling: about 10 KB, 6 KB for `context_for_task`, 4 KB for `pattern_search`. A longer answer drops whole list items from its tail, so the JSON stays valid, and carries `truncated: true`, `dropped` and a `hint` on how to narrow the call. A tool given `max_tokens` or `budget_kb` keeps that budget instead, and calls from the `cgh` CLI and the hooks get the whole answer.
+Every answer an agent gets stays under a size ceiling: about 10 KB, 6 KB for `context_for_task`, 2.5 KB for `pattern_search`, 2 KB for `file_summary`. A longer answer drops whole list items from its tail, so the JSON stays valid, and carries `truncated: true`, `dropped` and a `hint` on how to narrow the call. A tool given `max_tokens` or `budget_kb` keeps that budget instead, and calls from the `cgh` CLI and the hooks get the whole answer.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -27,7 +27,7 @@ Every answer an agent gets stays under a size ceiling: about 10 KB, 6 KB for `co
 | `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
-| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 4 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
+| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
 | `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |

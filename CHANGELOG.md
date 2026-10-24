@@ -73,6 +73,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`pattern_search` and `file_summary` answers weigh less than a Read.**
+  A token study found broad searches at their 4 KB ceiling and summaries
+  of large files up to 7.5 KB, when a Read averaged 3.5 KB. `pattern_search`
+  now stops at about 2.5 KB and `file_summary` at about 2 KB. A cut search
+  still gives `top_dirs`, the per-file counts and the way to narrow; a cut
+  summary keeps each symbol's name and line range, shortens docstrings and
+  import lists first, and says how many symbols there are and the line the
+  rest starts at.
 - **`context_for_task` answers can be acted on without reading files.**
   Paths are repo-relative, each symbol carries its line range and one to
   three short lines saying why it was picked (the matching docstring

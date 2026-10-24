@@ -13,6 +13,9 @@
 #                            checkpoint then /clear
 #              read_advice   before a full Read of a large file cgh does
 #                            not index, a line on reading only a part of it
+#              ranges_advice before a full Read of a large indexed file, a
+#                            line naming its main symbols and their line
+#                            ranges, so only the needed range gets read
 #              All only return text: they never block, never run a
 #              subprocess, and return None when they have nothing to say.
 #              Opt out with [hooks] bash_advice = false / compact_hint = false
@@ -57,9 +60,16 @@ _INDEXED_EXTS = frozenset(
     }
 )  # fmt: skip
 # A `cat` or a full Read below this size is not worth a hint. Bash outputs
-# averaged 3.8 KB in a measured run; 32 KB is about 8k tokens kept in every
-# later request.
-LARGE_FILE = 32 * 1024
+# averaged 3.8 KB in a measured run and Reads 4 to 5 KB, most of them whole
+# files of 4 to 30 KB; 12 KB is about 3k tokens kept in every later request.
+# `cat` prints the same bytes as a Read, so both share the threshold.
+LARGE_FILE = 12 * 1024
+# Every hint stays under this many bytes.
+_HINT_MAX = 300
+# Symbol rows read for the ranges hint; a file past it is outlined from the
+# first ones only.
+RANGES_ROWS = 400
+_RANGE_NAME_MAX = 40
 # Lines are counted only up to this size: past it the size alone says enough.
 _COUNT_LINES_MAX = 4 * 1024 * 1024
 _NAME_MAX = 60
@@ -304,6 +314,68 @@ def read_advice(target: Path) -> str | None:
         "stays in every later request. Read a range with offset/limit, Grep "
         "for a pattern, or `head -n 50` it."
     )
+
+
+def _short(name: str, limit: int) -> str:
+    return name if len(name) <= limit else name[: limit - 3] + "..."
+
+
+def _main_symbols(rows: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """The outermost symbols of the file, sorted by line. When one symbol
+    spans everything (a single class, a document's title section), its
+    direct children instead: they are the ranges worth reading apart."""
+    level = sorted(rows, key=lambda r: (r[1], -r[2]))
+    while True:
+        top: list[tuple[str, int, int]] = []
+        end = 0
+        for name, start, stop in level:
+            if start > end:
+                top.append((name, start, stop))
+                end = max(stop, start)
+        if len(top) != 1:
+            return top
+        _, start, stop = top[0]
+        inner = [r for r in level if r[1] > start and r[1] <= stop]
+        if not inner:
+            return top
+        level = inner
+
+
+def ranges_advice(
+    target: Path, size: int, rows: list[tuple[str, int, int]]
+) -> str | None:
+    """A one-line hint for a full Read of a large indexed file: its main
+    symbols with their line ranges, largest first when they do not all fit
+    in the byte budget, else None. ``size`` is the file's size in bytes and
+    ``rows`` are (name, start_line, end_line) from the FTS index; the caller
+    has already checked the read is full."""
+    if size < LARGE_FILE or not rows:
+        return None
+    top = _main_symbols(rows)
+    if not top:
+        return None
+    head = f"[cgh hook] {_short(target.name, _NAME_MAX)} ({_human_size(size)}): "
+    tail = ". Read a range with offset/limit."
+
+    def item(r: tuple[str, int, int]) -> str:
+        name, start, stop = r
+        span = f"{start}-{stop}" if stop > start else str(start)
+        return f"{_short(name, _RANGE_NAME_MAX)} {span}"
+
+    def render(chosen: list[tuple[str, int, int]]) -> str:
+        parts = [item(r) for r in sorted(chosen, key=lambda r: r[1])]
+        if len(chosen) < len(top):
+            parts.append(f"+{len(top) - len(chosen)} more")
+        return head + ", ".join(parts) + tail
+
+    chosen: list[tuple[str, int, int]] = []
+    for r in sorted(top, key=lambda r: r[2] - r[1], reverse=True):
+        if len(render([*chosen, r]).encode()) >= _HINT_MAX:
+            break
+        chosen.append(r)
+    if not chosen:
+        return None
+    return render(chosen)
 
 
 # --- compaction hint ----------------------------------------------------------

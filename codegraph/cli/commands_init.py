@@ -1473,25 +1473,19 @@ def _claude_hook_specs(cli_prefix: str) -> list[dict]:
             "command": f"{cli_prefix} _hook_resume_header  # cgh-resume-header",
             "async": False,
         },
+        {
+            # Sub-agents get the MCP tools but not the session's rules: this
+            # appends the cgh rule to every sub-agent brief (and, with
+            # CGH_AGENT_LOCATIONS=1, the code locations). Never blocks.
+            "event": "PreToolUse",
+            "matcher": "Agent|Task",
+            "marker": "cgh-precheck-agent",
+            "label": "pre-Agent cgh rule",
+            "target": "local",
+            "command": f"{cli_prefix} _hook_precheck_agent  # cgh-precheck-agent",
+            "async": False,
+        },
     ]
-    # Sub-agent locations: installed only where asked for, by running cgh
-    # init with CGH_AGENT_LOCATIONS=1, until a bench measures them. Not in
-    # _CLAUDE_HOOK_MARKERS for the same reason: their absence is not a
-    # missing hook.
-    from codegraph.cli import agent_brief
-
-    if agent_brief.enabled():
-        specs.append(
-            {
-                "event": "PreToolUse",
-                "matcher": "Agent|Task",
-                "marker": "cgh-precheck-agent",
-                "label": "pre-Agent locations",
-                "target": "local",
-                "command": f"{cli_prefix} _hook_precheck_agent  # cgh-precheck-agent",
-                "async": False,
-            }
-        )
     return specs
 
 
@@ -1843,6 +1837,7 @@ _CLAUDE_HOOK_MARKERS = [
     ("cgh-precheck-grep", "PreToolUse", "Grep", "pre-Grep symbol hint", "local"),
     ("cgh-precheck-read", "PreToolUse", "Read", "pre-Read outline hint", "local"),
     ("cgh-precheck-bash", "PreToolUse", "Bash", "pre-Bash search hint", "local"),
+    ("cgh-precheck-agent", "PreToolUse", "Agent|Task", "pre-Agent cgh rule", "local"),
     (
         "cgh-compact-hint",
         "UserPromptSubmit",

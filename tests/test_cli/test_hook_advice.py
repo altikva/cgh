@@ -391,6 +391,111 @@ def test_read_advice_skips_the_line_count_on_a_huge_file(tmp_path, monkeypatch):
     assert hint is not None and "lines" not in hint.split("is not")[0]
 
 
+def _add_symbols(repo, path, rows, kind="function"):
+    import sqlite3
+
+    conn = sqlite3.connect(repo / ".codegraph" / "fts.db")
+    for name, start, end in rows:
+        conn.execute(
+            "INSERT INTO symbols VALUES (?, ?, ?, ?, ?, ?, '')",
+            (
+                f"{path.name}:{name}:{start}",
+                kind,
+                name,
+                str(path.resolve()),
+                start,
+                end,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_unindexed_threshold_is_twelve_kb(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / "mid.json").write_text("{}\n" * 4500)  # 13 KB
+    assert "mid.json" in _context(_read(monkeypatch, capsys, indexed_repo, "mid.json"))
+    (indexed_repo / "small.json").write_text("{}\n" * 3500)  # 10 KB
+    assert _read(monkeypatch, capsys, indexed_repo, "small.json") == ""
+
+
+def test_full_read_of_a_large_indexed_file_gets_its_ranges(
+    monkeypatch, capsys, indexed_repo
+):
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, "billing.py"))
+    assert hint.startswith("[cgh hook] billing.py (46 KB): fn_0 1-5, fn_1 11-15")
+    assert "fn_5 51-55" in hint and "offset/limit" in hint
+    assert "\n" not in hint and len(hint.encode()) < 300
+
+
+def test_ranges_hint_keeps_the_largest_symbols_under_300_bytes(
+    monkeypatch, capsys, indexed_repo
+):
+    src = indexed_repo / "big.py"
+    src.write_text("pass\n" * 6000)
+    rows = [
+        (f"handler_with_a_rather_long_name_{i:02d}", i * 100 + 1, i * 100 + 10 + i)
+        for i in range(40)
+    ]
+    _add_symbols(indexed_repo, src, rows)
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, "big.py"))
+    assert len(hint.encode()) < 300
+    assert "more." in hint and "_39 3901-3949" in hint and "_00 " not in hint
+
+
+def test_ranges_hint_names_the_children_of_a_lone_top_symbol():
+    rows = [
+        ("Index", 1, 300),
+        ("parse", 10, 80),
+        ("helper", 20, 30),
+        ("write", 90, 299),
+    ]
+    assert a._main_symbols(rows) == [("parse", 10, 80), ("write", 90, 299)]
+
+
+def test_ranges_hint_is_silent_for_ranged_and_small_reads(
+    monkeypatch, capsys, indexed_repo
+):
+    assert _read(monkeypatch, capsys, indexed_repo, "billing.py", limit=40) == ""
+    small = indexed_repo / "small.py"
+    small.write_text("pass\n" * 1000)  # 5 KB
+    _add_symbols(
+        indexed_repo, small, [(f"f{i}", i * 10 + 1, i * 10 + 5) for i in range(6)]
+    )
+    out = _read(monkeypatch, capsys, indexed_repo, "small.py")
+    assert "Read a range with offset/limit." not in out
+
+
+def test_answer_mode_outline_is_not_doubled_by_the_ranges_hint(
+    monkeypatch, capsys, indexed_repo
+):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, "billing.py"))
+    assert hint.startswith("[cgh] Outline of billing.py")
+    assert "Read a range with offset/limit." not in hint
+
+
+def test_answer_mode_without_an_outline_gets_the_ranges_hint(
+    monkeypatch, capsys, indexed_repo
+):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    doc = indexed_repo / "GUIDE.md"
+    doc.write_text("text\n" * 4000)
+    rows = [("Guide", 1, 4000), ("Install", 3, 900), ("Usage", 901, 4000)]
+    _add_symbols(indexed_repo, doc, rows, kind="md_section")
+    hint = _context(_read(monkeypatch, capsys, indexed_repo, "GUIDE.md"))
+    assert hint == (
+        "[cgh hook] GUIDE.md (19 KB): Install 3-900, Usage 901-4000. "
+        "Read a range with offset/limit."
+    )
+
+
+def test_ranges_hint_opt_out(monkeypatch, capsys, indexed_repo):
+    monkeypatch.setenv("CGH_HOOK_READ_ADVICE", "0")
+    out = _read(monkeypatch, capsys, indexed_repo, "billing.py")
+    assert "Read a range with offset/limit." not in out
+    assert "indexed by cgh (6 symbols)" in _context(out)
+
+
 # --- heredocs are data, not searches -----------------------------------------
 
 

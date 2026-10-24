@@ -16,6 +16,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   a hint to ask for a part. The new `symbol` argument reads one definition,
   and a bad range is refused. Small files and explicit ranges are
   unchanged; `start_line` now defaults to 0, meaning not set.
+- **Sub-agents get the cgh rule.** Exploration sub-agents had the MCP
+  tools but not the session's rule, so they fell back to Read and Grep. A
+  PreToolUse hook on Agent now appends one line to each sub-agent brief:
+  locate with `symbol_lookup`, `pattern_search` or `find_callers` first,
+  then Read only the returned ranges. `cgh init` and `cgh setup claude`
+  install it by default; run `cgh setup claude` in an existing repo to get
+  it. Opt out with `[hooks] agent_rule = false` or `CGH_HOOK_AGENT_RULE=0`.
+  The code locations stay behind `CGH_AGENT_LOCATIONS=1`.
 - **Search tools understand a sentence.** `pattern_search`,
   `search_symbols` and `symbol_lookup` given a question in French or
   English ("where are webhooks retried") look up the identifiers it names
@@ -80,6 +88,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **The Read hint fires on mid-size files.** Whole-file Reads of 4 to 30
+  KB were the largest token cost and no hint reached them. A full Read of
+  an indexed file of 12 KB or more now gets one line with its main symbols
+  and their line ranges, unless answer mode already printed the outline.
+  The unindexed-file hint and the `cat` advice now start at 12 KB instead
+  of 32 KB. Same opt-out: `[hooks] read_advice = false`.
 - **`context_for_task` answers can be acted on without reading files.**
   Paths are repo-relative, each symbol carries its line range and one to
   three short lines saying why it was picked (the matching docstring

@@ -435,13 +435,45 @@ def _read_advice(target: Path, repo_root: Path) -> None:
         _emit_nudge(advice)
 
 
+def _ranges_advice(
+    target: Path, repo_root: Path, fts_db: Path, abs_path: str, rel_path: str
+) -> None:
+    """Emit the line-ranges hint for a full Read of a large indexed file, or
+    return when there is none. Advisory: any failure returns silently."""
+    if target.suffix.lower() in _READ_ADVICE_SKIP:
+        return
+    try:
+        size = target.stat().st_size
+        if size < hook_advice.LARGE_FILE:
+            return
+        if not hook_advice.read_advice_enabled(repo_root):
+            return
+        from codegraph.core.utils import ro_sqlite_uri
+
+        conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
+        try:
+            rows = conn.execute(
+                "SELECT name, start_line, end_line FROM symbols "
+                "WHERE file_path IN (?, ?) ORDER BY start_line LIMIT ?",
+                (abs_path, rel_path, hook_advice.RANGES_ROWS),
+            ).fetchall()
+        finally:
+            conn.close()
+        advice = hook_advice.ranges_advice(target, size, rows)
+    except Exception:
+        return
+    if advice:
+        _emit_nudge(advice)
+
+
 def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     """
     PreToolUse hook for Read. When the file is indexed in cgh's FTS and the
     Read is a full read (no offset/limit), suggest file_outline / symbols_in_file
     first, both return structured summaries for a fraction of the tokens of
     a raw Read. A full read of a large file the index does not hold (JSON,
-    a lock file, a log) gets a one-line hint to read a part of it instead.
+    a lock file, a log) gets a one-line hint to read a part of it instead,
+    and one of a large indexed file a line with its main symbols' ranges.
     The suggestion is delivered via hookSpecificOutput.additionalContext.
     Advisory: always exits 0.
     """
@@ -527,13 +559,17 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     symbol_count = (row or [0])[0]
     if symbol_count == 0 and suffix not in PARSED_DOC_EXTS:
         _read_advice(target, repo_root)
-    if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT:
-        sys.exit(0)
 
-    if hook_answers.enabled(Path(repo_root)):
+    answer_mode = hook_answers.enabled(Path(repo_root))
+    if answer_mode and symbol_count >= _MIN_SYMBOLS_FOR_OUTLINE_HINT:
         answer = hook_answers.outline_answer(repo_root, target)
         if answer:
             _emit_nudge(answer)
+    # Answer mode gave no outline (or is off): a large file gets its main
+    # line ranges in one line, in place of the longer tool list below.
+    if symbol_count and suffix not in PARSED_DOC_EXTS:
+        _ranges_advice(target, repo_root, fts_db, abs_path, rel_path)
+    if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT or answer_mode:
         sys.exit(0)
 
     is_markdown = suffix in (".md", ".markdown") or suffix in PARSED_DOC_EXTS
@@ -560,15 +596,15 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
 
 def cmd_hook_precheck_agent(args: argparse.Namespace) -> None:
     """
-    PreToolUse hook for the sub-agent tool (Agent, formerly Task). With
-    CGH_AGENT_LOCATIONS=1, appends to the sub-agent's brief the code
-    locations cgh finds for it, so it starts from file:line instead of
-    exploring the tree. Never blocks.
+    PreToolUse hook for the sub-agent tool (Agent, formerly Task). Appends
+    one line to the sub-agent's brief telling it to locate code with the
+    cgh tools before Read or Grep (opt out with [hooks] agent_rule = false
+    or CGH_HOOK_AGENT_RULE=0). With CGH_AGENT_LOCATIONS=1 it also appends
+    the code locations cgh finds for the brief. Silent outside a cgh repo.
+    Never blocks.
     """
     from codegraph.cli import agent_brief
 
-    if not agent_brief.enabled():
-        sys.exit(0)
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:

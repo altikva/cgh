@@ -74,3 +74,18 @@ def test_shell_search_kinds_are_tracked_apart(monkeypatch, capsys, repo):
     assert bash("git grep -n bar").startswith("[cgh hook] `git grep` again")
     # A different searcher is a different hint: full the first time.
     assert "pattern_search(pattern, glob?)" in bash("rg foo")
+
+
+def test_size_advice_still_fires_on_every_call(monkeypatch, capsys, repo):
+    payload = {
+        "tool_input": {"pattern": "charge_card", "output_mode": "content"},
+        "cwd": str(repo),
+        "session_id": "s1",
+    }
+    first = _ctx(monkeypatch, capsys, h.cmd_hook_precheck_grep, payload)
+    second = _ctx(monkeypatch, capsys, h.cmd_hook_precheck_grep, payload)
+    assert "symbol_lookup('charge_card')" in first
+    assert second.startswith("[cgh hook] Grep on a bare identifier again")
+    # The size line is about this call, not a repeated paragraph: it stays.
+    assert first.splitlines()[-1] == second.splitlines()[-1]
+    assert len(second.splitlines()) == 2

@@ -8,7 +8,8 @@
 #              commands, and a once-per-threshold compaction hint for a
 #              large session transcript, a hint before a full Read of a
 #              large file cgh does not index, and heredoc bodies kept out
-#              of the search nudge. All advisory, all can be turned off.
+#              of the search nudge, and a line on bounding a content-mode
+#              Grep. All advisory, all can be turned off.
 
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ def _isolated_config(monkeypatch, tmp_path):
         "CGH_HOOK_BASH_ADVICE",
         "CGH_HOOK_COMPACT_HINT",
         "CGH_HOOK_READ_ADVICE",
+        "CGH_HOOK_GREP_ADVICE",
     ):
         monkeypatch.delenv(env, raising=False)
 
@@ -523,3 +525,156 @@ def test_bash_precheck_is_silent_on_a_heredoc_with_grep(monkeypatch, capsys, tmp
         "cwd": str(tmp_path),
     }
     assert _run(monkeypatch, capsys, h.cmd_hook_precheck_bash, payload) == ""
+
+
+# --- Grep advice -------------------------------------------------------------
+
+
+def _grep(monkeypatch, capsys, cwd, **tool_input) -> str:
+    payload = {"tool_input": tool_input, "cwd": str(cwd)}
+    return _run(monkeypatch, capsys, h.cmd_hook_precheck_grep, payload)
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {"pattern": r"raise \w+Error", "output_mode": "content"},
+        {"pattern": r"raise \w+Error", "output_mode": "content", "-n": True},
+        {"pattern": "charge.*card", "output_mode": "content", "head_limit": 0},
+        # A glob does not narrow a pattern found on most lines.
+        {"pattern": r"\bid\b", "output_mode": "content", "glob": "*.py"},
+        {"pattern": "import", "output_mode": "content", "type": "py"},
+        {"pattern": "foo_x|bar_y|baz_z", "output_mode": "content", "glob": "*.ts"},
+    ],
+)
+def test_grep_advice_fires_on_unbounded_content(tool_input, tmp_path):
+    hint = a.grep_advice(tool_input, tmp_path)
+    assert hint is not None
+    for word in ("head_limit", "glob", "files_with_matches", "count_only=True"):
+        assert word in hint
+    assert "\n" not in hint and len(hint.encode()) < 300
+
+
+def test_grep_advice_mentions_context_lines(tmp_path):
+    ti = {"pattern": "raise", "output_mode": "content", "-C": 3}
+    hint = a.grep_advice(ti, tmp_path)
+    assert hint is not None and "with its context" in hint
+    assert len(hint.encode()) < 300
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {"pattern": r"raise \w+Error"},  # files_with_matches is the default
+        {"pattern": r"raise \w+Error", "output_mode": "files_with_matches"},
+        {"pattern": r"raise \w+Error", "output_mode": "count"},
+        {"pattern": r"raise \w+Error", "output_mode": "content", "head_limit": 40},
+        {"pattern": "charge_card", "output_mode": "content", "glob": "*.py"},
+        {"pattern": "charge_card", "output_mode": "content", "type": "py"},
+        {"pattern": "charge_card", "output_mode": "content", "path": "src"},
+        {"pattern": r"\bid\b", "output_mode": "content", "path": "one.py"},
+    ],
+)
+def test_grep_advice_silent_when_bounded(tool_input, tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "one.py").write_text("id = 1\n")
+    assert a.grep_advice(tool_input, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "broad"),
+    [
+        (".*", True),
+        (r"\bid\b", True),
+        ("[a-z]+\\(", True),
+        ("a_one|b_two|c_three", True),
+        ("return None", True),
+        ("charge_card", False),
+        (r"def charge_card\(", False),
+        ("WebhookManager|retry_hook", False),
+    ],
+)
+def test_broad_pattern(pattern, broad):
+    assert a.broad_pattern(pattern) is broad
+
+
+def test_grep_precheck_delivers_the_advice(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    out = _grep(monkeypatch, capsys, tmp_path, pattern="x.*y", output_mode="content")
+    ctx = _context(out)
+    assert ctx.startswith("[cgh hook] Grep in content mode") and "\n" not in ctx
+
+
+def test_grep_advice_is_silent_outside_a_cgh_repo(monkeypatch, capsys, tmp_path):
+    assert (
+        _grep(monkeypatch, capsys, tmp_path, pattern="x.*y", output_mode="content")
+        == ""
+    )
+
+
+def test_grep_advice_appends_to_the_identifier_nudge(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    ctx = _context(
+        _grep(
+            monkeypatch, capsys, tmp_path, pattern="charge_card", output_mode="content"
+        )
+    )
+    assert ctx.count("symbol_lookup('charge_card')") == 1
+    assert ctx.count("[cgh hook] Grep in content mode") == 1
+
+
+def test_grep_advice_in_answer_mode_is_not_doubled(monkeypatch, capsys, indexed_repo):
+    from codegraph.cli import hook_answers as ha
+
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    monkeypatch.setattr(ha, "_callers", lambda root, name: None)
+    out = _grep(
+        monkeypatch, capsys, indexed_repo, pattern="fn_0", output_mode="content"
+    )
+    assert out.count("hookSpecificOutput") == 1
+    ctx = _context(out)
+    assert ctx.count("Already looked up from the code graph") == 1
+    assert ctx.count("[cgh hook] Grep in content mode") == 1
+    assert ctx.index("Already looked up") < ctx.index("Grep in content mode")
+    # Bounded: the answer alone, unchanged.
+    bounded = _context(
+        _grep(
+            monkeypatch,
+            capsys,
+            indexed_repo,
+            pattern="fn_0",
+            output_mode="content",
+            head_limit=30,
+        )
+    )
+    assert "Grep in content mode" not in bounded and "fn_0" in bounded
+
+
+def test_grep_advice_in_answer_mode_without_an_answer(
+    monkeypatch, capsys, indexed_repo
+):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    ctx = _context(
+        _grep(monkeypatch, capsys, indexed_repo, pattern="x.*y", output_mode="content")
+    )
+    assert ctx.startswith("[cgh hook] Grep in content mode")
+
+
+def test_grep_advice_opt_out_by_env(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".codegraph").mkdir()
+    monkeypatch.setenv("CGH_HOOK_GREP_ADVICE", "0")
+    assert (
+        _grep(monkeypatch, capsys, tmp_path, pattern="x.*y", output_mode="content")
+        == ""
+    )
+
+
+def test_grep_advice_opt_out_by_config(monkeypatch, capsys, indexed_repo):
+    (indexed_repo / ".codegraph" / "config.toml").write_text(
+        "[hooks]\ngrep_advice = false\n"
+    )
+    assert not a.grep_advice_enabled(indexed_repo)
+    out = _grep(
+        monkeypatch, capsys, indexed_repo, pattern="x.*y", output_mode="content"
+    )
+    assert out == ""

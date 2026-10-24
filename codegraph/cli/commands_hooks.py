@@ -65,8 +65,10 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
     PreToolUse hook for Grep. Reads the hook payload from stdin, and when
     the pattern looks like a bare identifier delivers a suggestion (via
     hookSpecificOutput.additionalContext) pointing at cgh's symbol-search
-    MCP tools. Always exits 0, advisory, never blocking, so Claude can still
-    run Grep when it really wants to.
+    MCP tools. A content-mode Grep with unbounded output also gets a line on
+    bounding it, appended to whatever else the hook says. Always exits 0,
+    advisory, never blocking, so Claude can still run Grep when it really
+    wants to.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -74,8 +76,11 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     tool_input = payload.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
+        sys.exit(0)
     pattern = tool_input.get("pattern")
     cwd = Path(payload.get("cwd") or os.getcwd())
+    advice = _grep_advice(tool_input, cwd)
     if hook_answers.enabled(cwd):
         root = hook_answers.repo_root(cwd)
         target = tool_input.get("path")
@@ -91,26 +96,38 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
             and not (isinstance(target, str) and hook_answers.files_only([target], cwd))
             else None
         )
-        if answer:
-            _emit_nudge(answer)
+        if answer or advice:
+            _emit_nudge("\n".join(m for m in (answer, advice) if m))
         sys.exit(0)
     if not isinstance(pattern, str) or not _IDENTIFIER_RE.match(pattern):
+        if advice:
+            _emit_nudge(advice)
         sys.exit(0)
 
-    _emit_nudge(
-        _once_per_session(
-            payload,
-            cwd,
-            "Grep on a bare identifier",
-            f"[cgh hook] Grep pattern '{pattern}' looks like a bare identifier. "
-            "Prefer cgh MCP tools for symbol search (zero-token server-side execution):\n"
-            f"  - symbol_lookup('{pattern}')   exact definition (functions, classes, sections)\n"
-            f"  - search_symbols('{pattern}')  fuzzy across the graph\n"
-            f"  - find_callers('{pattern}')    incoming CALLS edges (functions only)\n"
-            "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
-            "to confirm a raw text search is what you want.",
-        )
+    # The identifier nudge is the same paragraph every time: full once per
+    # session, then one line. The size advice is about this call, so it stays.
+    nudge = _once_per_session(
+        payload,
+        cwd,
+        "Grep on a bare identifier",
+        f"[cgh hook] Grep pattern '{pattern}' looks like a bare identifier. "
+        "Prefer cgh MCP tools for symbol search (zero-token server-side execution):\n"
+        f"  - symbol_lookup('{pattern}')   exact definition (functions, classes, sections)\n"
+        f"  - search_symbols('{pattern}')  fuzzy across the graph\n"
+        f"  - find_callers('{pattern}')    incoming CALLS edges (functions only)\n"
+        "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
+        "to confirm a raw text search is what you want.",
     )
+    _emit_nudge(nudge + (f"\n{advice}" if advice else ""))
+
+
+def _grep_advice(tool_input: dict, cwd: Path) -> str | None:
+    """The output-size hint for a Grep call, inside a cgh repo and unless
+    turned off. The pure check runs first so most calls read no config."""
+    advice = hook_advice.grep_advice(tool_input, cwd)
+    if advice is None or not _in_cgh_repo(cwd):
+        return None
+    return advice if hook_advice.grep_advice_enabled(cwd) else None
 
 
 # The Grep precheck above only sees the Grep tool. The same lookups also run as

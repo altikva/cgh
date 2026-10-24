@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Sub-agents get the cgh rule.** Exploration sub-agents had the MCP
+  tools but not the session's rule, so they fell back to Read and Grep. A
+  PreToolUse hook on Agent now appends one line to each sub-agent brief:
+  locate with `symbol_lookup`, `pattern_search` or `find_callers` first,
+  then Read only the returned ranges. `cgh init` and `cgh setup claude`
+  install it by default; run `cgh setup claude` in an existing repo to get
+  it. Opt out with `[hooks] agent_rule = false` or `CGH_HOOK_AGENT_RULE=0`.
+  The code locations stay behind `CGH_AGENT_LOCATIONS=1`.
 - **Search tools understand a sentence.** `pattern_search`,
   `search_symbols` and `symbol_lookup` given a question in French or
   English ("where are webhooks retried") look up the identifiers it names

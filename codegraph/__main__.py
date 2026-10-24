@@ -416,7 +416,7 @@ def _register_setup_and_serve(sub) -> None:
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_bash", help=argparse.SUPPRESS)
     sub.add_parser("_hook_compact_hint", help=argparse.SUPPRESS)
-    # Sub-agent locations: inert unless CGH_AGENT_LOCATIONS=1.
+    # Sub-agent brief: the cgh rule, plus locations with CGH_AGENT_LOCATIONS=1.
     sub.add_parser("_hook_precheck_agent", help=argparse.SUPPRESS)
 
 

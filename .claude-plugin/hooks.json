@@ -27,6 +27,15 @@
             "command": "cgh _hook_precheck_bash"
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_precheck_agent"
+          }
+        ]
       }
     ],
     "PostToolUse": [

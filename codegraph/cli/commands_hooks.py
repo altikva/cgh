@@ -596,15 +596,15 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
 
 def cmd_hook_precheck_agent(args: argparse.Namespace) -> None:
     """
-    PreToolUse hook for the sub-agent tool (Agent, formerly Task). With
-    CGH_AGENT_LOCATIONS=1, appends to the sub-agent's brief the code
-    locations cgh finds for it, so it starts from file:line instead of
-    exploring the tree. Never blocks.
+    PreToolUse hook for the sub-agent tool (Agent, formerly Task). Appends
+    one line to the sub-agent's brief telling it to locate code with the
+    cgh tools before Read or Grep (opt out with [hooks] agent_rule = false
+    or CGH_HOOK_AGENT_RULE=0). With CGH_AGENT_LOCATIONS=1 it also appends
+    the code locations cgh finds for the brief. Silent outside a cgh repo.
+    Never blocks.
     """
     from codegraph.cli import agent_brief
 
-    if not agent_brief.enabled():
-        sys.exit(0)
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:

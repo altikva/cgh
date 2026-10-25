@@ -49,10 +49,15 @@ def _fit_extra(extra: dict, max_bytes: int) -> None:
 
 
 def _counts_payload(
-    hits: list[dict], with_scope: bool, roots: list | None, limit: int
+    hits: list[dict],
+    with_scope: bool,
+    roots: list | None,
+    limit: int,
+    reserve: int = 0,
 ) -> dict:
     """count_only: hits per file, the busiest first, without the lines, and
-    the directories holding most of them."""
+    the directories holding most of them. ``reserve`` is room kept for the
+    keys the tool adds."""
     from collections import Counter
 
     from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
@@ -75,7 +80,7 @@ def _counts_payload(
         out,
         ["files"],
         "File list cut to fit: pass one of `top_dirs` as glob.",
-        max_bytes=PATTERN_ANSWER_BYTES - 400,
+        max_bytes=PATTERN_ANSWER_BYTES - 400 - reserve,
     )
     return out
 
@@ -108,7 +113,7 @@ def _hits_payload(
     from codegraph.server._budget import answer_bytes
 
     if count_only:
-        return _counts_payload(hits, with_scope, roots, limit or len(hits) + 1)
+        return _counts_payload(hits, with_scope, roots, limit or len(hits) + 1, reserve)
     find = match_finder(pattern, regex, case_sensitive) if pattern else None
     budget = HITS_BUDGET_BYTES - reserve
     dirs: list[dict] | None = None
@@ -147,6 +152,66 @@ def _hits_payload(
             break
         budget -= excess
     return out
+
+
+def _shown_scopes(payload: dict, scopes: dict) -> dict:
+    """The commit info of the parent and of each scope the answer shows a
+    hit, symbol or doc from: a federation of many children would otherwise
+    spend the answer's budget on scopes it says nothing about."""
+    seen = {"parent"}
+    for key in ("files", "symbols", "docs"):
+        for row in payload.get(key) or []:
+            if isinstance(row, dict) and row.get("scope"):
+                seen.add(row["scope"])
+    return {k: v for k, v in scopes.items() if k in seen}
+
+
+def _fit_pattern_answer(build) -> str:
+    """The pattern_search answer as returned: at most PATTERN_ANSWER_BYTES
+    measured on the very text the agent receives (``wire_bytes``), not on an
+    estimate of the keys added around the hits.
+
+    ``build(slack)`` makes the whole payload with ``slack`` bytes taken off
+    the hits. Each pass measures the serialized answer and adds what it is
+    over to the slack, so the hits shrink and `more`, `top_dirs` and the
+    hint stay right. When the hits are down to the first one and the answer
+    is still over (a long pattern, a sentence's fields), those fields and
+    then the longest strings are shortened."""
+    from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
+    from codegraph.server._budget import (
+        answer_bytes,
+        clip_strings,
+        dumps_answer,
+        wire_bytes,
+    )
+
+    slack = 0
+    payload: dict = {}
+    for _ in range(8):
+        payload = build(slack)
+        text = dumps_answer(payload)
+        excess = wire_bytes(text) - PATTERN_ANSWER_BYTES
+        if excess <= 0:
+            return text
+        slack += excess
+
+    def over() -> int:
+        return wire_bytes(dumps_answer(payload)) - PATTERN_ANSWER_BYTES
+
+    if over() > 0:
+        _fit_extra(payload, answer_bytes(payload) - over())
+    more = payload.get("more") or {}
+    if over() > 0 and len(more) > 1:
+        # Long paths: fewer files named in `more`, `more_files` counting all.
+        payload.setdefault("more_files", len(more))
+        while len(more) > 1 and over() > 0:
+            more.popitem()
+    for _ in range(4):
+        if over() <= 0:
+            break
+        # Escaping makes the wire form longer than the raw one: aim lower.
+        clip_strings(payload, answer_bytes(payload) - 2 * over())
+    return dumps_answer(payload)
 
 
 # file_at_ref with no range: a file up to this size comes back whole, a
@@ -281,25 +346,31 @@ def register(mcp) -> None:
                 )
         except RefError as exc:
             return json.dumps({"pattern": pattern, "error": str(exc)}, indent=2)
-        payload = {
-            "pattern": pattern,
-            "glob": glob or None,
-            "repo": name or None,
-            "ref": ref or None,
-            "commit": sha,
-            "backend": backend,
-            **_hits_payload(
-                [{"file": h.file, "line": h.line, "text": h.text} for h in hits],
-                pattern,
-                regex,
-                case_sensitive,
-                roots=None if ref else [top],
-                count_only=count_only,
-                limit=max_results,
-            ),
-        }
-        payload.update(_grep_verdict(payload, pattern, glob, regex))
-        return json.dumps(payload, ensure_ascii=False)
+        rows = [{"file": h.file, "line": h.line, "text": h.text} for h in hits]
+
+        def build(slack: int) -> dict:
+            payload = {
+                "pattern": pattern,
+                "glob": glob or None,
+                "repo": name or None,
+                "ref": ref or None,
+                "commit": sha,
+                "backend": backend,
+                **_hits_payload(
+                    rows,
+                    pattern,
+                    regex,
+                    case_sensitive,
+                    roots=None if ref else [top],
+                    count_only=count_only,
+                    reserve=slack,
+                    limit=max_results,
+                ),
+            }
+            payload.update(_grep_verdict(payload, pattern, glob, regex))
+            return payload
+
+        return _fit_pattern_answer(build)
 
     def _central() -> dict[str, int]:
         """Import in-degree per file of the parent graph (hotspots' term)."""
@@ -737,33 +808,51 @@ def register(mcp) -> None:
         all_hits = all_hits[: max_results * (1 + len(children))]
 
         roots = [p for p in [_srv._root, *children] if p is not None]
-        payload: dict = {
-            "pattern": pattern,
-            "glob": glob or None,
-            "backend": backend,
-            **_hits_payload(
-                all_hits,
-                pattern,
-                regex,
-                case_sensitive,
-                with_scope=any(h["scope"] != "parent" for h in all_hits),
-                roots=roots,
-                count_only=count_only,
-                reserve=answer_bytes(extra) if extra else 0,
-                limit=max_results,
-            ),
-        }
-        if intent.sentence and not count_only:
-            # A sentence's own verdict stands. Lines matching it literally
-            # (often a comment quoting it) lift a low verdict to medium.
-            if payload.get("total") and extra.get("confidence") == "low":
-                for k in ("why", "next"):
-                    extra.pop(k, None)
-                extra["confidence"] = "medium"
-            payload.update(extra)
-        else:
-            payload.update(_grep_verdict(payload, pattern, glob, regex))
-        return json.dumps(payload, ensure_ascii=False)
+        with_scope = any(h["scope"] != "parent" for h in all_hits)
+        extra_bytes = answer_bytes(extra) if extra else 0
+        # In a federated project the answer names the commit of each scope
+        # it shows. Added here rather than by the tool wrapper, so the
+        # budget below counts it.
+        scopes: dict | None = None
+        if children:
+            try:
+                scopes = _srv._scope_commits(_srv._root)
+            except Exception:  # best-effort note: never fail the answer on it
+                scopes = None
+
+        def build(slack: int) -> dict:
+            payload: dict = {
+                "pattern": pattern,
+                "glob": glob or None,
+                "backend": backend,
+                **_hits_payload(
+                    all_hits,
+                    pattern,
+                    regex,
+                    case_sensitive,
+                    with_scope=with_scope,
+                    roots=roots,
+                    count_only=count_only,
+                    reserve=extra_bytes + slack,
+                    limit=max_results,
+                ),
+            }
+            if intent.sentence and not count_only:
+                own = dict(extra)
+                # A sentence's own verdict stands. Lines matching it literally
+                # (often a comment quoting it) lift a low verdict to medium.
+                if payload.get("total") and own.get("confidence") == "low":
+                    for k in ("why", "next"):
+                        own.pop(k, None)
+                    own["confidence"] = "medium"
+                payload.update(own)
+            else:
+                payload.update(_grep_verdict(payload, pattern, glob, regex))
+            if scopes:
+                payload["scopes"] = _shown_scopes(payload, scopes)
+            return payload
+
+        return _fit_pattern_answer(build)
 
     def _attach_rationale(conn, hits: list[dict]) -> None:
         """Give each function / class hit the rationale comments attached to

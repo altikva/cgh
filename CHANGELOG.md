@@ -233,6 +233,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Versions 0.18.x and earlier keep their original license.
 
 ### Fixed
+- **`pattern_search` answers stay under 2.5 KB.** In a federated project,
+  adding the `scopes` note re-wrote the answer as indented JSON with every
+  accent escaped, so capped answers reached 4 to 5.7 KB. The answer now
+  stays compact, names only the scopes it shows, and its size is checked
+  on the text the agent receives. Other federated tools also stay compact.
 - **`cgh pii scan` now finds provider API tokens** (cgh-pii 0.4.1). It
   caught AWS keys but missed Anthropic, OpenAI, GitHub, GitLab, Slack,
   Google and Stripe live keys. Each is now a `secret.*` finding at block

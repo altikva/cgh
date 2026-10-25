@@ -16,7 +16,9 @@
 #              whole list items go, never a cut in the middle of the text.
 #              cap_tool_answer applies a per-tool ceiling (TOOL_CAPS) to any
 #              tool's answer from the shared tool wrapper, so a tool without
-#              its own budget cannot flood the session either.
+#              its own budget cannot flood the session either. wire_bytes
+#              measures an answer as the agent receives it, escaped inside
+#              the structured-content envelope.
 
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
 
 # Rough characters per token of JSON output.
 CHARS_PER_TOKEN = 4
@@ -104,6 +108,16 @@ def dumps_answer(payload: dict[str, Any]) -> str:
 def answer_bytes(payload: dict[str, Any]) -> int:
     """Size in bytes of ``dumps_answer(payload)`` once UTF-8 encoded."""
     return len(dumps_answer(payload).encode("utf-8"))
+
+
+def wire_bytes(text: str) -> int:
+    """Bytes an agent receives for the tool answer ``text``. FastMCP sends a
+    string result a second time as structured content, ``{"result": text}``,
+    and that is the form Claude Code hands the model: every quote and
+    backslash of the text arrives escaped, so the answer weighs about a
+    tenth more than the string the tool returned."""
+    wrapped = json.dumps({"result": text}, ensure_ascii=False, separators=(",", ":"))
+    return len(wrapped.encode("utf-8"))
 
 
 def cap_answer(
@@ -217,6 +231,13 @@ TOOL_CAPS: dict[str, ToolCap] = {
     "memory_search": ToolCap(hint="Lower limit or filter with kind."),
     "packages": ToolCap(hint="Filter with name, or lower limit."),
     "path_between": ToolCap(hint="Pick closer endpoints."),
+    # pattern_search fits its own answer to this ceiling, `more` and
+    # `top_dirs` included; this entry only catches what a wrapper adds after.
+    "pattern_search": ToolCap(
+        max_bytes=PATTERN_ANSWER_BYTES,
+        hint="Narrow the pattern, pass a glob, or use count_only=True.",
+        keys=("files",),
+    ),
     "plan_list": ToolCap(hint="Lower limit or pass agent_only, or use plan_search."),
     "plan_search": ToolCap(hint="Lower limit."),
     "pr_overlap": ToolCap(hint="Lower limit."),
@@ -289,7 +310,7 @@ def _longest_string(node: Any) -> tuple[Any, Any, int]:
 _CUT_MARK = "\n[cut]"
 
 
-def _clip_strings(payload: dict[str, Any], budget: int) -> int:
+def clip_strings(payload: dict[str, Any], budget: int) -> int:
     """Shorten the longest strings, at a line break when one is near, until
     the answer fits ``budget``; returns how many strings were cut."""
     cut = 0
@@ -352,7 +373,7 @@ def cap_tool_answer(tool: str, result: Any, kwargs: dict[str, Any]) -> Any:
             answer_bytes,
             lambda item: len(dumps_answer(item).encode("utf-8")) + 2,
         )
-    clipped = _clip_strings(payload, budget)
+    clipped = clip_strings(payload, budget)
     if dropped or clipped:
         payload["truncated"] = True
         payload["dropped"] = (payload.get("dropped") or 0) + dropped

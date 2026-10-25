@@ -49,7 +49,8 @@ def make_cli_registrar(config: dict, repo_root=None):
             "--only",
             default="",
             help="Comma-separated categories: person,location,email,phone,"
-            "iban,card,aws_key,private_key,other (default: all)",
+            "iban,card,other, and one per secret.* scan key without its "
+            "prefix (aws_key,github_token,...) (default: all)",
         )
         p.add_argument(
             "--mode",

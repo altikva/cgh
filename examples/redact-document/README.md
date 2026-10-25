@@ -12,8 +12,9 @@ pip install cgh cgh-pii
 pip install "cgh-pii[ner]"     # only if you redact person/location names
 ```
 
-The regex categories (email, phone, iban, card, aws_key, private_key)
-work with `cgh-pii` alone. Person and location **names** come from the
+The regex categories (email, phone, iban, card, and the secrets:
+aws_key, private_key, the provider API tokens such as github_token or
+openai_key, and assignment) work with `cgh-pii` alone. Person and location **names** come from the
 NER tier, which needs the `[ner]` extra; asking for `person` without it
 fails with a clear message.
 

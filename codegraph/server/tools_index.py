@@ -8,11 +8,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 from codegraph.core.utils import quiet_subprocess_kwargs
+from codegraph.server._budget import dumps_answer
 
 
 def _within_repo(target: Path, root: Path) -> bool:
@@ -57,13 +57,12 @@ def register(mcp) -> None:
         _server._conn = None
         reset_connection()
         stats = index_repo(_server._root, verbose=verbose)
-        return json.dumps(
+        return dumps_answer(
             {
                 "action": "full_reindex",
                 "root": str(_server._root),
                 **stats,
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -109,7 +108,7 @@ def register(mcp) -> None:
                             )
 
         if not confirmed:
-            return json.dumps(
+            return dumps_answer(
                 {
                     "action": "force_index_preview",
                     "status": "CONFIRMATION_REQUIRED",
@@ -121,8 +120,7 @@ def register(mcp) -> None:
                     "files_to_index": preview_files,
                     "file_count": len(preview_files),
                     "refused_outside_repo": refused,
-                },
-                indent=2,
+                }
             )
 
         # Step 2: Confirmed, actually index
@@ -172,7 +170,7 @@ def register(mcp) -> None:
             else:
                 skipped.append(f"{p} (not found)")
 
-        return json.dumps(
+        return dumps_answer(
             {
                 "action": "force_index",
                 "confirmed": True,
@@ -181,8 +179,7 @@ def register(mcp) -> None:
                 "errors": errors,
                 "refused_outside_repo": refused,
                 "indexed_count": len(indexed),
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -203,7 +200,7 @@ def register(mcp) -> None:
 
         root = _server._root
         if root is None:
-            return json.dumps({"status": "error", "message": "repo root not set"})
+            return dumps_answer({"status": "error", "message": "repo root not set"})
         result = _incr(root)
         # Truncate lists for token economy
         if len(result.get("reindexed", [])) > 100:
@@ -212,7 +209,7 @@ def register(mcp) -> None:
         if len(result.get("deleted", [])) > 100:
             result["deleted"] = result["deleted"][:100]
             result["deleted_truncated"] = True
-        return json.dumps(result, indent=2)
+        return dumps_answer(result)
 
     @mcp.tool()
     @_logged_tool
@@ -241,13 +238,13 @@ def register(mcp) -> None:
 
         root = _server._root
         if root is None:
-            return json.dumps({"status": "error", "message": "repo root not set"})
+            return dumps_answer({"status": "error", "message": "repo root not set"})
         ss = _scan_status(root)
         # Truncate changed_files for token economy
         if len(ss.get("changed_files", [])) > 200:
             ss["changed_files"] = ss["changed_files"][:200]
             ss["changed_files_truncated"] = True
-        return json.dumps(ss, indent=2)
+        return dumps_answer(ss)
 
     @mcp.tool()
     @_logged_tool
@@ -275,13 +272,13 @@ def register(mcp) -> None:
 
         root = _server._root
         if root is None:
-            return json.dumps({"status": "error", "message": "repo root not set"})
+            return dumps_answer({"status": "error", "message": "repo root not set"})
 
         # Resolve + validate
         target = Path(path) if os.path.isabs(path) else (root / path)
         resolved = target.resolve()
         if not resolved.exists() or not resolved.is_dir():
-            return json.dumps(
+            return dumps_answer(
                 {
                     "status": "error",
                     "message": f"Directory does not exist or is not a directory: {resolved}",
@@ -290,7 +287,7 @@ def register(mcp) -> None:
 
         config_path, data = _load_config_toml(root)
         if not config_path.exists():
-            return json.dumps(
+            return dumps_answer(
                 {
                     "status": "error",
                     "message": "codegraph not initialized (missing .codegraph/config.toml)",
@@ -319,7 +316,7 @@ def register(mcp) -> None:
                 except OSError:
                     continue
             if str(resolved) not in declared:
-                return json.dumps(
+                return dumps_answer(
                     {
                         "status": "error",
                         "message": (
@@ -350,7 +347,7 @@ def register(mcp) -> None:
             try:
                 _write_extra_dirs(config_path, data, extra_dirs)
             except (ConfigEditError, OSError) as exc:
-                return json.dumps(
+                return dumps_answer(
                     {
                         "status": "error",
                         "message": f"could not record {rel} in extra_dirs: {exc}",
@@ -396,7 +393,7 @@ def register(mcp) -> None:
         except Exception:
             pass
 
-        return json.dumps(
+        return dumps_answer(
             {
                 "status": "ok",
                 "action": "add_directory",
@@ -412,8 +409,7 @@ def register(mcp) -> None:
                     if watcher_extended
                     else "Directory added and indexed. Watcher will pick up changes after next MCP server restart."
                 ),
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -440,7 +436,7 @@ def register(mcp) -> None:
             # parsed as a git flag (argument injection via the MCP arg). The
             # trailing "--" keeps the ref from being read as a pathspec.
             if since.startswith("-"):
-                return json.dumps({"error": f"invalid git ref: {since!r}"})
+                return dumps_answer({"error": f"invalid git ref: {since!r}"})
             cmd = ["git", "diff", "--name-only", "--diff-filter=ACMR", since, "--"]
 
         try:
@@ -456,7 +452,7 @@ def register(mcp) -> None:
             )
             files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
         except Exception as exc:
-            return json.dumps({"error": f"git diff failed: {exc}"})
+            return dumps_answer({"error": f"git diff failed: {exc}"})
 
         indexed = []
         skipped = []
@@ -475,7 +471,7 @@ def register(mcp) -> None:
             except Exception as exc:
                 errors.append({"file": rel_path, "error": str(exc)})
 
-        return json.dumps(
+        return dumps_answer(
             {
                 "action": "incremental_index",
                 "since": since,
@@ -483,6 +479,5 @@ def register(mcp) -> None:
                 "skipped": skipped,
                 "errors": errors,
                 "indexed_count": len(indexed),
-            },
-            indent=2,
+            }
         )

@@ -8,9 +8,8 @@
 
 from __future__ import annotations
 
-import json
-
 from codegraph.core.utils import short_path as _short_path
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -87,7 +86,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -165,7 +164,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -474,7 +473,7 @@ def register(mcp) -> None:
         from codegraph.state.call_log import clear_session
 
         removed = clear_session(session_id, repo_root=_srv._root)
-        return json.dumps({"session_id": session_id, "cleared": removed})
+        return dumps_answer({"session_id": session_id, "cleared": removed})
 
     @mcp.tool()
     @_logged_tool
@@ -486,4 +485,4 @@ def register(mcp) -> None:
         from codegraph.state.call_log import get_stats
 
         stats = get_stats(_srv._root)
-        return json.dumps(stats, indent=2)
+        return dumps_answer(stats)

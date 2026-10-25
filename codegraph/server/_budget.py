@@ -102,9 +102,14 @@ def fit_tokens(payload: dict[str, Any], keys: list[str], max_tokens: int) -> int
     return dropped
 
 
-def dumps_answer(payload: dict[str, Any]) -> str:
-    """The compact JSON text a capped tool answers with."""
-    return json.dumps(payload, ensure_ascii=False)
+def dumps_answer(payload: Any, default: Callable[[Any], Any] | None = None) -> str:
+    """The JSON text every tool answers with: no indentation, no space after
+    the separators, non-ASCII text as is. Clients parse it the same, and an
+    indented answer weighs about a fifth more tokens. ``default`` is passed
+    to json.dumps for values it cannot serialize."""
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), default=default
+    )
 
 
 def wire_bytes(text: str) -> int:
@@ -131,8 +136,8 @@ def answer_bytes(payload: dict[str, Any]) -> int:
 
 def item_bytes(item: Any) -> int:
     """Bytes one list item adds to an answer as received: its escaped text
-    plus a separator."""
-    return wire_bytes(json.dumps(item, ensure_ascii=False)) - _ENVELOPE_BYTES + 2
+    plus the comma before it."""
+    return wire_bytes(dumps_answer(item)) - _ENVELOPE_BYTES + 1
 
 
 def cap_answer(

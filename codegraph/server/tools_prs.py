@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import json
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -42,8 +42,8 @@ def register(mcp) -> None:
         index, so it should be fresh on the PRs' base branch.
         """
         if _srv._root is None:
-            return json.dumps({"error": "owner root not initialised"})
+            return dumps_answer({"error": "owner root not initialised"})
         from codegraph.analysis.pr_overlap import pr_overlap as _overlap
 
         report = _overlap(_get_conn(), str(_srv._root), limit)
-        return json.dumps(report, indent=2)
+        return dumps_answer(report)

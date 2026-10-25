@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-import json
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -38,7 +38,7 @@ def register(mcp) -> None:
 
         conn = get_fts_conn(_srv._root)
         hits = _search(conn, query, kind=kind or None, limit=limit)
-        return json.dumps(
+        return dumps_answer(
             {
                 "query": query,
                 "kind": kind or None,
@@ -53,8 +53,7 @@ def register(mcp) -> None:
                     }
                     for h in hits
                 ],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -72,7 +71,7 @@ def register(mcp) -> None:
 
         conn = get_fts_conn(_srv._root)
         hits = list_memory_entries(conn, kind=kind or None)
-        return json.dumps(
+        return dumps_answer(
             {
                 "kind": kind or None,
                 "total": len(hits),
@@ -86,8 +85,7 @@ def register(mcp) -> None:
                     }
                     for h in hits
                 ],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -101,4 +99,4 @@ def register(mcp) -> None:
         from codegraph.claude_state.memory import scan_memory_dir
 
         stats = scan_memory_dir(_srv._root, verbose=False)
-        return json.dumps(stats, indent=2)
+        return dumps_answer(stats)

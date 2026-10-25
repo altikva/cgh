@@ -15,8 +15,9 @@
 
 from __future__ import annotations
 
-import json
 import os
+
+from codegraph.server._budget import dumps_answer
 
 # Hard caps so a pathological graph never blows up the JSON response.
 _SYMBOL_CAP = 200
@@ -681,7 +682,7 @@ def register(mcp) -> None:
             # Impacted nodes come nearest first: the farthest go first.
             if fit_tokens(payload, ["impacted"], max_tokens):
                 payload["count"] = len(payload["impacted"])
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -717,7 +718,7 @@ def register(mcp) -> None:
             min_confidence=float(min_confidence),
             limit=int(limit),
         )
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -745,7 +746,7 @@ def register(mcp) -> None:
         """
         edge = (edge or "CALLS").upper()
         if edge not in {"CALLS", "IMPORTS"}:
-            return json.dumps(
+            return dumps_answer(
                 {"found": False, "error": f"unsupported edge type: {edge}"}
             )
         is_calls = edge == "CALLS"
@@ -870,7 +871,7 @@ def register(mcp) -> None:
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload, indent=2)
+            return dumps_answer(payload)
 
         scope, found = results
         chain = found["path"]
@@ -888,7 +889,7 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -923,4 +924,4 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)

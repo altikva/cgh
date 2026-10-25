@@ -243,7 +243,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   structured-content envelope, about 10% larger, so answers arrived over
   their cap (file_summary at 2.1 KB against 2 KB). The caps keep their
   values; a large JSON list is now trimmed under `items` instead of passing
-  whole.
+  whole. Every tool also answers compact JSON, with no indentation or
+  spaces after separators, so symbol_lookup answers weigh about 23% less.
+  Clients that parse the JSON see no change.
 - **`cgh pii scan` now finds provider API tokens** (cgh-pii 0.4.1). It
   caught AWS keys but missed Anthropic, OpenAI, GitHub, GitLab, Slack,
   Google and Stripe live keys. Each is now a `secret.*` finding at block

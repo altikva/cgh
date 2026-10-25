@@ -159,7 +159,7 @@ def test_federated_answer_is_compact_and_keeps_accents(federated):
 def test_scopes_note_is_compact():
     payload = '{"a": "é"}'
     out = _srv._add_scopes(payload, {"parent": {"head": "abc"}})
-    assert out == '{"a": "é", "scopes": {"parent": {"head": "abc"}}}'
+    assert out == '{"a":"é","scopes":{"parent":{"head":"abc"}}}'
 
 
 def test_count_only_fits_the_cap(federated):

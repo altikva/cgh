@@ -150,7 +150,8 @@ def _hits_payload(
         )
         if excess <= 0 or shown <= 1:
             break
-        budget -= excess
+        # A small excess may not free a whole hit: take at least a line off.
+        budget -= max(excess, 100)
     return out
 
 

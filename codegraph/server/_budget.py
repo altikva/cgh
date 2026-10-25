@@ -18,7 +18,9 @@
 #              tool's answer from the shared tool wrapper, so a tool without
 #              its own budget cannot flood the session either. wire_bytes
 #              measures an answer as the agent receives it, escaped inside
-#              the structured-content envelope.
+#              the structured-content envelope, and every byte ceiling here
+#              (answer_bytes, cap_answer, cap_tool_answer) is held on that
+#              size, not on the raw string.
 
 from __future__ import annotations
 
@@ -105,11 +107,6 @@ def dumps_answer(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def answer_bytes(payload: dict[str, Any]) -> int:
-    """Size in bytes of ``dumps_answer(payload)`` once UTF-8 encoded."""
-    return len(dumps_answer(payload).encode("utf-8"))
-
-
 def wire_bytes(text: str) -> int:
     """Bytes an agent receives for the tool answer ``text``. FastMCP sends a
     string result a second time as structured content, ``{"result": text}``,
@@ -120,24 +117,42 @@ def wire_bytes(text: str) -> int:
     return len(wrapped.encode("utf-8"))
 
 
+# What the envelope adds around any text: `{"result":""}`.
+_ENVELOPE_BYTES = wire_bytes("")
+
+
+def answer_bytes(payload: dict[str, Any]) -> int:
+    """Bytes the agent receives for ``payload`` answered as
+    ``dumps_answer(payload)``: the escaped structured-content form that
+    ``wire_bytes`` measures. Every cap and budget compares against this, so
+    a cap holds on what the model reads, not on the raw string."""
+    return wire_bytes(dumps_answer(payload))
+
+
+def item_bytes(item: Any) -> int:
+    """Bytes one list item adds to an answer as received: its escaped text
+    plus a separator."""
+    return wire_bytes(json.dumps(item, ensure_ascii=False)) - _ENVELOPE_BYTES + 2
+
+
 def cap_answer(
     payload: dict[str, Any],
     keys: list[str],
     hint: str,
     max_bytes: int = ANSWER_MAX_BYTES,
 ) -> int:
-    """Trim ``payload[k]`` for ``k`` in ``keys`` until the compact JSON is at
-    most ``max_bytes``. Items go from the end of the longest list first. When
-    anything went, sets ``truncated``, adds to ``dropped`` and sets ``hint``;
-    returns the number of items dropped."""
+    """Trim ``payload[k]`` for ``k`` in ``keys`` until the answer is at most
+    ``max_bytes`` as received (``answer_bytes``). Items go from the end of
+    the longest list first. When anything went, sets ``truncated``, adds to
+    ``dropped`` and sets ``hint``; returns the number of items dropped."""
     # The hint is part of the answer when anything is cut, so count it in.
-    reserve = len(hint.encode("utf-8")) + 48
+    reserve = item_bytes(hint) + 48
     dropped = _trim(
         payload,
         lambda: _top_lists(payload, keys),
         max_bytes - reserve,
         answer_bytes,
-        lambda item: len(dumps_answer(item).encode("utf-8")) + 2,
+        item_bytes,
     )
     if dropped:
         payload["truncated"] = True
@@ -334,34 +349,40 @@ def clip_strings(payload: dict[str, Any], budget: int) -> int:
 
 
 def cap_tool_answer(tool: str, result: Any, kwargs: dict[str, Any]) -> Any:
-    """Bring a tool's answer under its ceiling in TOOL_CAPS.
+    """Bring a tool's answer under its ceiling in TOOL_CAPS, measured as the
+    agent receives it (``wire_bytes``).
 
     An answer that fits comes back unchanged. A larger JSON object comes
     back as compact JSON with whole list items dropped (the longest list
     first, from its tail), then the longest strings shortened if that is not
-    enough, and ``truncated``, ``dropped`` and ``hint`` set. Plain text is
-    cut at a line break with a closing note. Anything else, and every answer
-    of a call that passed one of SIZE_ARGS, is left alone.
+    enough, and ``truncated``, ``dropped`` and ``hint`` set. A JSON list is
+    trimmed the same way under an ``items`` key. Plain text is cut at a line
+    break with a closing note. Whatever the shape, the text returned never
+    weighs more than the ceiling. Non-string answers, and every answer of a
+    call that passed one of SIZE_ARGS, are left alone.
     """
     if not isinstance(result, str):
         return result
     if any(kwargs.get(arg) for arg in SIZE_ARGS):
         return result
     spec = TOOL_CAPS.get(tool, ToolCap())
-    if len(result.encode("utf-8")) <= spec.max_bytes:
+    if wire_bytes(result) <= spec.max_bytes:
         return result
     hint = (
         f"Answer cut to about {spec.max_bytes // 1000} KB. {spec.hint or _GENERIC_HINT}"
     )
     try:
-        payload = json.loads(result)
+        parsed = json.loads(result)
     except ValueError:
         return _cut_text(result, spec.max_bytes, hint)
-    if not isinstance(payload, dict):
-        return result
+    if isinstance(parsed, list):
+        parsed = {"items": parsed}
+    elif not isinstance(parsed, dict):
+        return _cut_text(result, spec.max_bytes, hint)
+    payload: dict[str, Any] = parsed
     if answer_bytes(payload) <= spec.max_bytes:
         return dumps_answer(payload)
-    budget = spec.max_bytes - len(hint.encode("utf-8")) - 48
+    budget = spec.max_bytes - item_bytes(hint) - 48
     dropped = 0
     # The lists the spec names go first; the others only if that is not
     # enough, so the ceiling holds whatever the answer's shape.
@@ -371,21 +392,75 @@ def cap_tool_answer(tool: str, result: Any, kwargs: dict[str, Any]) -> Any:
             lambda keys=keys: _nested_lists(payload, keys),
             budget,
             answer_bytes,
-            lambda item: len(dumps_answer(item).encode("utf-8")) + 2,
+            item_bytes,
         )
     clipped = clip_strings(payload, budget)
     if dropped or clipped:
         payload["truncated"] = True
         payload["dropped"] = (payload.get("dropped") or 0) + dropped
         payload["hint"] = hint
+    text = dumps_answer(payload)
+    if wire_bytes(text) <= spec.max_bytes:
+        return text
+    return _hard_fit(payload, spec.max_bytes, hint)
+
+
+# How many of the keys _hard_fit dropped it names; `omitted_total` counts all.
+_OMITTED_NAMED = 10
+
+
+def _hard_fit(payload: dict[str, Any], max_bytes: int, hint: str) -> str:
+    """Last resort when dropping items and clipping strings is not enough
+    (many short strings, a deep object): the heaviest top-level keys go
+    whole, the first few named under ``omitted`` and all counted under
+    ``omitted_total``, until the answer fits."""
+    payload["truncated"] = True
+    payload["hint"] = hint
+    omitted: list[str] = []
+    kept = ("truncated", "hint", "omitted", "omitted_total")
+    for _ in range(8):
+        payload.pop("omitted", None)
+        payload.pop("omitted_total", None)
+        if omitted:
+            payload["omitted"] = omitted[:_OMITTED_NAMED]
+            payload["omitted_total"] = len(omitted)
+        excess = answer_bytes(payload) - max_bytes
+        if excess <= 0:
+            break
+        weights = {k: item_bytes(payload[k]) for k in payload if k not in kept}
+        if not weights:
+            break
+        # Heaviest first, as many as the excess asks for, then measure again.
+        for key in sorted(weights, key=weights.__getitem__, reverse=True):
+            if excess <= 0:
+                break
+            del payload[key]
+            omitted.append(key)
+            excess -= weights[key] + item_bytes(key)
+    if answer_bytes(payload) > max_bytes:
+        # Only the note itself is left and still too long (a tiny ceiling).
+        payload = {"truncated": True, "hint": _cut_text(hint, max_bytes - 40, "")}
     return dumps_answer(payload)
 
 
+def fit_wire(text: str, max_bytes: int, hint: str = _GENERIC_HINT) -> str:
+    """``text`` as is when its wire size fits ``max_bytes``, else cut to fit:
+    the guard for a path where the structured cap could not run."""
+    if wire_bytes(text) <= max_bytes:
+        return text
+    return _cut_text(text, max_bytes, hint)
+
+
 def _cut_text(text: str, max_bytes: int, hint: str) -> str:
-    """Plain text cut at a line break under ``max_bytes``, with a note."""
-    note = f"\n[{hint}]"
-    room = max_bytes - len(note.encode("utf-8"))
+    """Plain text cut at a line break, with a note, so the whole weighs at
+    most ``max_bytes`` as received."""
+    note = f"\n[{hint}]" if hint else ""
+    room = max_bytes - wire_bytes(note)
     head = text.encode("utf-8")[: max(room, 0)].decode("utf-8", "ignore")
+    # Escaping makes the received form longer than the raw bytes: shorten
+    # by what is still over, in characters, until it fits.
+    while head and (over := wire_bytes(head + note) - max_bytes) > 0:
+        head = head[: max(0, len(head) - over)]
     newline = head.rfind("\n")
     if newline > len(head) // 2:
         head = head[:newline]

@@ -55,13 +55,18 @@ def _fit_search_answer(
     if dropped:
         payload["dropped"] = dropped
         payload["hint"] = "Pass a larger limit for more hits."
-    excess = answer_bytes(payload) - target
-    if hits and excess > 0 and isinstance(hits[0].get("body"), str):
+    # Characters, not bytes, and escaping weighs more than one per quote or
+    # line break: measure again after each cut.
+    for _ in range(3):
+        excess = answer_bytes(payload) - target
+        if not hits or excess <= 0 or not isinstance(hits[0].get("body"), str):
+            break
         body = hits[0]["body"]
         keep = max(300, len(body) - excess - 16)
-        if keep < len(body):
-            hits[0]["body"], _ = clip(body, keep)
-            hits[0]["body_clipped"] = True
+        if keep >= len(body):
+            break
+        hits[0]["body"], _ = clip(body, keep)
+        hits[0]["body_clipped"] = True
 
 
 # Byte target for a knowledge_list answer at the default limit, for the same
@@ -79,8 +84,19 @@ def _fit_list_answer(payload: dict, target: int = LIST_TARGET_BYTES) -> int:
 
     entries: list[dict] = payload.get("entries") or []
     hint = "Page with offset=next_offset, or pass a larger limit for more."
-    # Room for the hint and the dropped counter, should briefs have to go.
-    room = target - len(hint) - 32
+    # Room for the keys added below, should briefs have to go.
+    room = target - (
+        answer_bytes(
+            {
+                "dropped": 999,
+                "hint": hint,
+                "returned": 999,
+                "has_more": True,
+                "next_offset": 99_999,
+            }
+        )
+        - answer_bytes({})
+    )
     for e in reversed(entries[1:]):
         if answer_bytes(payload) <= target:
             return 0

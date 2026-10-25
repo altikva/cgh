@@ -68,10 +68,58 @@ def duckdb_available() -> bool:
 # adapter is all we cache; close() on it releases everything.
 _conns: dict[str, GraphDB] = {}
 _ro_conns: dict[str, GraphDB] = {}
+# Per repo, how many invalidated connections were dropped from the caches.
+# A reindex compares it before and after: a change means a fatal error hit
+# some write of the run, even one a caller caught and only logged.
+_invalidations: dict[str, int] = {}
+
+
+class GraphInvalidatedError(RuntimeError):
+    """The graph database stays unusable in this process after a fatal
+    DuckDB error: reopening it handed back the same poisoned instance,
+    because something else in the process still holds a connection to it."""
 
 
 def _cache_key(repo_root: str | Path | None) -> str:
     return str((Path(repo_root) if repo_root else Path.cwd()).resolve())
+
+
+def _is_invalidated(conn: GraphDB | None) -> bool:
+    return conn is not None and bool(getattr(conn, "invalidated", False))
+
+
+def _drop_if_invalidated(key: str) -> None:
+    """Close and forget every cached connection of ``key`` once one of them
+    met a fatal DuckDB error. DuckDB keeps one database instance per file
+    and process while any connection to it is open, so the RW and the RO
+    entry must both go before a reopen can get a fresh instance."""
+    if _is_invalidated(_conns.get(key)) or _is_invalidated(_ro_conns.get(key)):
+        reset_connection(key)
+
+
+def invalidation_count(repo_root: str | Path | None = None) -> int:
+    """How many fatal DuckDB errors poisoned this repo's graph connection in
+    this process, counting a cached one not dropped yet. Monotonic."""
+    key = _cache_key(repo_root)
+    pending = _is_invalidated(_conns.get(key)) or _is_invalidated(_ro_conns.get(key))
+    return _invalidations.get(key, 0) + (1 if pending else 0)
+
+
+def _ensure_usable(conn: GraphDB) -> GraphDB:
+    """Fail loudly when a freshly opened connection is already invalidated,
+    instead of caching it and answering every query with an error."""
+    healthy = getattr(conn, "healthy", None)
+    if healthy is None or healthy():
+        return conn
+    try:
+        conn.close()
+    except Exception:
+        pass
+    raise GraphInvalidatedError(
+        "the graph database cannot be reopened in this process after a fatal "
+        "DuckDB error; restart the cgh owner (cgh stop) so the next call "
+        "opens it fresh"
+    )
 
 
 _atexit_registered = False
@@ -131,6 +179,7 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     global _atexit_registered
 
     key = _cache_key(repo_root)
+    _drop_if_invalidated(key)
     cached = _conns.get(key)
     if cached is not None:
         return cached
@@ -171,7 +220,7 @@ def get_connection(repo_root: str | Path | None = None) -> GraphDB:
     from codegraph.core.db_duckdb import DuckDBGraphDB
 
     db_path = db_dir / _DUCKDB_FILE
-    conn = DuckDBGraphDB(str(db_path), read_only=False)
+    conn = _ensure_usable(DuckDBGraphDB(str(db_path), read_only=False))
     _conns[key] = conn
     return conn
 
@@ -182,6 +231,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
     Returns None if the DB is locked or absent, caller should handle gracefully.
     """
     key = _cache_key(repo_root)
+    _drop_if_invalidated(key)
     cached = _ro_conns.get(key)
     if cached is not None:
         return cached
@@ -215,7 +265,7 @@ def get_readonly_connection(repo_root: str | Path | None = None) -> GraphDB | No
     if not db_path.exists():
         return None
     try:
-        conn = DuckDBGraphDB(str(db_path), read_only=True)
+        conn = _ensure_usable(DuckDBGraphDB(str(db_path), read_only=True))
         _ro_conns[key] = conn
         return conn
     except Exception:
@@ -232,11 +282,16 @@ def reset_connection(repo_root: str | Path | None = None) -> None:
     every cached connection closes (atexit, owner shutdown).
     """
     keys = [_cache_key(repo_root)] if repo_root else None
+    poisoned: set[str] = set()
     for cache in (_conns, _ro_conns):
         for key in keys if keys is not None else list(cache):
             obj = cache.pop(key, None)
             if obj is None:
                 continue
+            if _is_invalidated(obj) and key not in poisoned:
+                # Keeps invalidation_count monotonic across the drop.
+                poisoned.add(key)
+                _invalidations[key] = _invalidations.get(key, 0) + 1
             try:
                 obj.close()
             except Exception as exc:

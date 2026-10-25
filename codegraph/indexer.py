@@ -2012,11 +2012,57 @@ def _is_graph_corrupt(exc: BaseException) -> bool:
     graph must be rebuilt, not a transient failure to retry as-is. DuckDB
     reports a corrupt ART index as 'Failed to delete all rows from index'
     and, once the connection is poisoned, 'database has been invalidated'."""
+    if isinstance(exc, GraphWriteError) or is_fatal_graph_error(exc):
+        return True
     m = str(exc).lower()
     return (
         "failed to delete all rows from index" in m
         or "database has been invalidated" in m
     )
+
+
+class GraphWriteError(RuntimeError):
+    """An index run whose writes did not all land in the graph: a fatal
+    DuckDB error hit the connection during the run (even one a step caught
+    and only logged), or the sanity check after the run failed. The run must
+    not be reported as a success, nor the index as fresh."""
+
+
+def _check_write_landed(
+    repo_root: Path, invalidations_before: int, stats: dict
+) -> None:
+    """Sanity check run before an index reports success and writes the scan
+    metadata that makes scan_status call the index fresh.
+
+    Raises GraphWriteError when the graph connection was invalidated during
+    the run, when the graph does not answer a query, or when it holds no
+    File node although the run indexed files. Files left half written (a
+    File node without its completion stamp) are listed in
+    ``stats["incomplete_files"]`` and counted as errors."""
+    from codegraph.core.db import invalidation_count
+
+    if invalidation_count(repo_root) != invalidations_before:
+        raise GraphWriteError(
+            "a fatal DuckDB error hit the graph during this index run, so some "
+            "of its writes may not have landed"
+        )
+    try:
+        conn = get_connection(repo_root)
+        files = conn.count_nodes("File")
+        stale, _orphans = conn.unstamped_files()
+    except Exception as exc:
+        raise GraphWriteError(
+            f"graph sanity check failed after indexing: {exc}"
+        ) from exc
+    indexed = int(stats.get("indexed") or stats.get("reindexed_count") or 0)
+    if indexed > 0 and files == 0:
+        raise GraphWriteError(
+            f"graph sanity check failed: {indexed} file(s) indexed but the graph "
+            "holds no File node"
+        )
+    if stale:
+        stats["incomplete_files"] = stale[:20]
+        stats["errors"] = int(stats.get("errors") or 0) + len(stale)
 
 
 def _recover_corrupt_graph(repo_root: Path) -> None:
@@ -2055,7 +2101,10 @@ def is_fatal_graph_error(exc: BaseException) -> bool:
     but this result wipes the graph on its own: an unrelated error that merely
     quotes such a sentence (a file named after it, a tool argument echoed in
     a message) must never count. So the exception has to be a duckdb.Error,
-    here or in its cause chain, and the text has to match from the start."""
+    here or in its cause chain, and the text has to match from the start. A
+    duckdb.FatalException counts whatever its text (a checkpoint that could
+    not write the file, for one): DuckDB raises it only once the database
+    instance is invalidated, and every later statement fails the same way."""
     try:
         import duckdb
     except ImportError:
@@ -2064,6 +2113,8 @@ def is_fatal_graph_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        if isinstance(current, duckdb.FatalException):
+            return True
         if isinstance(current, duckdb.Error) and _FATAL_GRAPH_ERROR.match(
             str(current).lstrip()
         ):
@@ -2217,12 +2268,15 @@ def _index_repo_recovering(
         if not _is_graph_corrupt(exc):
             raise
         from codegraph.state.activity import log as _activity_log
+        from codegraph.state.scan_meta import clear_meta
 
         _activity_log(Path(repo_root), "graph_corrupt_recover", str(exc)[:200])
         _recover_corrupt_graph(Path(repo_root))
+        clear_meta(Path(repo_root))
         # One retry on a fresh graph, forced full so nothing is skipped.
         # Calls _index_repo directly, so a second corruption propagates
-        # instead of looping.
+        # instead of looping, and the scan metadata stays cleared: the index
+        # is not reported fresh after a run that failed.
         return _index_repo(
             repo_root,
             verbose=verbose,
@@ -2305,6 +2359,9 @@ def _index_repo(
         if method == "git_diff":
             method = "auto"
 
+    from codegraph.core.db import invalidation_count
+
+    invalidations_before = invalidation_count(repo_root)
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
     take_import_coverage()  # drop anything a watcher left behind
     take_import_coverage_partial()
@@ -2404,6 +2461,10 @@ def _index_repo(
     if deletions:
         stats["deleted"] = len(deletions)
 
+    # Before claiming success: did every write land? Raises GraphWriteError,
+    # which index_repo answers with one rebuild from scratch.
+    _check_write_landed(repo_root, invalidations_before, stats)
+
     # Persist scan metadata (git HEAD + branch + stats) for scan_status
     try:
         from codegraph.state.scan_meta import write_meta
@@ -2462,9 +2523,32 @@ def incremental_reindex(
     from codegraph.state.index_lock import index_lock
 
     with index_lock(repo_root):
-        return _incremental_reindex(
-            repo_root, on_file=on_file, on_discovery=on_discovery
-        )
+        try:
+            return _incremental_reindex(
+                repo_root, on_file=on_file, on_discovery=on_discovery
+            )
+        except Exception as exc:
+            if not _is_graph_corrupt(exc):
+                raise
+            # A blob diff cannot tell which writes a fatal error lost: the
+            # stored blob shas say "unchanged" for files whose nodes or edges
+            # never landed. Rebuild from source instead (a second failure
+            # propagates), and say so in the result.
+            from codegraph.state.activity import log as _activity_log
+            from codegraph.state.scan_meta import clear_meta
+
+            root = Path(repo_root)
+            _activity_log(root, "graph_corrupt_recover", str(exc)[:200])
+            _recover_corrupt_graph(root)
+            clear_meta(root)
+            stats = _index_repo(
+                root, on_file=on_file, on_discovery=on_discovery, method="os_walk"
+            )
+            return {
+                "mode": "rebuilt_after_fatal",
+                "recovered_from": str(exc)[:200],
+                **stats,
+            }
 
 
 def _incremental_reindex(
@@ -2550,6 +2634,10 @@ def _incremental_reindex(
         }
 
     head_shas.update(_untracked_blob_shas(repo_root))
+
+    from codegraph.core.db import invalidation_count
+
+    invalidations_before = invalidation_count(repo_root)
 
     if subrepos:
         head_shas = {
@@ -2712,9 +2800,15 @@ def _incremental_reindex(
         "deleted_count": deleted_count,
         "fts_orphans_purged": purged,
         "unchanged_count": max(0, len(head_shas) - len(to_index)),
-        "errors": errors,
+        "errors": errors + delete_errors,
         "elapsed_s": elapsed,
     }
+    if delete_errors:
+        result["delete_errors"] = delete_errors
+
+    # Before claiming success: did every write land? Raises GraphWriteError,
+    # which incremental_reindex answers with a rebuild from scratch.
+    _check_write_landed(repo_root, invalidations_before, result)
 
     # Refresh scan metadata (HEAD + branch) since we just caught up
     try:
@@ -2723,7 +2817,7 @@ def _incremental_reindex(
             {
                 "indexed": len(reindexed),
                 "skipped": result["unchanged_count"],
-                "errors": errors,
+                "errors": result["errors"],
                 "elapsed_s": elapsed,
                 "method": "incremental",
             },

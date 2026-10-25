@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
-import json
 import os
+
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -71,4 +72,4 @@ def register(mcp) -> None:
                 row["scope"] = child.name
                 rows.append(row)
 
-        return json.dumps({"total": len(rows), "findings": rows}, indent=2)
+        return dumps_answer({"total": len(rows), "findings": rows})

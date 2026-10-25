@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+from codegraph.server._budget import dumps_answer
+
 
 def _digest_tags(caller_tags: str) -> str:
     """Tags for a session digest. Always carries 'session-digest' so resume's
@@ -55,13 +57,18 @@ def _fit_search_answer(
     if dropped:
         payload["dropped"] = dropped
         payload["hint"] = "Pass a larger limit for more hits."
-    excess = answer_bytes(payload) - target
-    if hits and excess > 0 and isinstance(hits[0].get("body"), str):
+    # Characters, not bytes, and escaping weighs more than one per quote or
+    # line break: measure again after each cut.
+    for _ in range(3):
+        excess = answer_bytes(payload) - target
+        if not hits or excess <= 0 or not isinstance(hits[0].get("body"), str):
+            break
         body = hits[0]["body"]
         keep = max(300, len(body) - excess - 16)
-        if keep < len(body):
-            hits[0]["body"], _ = clip(body, keep)
-            hits[0]["body_clipped"] = True
+        if keep >= len(body):
+            break
+        hits[0]["body"], _ = clip(body, keep)
+        hits[0]["body_clipped"] = True
 
 
 # Byte target for a knowledge_list answer at the default limit, for the same
@@ -79,8 +86,19 @@ def _fit_list_answer(payload: dict, target: int = LIST_TARGET_BYTES) -> int:
 
     entries: list[dict] = payload.get("entries") or []
     hint = "Page with offset=next_offset, or pass a larger limit for more."
-    # Room for the hint and the dropped counter, should briefs have to go.
-    room = target - len(hint) - 32
+    # Room for the keys added below, should briefs have to go.
+    room = target - (
+        answer_bytes(
+            {
+                "dropped": 999,
+                "hint": hint,
+                "returned": 999,
+                "has_more": True,
+                "next_offset": 99_999,
+            }
+        )
+        - answer_bytes({})
+    )
     for e in reversed(entries[1:]):
         if answer_bytes(payload) <= target:
             return 0
@@ -155,7 +173,7 @@ def register(mcp) -> None:
             )
         except Exception:
             pass
-        return json.dumps({"id": entry_id, "kind": kind, "title": title})
+        return dumps_answer({"id": entry_id, "kind": kind, "title": title})
 
     @mcp.tool()
     @_logged_tool
@@ -287,7 +305,7 @@ def register(mcp) -> None:
 
             entry = knowledge_get(entry_id, repo_root=_srv._root)
             if entry is None:
-                return json.dumps({"error": f"no knowledge entry with id {entry_id}"})
+                return dumps_answer({"error": f"no knowledge entry with id {entry_id}"})
             return dumps_answer(
                 {"entry_id": entry_id, "total": 1, "returned": 1, "has_more": False,
                  "entries": json.loads(json.dumps([entry], default=str))}
@@ -359,12 +377,11 @@ def register(mcp) -> None:
         from codegraph.state.call_log import knowledge_terms as _terms
 
         terms = _terms(min_count=min_count, repo_root=_srv._root)
-        return json.dumps(
+        return dumps_answer(
             {
                 "total": len(terms),
                 "terms": [{"term": t, "count": n} for t, n in terms],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -374,7 +391,7 @@ def register(mcp) -> None:
         from codegraph.state.call_log import knowledge_forget as _forget
 
         ok = _forget(entry_id=entry_id, repo_root=_srv._root)
-        return json.dumps({"id": entry_id, "forgotten": ok})
+        return dumps_answer({"id": entry_id, "forgotten": ok})
 
     @mcp.tool()
     @_logged_tool
@@ -416,7 +433,7 @@ def register(mcp) -> None:
             # Plain relevance: the target must not depend on earlier verdicts.
             hits = _search(query, limit=1, repo_root=_srv._root, rank_outcomes=False)
             if not hits:
-                return json.dumps({"error": f"no knowledge entry matches {query!r}"})
+                return dumps_answer({"error": f"no knowledge entry matches {query!r}"})
             target, title = int(hits[0]["id"]), hits[0]["title"]
         try:
             outcome_id = knowledge_outcome_record(
@@ -429,7 +446,7 @@ def register(mcp) -> None:
                 repo_root=_srv._root,
             )
         except ValueError as exc:
-            return json.dumps({"error": str(exc)})
+            return dumps_answer({"error": str(exc)})
         entries, files = knowledge_outcome_scores(repo_root=_srv._root)
         refs = [f.strip() for f in file_refs.split(",") if f.strip()]
         out: dict = {"id": outcome_id, "verdict": verdict}
@@ -441,7 +458,7 @@ def register(mcp) -> None:
                 out["outcome"] = entries[target].summary()
         if refs:
             out["files"] = {f: files[f].summary() for f in refs if f in files}
-        return json.dumps(out, default=str)
+        return dumps_answer(out, default=str)
 
     @mcp.tool()
     @_logged_tool
@@ -478,7 +495,7 @@ def register(mcp) -> None:
             _log(_srv._root, "session_compact", f"{session_id} id={entry_id}")
         except Exception:
             pass
-        return json.dumps(
+        return dumps_answer(
             {
                 "id": entry_id,
                 "session_id": session_id,

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import json
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -35,8 +35,8 @@ def register(mcp) -> None:
         try:
             out = _fi(_srv._root, url, ttl_hours=ttl_hours, force=force, config=cfg)
         except FetchError as exc:
-            return json.dumps({"error": str(exc)})
-        return json.dumps(out)
+            return dumps_answer({"error": str(exc)})
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -45,4 +45,4 @@ def register(mcp) -> None:
         network: reads the local index. Returns url, title, snippet."""
         from codegraph.analysis.fetch_index import search_fetched as _sf
 
-        return json.dumps({"results": _sf(_srv._root, query, limit=limit)})
+        return dumps_answer({"results": _sf(_srv._root, query, limit=limit)})

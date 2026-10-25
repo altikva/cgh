@@ -238,6 +238,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   accent escaped, so capped answers reached 4 to 5.7 KB. The answer now
   stays compact, names only the scopes it shows, and its size is checked
   on the text the agent receives. Other federated tools also stay compact.
+- **Every tool's size cap now holds on what the agent receives.** Caps were
+  measured on the raw answer, but the agent gets it escaped inside a
+  structured-content envelope, about 10% larger, so answers arrived over
+  their cap (file_summary at 2.1 KB against 2 KB). The caps keep their
+  values; a large JSON list is now trimmed under `items` instead of passing
+  whole. Every tool also answers compact JSON, with no indentation or
+  spaces after separators, so symbol_lookup answers weigh about 23% less.
+  Clients that parse the JSON see no change.
 - **`cgh pii scan` now finds provider API tokens** (cgh-pii 0.4.1). It
   caught AWS keys but missed Anthropic, OpenAI, GitHub, GitLab, Slack,
   Google and Stripe live keys. Each is now a `secret.*` finding at block

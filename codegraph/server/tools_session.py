@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import re
 
+from codegraph.server._budget import dumps_answer
+
 # The share of the post-instructions budget reserved for the knowledge bucket,
 # so earlier sections (digests, and especially contentless auto checkpoints)
 # cannot starve it. Without this a long standing instruction plus a few digests
@@ -526,7 +528,7 @@ def register(mcp) -> None:
             repo_root=_srv._root,
             supersedes=previous[0]["id"] if previous else 0,
         )
-        return json.dumps({"id": entry_id, "session_id": session_id})
+        return dumps_answer({"id": entry_id, "session_id": session_id})
 
     @mcp.tool()
     @_logged_tool
@@ -565,7 +567,7 @@ def register(mcp) -> None:
                 budget_kb=budget_kb,
                 scope=scope,
             )
-            return json.dumps(out, indent=2, default=str)
+            return dumps_answer(out, default=str)
         if detail or full or scope == "all":
             bundle = build_resume_bundle(
                 _srv._root,
@@ -574,6 +576,6 @@ def register(mcp) -> None:
                 budget_kb=budget_kb,
                 scope=scope,
             )
-            return json.dumps(bundle, indent=2, default=str)
+            return dumps_answer(bundle, default=str)
         summary = resume_summary(_srv._root, session_id=session_id, task=task)
-        return json.dumps(summary, ensure_ascii=False, default=str)
+        return dumps_answer(summary, default=str)

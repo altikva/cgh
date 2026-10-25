@@ -8,8 +8,9 @@
 
 from __future__ import annotations
 
-import json
 import os
+
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -88,9 +89,7 @@ def register(mcp) -> None:
             for row in rows:
                 row["scope"] = scope
                 results.append(row)
-        return json.dumps(
-            {"query": q_str, "results": results, "count": len(results)}, indent=2
-        )
+        return dumps_answer({"query": q_str, "results": results, "count": len(results)})
 
     @mcp.tool()
     @_logged_tool
@@ -126,10 +125,10 @@ def register(mcp) -> None:
                     }
                 )
         if not outline:
-            return json.dumps(
+            return dumps_answer(
                 {"file": file_path, "outline": [], "note": "No sections found"}
             )
-        return json.dumps({"file": file_path, "outline": outline}, indent=2)
+        return dumps_answer({"file": file_path, "outline": outline})
 
     @mcp.tool()
     @_logged_tool
@@ -213,11 +212,10 @@ def register(mcp) -> None:
             for r in rows:
                 r["scope"] = scope
                 results.append(r)
-        return json.dumps(
+        return dumps_answer(
             {
                 "symbol": symbol_name,
                 "doc_references": results,
                 "count": len(results),
-            },
-            indent=2,
+            }
         )

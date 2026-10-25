@@ -236,6 +236,19 @@ def _budget_dumps(payload: dict) -> str:
     return dumps_answer(payload)
 
 
+def _hard_cap(tool: str, result, kwargs: dict):
+    """The ceiling held even when the structured cap failed: an over-cap
+    text answer is cut as plain text."""
+    from codegraph.server._budget import SIZE_ARGS, TOOL_CAPS, ToolCap, fit_wire
+
+    if not isinstance(result, str) or any(kwargs.get(a) for a in SIZE_ARGS):
+        return result
+    try:
+        return fit_wire(result, TOOL_CAPS.get(tool, ToolCap()).max_bytes)
+    except Exception:
+        return result
+
+
 # Callers whose answers skip the size ceiling: they are programs, not agents.
 _UNCAPPED_ORIGINS = frozenset({"cli", "hook"})
 
@@ -271,11 +284,14 @@ def _logged_tool(fn):
                     pass  # best-effort note: never fail the answer on it
             # The CLI and the hooks render or filter the full answer
             # themselves; an agent re-reads every byte on each later turn.
+            # This is the last step, after every note above, and the cap is
+            # measured on the escaped text the agent receives.
             if origin not in _UNCAPPED_ORIGINS:
                 try:
                     result = cap_tool_answer(tool_name, result, kwargs)
                 except Exception:
                     _log.debug("answer cap failed for %s", tool_name, exc_info=True)
+                    result = _hard_cap(tool_name, result, kwargs)
             return result
         except Exception as exc:
             success = False

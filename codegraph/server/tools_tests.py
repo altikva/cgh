@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 from codegraph.analysis import impact as _impact
+from codegraph.server._budget import dumps_answer
 
 # Cap untested output so a large repo cannot produce an unbounded list.
 _UNTESTED_CAP = 200
@@ -104,7 +104,7 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -126,11 +126,11 @@ def register(mcp) -> None:
         edges, not coverage (see `note`).
         """
         if _srv._root is None:
-            return json.dumps({"error": "owner root not initialised"})
+            return dumps_answer({"error": "owner root not initialised"})
         report = _impact.build_impact_report(
             _get_conn(), str(_srv._root), list(changed_files)
         )
-        return json.dumps(report, indent=2)
+        return dumps_answer(report)
 
     @mcp.tool()
     @_logged_tool
@@ -189,4 +189,4 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)

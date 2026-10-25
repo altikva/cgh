@@ -174,7 +174,9 @@ def test_large_file_in_an_unparsed_language_answers_its_head(setup):
     _commit(proj, "notes.xyz", "".join(f"row {i} {'q' * 80}\n" for i in range(200)))
     out = json.loads(t["file_at_ref"]("notes.xyz", "main"))
     assert "outline" not in out and "lines" not in out
-    assert [x["line"] for x in out["head"]] == list(range(1, 31))
+    lines = [x["line"] for x in out["head"]]
+    # The first lines in order, as many as fit 4 KB as received.
+    assert lines == list(range(1, len(lines) + 1)) and 20 <= len(lines) <= 30
     assert out["total_lines"] == 200 and "start_line" in out["hint"]
 
 

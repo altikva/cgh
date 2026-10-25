@@ -279,6 +279,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   It is skipped. Before, a file that disappeared between the directory walk
   and its turn, for example a ticket another tool was moving, stopped the
   whole index with `FileNotFoundError`.
+- **A reindex no longer reports success after a fatal DuckDB error.** When
+  the database was invalidated mid-run (a failed checkpoint, a corrupt
+  index), `incremental_reindex` still returned `mode: incremental`, marked
+  the index fresh and left the poisoned connection cached, so every later
+  query failed. The connection is now dropped and reopened, and a run whose
+  writes did not all land rebuilds the graph from source (reported as
+  `mode: rebuilt_after_fatal`) or fails without marking the index fresh. A
+  sanity check after each run also lists half-written files as errors.
 
 ## [0.18.0] - 2026-10-13
 

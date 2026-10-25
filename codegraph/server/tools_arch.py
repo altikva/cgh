@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 
 from codegraph.core.utils import short_path as _short_path
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -111,11 +111,11 @@ def register(mcp) -> None:
                 flat["subsystems"] = [
                     {k: v for k, v in s.items() if k != "scope"} for s in subsystems
                 ]
-            return json.dumps(flat, indent=2)
+            return dumps_answer(flat)
         out: dict = {"by_scope": scopes_out}
         if subsystems:
             out["subsystems"] = subsystems
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     def _subsystems(per_scope_cap: int = 8) -> list[dict]:
         """The biggest communities of each scope, for architecture_overview.
@@ -155,7 +155,7 @@ def register(mcp) -> None:
         Matches against file path, role, and module_doc (case-insensitive).
         """
         if not keyword.strip():
-            return json.dumps({"error": "keyword is required"})
+            return dumps_answer({"error": "keyword is required"})
 
         k = keyword.strip().lower()
 
@@ -202,13 +202,12 @@ def register(mcp) -> None:
             for v in hits_by_role.values()
             if not any("more" in str(e.get("path", "")) for e in v)
         )
-        return json.dumps(
+        return dumps_answer(
             {
                 "keyword": keyword,
                 "total": total,
                 "files_by_role": dict(hits_by_role),
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -259,7 +258,7 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -300,7 +299,7 @@ def register(mcp) -> None:
             resolution=resolution,
             max_items=max(1, int(max_items)),
         )
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -345,7 +344,7 @@ def register(mcp) -> None:
         )
         if warnings:
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -393,4 +392,4 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)

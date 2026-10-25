@@ -12,9 +12,10 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
+
+from codegraph.server._budget import dumps_answer
 
 # Cap on the number of files we score / return.
 _HOTSPOT_SCAN_CAP = 2000
@@ -66,11 +67,11 @@ def register(mcp) -> None:
         """
         root = _srv._root
         if root is None:
-            return json.dumps({"hotspots": [], "count": 0, "error": "no repo root"})
+            return dumps_answer({"hotspots": [], "count": 0, "error": "no repo root"})
 
         churn = _churn.file_churn(root)
         if not churn:
-            return json.dumps(
+            return dumps_answer(
                 {
                     "hotspots": [],
                     "count": 0,
@@ -98,7 +99,7 @@ def register(mcp) -> None:
         )
         items = min(len(churn), _HOTSPOT_SCAN_CAP)
         top = scored[: max(1, int(limit))]
-        return json.dumps(
+        return dumps_answer(
             {
                 "hotspots": top,
                 "count": len(top),
@@ -109,8 +110,7 @@ def register(mcp) -> None:
                     "(0.35), and recency (0.20). Git history is the parent "
                     "repo only, not federated."
                 ),
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -130,7 +130,7 @@ def register(mcp) -> None:
         """
         root = _srv._root
         if root is None:
-            return json.dumps(
+            return dumps_answer(
                 {"file": file_path, "authors": [], "error": "no repo root"}
             )
 
@@ -144,11 +144,10 @@ def register(mcp) -> None:
                 "no git history for this file (not tracked, not a git repo, "
                 "or git missing)"
             )
-        return json.dumps(
+        return dumps_answer(
             {
                 "file": file_path,
                 "authors": authors,
                 "note": note,
-            },
-            indent=2,
+            }
         )

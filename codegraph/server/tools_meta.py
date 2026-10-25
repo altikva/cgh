@@ -8,9 +8,8 @@
 
 from __future__ import annotations
 
-import json
-
 from codegraph.core.utils import short_path as _short_path
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -87,7 +86,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -165,7 +164,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -274,7 +273,7 @@ def register(mcp) -> None:
         # Trimmed before the session record below: what the cut leaves out
         # was not served, so the next call with this session_id gets it.
         subsystem = _subsystem_of(ctx)
-        dropped = _fit_context(ctx, subsystem)
+        dropped = _fit_context(ctx, subsystem, session_id, task)
         if dropped:
             ctx.token_estimate = _token_estimate(ctx)
 
@@ -395,8 +394,11 @@ def register(mcp) -> None:
         ("nodes", 1),
     )
 
-    def _fit_context(ctx, subsystem: dict | None) -> int:
-        """Drop the lowest-ranked items of ``ctx`` until its answer fits
+    def _fit_context(
+        ctx, subsystem: dict | None, session_id: str = "", task: str = ""
+    ) -> int:
+        """Drop the lowest-ranked items of ``ctx`` until its answer, measured
+        as received and with the same session_id and task, fits
         CONTEXT_MAX_BYTES; returns how many went."""
         from codegraph.server._budget import (
             CONTEXT_MAX_BYTES,
@@ -407,7 +409,7 @@ def register(mcp) -> None:
         # Room for the truncated, dropped and hint keys added when cut.
         budget = CONTEXT_MAX_BYTES - len(TOOL_CAPS["context_for_task"].hint) - 80
         dropped = 0
-        while answer_bytes(_context_payload(ctx, "", subsystem)) > budget:
+        while answer_bytes(_context_payload(ctx, session_id, subsystem, task)) > budget:
             for attr, floor in _CONTEXT_TRIM:
                 items = getattr(ctx, attr)
                 if len(items) > floor:
@@ -471,7 +473,7 @@ def register(mcp) -> None:
         from codegraph.state.call_log import clear_session
 
         removed = clear_session(session_id, repo_root=_srv._root)
-        return json.dumps({"session_id": session_id, "cleared": removed})
+        return dumps_answer({"session_id": session_id, "cleared": removed})
 
     @mcp.tool()
     @_logged_tool
@@ -483,4 +485,4 @@ def register(mcp) -> None:
         from codegraph.state.call_log import get_stats
 
         stats = get_stats(_srv._root)
-        return json.dumps(stats, indent=2)
+        return dumps_answer(stats)

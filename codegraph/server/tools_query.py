@@ -9,11 +9,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 
 from codegraph.core.utils import short_path as _short_path
+from codegraph.server._budget import dumps_answer
 
 # Forward call-chain traversal bounds for find_callees(max_depth>1): the
 # hop ceiling, the per-node edge fan-out, and the total callees returned.
@@ -150,7 +150,8 @@ def _hits_payload(
         )
         if excess <= 0 or shown <= 1:
             break
-        budget -= excess
+        # A small excess may not free a whole hit: take at least a line off.
+        budget -= max(excess, 100)
     return out
 
 
@@ -345,7 +346,7 @@ def register(mcp) -> None:
                     include_extra_dirs=False,
                 )
         except RefError as exc:
-            return json.dumps({"pattern": pattern, "error": str(exc)}, indent=2)
+            return dumps_answer({"pattern": pattern, "error": str(exc)})
         rows = [{"file": h.file, "line": h.line, "text": h.text} for h in hits]
 
         def build(slack: int) -> dict:
@@ -567,7 +568,7 @@ def register(mcp) -> None:
                     return _outline_answer(head, rel, text)
             out = slice_lines(rel, text, start_line, end_line)
         except RefError as exc:
-            return json.dumps({"path": path, "ref": ref, "error": str(exc)}, indent=2)
+            return dumps_answer({"path": path, "ref": ref, "error": str(exc)})
         payload = {**head, **out}
         if cap_answer(
             payload,
@@ -923,7 +924,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     def _definitions_query(name: str, role: str = "", layer: str = ""):
         """The graph query symbol_lookup runs for one name: functions,
@@ -1157,12 +1158,12 @@ def register(mcp) -> None:
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload, ensure_ascii=False)
+            return dumps_answer(payload)
         out = {"found": True, "name": name, "definitions": results, **verdict}
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2, ensure_ascii=False)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -1198,7 +1199,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -1354,7 +1355,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -1389,7 +1390,7 @@ def register(mcp) -> None:
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
-        return json.dumps(out, indent=2)
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -1409,7 +1410,7 @@ def register(mcp) -> None:
             if not os.path.isabs(path) and _srv._root:
                 path = str(_srv._root / path)
             hit = conn.query_node_field("File", "path", path, "path")
-            return json.dumps({"path": path, "indexed": hit is not None})
+            return dumps_answer({"path": path, "indexed": hit is not None})
         found = conn.find_nodes(
             "File",
             contains={"path": pattern} if pattern else None,
@@ -1417,9 +1418,8 @@ def register(mcp) -> None:
             order_by=["path"],
         )
         paths = [r["path"] for r in found]
-        return json.dumps(
-            {"pattern": pattern, "total": len(paths), "files": paths[: max(limit, 0)]},
-            indent=2,
+        return dumps_answer(
+            {"pattern": pattern, "total": len(paths), "files": paths[: max(limit, 0)]}
         )
 
     def _file_role_layer(conn, file_path: str) -> tuple[str, str]:
@@ -1827,4 +1827,4 @@ def register(mcp) -> None:
             from codegraph.server._budget import fit_tokens
 
             fit_tokens(payload, keys, max_tokens)
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)

@@ -26,6 +26,7 @@ from codegraph.server._budget import (
     CONTEXT_MAX_BYTES,
     TOOL_CAPS,
     cap_tool_answer,
+    wire_bytes,
 )
 
 
@@ -43,7 +44,7 @@ def _big(rows: int = 400) -> dict:
 def _assert_capped(
     raw: str, ceiling: int = ANSWER_MAX_BYTES, items_dropped: bool = True
 ) -> dict:
-    assert len(raw.encode("utf-8")) <= ceiling
+    assert wire_bytes(raw) <= ceiling
     out = json.loads(raw)
     assert out["truncated"] is True
     assert (out["dropped"] > 0) is items_dropped
@@ -76,11 +77,11 @@ def test_small_answer_is_returned_unchanged():
 
 
 def test_indented_answer_that_fits_once_compact_loses_nothing():
-    payload = {"rows": [{"file": f"f{i}.py", "line": i} for i in range(260)]}
+    payload = {"rows": [{"file": f"f{i}.py", "line": i} for i in range(240)]}
     raw = json.dumps(payload, indent=2)
     assert len(raw) > ANSWER_MAX_BYTES
     capped = cap_tool_answer("find_callers", raw, {})
-    assert len(capped) <= ANSWER_MAX_BYTES
+    assert wire_bytes(capped) <= ANSWER_MAX_BYTES
     assert json.loads(capped) == payload
 
 
@@ -113,13 +114,20 @@ def test_resume_keeps_the_standing_instructions():
 def test_plain_text_is_cut_with_a_note():
     text = "\n".join(f"row {i}" for i in range(5000))
     raw = cap_tool_answer("some_tool", text, {})
-    assert len(raw.encode()) <= ANSWER_MAX_BYTES
+    assert wire_bytes(raw) <= ANSWER_MAX_BYTES
     assert raw.splitlines()[-1].startswith("[Answer cut to about")
 
 
-def test_a_json_list_is_left_alone():
-    raw = json.dumps(list(range(10_000)))
+def test_a_small_json_list_is_left_alone():
+    raw = json.dumps(list(range(100)))
     assert cap_tool_answer("some_tool", raw, {}) is raw
+
+
+def test_a_large_json_list_is_trimmed_under_items():
+    out = _assert_capped(
+        cap_tool_answer("some_tool", json.dumps(list(range(10_000))), {})
+    )
+    assert out["items"][:3] == [0, 1, 2]
 
 
 # ---------------------------------------------------------------------------

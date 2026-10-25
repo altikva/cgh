@@ -9,6 +9,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Grep-like text answers, opt-in.** `pattern_search`, `find_callers`,
+  `search_symbols` and `symbol_lookup` take `format="text"`: one header
+  line of metadata, then the rows under their file path, like ripgrep.
+  On cgh's own index it weighs 6% (pattern_search) to 53% (find_callers)
+  fewer tokens than compact JSON, under the same size ceiling. Make it
+  the agents' default with `[mcp] answer_format = "text"` or
+  `CGH_ANSWER_FORMAT=text`; the default stays JSON, and the CLI and hooks
+  always get JSON.
 - **A hint before an unbounded content Grep.** A Grep in content mode
   with no `head_limit` over the whole tree, or with a pattern that matches
   broadly, returned every matching line, even with hook answers on (the

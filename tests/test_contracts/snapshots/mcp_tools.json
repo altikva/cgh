@@ -245,6 +245,10 @@
     "properties": {
       "fn_name": {
         "type": "string"
+      },
+      "format": {
+        "default": "",
+        "type": "string"
       }
     },
     "required": [
@@ -629,6 +633,10 @@
         "default": false,
         "type": "boolean"
       },
+      "format": {
+        "default": "",
+        "type": "string"
+      },
       "glob": {
         "default": "",
         "type": "string"
@@ -790,6 +798,10 @@
   },
   "search_symbols": {
     "properties": {
+      "format": {
+        "default": "",
+        "type": "string"
+      },
       "kinds": {
         "default": "",
         "type": "string"
@@ -865,6 +877,10 @@
   },
   "symbol_lookup": {
     "properties": {
+      "format": {
+        "default": "",
+        "type": "string"
+      },
       "layer": {
         "default": "",
         "type": "string"

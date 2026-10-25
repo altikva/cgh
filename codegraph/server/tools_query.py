@@ -616,6 +616,7 @@ def register(mcp) -> None:
         repo: str = "",
         ref: str = "",
         count_only: bool = False,
+        format: str = "",
     ) -> str:
         """
         Regex / substring pattern search across the indexed repo. Use this
@@ -658,6 +659,8 @@ def register(mcp) -> None:
                           (e.g. "origin/develop") straight from git, no
                           checkout needed; hit files are paths inside the
                           repo, read them with file_at_ref
+          format:         "text" answers a grep-like layout instead of
+                          JSON (default: the [mcp] answer_format setting)
 
         Example: pattern_search(r"@router\\.(get|post)", glob="*.py")
                  → list of route declarations with line numbers.
@@ -1034,7 +1037,9 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def symbol_lookup(name: str, role: str = "", layer: str = "") -> str:
+    def symbol_lookup(
+        name: str, role: str = "", layer: str = "", format: str = ""
+    ) -> str:
         """
         Find where a symbol (function, class, TF resource) is defined.
         Returns file path, line range, type, and docstring snippet, plus
@@ -1063,6 +1068,9 @@ def register(mcp) -> None:
         Every answer has `confidence` (high, medium, low); a low or empty
         one says `why` and gives `next` (a call to try) and, for a near
         miss, `candidates` (close names).
+
+        `format="text"` answers a grep-like layout instead of JSON (default:
+        the [mcp] answer_format setting).
         """
         results, warnings = _federate(_definitions_query(name, role, layer))
         if warnings and not (role or layer):
@@ -1167,7 +1175,7 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def find_callers(fn_name: str) -> str:
+    def find_callers(fn_name: str, format: str = "") -> str:
         """
         Find all functions that call `fn_name`. Federated across subrepos,
         each result tagged with `scope`. Note: cross-repo CALLS edges are
@@ -1190,6 +1198,9 @@ def register(mcp) -> None:
 
         For a Terraform address (var.region, google_x.y, module.m) it
         returns each block that uses it.
+
+        `format="text"` answers a grep-like layout instead of JSON (default:
+        the [mcp] answer_format setting).
         """
 
         from codegraph.analysis.callers import callers_of
@@ -1443,6 +1454,7 @@ def register(mcp) -> None:
         layer: str = "",
         kinds: str = "",
         name_only: bool = False,
+        format: str = "",
     ) -> str:
         """
         Find symbols (functions, classes, TF resources) whose NAME contains
@@ -1471,6 +1483,9 @@ def register(mcp) -> None:
         A sentence instead of a name is understood like in symbol_lookup
         (`interpreted_as`, `expanded`). Every answer has `confidence`; a
         low one says `why` and gives `next`.
+
+        `format="text"` answers a grep-like layout instead of JSON (default:
+        the [mcp] answer_format setting).
         """
         wanted = {k.strip() for k in kinds.split(",") if k.strip()}
 

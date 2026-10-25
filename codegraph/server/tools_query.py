@@ -647,7 +647,7 @@ def register(mcp) -> None:
         answer says `why` and gives `next`, a call to try instead.
 
         Args:
-          pattern:        regex by default, literal when regex=False
+          pattern:        Python-style regex on every backend (\\w \\d \\s \\b, lazy quantifiers, classes), literal when regex=False
           glob:           optional shell glob, e.g. "*.py", "api/handlers/*"
           max_results:    hard cap (default 50)
           regex:          treat pattern as regex (default True)

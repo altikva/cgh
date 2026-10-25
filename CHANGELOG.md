@@ -249,6 +249,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Versions 0.18.x and earlier keep their original license.
 
 ### Fixed
+- **`pattern_search` reads the same regex and glob on every backend.**
+  Without ripgrep, git grep ran the pattern as POSIX ERE, so `\w`, `\d`
+  and `\b` found nothing. The pattern is now Python-style everywhere:
+  git grep uses `-P` when git has PCRE, else POSIX classes, else the
+  Python backend. A glob with no `/` such as `module_*.py` now matches in
+  subfolders on every backend, and a glob with a `/` such as `api/**`
+  works with ripgrep, where it matched nothing. `ref=` searches get the
+  same fix.
 - **`pattern_search` answers stay under 2.5 KB.** In a federated project,
   adding the `scopes` note re-wrote the answer as indented JSON with every
   accent escaped, so capped answers reached 4 to 5.7 KB. The answer now

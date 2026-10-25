@@ -21,7 +21,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from codegraph.analysis.pattern import _MAX_LINE_LEN, PatternHit, _expand_braces
+from codegraph.analysis.pattern import (
+    _MAX_LINE_LEN,
+    PatternHit,
+    git_pathspecs,
+    git_regex_args,
+)
 from codegraph.analysis.terraform import git_env, git_toplevel, resolve_ref
 from codegraph.core.utils import quiet_subprocess_kwargs
 
@@ -167,12 +172,15 @@ def grep_at_ref(
     args = ["grep", "-n", "-I", "--no-color"]
     if not case_sensitive:
         args.append("-i")
-    args.append("-E" if regex else "-F")
     # "-e" so a pattern starting with "-" is never read as an option; the
-    # commit is a validated sha, so it cannot be one either.
-    args.extend(["-e", pattern, target.sha])
+    # commit is a validated sha, so it cannot be one either. A regex ERE
+    # cannot express, on a git without PCRE, goes to -E as written: there is
+    # no other backend for a tree at a commit.
+    rx_args = git_regex_args(pattern) if regex else ["-F", "-e", pattern]
+    args.extend(rx_args or ["-E", "-e", pattern])
+    args.append(target.sha)
     if glob:
-        args.extend(["--", *_expand_braces(glob)])
+        args.extend(["--", *git_pathspecs(glob)])
     try:
         r = _run_git(target.top, args)
     except (OSError, subprocess.SubprocessError) as exc:

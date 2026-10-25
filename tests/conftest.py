@@ -24,6 +24,15 @@ def _isolated_claude_settings_layers(tmp_path_factory, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_call_origin(monkeypatch):
+    """A test that runs a hook command in process sets CGH_ORIGIN=hook for
+    the rest of the run, and every later CLI call would then reach a live
+    owner as a hook, whose answers carry relative paths. Start each test
+    without it."""
+    monkeypatch.delenv("CGH_ORIGIN", raising=False)
+
+
 @pytest.fixture
 def sample_python(tmp_path: Path) -> Path:
     """Create a sample Python file for parser tests."""

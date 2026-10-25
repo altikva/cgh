@@ -252,6 +252,11 @@ def _hard_cap(tool: str, result, kwargs: dict):
 # Callers whose answers skip the size ceiling: they are programs, not agents.
 _UNCAPPED_ORIGINS = frozenset({"cli", "hook"})
 
+# Callers whose answers get repo-relative paths plus one `root` to rebuild
+# the absolute path. The CLI keeps absolute paths: its commands open the
+# files they are handed and do their own shortening for display.
+_RELATIVE_ORIGINS = frozenset({"agent", "hook"})
+
 
 def _logged_tool(fn):
     """Decorator that logs every MCP tool call to call_log.db."""
@@ -259,6 +264,7 @@ def _logged_tool(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         from codegraph.server._budget import cap_tool_answer
+        from codegraph.server._paths import relative_result
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
@@ -282,6 +288,11 @@ def _logged_tool(fn):
                     result = _add_scopes(result, _scope_commits(_root))
                 except Exception:
                     pass  # best-effort note: never fail the answer on it
+            if origin in _RELATIVE_ORIGINS:
+                try:
+                    result = relative_result(result, _root)
+                except Exception:
+                    _log.debug("relative paths failed for %s", tool_name, exc_info=True)
             # The CLI and the hooks render or filter the full answer
             # themselves; an agent re-reads every byte on each later turn.
             # This is the last step, after every note above, and the cap is
@@ -361,9 +372,10 @@ mcp = FastMCP(
         "cgh, the context graph hub: the project memory of your coding agents,\n"
         "plus a code and document graph and the Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
-        "and line numbers so you only read the specific lines you need.\n\n"
-        + SEARCH_GUIDE
-        + "\n"
+        "and line numbers so you only read the specific lines you need.\n"
+        "Paths are relative to the answer's `root` (a federated subrepo's\n"
+        "rows: to `roots[scope]`); join the two for a tool that wants an\n"
+        "absolute path, such as Read.\n\n" + SEARCH_GUIDE + "\n"
         "Tool execution is SERVER-SIDE and costs zero model tokens. Only the\n"
         "JSON response counts (capped + truncated). When in doubt: call the\n"
         "tool. It is almost always cheaper than Read/Grep over full files.\n\n"

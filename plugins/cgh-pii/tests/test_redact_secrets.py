@@ -103,11 +103,49 @@ def test_only_selects_a_token_kind():
     assert counts == {"github_token": 1}
 
 
-def test_pseudonym_mode_masks_tokens():
+_KEY = b"k" * 32
+_PSEUDO = re.compile(r"<pii\.(\w+):([0-9a-f]{10})>")
+
+
+def test_pseudonym_mode_masks_tokens_consistently_in_one_run():
     gl = _fakes()["gitlab_token"][0]
-    out, _ = redact(f"token {gl}", only=_SECRETS, mode="pseudonym", secret=b"k" * 32)
-    assert gl not in out
-    assert re.search(r"<pii\.gitlab_token:[0-9a-f]{10}>", out)
+    gh = _fakes()["github_token"][0]
+    out, _ = redact(f"{gl} {gh} {gl}", only=_SECRETS, mode="pseudonym", secret=_KEY)
+    assert gl not in out and gh not in out
+    found = _PSEUDO.findall(out)
+    assert [c for c, _h in found] == ["gitlab_token", "github_token", "gitlab_token"]
+    assert found[0] == found[2]
+    assert found[0][1] != found[1][1]
+
+
+def test_secret_pseudonym_cannot_be_recomputed_from_the_value():
+    """Even with the caller's key, the pseudonym of a secret is not a
+    function of its value: two runs with the same key differ, and none
+    equals the keyed hash the other categories use."""
+    import hashlib
+    import hmac
+
+    value = _fakes()["assignment"][0]
+    text = 'password = "' + value + '"'
+    runs = {
+        _PSEUDO.search(
+            redact(text, only=_SECRETS, mode="pseudonym", secret=_KEY)[0]
+        ).group(2)
+        for _ in range(5)
+    }
+    assert len(runs) == 5
+    keyed = hmac.new(_KEY, value.encode(), hashlib.sha256).hexdigest()[:10]
+    plain = hashlib.sha256(value.encode()).hexdigest()[:10]
+    assert keyed not in runs and plain not in runs
+
+
+def test_non_secret_pseudonym_stays_stable_across_runs():
+    # Correlating a person or an email across documents is the point of
+    # pseudonym mode with a shared key; only secrets lose it.
+    text = "mail jane" + "@example.org"
+    a, _ = redact(text, only=["email"], mode="pseudonym", secret=_KEY)
+    b, _ = redact(text, only=["email"], mode="pseudonym", secret=_KEY)
+    assert a == b
 
 
 def test_assignment_keeps_the_name_and_masks_the_value():

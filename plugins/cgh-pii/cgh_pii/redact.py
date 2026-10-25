@@ -46,6 +46,7 @@ _REGEX = {
 # before the generic assignment: when both cover the same bytes, the
 # provider category wins the tie in _dedup.
 SECRET_CATEGORIES = tuple(key.removeprefix("secret.") for key, _sev, _p in _SECRETS)
+_SECRET_SET = frozenset(SECRET_CATEGORIES)
 _REGEX.update(
     (key.removeprefix("secret."), (pattern, None)) for key, _sev, pattern in _SECRETS
 )
@@ -144,7 +145,17 @@ class _Tokenizer:
         cached = self._map.get((cat, value))
         if cached:
             return cached
-        if self._mode == "pseudonym":
+        if self._mode == "pseudonym" and cat in _SECRET_SET:
+            # A secret is never hashed, not even keyed: a password or a
+            # short token could be brute-forced offline by anyone holding
+            # the pseudonym and the shared key. It gets a random id, the
+            # same for every occurrence in this run (through _map) and
+            # unrelated to the value, so no one can recompute it.
+            used = set(self._map.values())
+            tok = f"<pii.{cat}:{secrets.token_hex(5)}>"
+            while tok in used:
+                tok = f"<pii.{cat}:{secrets.token_hex(5)}>"
+        elif self._mode == "pseudonym":
             digest = _hmac.new(
                 self._key, value.encode("utf-8"), hashlib.sha256
             ).hexdigest()[:10]
@@ -228,6 +239,8 @@ def redact(
     "placeholder" (numbered [PERSON_1], distinct within this text) or
     "pseudonym" (keyed <pii.person:hex>; pass a fixed ``secret`` for the
     same token across documents, else one is generated for this call).
+    Secret categories are the exception: their pseudonym is random per
+    call, never derived from the value, so it cannot be brute-forced.
     ``llm_hits`` are (redaction_category, quote) pairs from the optional
     LLM tier; each quote is located by literal search and redacted like a
     NER value. Raises RedactError if a requested NER category has no

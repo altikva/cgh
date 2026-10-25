@@ -169,7 +169,7 @@ def _mark_stale(result, reason: str):
         return result
     payload["stale"] = True
     payload["stale_reason"] = reason
-    return json.dumps(payload, indent=2)
+    return _budget_dumps(payload)
 
 
 # Tools that fan out to federated subrepos and tag each row with `scope`.
@@ -224,7 +224,16 @@ def _add_scopes(result, scopes: dict | None):
     if payload.get("repo") or payload.get("ref"):
         return result
     payload["scopes"] = scopes
-    return json.dumps(payload, indent=2)
+    return _budget_dumps(payload)
+
+
+def _budget_dumps(payload: dict) -> str:
+    """A note added to an answer keeps it compact JSON with non-ASCII text
+    as is: indented, with every accent escaped, a capped 2.5 KB answer
+    came back over 4 KB."""
+    from codegraph.server._budget import dumps_answer
+
+    return dumps_answer(payload)
 
 
 # Callers whose answers skip the size ceiling: they are programs, not agents.

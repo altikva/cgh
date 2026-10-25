@@ -182,6 +182,10 @@ def _fts(root: Path) -> sqlite3.Connection | None:
 
 
 def _rel(path: str, root: Path) -> str:
+    # The owner answers hooks with repo-relative paths already; resolving one
+    # would anchor it at the hook's working directory instead of the repo.
+    if not os.path.isabs(path):
+        return path
     try:
         return str(Path(path).resolve().relative_to(root.resolve()))
     except ValueError:

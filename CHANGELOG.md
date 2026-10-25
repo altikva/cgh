@@ -95,6 +95,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Tool answers use repo-relative paths.** Every JSON answer an agent or
+  a hook receives gives its file paths relative to the repo root, plus one
+  `root` field to rebuild the absolute path a Read needs. Rows of a
+  federated subrepo are relative to that subrepo, whose root is under
+  `roots[scope]`. The repeated prefix was about an eighth of an answer's
+  bytes. Paths under no root stay absolute, and `cgh` CLI commands still
+  get absolute paths. A client that opened the `file` fields as they came
+  should now join them to `root`.
 - **`knowledge_list` answers with briefs.** One default call answered
   about 10 KB: 50 entries, each with its body. The default limit is now
   10 and each entry a brief (id, title, kind, tags, `recorded`, outcome

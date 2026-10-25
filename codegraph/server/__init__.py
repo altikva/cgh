@@ -265,6 +265,7 @@ def _logged_tool(fn):
     def wrapper(*args, **kwargs):
         from codegraph.server._budget import cap_tool_answer
         from codegraph.server._paths import relative_result
+        from codegraph.server._text import TEXT_TOOLS, resolve_format, text_answer
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
@@ -303,6 +304,15 @@ def _logged_tool(fn):
                 except Exception:
                     _log.debug("answer cap failed for %s", tool_name, exc_info=True)
                     result = _hard_cap(tool_name, result, kwargs)
+            # The grep-like text answer, for agents only: the CLI and the
+            # hooks parse JSON. Rendered from the fitted answer and held to
+            # the same ceiling on the text itself.
+            if origin == "agent" and tool_name in TEXT_TOOLS:
+                try:
+                    if resolve_format(kwargs.get("format"), _root) == "text":
+                        result = text_answer(tool_name, result)
+                except Exception:
+                    _log.debug("text answer failed for %s", tool_name, exc_info=True)
             return result
         except Exception as exc:
             success = False

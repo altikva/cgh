@@ -28,6 +28,7 @@
 #   [mcp]
 #   auto_watch = true
 #   reindex_on_start = true
+#   answer_format = "json"    # or "text": grep-like answers, see _text.py
 #
 #   [tools]
 #   expose = "all"            # or "core": what tools/list shows, see
@@ -75,6 +76,10 @@ _log = logging.getLogger(__name__)
 # Values [tools] expose accepts. Anything else falls back to "all", so a
 # typo never hides a tool.
 TOOL_EXPOSE_MODES: tuple[str, ...] = ("all", "core")
+
+# Values [mcp] answer_format and CGH_ANSWER_FORMAT accept; anything else
+# keeps "json".
+ANSWER_FORMATS: tuple[str, ...] = ("json", "text")
 
 _legacy_mode_warned = False
 _legacy_mode_suppressed = False
@@ -265,6 +270,11 @@ class CodegraphConfig:
     # MCP
     auto_watch: bool = True
     reindex_on_start: bool = True
+    # The answer format agents get by default from pattern_search,
+    # find_callers, search_symbols and symbol_lookup: "json", or "text" for
+    # the grep-like layout. CGH_ANSWER_FORMAT overrides it; an unknown value
+    # keeps json. CLI and hook callers always get JSON.
+    answer_format: str = "json"
 
     # Owner log rotation (applied at owner spawn time)
     log_max_mb: int = 5
@@ -373,6 +383,10 @@ def load_config(project_root: str | Path | None = None) -> CodegraphConfig:
     if os.environ.get("CODEGRAPH_ROOT"):
         config.project_root = Path(os.environ["CODEGRAPH_ROOT"]).resolve()
 
+    env_format = os.environ.get("CGH_ANSWER_FORMAT", "").strip().lower()
+    if env_format in ANSWER_FORMATS:
+        config.answer_format = env_format
+
     if os.environ.get("CGH_PRECISE_CALLS"):
         config.precise_calls = os.environ["CGH_PRECISE_CALLS"].lower() in (
             "1",
@@ -440,6 +454,9 @@ def _apply_toml(config: CodegraphConfig, data: dict) -> None:
         config.auto_watch = mcp["auto_watch"]
     if "reindex_on_start" in mcp:
         config.reindex_on_start = mcp["reindex_on_start"]
+    fmt = str(mcp.get("answer_format", "")).strip().lower()
+    if fmt in ANSWER_FORMATS:
+        config.answer_format = fmt
 
     _apply_tools_table(config, data.get("tools"))
 
@@ -579,6 +596,10 @@ max_file_size_kb = 500
 auto_watch = true
 # Re-index before starting MCP server
 reindex_on_start = true
+# Default answer of pattern_search, find_callers, search_symbols and
+# symbol_lookup for agents: "json", or "text" for a grep-like layout that
+# weighs fewer tokens. A call's own format argument wins.
+# answer_format = "json"
 
 [tools]
 # Which MCP tools tools/list shows. "all" lists every tool. "core" lists a

@@ -6,6 +6,19 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 
 Every answer an agent gets stays under a size ceiling: about 10 KB, 6 KB for `context_for_task`, 2.5 KB for `pattern_search`, 2 KB for `file_summary`. A longer answer drops whole list items from its tail, so the JSON stays valid, and carries `truncated: true`, `dropped` and a `hint` on how to narrow the call. A tool given `max_tokens` or `budget_kb` keeps that budget instead, and calls from the `cgh` CLI and the hooks get the whole answer.
 
+`pattern_search`, `find_callers`, `search_symbols` and `symbol_lookup` take `format="json"` (the default) or `format="text"`. Text is a grep-like layout that weighs fewer tokens than the same compact JSON (measured on cgh's own index: 6% for `pattern_search`, 34% for `symbol_lookup`, 42% for `search_symbols`, 53% for `find_callers`): one header line of `key=value` metadata (`confidence`, `total`, `truncated`, `root`, `top_dirs`, `hint`, `next`...), then the rows under their file path, and one `[scope]` section per scope in a federated answer:
+
+```
+pattern=wire_bytes backend=git-grep total=3 confidence=high root=/work/cgh
+codegraph/server/_budget.py
+  113: def wire_bytes(text: str) -> int:
+tests/test_server/test_wire_caps.py
+  12: from codegraph.server._budget import wire_bytes
+  40: assert wire_bytes(out) <= cap
+```
+
+`find_callers` and `search_symbols` rows read `  line name...` under their path (`  102 register resolved`, `  108 function answer_bytes`); `symbol_lookup` writes one line per definition, `path:start-end kind name`, with the doc on the next indented line. Other fields follow as `key=value`. A value is bare when it is a plain word or path and compact JSON otherwise; a hit text holding a newline, a tab or a leading quote is JSON-quoted. Null and empty values are left out. A cut `pattern_search` answer ends with a `[cut]` section counting the hits left out per file. Text answers hold the same size ceiling, measured on the text. Without `format`, the `[mcp] answer_format` setting decides (see [CONFIGURATION.md](CONFIGURATION.md)); the `cgh` CLI and the hooks always get JSON.
+
 ### Architecture Awareness (call these FIRST)
 
 | Tool | Description |

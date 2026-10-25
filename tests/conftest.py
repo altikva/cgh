@@ -31,6 +31,9 @@ def _no_inherited_call_origin(monkeypatch):
     owner as a hook, whose answers carry relative paths. Start each test
     without it."""
     monkeypatch.delenv("CGH_ORIGIN", raising=False)
+    # A shell that opted into text answers would turn every agent-origin
+    # tool answer in the suite into text.
+    monkeypatch.delenv("CGH_ANSWER_FORMAT", raising=False)
 
 
 @pytest.fixture

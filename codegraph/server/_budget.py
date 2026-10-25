@@ -189,7 +189,7 @@ class ToolCap:
 
 
 # A summary by nature, or a tool already cut tighter in its own body.
-CONTEXT_MAX_BYTES = 6_000
+CONTEXT_MAX_BYTES = 4_000
 # file_summary is the cheap step before a Read, so it must weigh less than
 # one: a token study measured Reads at 3.5 KB on average.
 FILE_SUMMARY_MAX_BYTES = 2_048

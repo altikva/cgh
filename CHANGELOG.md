@@ -95,6 +95,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **`context_for_task` answers about 3.5 KB instead of 6 KB.** Agents in
+  the work lots seldom followed up its memory, plan or knowledge snippets,
+  which made up a quarter of each answer. These entries are now one-line
+  pointers (title, plus the plan file or the knowledge id), `related`
+  lists five files at most, the subsystem no longer repeats in the
+  markdown, `max_nodes` defaults to 10 and the cap is 4 KB. Fetch an
+  entry's text with `memory_search`, `plan_search` or `knowledge_search`.
 - **Tool answers use repo-relative paths.** Every JSON answer an agent or
   a hook receives gives its file paths relative to the repo root, plus one
   `root` field to rebuild the absolute path a Read needs. Rows of a

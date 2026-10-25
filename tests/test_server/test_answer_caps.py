@@ -301,7 +301,7 @@ def test_knowledge_list_pages_from_the_first_entry_left_out(big_repo):
     assert len(seen) + len(second["entries"]) <= 60
 
 
-def test_context_for_task_fits_six_kb_and_serves_the_rest_later(big_repo):
+def test_context_for_task_fits_its_cap_and_serves_the_rest_later(big_repo):
     task = "helper function with a long name for the oversized fixture"
     raw = big_repo["context_for_task"](task=task, max_nodes=80, session_id="s1")
     out = _assert_capped(raw, CONTEXT_MAX_BYTES)

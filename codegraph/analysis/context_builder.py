@@ -31,6 +31,11 @@ WHY_MAX_CHARS = 160
 WHY_MAX_LINES = 3
 # At most this many files in the start_here tier.
 START_HERE_MAX = 3
+# At most this many files in the related tier: every file of the answer is
+# already named in its symbol headings, the tier only ranks the next ones.
+RELATED_MAX = 5
+# A memory, plan or knowledge entry is listed by its title, cut to this.
+POINTER_TITLE_MAX = 90
 # A ranged Read suggested by ``next`` covers at most this many lines.
 NEXT_READ_MAX_LINES = 80
 # Source files larger than this are not read for justification lines.
@@ -415,7 +420,8 @@ _CODE_KINDS = {"function", "method", "class", "tf_resource", "endpoint"}
 
 def file_tiers(nodes: list[ContextNode]) -> tuple[list[str], list[str]]:
     """The files of ``nodes`` split into ``start_here`` (at most
-    START_HERE_MAX, the best entry points) and ``related``, each best first.
+    START_HERE_MAX, the best entry points) and ``related`` (at most
+    RELATED_MAX), each best first.
 
     A file scores its best symbol plus a share of the others; a test file
     counts for half, and so does a file holding only docs or data, so the
@@ -434,7 +440,8 @@ def file_tiers(nodes: list[ContextNode]) -> tuple[list[str], list[str]]:
         if not code[key]:
             scores[key] *= 0.5
     ranked = sorted(scores, key=lambda k: (-scores[k], k))
-    return ranked[:START_HERE_MAX], ranked[START_HERE_MAX:]
+    related = ranked[START_HERE_MAX:][:RELATED_MAX]
+    return ranked[:START_HERE_MAX], related
 
 
 def next_step(
@@ -487,7 +494,7 @@ def context_for_task(
     task: str,
     graph_conn,
     fts_conn: sqlite3.Connection,
-    max_nodes: int = 15,
+    max_nodes: int = 10,
     root: str | Path | None = None,
 ) -> TaskContext:
     """
@@ -578,10 +585,16 @@ def _local_memory_hits(
     try:
         from codegraph.core.fts import memory_search as _search
 
+        def search(q: str) -> list:
+            # MEMORY.md is the index Claude Code already loads at session
+            # start, so it is never worth a line of the answer.
+            found = _search(fts_conn, q, limit=limit + 1)
+            return [h for h in found if Path(h.path).name != "MEMORY.md"]
+
         query = _keyword_query(task)
-        hits = _search(fts_conn, query, limit=limit)
+        hits = search(query)
         if not hits and query != task:
-            hits = _search(fts_conn, task, limit=limit)
+            hits = search(task)
         return [
             MemoryDocHit(
                 path=h.path,
@@ -590,7 +603,7 @@ def _local_memory_hits(
                 snippet=h.snippet,
                 score=h.score,
             )
-            for h in hits
+            for h in hits[:limit]
         ]
     except Exception:
         return []
@@ -651,37 +664,27 @@ def render_context_markdown(ctx: TaskContext) -> str:
             lines.append(f"  {r['tag']} (line {r['line']}): {text}{adr}")
         lines.append("")
 
-    # Claude Code memory (user preferences / feedback / project notes)
-    if ctx.memory_docs:
-        lines.append("---")
-        lines.append("## Memory (Claude Code)")
-        lines.append("")
-        for m in ctx.memory_docs:
-            lines.append(f"- **[{m.kind}]** {m.title}")
-            lines.append(f"  {m.snippet[:180]}")
-            lines.append("")
-
-    # Relevant past plans
-    if ctx.plan_docs:
-        lines.append("---")
-        lines.append("## Related Plans")
-        lines.append("")
-        for p in ctx.plan_docs:
-            agent = f" (agent {p.agent_id[:8]})" if p.agent_id else ""
-            lines.append(f"- **{p.slug}**{agent}, {p.title}")
-            lines.append(f"  `{_home_short(p.path)}`")
-            lines.append("")
-
-    # Persisted knowledge, patterns, decisions, gotchas
-    if ctx.knowledge_docs:
-        lines.append("---")
-        lines.append("## Learned Knowledge")
-        lines.append("")
-        for k in ctx.knowledge_docs:
-            tag_str = f"  [{', '.join(k.tags)}]" if k.tags else ""
-            lines.append(f"- **[{k.kind}]** {k.title}{tag_str}")
-            lines.append(f"  {k.body[:200]}")
-            lines.append("")
+    # Memory, plans and knowledge are pointers, one line each: the agents
+    # seldom follow them up, and memory_search, plan_search or
+    # knowledge_search brings the text of the one that matters.
+    pointers = (
+        [
+            f"- memory [{m.kind}] {_clip(m.title, POINTER_TITLE_MAX)}"
+            for m in ctx.memory_docs
+        ]
+        + [
+            f"- plan {_clip(p.title or p.slug, POINTER_TITLE_MAX)} "
+            f"({_home_short(p.path)})"
+            for p in ctx.plan_docs
+        ]
+        + [
+            f"- knowledge [{k.kind}] {_clip(k.title, POINTER_TITLE_MAX)} (#{k.id})"
+            for k in ctx.knowledge_docs
+        ]
+    )
+    if pointers:
+        lines.append("## See also (memory_search, plan_search, knowledge_search)")
+        lines.extend(pointers)
 
     # The files, their tiers and the next step are top-level keys of the
     # answer, not repeated here.

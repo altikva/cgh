@@ -8,7 +8,8 @@
 #              whole files: repo-relative paths (relative to each subrepo's
 #              root in a federated workspace), a line range and justification
 #              lines per symbol, the files split into start_here (three at
-#              most) and related, and a next step. The tiering and next-step
+#              most) and related (five at most), a next step, and memory,
+#              plans and knowledge as one-line pointers. The tiering and next-step
 #              helpers are also tested on their own.
 
 from __future__ import annotations
@@ -22,14 +23,22 @@ import pytest
 import codegraph.server as _srv
 from codegraph.analysis import federation
 from codegraph.analysis.context_builder import (
+    RELATED_MAX,
     START_HERE_MAX,
     WHY_MAX_CHARS,
     WHY_MAX_LINES,
     ContextNode,
+    KnowledgeHit,
+    MemoryDocHit,
+    PlanDocHit,
+    TaskContext,
+    _local_memory_hits,
     file_tiers,
     next_step,
+    render_context_markdown,
 )
 from codegraph.core.db import reset_connection
+from codegraph.core.fts import MemoryHit
 from codegraph.indexer import index_repo
 from codegraph.server._budget import CONTEXT_MAX_BYTES
 
@@ -143,7 +152,8 @@ _HEADER = re.compile(
 def _blocks(out: dict) -> list[tuple[re.Match, list[str]]]:
     """Each symbol of the markdown: its parsed header and its why lines."""
     found = []
-    for block in out["context_markdown"].split("\n### ")[1:]:
+    symbols = out["context_markdown"].split("\n## See also", 1)[0]
+    for block in symbols.split("\n### ")[1:]:
         head, *rest = block.split("\n")
         m = _HEADER.match(head)
         assert m, head
@@ -249,6 +259,84 @@ def test_start_here_holds_at_most_three_files(tmp_path):
     start, related = file_tiers(nodes)
     assert start == ["m0.py", "m1.py", "m2.py"]
     assert related == [f"m{i}.py" for i in range(3, 7)]
+
+
+def test_related_holds_at_most_five_files(tmp_path):
+    nodes = [
+        ContextNode(
+            kind="function",
+            name=f"f{i:02}",
+            file_path=str(tmp_path / f"m{i:02}.py"),
+            start_line=1,
+            end_line=5,
+            docstring="",
+            relevance=1.0 - i / 20,
+            scope_root=str(tmp_path),
+        )
+        for i in range(12)
+    ]
+    start, related = file_tiers(nodes)
+    assert len(start) == START_HERE_MAX
+    assert related == [f"m{i:02}.py" for i in range(3, 3 + RELATED_MAX)]
+
+
+def test_memory_plans_and_knowledge_are_one_line_pointers():
+    body = "The long body of the entry that the answer must not carry. " * 5
+    ctx = TaskContext(
+        task="t",
+        nodes=[],
+        files_referenced=[],
+        token_estimate=0,
+        memory_docs=[
+            MemoryDocHit(
+                path="/m/feedback_x.md",
+                kind="feedback",
+                title="scan-meta-drift",
+                snippet=body,
+                score=1.0,
+            )
+        ],
+        plan_docs=[
+            PlanDocHit(
+                path="/p/plan.md",
+                slug="plan",
+                agent_id="",
+                title="Refactor the store",
+                snippet=body,
+                score=1.0,
+            )
+        ],
+        knowledge_docs=[
+            KnowledgeHit(
+                id=42,
+                kind="gotcha",
+                title="Owner lock " + "x" * 200,
+                body=body,
+                tags=["papercut"],
+                score=1.0,
+            )
+        ],
+    )
+    md = render_context_markdown(ctx)
+    assert "long body" not in md and "papercut" not in md
+    pointers = md.split("## See also", 1)[1].splitlines()[1:]
+    assert pointers == [
+        "- memory [feedback] scan-meta-drift",
+        "- plan Refactor the store (/p/plan.md)",
+        pointers[2],
+    ]
+    assert pointers[2].startswith("- knowledge [gotcha] Owner lock x")
+    assert pointers[2].endswith("... (#42)")
+
+
+def test_the_memory_index_file_is_not_a_hit(monkeypatch):
+    hits = [
+        MemoryHit("/m/MEMORY.md", "other", "Memory", "index", 2.0),
+        MemoryHit("/m/feedback_a.md", "feedback", "a", "", 1.0),
+    ]
+    monkeypatch.setattr("codegraph.core.fts.memory_search", lambda *a, **k: hits)
+    found = _local_memory_hits(None, "anything", limit=3)
+    assert [m.path for m in found] == ["/m/feedback_a.md"]
 
 
 # ---------------------------------------------------------------------------

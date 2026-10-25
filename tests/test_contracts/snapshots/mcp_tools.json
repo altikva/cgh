@@ -103,7 +103,7 @@
         "type": "boolean"
       },
       "max_nodes": {
-        "default": 15,
+        "default": 10,
         "type": "integer"
       },
       "session_id": {

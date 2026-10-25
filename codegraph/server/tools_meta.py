@@ -170,7 +170,7 @@ def register(mcp) -> None:
     @_logged_tool
     def context_for_task(
         task: str,
-        max_nodes: int = 15,
+        max_nodes: int = 10,
         session_id: str = "",
         include_shown: bool = False,
     ) -> str:
@@ -189,7 +189,7 @@ def register(mcp) -> None:
                   e.g. "fix the authentication token validation logic"
                        "add a new GCS bucket resource"
                        "refactor the DataLoader class"
-            max_nodes: max symbols to include (default 15)
+            max_nodes: max symbols to include (default 10)
             session_id: optional, when passed, already-surfaced entities
                   from previous calls in THIS session are hidden. Pass the
                   same id across calls to avoid re-serving the same nodes.
@@ -201,8 +201,11 @@ def register(mcp) -> None:
         three lines saying why it was picked (the docstring sentence that
         matches, a call site, or the matching source line), often enough to
         act without reading the file. `start_here` lists the best entry
-        files (at most 3), `related` the others, and `next` the one call or
-        ranged Read to make next. In a federated workspace the subrepos are
+        files (at most 3), `related` the next five, and `next` the one call
+        or ranged Read to make next. Matching memory, plans and knowledge
+        entries come as one-line pointers (a title, plus the plan file or
+        the knowledge id): memory_search, plan_search or knowledge_search
+        brings their text. In a federated workspace the subrepos are
         searched too: their symbols show their scope, and their files read
         `<scope>:<path>`, the path relative to that subrepo's root. When the
         served functions and classes carry rationale comments (WHY:, NOTE:,
@@ -343,7 +346,8 @@ def register(mcp) -> None:
     def _context_payload(
         ctx, session_id: str, subsystem: dict | None, task: str = ""
     ) -> dict:
-        """The answer for ``ctx``, with the ``subsystem`` hint when one."""
+        """The answer for ``ctx``, with the ``subsystem`` hint when one (as a
+        key only, not repeated in the markdown)."""
         from codegraph.analysis.context_builder import (
             file_tiers,
             next_step,
@@ -369,29 +373,22 @@ def register(mcp) -> None:
             payload["rationale"] = rationale
         if subsystem:
             payload["subsystem"] = subsystem
-            payload["context_markdown"] = md + (
-                f"\n\n**Subsystem**: {subsystem['name']} ({subsystem['size']} files)"
-                + (
-                    f", also: {', '.join(subsystem['files'])}"
-                    if subsystem["files"]
-                    else ""
-                )
-            )
         return payload
 
     # Trim order when the context overflows its ceiling: the lists are ranked
-    # best first, so items go from the tail. Plans, memory and knowledge are
-    # thinned to a few before the symbols, which are what the task is about,
-    # then the symbols down to five, then the rest, keeping one symbol.
+    # best first, so items go from the tail. A symbol weighs about four times
+    # a one-line memory, plan or knowledge pointer, so the symbols go down to
+    # five first, then the pointers to one each, the symbols to one, and the
+    # last pointers.
     _CONTEXT_TRIM = (
-        ("plan_docs", 1),
-        ("memory_docs", 2),
-        ("knowledge_docs", 2),
         ("nodes", 5),
+        ("plan_docs", 1),
+        ("memory_docs", 1),
+        ("knowledge_docs", 1),
+        ("nodes", 1),
         ("plan_docs", 0),
         ("memory_docs", 0),
         ("knowledge_docs", 0),
-        ("nodes", 1),
     )
 
     def _fit_context(
@@ -449,7 +446,9 @@ def register(mcp) -> None:
 
             result = communities_for(_get_conn())
             seeds = [n.file_path for n in ctx.nodes]
-            hint = subsystem_hint(result, seeds, exclude=ctx.files_referenced)
+            hint = subsystem_hint(
+                result, seeds, exclude=ctx.files_referenced, max_files=3
+            )
         except Exception:  # best effort, see the docstring
             return None
         if hint is None:

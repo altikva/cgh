@@ -377,7 +377,9 @@ def test_context_for_task_names_the_subsystem_of_its_matches(repo):
     out = json.loads(m.tools["context_for_task"]("f_alpha_2 ledger"))
     sub = out["subsystem"]
     assert sub["name"].startswith("alpha") and sub["size"] == 6
-    assert "**Subsystem**" in out["context_markdown"]
+    # A key only: the markdown does not repeat it.
+    assert "**Subsystem**" not in out["context_markdown"]
+    assert len(sub["files"]) <= 3
     assert not set(sub["files"]) & set(out["start_here"] + out["related"])
 
 

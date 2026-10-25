@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
@@ -105,6 +107,162 @@ def _expand_braces(glob: str) -> list[str]:
     return [glob]
 
 
+def _normalize_glob(glob: str) -> str:
+    """A glob in ripgrep's sense, relative to the search root: a leading
+    ``/`` anchors it at the root, and a glob with no ``/`` matches a file
+    name at any depth, so ``module_*.py`` finds ``a/b/module_x.py`` too."""
+    if glob.startswith("/"):
+        return glob.lstrip("/")
+    if "/" not in glob:
+        return "**/" + glob
+    return glob
+
+
+def git_pathspecs(glob: str) -> list[str]:
+    """``glob`` as git pathspecs with the same meaning as ripgrep's: one per
+    brace alternative, with ``:(glob)`` magic so ``*`` stays inside one
+    directory and ``**`` crosses them. A bare pathspec would anchor
+    ``module_*.py`` at the root and miss every file in a subfolder."""
+    return [":(glob)" + _normalize_glob(g) for g in _expand_braces(glob)]
+
+
+def _glob_regex(glob: str) -> re.Pattern[str]:
+    """A compiled regex fully matching the posix relative paths ``glob``
+    selects, with the semantics of git_pathspecs."""
+    g = _normalize_glob(glob)
+    out: list[str] = []
+    i = 0
+    while i < len(g):
+        if g.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif g.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif g[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif g[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif g[i] == "[" and (end := g.find("]", i + 2)) != -1:
+            body = g[i + 1 : end]
+            if body.startswith("!"):
+                body = "^" + body[1:]
+            out.append("[" + body.replace("\\", "\\\\") + "]")
+            i = end + 1
+        else:
+            out.append(re.escape(g[i]))
+            i += 1
+    return re.compile("".join(out), re.DOTALL)
+
+
+@functools.cache
+def git_has_pcre() -> bool:
+    """Whether this git was built with PCRE, so ``git grep -P`` works.
+    Asked once per process, in an empty directory outside any repo."""
+    git = shutil.which("git")
+    if not git:
+        return False
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run(
+                [git, "grep", "--no-index", "-q", "-P", "-e", r"\w"],
+                capture_output=True,
+                cwd=tmp,
+                timeout=10,
+                **quiet_subprocess_kwargs(),
+            )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    # 1 = no match; a build without PCRE exits 128 with a fatal error.
+    return r.returncode in (0, 1)
+
+
+# Perl classes and their POSIX spelling, outside and inside a bracket.
+_POSIX_CLASS = {
+    "w": ("[[:alnum:]_]", "[:alnum:]_"),
+    "W": ("[^[:alnum:]_]", None),
+    "d": ("[0-9]", "0-9"),
+    "D": ("[^0-9]", None),
+    "s": ("[[:space:]]", "[:space:]"),
+    "S": ("[^[:space:]]", None),
+}
+_ERE_ESCAPABLE = set(".[]()*+?{}|^$\\")
+
+
+def to_posix_ere(pattern: str) -> str | None:
+    """``pattern``, a Python-style regex, spelled for ``git grep -E``: the
+    Perl classes become POSIX classes. None when ERE cannot say the same
+    thing (word boundaries, lazy quantifiers, groups with ``(?``, other
+    escapes), so the caller can pick a backend that can."""
+    out: list[str] = []
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                return None
+            nxt = pattern[i + 1]
+            if nxt in _POSIX_CLASS:
+                out.append(_POSIX_CLASS[nxt][0])
+            elif nxt in _ERE_ESCAPABLE:
+                out.append("\\" + nxt)
+            elif nxt in "/-_:,=@#%&'\"<>~` ":
+                # Escaped for Python's sake only; ERE leaves \x undefined.
+                out.append(nxt)
+            else:
+                return None
+            i += 2
+        elif ch == "[":
+            j = i + 1
+            body = ["["]
+            if j < n and pattern[j] == "^":
+                body.append("^")
+                j += 1
+            if j < n and pattern[j] == "]":
+                body.append("]")
+                j += 1
+            while j < n and pattern[j] != "]":
+                c = pattern[j]
+                if c == "\\":
+                    inner = _POSIX_CLASS.get(pattern[j + 1 : j + 2], (None, None))[1]
+                    if inner is None:
+                        return None
+                    body.append(inner)
+                    j += 2
+                elif c == "[" and pattern[j + 1 : j + 2] == ":":
+                    end = pattern.find(":]", j + 2)
+                    if end == -1:
+                        return None
+                    body.append(pattern[j : end + 2])
+                    j = end + 2
+                else:
+                    body.append(c)
+                    j += 1
+            if j >= n:
+                return None
+            out.append("".join(body) + "]")
+            i = j + 1
+        elif ch in "(*+?}" and pattern[i + 1 : i + 2] == "?":
+            # "(?" opens a group ERE has no syntax for; "*?" and kin are lazy.
+            return None
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def git_regex_args(pattern: str) -> list[str] | None:
+    """The ``git grep`` flags and ``-e`` pattern that give ``pattern`` the
+    documented Python-style meaning: ``-P`` when git has PCRE, else ``-E``
+    with the Perl classes spelled in POSIX. None when neither can say it."""
+    if git_has_pcre():
+        return ["-P", "-e", pattern]
+    ere = to_posix_ere(pattern)
+    return None if ere is None else ["-E", "-e", ere]
+
+
 def pattern_search(
     repo_root: str | Path,
     pattern: str,
@@ -122,7 +280,11 @@ def pattern_search(
     `_IGNORE_DIR_NAMES`. Scans `extra_dirs` from config.toml when
     include_extra_dirs=True.
 
-    `glob` is a case-sensitive shell glob (e.g. "*.py", "api/handlers/*.py").
+    `glob` is a case-sensitive shell glob (e.g. "*.py", "api/handlers/*.py");
+    one without a "/" matches a file name at any depth, as in ripgrep.
+    `pattern` is a Python-style regex (\\w, \\d, \\s, \\b, lazy quantifiers,
+    classes) on every backend: git grep runs it with -P when git has PCRE,
+    else with -E and POSIX classes, else the Python backend takes it.
     `regex=False` treats the pattern as a plain substring (rg `--fixed-strings`).
     `max_results` is a hard cap to keep the response compact.
     """
@@ -192,7 +354,10 @@ def _run_rg(
             args.extend(["--glob", glob])
         # "--" stops the pattern from being parsed as a flag: without it a
         # pattern like "--pre=sh" reaches ripgrep's preprocessor (code exec).
-        args.extend(["--", pattern, str(root)])
+        # ripgrep matches a glob holding a "/" against the path relative to
+        # its working directory, so it runs inside the root: given the root
+        # as an absolute path, "api/**" matched no file at all.
+        args.extend(["--", pattern, "."])
         try:
             r = subprocess.run(
                 args,
@@ -200,6 +365,7 @@ def _run_rg(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                cwd=str(root),
                 timeout=30,
                 **quiet_subprocess_kwargs(),
             )
@@ -225,7 +391,7 @@ def _run_rg(
             if path and line_no:
                 out.append(
                     PatternHit(
-                        file=path,
+                        file=str(root / path),
                         line=line_no,
                         text=text.rstrip("\n")[:_MAX_LINE_LEN],
                     )
@@ -250,15 +416,17 @@ def _run_git_grep(
         args = ["git", "grep", "-n", "-I", "--untracked"]
         if not case_sensitive:
             args.append("-i")
-        if not regex:
-            args.append("-F")
-        else:
-            args.append("-E")
         # "-e <pattern>" so a pattern starting with "-" is never read as a flag.
-        args.extend(["-e", pattern])
+        if not regex:
+            args.extend(["-F", "-e", pattern])
+        else:
+            rx_args = git_regex_args(pattern)
+            if rx_args is None:
+                # ERE cannot express it and git has no PCRE: Python re can.
+                return [], False
+            args.extend(rx_args)
         if glob:
-            # One pathspec per brace alternative: git has no brace syntax.
-            args.extend(["--", *_expand_braces(glob)])
+            args.extend(["--", *git_pathspecs(glob)])
         try:
             r = subprocess.run(
                 args,
@@ -316,9 +484,7 @@ def _run_python(
         return []
 
     out: list[PatternHit] = []
-    import fnmatch as _fn
-
-    globs = _expand_braces(glob) if glob else []
+    globs = [_glob_regex(g) for g in _expand_braces(glob)] if glob else []
     for root in roots:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [
@@ -327,9 +493,11 @@ def _run_python(
                 if d not in _IGNORE_DIR_NAMES and not d.startswith(".")
             ]
             for filename in filenames:
-                if globs and not any(_fn.fnmatch(filename, g) for g in globs):
-                    continue
                 full = Path(dirpath) / filename
+                if globs:
+                    rel = full.relative_to(root).as_posix()
+                    if not any(g.fullmatch(rel) for g in globs):
+                        continue
                 try:
                     with open(full, encoding="utf-8", errors="replace") as f:
                         for i, line in enumerate(f, start=1):

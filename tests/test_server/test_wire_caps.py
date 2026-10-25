@@ -46,7 +46,11 @@ _ACCENTS = "Prénom, numéro, réessayez « plus tard », 注文の合計金額 
 
 
 def _registered_tools() -> list[str]:
-    return sorted(t.name for t in asyncio.run(_srv.mcp.list_tools()))
+    # FastMCP renamed get_tools (a dict by name) to list_tools; the
+    # declared floor still has only the first.
+    if hasattr(_srv.mcp, "list_tools"):
+        return sorted(t.name for t in asyncio.run(_srv.mcp.list_tools()))
+    return sorted(asyncio.run(_srv.mcp.get_tools()))
 
 
 _TOOLS = _registered_tools()

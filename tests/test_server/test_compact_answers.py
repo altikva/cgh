@@ -100,7 +100,11 @@ def tools(tmp_path_factory):
 
 
 def _registered() -> list[str]:
-    return sorted(t.name for t in asyncio.run(_srv.mcp.list_tools()))
+    # FastMCP renamed get_tools (a dict by name) to list_tools; the
+    # declared floor still has only the first.
+    if hasattr(_srv.mcp, "list_tools"):
+        return sorted(t.name for t in asyncio.run(_srv.mcp.list_tools()))
+    return sorted(asyncio.run(_srv.mcp.get_tools()))
 
 
 def _call(fn):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,11 @@ from codegraph.cli import (
 from codegraph.cli import (
     status as phase_status,
 )
-from codegraph.core.utils import ensure_dir, quiet_subprocess_kwargs
+from codegraph.core.utils import (
+    ensure_dir,
+    quiet_subprocess_kwargs,
+    write_json_file,
+)
 from codegraph.integrations.mcp_name import (
     SERVER_KEY as _MCP_SERVER_KEY,
 )
@@ -120,7 +125,7 @@ def _configure_claude_auto_accept(root: Path) -> list[str]:
             allow.append(pattern)
             added.append(pattern)
 
-    settings_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_json_file(settings_path, data)
     return added
 
 
@@ -1514,36 +1519,102 @@ def ensure_claude_hooks_installed(root: Path, cli_prefix: str = "cgh") -> list[s
     local = _load(local_path)
     result = _ensure_claude_hooks(shared, local, cli_prefix)
     if result["shared_changed"]:
-        shared_path.write_text(_json.dumps(shared, indent=2) + "\n", encoding="utf-8")
+        write_json_file(shared_path, shared)
     if result["local_changed"]:
-        local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+        write_json_file(local_path, local)
     return list(result["added"])
 
 
+def _entry_commands(entry: object) -> list[str]:
+    """Every command string of one hook entry, not only the first."""
+    if not isinstance(entry, dict):
+        return []
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return []
+    return [str(h.get("command", "")) for h in hooks if isinstance(h, dict)]
+
+
+# A command that already reindexes the repo: `cgh index`, `codegraph index`,
+# an absolute path to either, `python -m codegraph index`, a Windows `.exe`.
+_REINDEX_COMMAND_RE = re.compile(
+    r"(?:^|[\s;&|(/\\])(?:cgh|codegraph)(?:w?\.exe)?[\"']?\s+index(?=$|[\s;&|)])"
+)
+
+# Spec markers whose job a hand-written command can already do, and how to
+# recognise that command.
+_EQUIVALENT_COMMANDS = {"cgh-reindex-on-commit": _REINDEX_COMMAND_RE}
+
+
+def _same_matcher(entry: object, spec: dict) -> bool:
+    """Lifecycle hooks carry no matcher; treat missing and empty as equal."""
+    return isinstance(entry, dict) and (entry.get("matcher") or "") == (
+        spec["matcher"] or ""
+    )
+
+
+def _bucket(settings: dict, spec: dict) -> list:
+    hooks_root = settings.get("hooks")
+    if not isinstance(hooks_root, dict):
+        return []
+    bucket = hooks_root.get(spec["event"])
+    return bucket if isinstance(bucket, list) else []
+
+
 def _find_hook(settings: dict, spec: dict) -> bool:
-    """True iff `settings` contains a hook entry tagged with spec['marker'].
-    Lifecycle hooks carry no matcher; treat missing and empty as equal."""
-    bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
+    """True iff `settings` holds a hook entry on spec's event + matcher with
+    any command tagged with spec['marker']."""
     return any(
-        spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
-        for h in bucket
-        if (h.get("matcher") or "") == (spec["matcher"] or "")
+        spec["marker"] in command
+        for h in _bucket(settings, spec)
+        if _same_matcher(h, spec)
+        for command in _entry_commands(h)
+    )
+
+
+def _find_equivalent_hook(settings: dict, spec: dict) -> bool:
+    """True iff `settings` holds an untagged entry on spec's event + matcher
+    whose command already does the spec's job (a hand-written `cgh index`
+    after a commit). cgh then leaves it alone and adds nothing."""
+    pattern = _EQUIVALENT_COMMANDS.get(spec["marker"])
+    if pattern is None:
+        return False
+    return any(
+        spec["marker"] not in command and pattern.search(command)
+        for h in _bucket(settings, spec)
+        if _same_matcher(h, spec)
+        for command in _entry_commands(h)
     )
 
 
 def _drop_hook(settings: dict, spec: dict) -> bool:
-    """Remove any hook entry tagged with spec['marker']. Returns True if dropped."""
-    hooks_root = settings.get("hooks") or {}
-    bucket = hooks_root.get(spec["event"], []) or []
-    keep = [
-        h
-        for h in bucket
-        if not (
-            (h.get("matcher") or "") == (spec["matcher"] or "")
-            and spec["marker"] in str(h.get("hooks", [{}])[0].get("command", ""))
-        )
-    ]
-    if len(keep) == len(bucket):
+    """Remove every command tagged with spec['marker'] from the entries on
+    spec's event + matcher; an entry left with no command goes too, the
+    user's other commands in it stay. Returns True if anything was dropped."""
+    hooks_root = settings.get("hooks")
+    if not isinstance(hooks_root, dict):
+        return False
+    bucket = _bucket(settings, spec)
+    dropped = False
+    keep: list = []
+    for h in bucket:
+        inner = h.get("hooks") if isinstance(h, dict) else None
+        if not _same_matcher(h, spec) or not isinstance(inner, list):
+            keep.append(h)
+            continue
+        rest = [
+            c
+            for c in inner
+            if not (isinstance(c, dict) and spec["marker"] in str(c.get("command", "")))
+        ]
+        if len(rest) == len(inner):
+            keep.append(h)
+            continue
+        dropped = True
+        if rest:
+            h["hooks"] = rest
+            keep.append(h)
+    if not dropped:
         return False
     if keep:
         hooks_root[spec["event"]] = keep
@@ -1708,7 +1779,7 @@ def _install_bob_hooks(root: Path, cli: str) -> list[str]:
         hooks.setdefault(event, []).append(group)
         written.append(event)
     ensure_dir(path.parent)
-    path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_json_file(path, data)
     return written
 
 
@@ -1751,13 +1822,12 @@ def _hook_exe_path(path: str, windows: bool | None = None) -> str:
 
 def _hook_command(settings: dict, spec: dict) -> str | None:
     """The command of the installed hook tagged with spec['marker'], or None."""
-    bucket = (settings.get("hooks") or {}).get(spec["event"], []) or []
-    for h in bucket:
-        if (h.get("matcher") or "") != (spec["matcher"] or ""):
+    for h in _bucket(settings, spec):
+        if not _same_matcher(h, spec):
             continue
-        command = str(h.get("hooks", [{}])[0].get("command", ""))
-        if spec["marker"] in command:
-            return command
+        for command in _entry_commands(h):
+            if spec["marker"] in command:
+                return command
     return None
 
 
@@ -1789,6 +1859,17 @@ def _ensure_claude_hooks(
                 local_changed = True
             else:
                 shared_changed = True
+
+        if _find_equivalent_hook(right, spec) or _find_equivalent_hook(wrong, spec):
+            # The user already runs the same thing by hand: keep their entry
+            # as written, add nothing, and drop a copy of ours an older
+            # setup added next to it.
+            if _drop_hook(right, spec):
+                if right_is_shared:
+                    shared_changed = True
+                else:
+                    local_changed = True
+            continue
 
         in_right = _find_hook(right, spec)
         installed = _hook_command(right, spec) if in_right else None
@@ -1849,12 +1930,16 @@ _CLAUDE_HOOK_MARKERS = [
 
 
 def _bucket_has(bucket: list, matcher: str, marker: str) -> bool:
-    """Helper: scan a hooks list for an entry tagged with `marker`."""
-    return any(
-        marker in str(h.get("hooks", [{}])[0].get("command", ""))
-        for h in (bucket or [])
-        if h.get("matcher") == matcher
-    )
+    """Helper: scan a hooks list for an entry tagged with `marker` in any of
+    its commands, or holding a hand-written equivalent of that hook."""
+    equivalent = _EQUIVALENT_COMMANDS.get(marker)
+    for h in bucket if isinstance(bucket, list) else []:
+        if not isinstance(h, dict) or (h.get("matcher") or "") != (matcher or ""):
+            continue
+        for command in _entry_commands(h):
+            if marker in command or (equivalent and equivalent.search(command)):
+                return True
+    return False
 
 
 def audit_claude_integration(root: Path) -> dict:
@@ -2005,14 +2090,13 @@ def _write_mcp_entry(path: Path, entry: dict, blocked: bool) -> None:
     """Register the cgh server in one client MCP config. Settings a user
     added to the existing entry (env, a longer timeout) are kept; the
     command and its arguments are refreshed. Other servers are untouched."""
-    import json as _json
 
     data, key = _load_mcp_config(path, blocked)
     previous = data["mcpServers"].get(key)
     if not isinstance(previous, dict):
         previous = {}
     data["mcpServers"][key] = {**previous, **entry}
-    path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_json_file(path, data)
 
 
 def print_rename_blockers(blockers: list, forced: bool = False) -> None:
@@ -2145,11 +2229,9 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         result = _ensure_claude_hooks(shared, local, cli_prefix)
 
         if result["shared_changed"]:
-            shared_path.write_text(
-                _json.dumps(shared, indent=2) + "\n", encoding="utf-8"
-            )
+            write_json_file(shared_path, shared)
         if result["local_changed"]:
-            local_path.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+            write_json_file(local_path, local)
 
         for label in result["added"]:
             target_file = next(
@@ -2247,7 +2329,7 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
             "alwaysAllow": always_allow,
         }
         data["mcpServers"][key] = {**previous, **bob_entry}
-        mcp_path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        write_json_file(mcp_path, data)
         console.print("    [green]+[/green] .bob/mcp.json [dim](MCP server)[/dim]")
         if command == sys.executable:
             bob_cli = f"{_hook_exe_path(sys.executable)} -P -m codegraph"

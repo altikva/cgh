@@ -181,3 +181,15 @@ def chunks(items: list, size: int = 500) -> list[list]:
     """Split ``items`` into lists of at most ``size``, so an IN (...) or a
     multi-row VALUES stays under the backend's bound-parameter limit."""
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def write_json_file(path: Path, data: object) -> None:
+    """Write a JSON config file a person also edits (.claude/settings.json,
+    .mcp.json and the like): two-space indent, key order kept, UTF-8 with
+    non-ASCII text left as is so `—` or an emoji in the user's own entries
+    does not turn into `\\uXXXX` escapes."""
+    import json
+
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )

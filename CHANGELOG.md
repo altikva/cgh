@@ -256,6 +256,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Versions 0.18.x and earlier keep their original license.
 
 ### Fixed
+- **`cgh setup claude` keeps your settings readable and your own
+  reindex hook.** Rewriting `.claude/settings.json`, `settings.local.json`
+  or `.mcp.json` turned every non-ASCII character in your own entries
+  (`—`, an emoji) into `\uXXXX`; they now stay as written. A commit hook
+  you wrote yourself that already runs `cgh index` now counts as the
+  reindex-on-commit hook, so setup no longer adds a second one and every
+  commit reindexes once; a copy an earlier setup added next to it is
+  removed. A cgh hook is also recognised when it is not the first command
+  of its entry.
 - **`pattern_search` reads the same regex and glob on every backend.**
   Without ripgrep, git grep ran the pattern as POSIX ERE, so `\w`, `\d`
   and `\b` found nothing. The pattern is now Python-style everywhere:

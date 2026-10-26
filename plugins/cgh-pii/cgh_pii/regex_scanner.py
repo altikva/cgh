@@ -54,8 +54,22 @@ _API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
     ("secret.google_api_key", re.compile(_WORD_START + r"AIza[0-9A-Za-z_-]{35}")),
     ("secret.stripe_key", re.compile(_WORD_START + r"[rs]k_live_[A-Za-z0-9]{24,}")),
 )
+# The "value" group is the quoted secret itself: redaction masks only
+# that part and keeps the variable name readable.
 _ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b\s*[:=]\s*[\"'][^\"']{8,}[\"']"
+    r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b\s*[:=]\s*"
+    r"[\"'](?P<value>[^\"']{8,})[\"']"
+)
+
+# Every secret.* kind, as (key, severity, pattern), in report order. The
+# scanner and the redactor both read this table, so a new secret kind is
+# detected and redacted from one entry. A pattern with a "value" group is
+# redacted on that group only.
+_SECRETS: tuple[tuple[str, str, re.Pattern], ...] = (
+    ("secret.aws_key", "block", _AWS_KEY),
+    ("secret.private_key", "block", _PRIVATE_KEY),
+    *((key, "block", pattern) for key, pattern in _API_TOKENS),
+    ("secret.assignment", "warn", _ASSIGNMENT),
 )
 
 
@@ -128,11 +142,8 @@ class RegexPiiScanner:
                     validate=lambda m: _card_ok(re.sub(r"[ -]", "", m.group(0))),
                 ),
             )
-        _emit("secret.aws_key", "block", _match_lines(_AWS_KEY, text))
-        _emit("secret.private_key", "block", _match_lines(_PRIVATE_KEY, text))
-        for key, pattern in _API_TOKENS:
-            _emit(key, "block", _match_lines(pattern, text))
-        _emit("secret.assignment", "warn", _match_lines(_ASSIGNMENT, text))
+        for key, severity, pattern in _SECRETS:
+            _emit(key, severity, _match_lines(pattern, text))
         return found
 
 

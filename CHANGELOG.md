@@ -282,6 +282,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Google and Stripe live keys. Each is now a `secret.*` finding at block
   severity, so `cgh pii scan` exits 1 on them and a guard that blocks on
   secrets stops them.
+- **`cgh pii redact` now masks API tokens** (cgh-pii 0.4.2). It only knew
+  AWS and private keys, so the tokens `cgh pii scan` reports came out in
+  clear text. Every `secret.*` kind of the scanner is now a redaction
+  category (`github_token` gives `[GITHUB_TOKEN_1]`), and a hardcoded
+  `password = "..."` keeps its name with the value masked. In pseudonym
+  mode a secret gets a random pseudonym per run instead of a keyed hash
+  of its value, so it cannot be brute-forced from the output.
 - **A file moved or deleted during `cgh index` no longer aborts the scan.**
   It is skipped. Before, a file that disappeared between the directory walk
   and its turn, for example a ticket another tool was moving, stopped the

@@ -108,11 +108,21 @@ cgh pii redact report.docx --only person --out report.anon.docx
 ```
 
 `--only` limits the categories (`person`, `location`, `email`,
-`phone`, `iban`, `card`, `aws_key`, `private_key`; default: all).
+`phone`, `iban`, `card`, `other`, plus every `secret.*` key of the
+table above without its prefix: `aws_key`, `private_key`,
+`anthropic_key`, `openai_key`, `github_token`, `gitlab_token`,
+`slack_token`, `google_api_key`, `stripe_key`, `assignment`; default:
+all). An `assignment` keeps its variable name and masks only the
+quoted value. A `private_key` match is the `-----BEGIN ... PRIVATE
+KEY-----` line only: the key body below it is not masked, so remove
+the whole block by hand.
 `--mode placeholder` (default) writes numbered tags `[PERSON_1]`,
 distinct within the document; `--mode pseudonym` writes a keyed
 `<pii.person:hex>`, the same token for the same value across documents
-when you export a stable `CGH_REDACT_SECRET` (16+ chars). From code:
+when you export a stable `CGH_REDACT_SECRET` (16+ chars). Secrets are
+the exception: a token or password gets a random pseudonym, the same
+within one run but never derived from its value, so nobody holding the
+output and the key can brute-force it back. From code:
 `codegraph.sdk.redact_text(text, only=["person"])`.
 
 Read the output before you share it. The same limits apply as above:

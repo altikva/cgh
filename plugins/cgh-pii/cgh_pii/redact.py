@@ -4,7 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Text redaction: find PII spans (the regex tier, plus the
+# Description: Text redaction: find PII and secret spans (the regex tier,
+#              which covers every secret.* kind of the scanner, plus the
 #              NER tier for names and locations when presidio is
 #              installed), keep the categories the caller asked for, and
 #              replace each span with a stable token. The finding store
@@ -23,12 +24,11 @@ import re
 import secrets
 
 from .regex_scanner import (
-    _AWS_KEY,
     _CARD,
     _EMAIL,
     _IBAN,
     _PHONE,
-    _PRIVATE_KEY,
+    _SECRETS,
     _card_ok,
     _iban_ok,
 )
@@ -39,9 +39,17 @@ _REGEX = {
     "phone": (_PHONE, None),
     "iban": (_IBAN, lambda m: _iban_ok(m.group(0))),
     "card": (_CARD, lambda m: _card_ok(re.sub(r"[ -]", "", m.group(0)))),
-    "aws_key": (_AWS_KEY, None),
-    "private_key": (_PRIVATE_KEY, None),
 }
+# Every secret.* kind the scanner reports, under its key without the
+# "secret." prefix (secret.github_token -> github_token), from the
+# scanner's own table so the two never drift apart. Provider tokens come
+# before the generic assignment: when both cover the same bytes, the
+# provider category wins the tie in _dedup.
+SECRET_CATEGORIES = tuple(key.removeprefix("secret.") for key, _sev, _p in _SECRETS)
+_SECRET_SET = frozenset(SECRET_CATEGORIES)
+_REGEX.update(
+    (key.removeprefix("secret."), (pattern, None)) for key, _sev, pattern in _SECRETS
+)
 # NER entity type -> category
 _NER = {"PERSON": "person", "LOCATION": "location"}
 NER_CATEGORIES = frozenset(_NER.values())
@@ -67,7 +75,10 @@ def _regex_spans(text: str, cats: set[str]) -> list[tuple[int, int, str]]:
         for m in pattern.finditer(text):
             if validate is not None and not validate(m):
                 continue
-            spans.append((m.start(), m.end(), cat))
+            # A pattern with a "value" group masks only the secret, not
+            # the name it is assigned to.
+            group = "value" if "value" in pattern.groupindex else 0
+            spans.append((m.start(group), m.end(group), cat))
     return spans
 
 
@@ -134,7 +145,17 @@ class _Tokenizer:
         cached = self._map.get((cat, value))
         if cached:
             return cached
-        if self._mode == "pseudonym":
+        if self._mode == "pseudonym" and cat in _SECRET_SET:
+            # A secret is never hashed, not even keyed: a password or a
+            # short token could be brute-forced offline by anyone holding
+            # the pseudonym and the shared key. It gets a random id, the
+            # same for every occurrence in this run (through _map) and
+            # unrelated to the value, so no one can recompute it.
+            used = set(self._map.values())
+            tok = f"<pii.{cat}:{secrets.token_hex(5)}>"
+            while tok in used:
+                tok = f"<pii.{cat}:{secrets.token_hex(5)}>"
+        elif self._mode == "pseudonym":
             digest = _hmac.new(
                 self._key, value.encode("utf-8"), hashlib.sha256
             ).hexdigest()[:10]
@@ -218,6 +239,8 @@ def redact(
     "placeholder" (numbered [PERSON_1], distinct within this text) or
     "pseudonym" (keyed <pii.person:hex>; pass a fixed ``secret`` for the
     same token across documents, else one is generated for this call).
+    Secret categories are the exception: their pseudonym is random per
+    call, never derived from the value, so it cannot be brute-forced.
     ``llm_hits`` are (redaction_category, quote) pairs from the optional
     LLM tier; each quote is located by literal search and redacted like a
     NER value. Raises RedactError if a requested NER category has no

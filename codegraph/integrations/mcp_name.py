@@ -30,6 +30,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from codegraph.core.utils import write_json_file
+
 SERVER_KEY = "cgh"
 LEGACY_SERVER_KEY = "codegraph"
 
@@ -345,7 +347,7 @@ def _load(path: Path) -> dict | None:
 
 
 def _write(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_json_file(path, data)
 
 
 def migrate_mcp_file(path: Path) -> bool:

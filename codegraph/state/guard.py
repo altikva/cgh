@@ -23,6 +23,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from codegraph.core.utils import write_json_file
+
 _SIDECAR = "guard_denies.json"
 
 _BOBIGNORE_START = "# >>> cgh guard (managed, do not edit) >>>"
@@ -74,7 +76,7 @@ def _load_json(path: Path) -> dict | None:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_json_file(path, data)
 
 
 def _sidecar_rules(root: Path) -> set[str]:

@@ -54,11 +54,21 @@ _API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
     ("secret.google_api_key", re.compile(_WORD_START + r"AIza[0-9A-Za-z_-]{35}")),
     ("secret.stripe_key", re.compile(_WORD_START + r"[rs]k_live_[A-Za-z0-9]{24,}")),
 )
-# The "value" group is the quoted secret itself: redaction masks only
-# that part and keeps the variable name readable.
+# A secret assigned to a known name, quoted (`password = "..."`) or bare
+# as in a .env file or a shell line (`PASSWORD=hunter2hunter2`). The
+# "value" group is the secret itself: redaction masks only that part and
+# keeps the variable name readable. A bare value runs to the next
+# whitespace, stays on the name's line and never ends on a comma or a
+# semicolon, so a keyword argument in code does not match. It is skipped
+# when it is a reference rather than a secret: `$VAR` or `${VAR}`, a
+# `<placeholder>`, an already masked `****`, or an attribute access such
+# as `settings.API_KEY`; quotes, brackets and parentheses rule out code.
 _ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b\s*[:=]\s*"
-    r"[\"'](?P<value>[^\"']{8,})[\"']"
+    r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b"
+    r"(?:\s*[:=]\s*(?P<quote>[\"'])"
+    r"|[ \t]*[:=][ \t]*(?![$<])(?!\*+(?!\S))(?![A-Za-z_]\w*(?:\.\w+)+(?!\S)))"
+    r"(?P<value>(?(quote)[^\"']{8,}|[^\s\"'`(){}\[\]]{7,}[^\s\"'`(){}\[\],;]))"
+    r"(?(quote)[\"']|(?!\S))"
 )
 
 # Every secret.* kind, as (key, severity, pattern), in report order. The

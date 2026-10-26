@@ -68,6 +68,40 @@ class TestPatterns:
         assert found["secret.private_key"].severity == "block"
         assert found["secret.assignment"].severity == "warn"
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "PASSWORD=hunter2hunter2",
+            "API_KEY=abc123def456ghi",
+            "export TOKEN=s3cr3t-v4lue!",
+            "secret: s3cr3t-v4lue",
+            "password = hunter2hunter2  # local only",
+        ],
+    )
+    def test_unquoted_assignment(self, line):
+        found = _keys("# env\n" + line + "\n")
+        assert found["secret.assignment"].severity == "warn"
+        assert found["secret.assignment"].line == 2
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "TOKEN=${GITHUB_TOKEN}",
+            "PASSWORD=$DB_PASSWORD_VALUE",
+            "password=<your-password-here>",
+            "password=********",
+            "api_key = settings.API_KEY",
+            "token = self._token_value",
+            "password = get_password()",
+            "client(token=access_token, retries=3)",
+            "    token=access_token,",
+            "password=short",
+            "password:\n    hunter2hunter2",
+        ],
+    )
+    def test_unquoted_assignment_false_positives(self, line):
+        assert "secret.assignment" not in _keys(line + "\n")
+
     def test_clean_text(self):
         assert _scan("def add(a, b):\n    return a + b\n") == []
 

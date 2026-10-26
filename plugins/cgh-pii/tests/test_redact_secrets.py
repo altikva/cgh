@@ -162,6 +162,34 @@ def test_token_in_assignment_keeps_the_provider_category():
     assert counts == {"openai_key": 1}
 
 
+def test_unquoted_assignment_masks_only_the_value():
+    value = _fakes()["assignment"][0]
+    text = "# .env\nPASSWORD=" + value + "\nDEBUG=true\n"
+    out, counts = redact(text, only=_SECRETS)
+    assert out == "# .env\nPASSWORD=[ASSIGNMENT_1]\nDEBUG=true\n"
+    assert counts == {"assignment": 1}
+
+
+def test_unquoted_assignment_stops_at_whitespace():
+    value = _fakes()["assignment"][0]
+    out, _ = redact("api_key: " + value + "  # rotate monthly", only=_SECRETS)
+    assert out == "api_key: [ASSIGNMENT_1]  # rotate monthly"
+
+
+def test_unquoted_token_keeps_the_provider_category():
+    key = _fakes()["openai_key"][0]
+    out, counts = redact("API_KEY=" + key, only=_SECRETS)
+    assert out == "API_KEY=[OPENAI_KEY_1]"
+    assert counts == {"openai_key": 1}
+
+
+def test_unquoted_reference_is_left_alone():
+    text = "TOKEN=${GITHUB_TOKEN}\nPASSWORD=<your-password>\n"
+    out, counts = redact(text, only=_SECRETS)
+    assert out == text
+    assert counts == {}
+
+
 def _mixed() -> tuple[str, list[str]]:
     f = _fakes()
     gh = f["github_token"][0]

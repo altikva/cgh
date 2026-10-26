@@ -186,8 +186,8 @@ def chunks(items: list, size: int = 500) -> list[list]:
 def write_json_file(path: Path, data: object) -> None:
     """Write a JSON config file a person also edits (.claude/settings.json,
     .mcp.json and the like): two-space indent, key order kept, UTF-8 with
-    non-ASCII text left as is so `—` or an emoji in the user's own entries
-    does not turn into `\\uXXXX` escapes."""
+    non-ASCII text left as is, so accented letters or emoji in the user's
+    own entries do not turn into `\\uXXXX` escapes."""
     import json
 
     path.write_text(

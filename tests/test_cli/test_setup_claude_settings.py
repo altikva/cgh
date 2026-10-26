@@ -20,7 +20,7 @@ import pytest
 
 from codegraph.cli import commands_init as ci
 
-USER_TEXT = "⏱️  Deploy triggered — run /deploy-status"
+USER_TEXT = "⏱️  Déploiement lancé → run /deploy-status ✅"
 HAND_REINDEX = "cgh diff --since HEAD~1; cgh index"
 
 

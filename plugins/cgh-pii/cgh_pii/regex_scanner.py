@@ -54,20 +54,36 @@ _API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
     ("secret.google_api_key", re.compile(_WORD_START + r"AIza[0-9A-Za-z_-]{35}")),
     ("secret.stripe_key", re.compile(_WORD_START + r"[rs]k_live_[A-Za-z0-9]{24,}")),
 )
-# A secret assigned to a known name, quoted (`password = "..."`) or bare
-# as in a .env file or a shell line (`PASSWORD=hunter2hunter2`). The
-# "value" group is the secret itself: redaction masks only that part and
-# keeps the variable name readable. A bare value runs to the next
-# whitespace, stays on the name's line and never ends on a comma or a
-# semicolon, so a keyword argument in code does not match. It is skipped
-# when it is a reference rather than a secret: `$VAR` or `${VAR}`, a
-# `<placeholder>`, an already masked `****`, or an attribute access such
-# as `settings.API_KEY`; quotes, brackets and parentheses rule out code.
+# A secret assigned to a name that holds a secret keyword, quoted
+# (`password = "..."`) or bare as in a .env file or a shell line
+# (`DB_PASSWORD=hunter2hunter2`). The name is one identifier of up to
+# about 130 characters with the keyword anywhere in it (GH_TOKEN,
+# client_secret, AWS_SECRET_ACCESS_KEY); a name ending in _URL, _URI,
+# _DIR, _FILE, _PATH, _NAME or _ENDPOINT points at a secret rather than
+# holding one and is skipped. The "value" group is the secret itself:
+# redaction masks only that part and keeps the name readable.
+#
+# A bare value runs to the next whitespace, stays on the name's line and
+# never ends on a comma or a semicolon, so a keyword argument in code
+# does not match. It is skipped when it is a reference rather than a
+# secret: `$VAR` or `${VAR}`, a `<placeholder>`, an already masked
+# `****`, or an attribute access such as `settings.API_KEY`; quotes,
+# brackets and parentheses rule out code.
+#
+# Scanning stays linear: every repeat is possessive or atomic, so a
+# failed attempt never backtracks, and the name and both values are
+# bounded, so each start position costs a bounded amount even when the
+# keyword repeats along one long line. A value longer than its bound
+# (1024 characters bare, 4096 quoted) is not matched at all rather than
+# cut short, so a match never masks a value partially.
 _ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\b"
-    r"(?:\s*[:=]\s*(?P<quote>[\"'])"
-    r"|[ \t]*[:=][ \t]*(?![$<])(?!\*+(?!\S))(?![A-Za-z_]\w*(?:\.\w+)+(?!\S)))"
-    r"(?P<value>(?(quote)[^\"']{8,}|[^\s\"'`(){}\[\]]{7,}[^\s\"'`(){}\[\],;]))"
+    r"(?i)(?<![A-Za-z0-9_])"
+    r"(?>[A-Za-z0-9_]{0,64}?(?:password|passwd|api[_-]?key|secret|token))"
+    r"[A-Za-z0-9_]{0,64}+(?![A-Za-z0-9_])"
+    r"(?<!_url)(?<!_uri)(?<!_dir)(?<!_file)(?<!_path)(?<!_name)(?<!_endpoint)"
+    r"(?:\s*+[:=]\s*+(?P<quote>[\"'])"
+    r"|[ \t]*+[:=][ \t]*+(?![$<])(?!\*++(?!\S))(?![A-Za-z_]\w*+(?:\.\w++)++(?!\S)))"
+    r"(?P<value>(?(quote)[^\"']{8,4096}+|[^\s\"'`(){}\[\]]{8,1024}+(?<![,;])))"
     r"(?(quote)[\"']|(?!\S))"
 )
 

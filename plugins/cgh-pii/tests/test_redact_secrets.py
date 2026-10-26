@@ -183,6 +183,14 @@ def test_unquoted_token_keeps_the_provider_category():
     assert counts == {"openai_key": 1}
 
 
+def test_prefixed_names_mask_only_the_value():
+    value = _fakes()["assignment"][0]
+    text = "DB_PASSWORD=" + value + '\nclient_secret = "' + value + '"\n'
+    out, counts = redact(text, only=_SECRETS)
+    assert out == 'DB_PASSWORD=[ASSIGNMENT_1]\nclient_secret = "[ASSIGNMENT_1]"\n'
+    assert counts == {"assignment": 2}
+
+
 def test_unquoted_reference_is_left_alone():
     text = "TOKEN=${GITHUB_TOKEN}\nPASSWORD=<your-password>\n"
     out, counts = redact(text, only=_SECRETS)

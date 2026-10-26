@@ -64,7 +64,7 @@ cgh pii scan || { echo "secret in the tree"; exit 1; }
 | `secret.slack_token` | Slack tokens (`xoxb-`, `xoxp-`, ...) | block | on |
 | `secret.google_api_key` | Google API keys (`AIza...`) | block | on |
 | `secret.stripe_key` | Stripe live secret and restricted keys | block | on |
-| `secret.assignment` | `password = "..."` or `.env` style `PASSWORD=...` hardcoded credentials | warn | on |
+| `secret.assignment` | `password = "..."` or `.env` style `DB_PASSWORD=...` hardcoded credentials | warn | on |
 | `pii.email` | email addresses | warn | `--pii` |
 | `pii.phone` | international-format phone numbers | warn | `--pii` |
 | `pii.iban` | IBANs, mod-97 validated | warn | `--pii` |

@@ -64,7 +64,7 @@ cgh pii scan || { echo "secret in the tree"; exit 1; }
 | `secret.slack_token` | Slack tokens (`xoxb-`, `xoxp-`, ...) | block | on |
 | `secret.google_api_key` | Google API keys (`AIza...`) | block | on |
 | `secret.stripe_key` | Stripe live secret and restricted keys | block | on |
-| `secret.assignment` | `password = "..."` style hardcoded credentials | warn | on |
+| `secret.assignment` | `password = "..."` or `.env` style `DB_PASSWORD=...` hardcoded credentials | warn | on |
 | `pii.email` | email addresses | warn | `--pii` |
 | `pii.phone` | international-format phone numbers | warn | `--pii` |
 | `pii.iban` | IBANs, mod-97 validated | warn | `--pii` |
@@ -113,7 +113,7 @@ table above without its prefix: `aws_key`, `private_key`,
 `anthropic_key`, `openai_key`, `github_token`, `gitlab_token`,
 `slack_token`, `google_api_key`, `stripe_key`, `assignment`; default:
 all). An `assignment` keeps its variable name and masks only the
-quoted value. A `private_key` match is the `-----BEGIN ... PRIVATE
+value, quoted or not. A `private_key` match is the `-----BEGIN ... PRIVATE
 KEY-----` line only: the key body below it is not masked, so remove
 the whole block by hand.
 `--mode placeholder` (default) writes numbered tags `[PERSON_1]`,

@@ -13,13 +13,14 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("cgh_pii")
 
-from cgh_pii.regex_scanner import RegexPiiScanner
+from cgh_pii.regex_scanner import _ASSIGNMENT, RegexPiiScanner
 
 import codegraph.plugins as plugins
 
@@ -67,6 +68,102 @@ class TestPatterns:
         assert found["secret.aws_key"].severity == "block"
         assert found["secret.private_key"].severity == "block"
         assert found["secret.assignment"].severity == "warn"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "PASSWORD=hunter2hunter2",
+            "API_KEY=abc123def456ghi",
+            "export TOKEN=s3cr3t-v4lue!",
+            "secret: s3cr3t-v4lue",
+            "password = hunter2hunter2  # local only",
+            "x-api-key: abcdefgh123",
+        ],
+    )
+    def test_unquoted_assignment(self, line):
+        found = _keys("# env\n" + line + "\n")
+        assert found["secret.assignment"].severity == "warn"
+        assert found["secret.assignment"].line == 2
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "DB_PASSWORD=hunter2hunter2",
+            "GH_TOKEN=abcdefghijkl",
+            "ANTHROPIC_API_KEY=abcdefghijkl",
+            "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG",
+            'client_secret = "abcdefghijkl"',
+            'DB_PASSWORD = "hunter2hunter2"',
+            "PASSWORD_NAME=hunter2hunter2",
+        ],
+    )
+    def test_prefixed_names(self, line):
+        assert "secret.assignment" in _keys(line + "\n")
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "TOKEN_URL=https://auth.example.com/oauth/token",
+            "PASSWORD_FILE=/run/secrets/db_password",
+            'token_endpoint = "https://auth.example.com/token"',
+            "password-reset: https://example.com/reset",
+        ],
+    )
+    def test_names_that_point_at_a_secret(self, line):
+        assert "secret.assignment" not in _keys(line + "\n")
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "TOKEN=${GITHUB_TOKEN}",
+            "PASSWORD=$DB_PASSWORD_VALUE",
+            "password=<your-password-here>",
+            "password=********",
+            "api_key = settings.API_KEY",
+            "token = self._token_value",
+            "password = get_password()",
+            "client(token=access_token, retries=3)",
+            "    token=access_token,",
+            "password=short",
+            "password:\n    hunter2hunter2",
+        ],
+    )
+    def test_unquoted_assignment_false_positives(self, line):
+        assert "secret.assignment" not in _keys(line + "\n")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=" * 6000 + ",",
+            'secret="' + "a" * 50000,
+            "secret=" + "a." * 25000,
+            "secret=a." * 6000,
+            "token: " * 8000 + ",",
+            "password" * 6000 + "=abcdefghij",
+            "password" + " " * 50000 + "x",
+            "secret=" + "*" * 50000 + ",",
+            "password=" + ("a" * 1100 + "-password=") * 45,
+            ('secret="' + "b" * 5000 + "\n") * 10,
+        ],
+        ids=[
+            "repeated-keyword",
+            "unterminated-quote",
+            "long-dotted-run",
+            "repeated-dotted",
+            "repeated-colon",
+            "long-identifier",
+            "long-whitespace",
+            "long-asterisks",
+            "capped-bare-repeats",
+            "capped-quoted-lines",
+        ],
+    )
+    def test_assignment_scan_stays_linear(self, text):
+        """Hostile input of about 50 KB scans fast: the assignment
+        pattern must not backtrack over a long run once per start."""
+        start = time.perf_counter()
+        list(_ASSIGNMENT.finditer(text))
+        assert time.perf_counter() - start < 0.5
 
     def test_clean_text(self):
         assert _scan("def add(a, b):\n    return a + b\n") == []

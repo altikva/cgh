@@ -292,7 +292,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **`cgh pii` now catches unquoted secret assignments** (cgh-pii 0.4.3).
   Only `password = "..."` was matched, so a `.env` or shell line such as
   `PASSWORD=hunter2hunter2` was neither reported nor masked. A bare value
-  of 8 characters or more now counts, and redaction masks only the value.
+  of 8 characters or more now counts, and redaction masks only the value,
+  however long it is.
   Prefixed names such as `DB_PASSWORD`, `GH_TOKEN` or `client_secret` now
   count too, quoted or not. `$VAR` and `${VAR}` references, `<placeholder>`
   values, `****`, names ending in `_URL` or `_PATH`, and code such as

@@ -191,6 +191,34 @@ def test_prefixed_names_mask_only_the_value():
     assert counts == {"assignment": 2}
 
 
+def _long_value(n: int) -> str:
+    return (_ALNUM * (n // len(_ALNUM) + 1))[:n]
+
+
+def test_long_bare_value_is_reported_and_masked_whole():
+    value = _long_value(5000)
+    text = "TOKEN=" + value + "\nDEBUG=true\n"
+    assert "secret.assignment" in _scan_keys(text)
+    out, counts = redact(text, only=_SECRETS)
+    assert out == "TOKEN=[ASSIGNMENT_1]\nDEBUG=true\n"
+    assert counts == {"assignment": 1}
+
+
+def test_long_quoted_value_is_reported_and_masked_whole():
+    value = _long_value(6000)
+    text = 'password = "' + value + '"\nnext = 1\n'
+    assert "secret.assignment" in _scan_keys(text)
+    out, counts = redact(text, only=_SECRETS)
+    assert out == 'password = "[ASSIGNMENT_1]"\nnext = 1\n'
+    assert counts == {"assignment": 1}
+
+
+def test_long_unterminated_quote_is_masked_to_the_end_of_line():
+    value = _long_value(6000)
+    out, _ = redact('secret = "' + value + "\nnext = 1\n", only=_SECRETS)
+    assert out == 'secret = "[ASSIGNMENT_1]\nnext = 1\n'
+
+
 def test_unquoted_reference_is_left_alone():
     text = "TOKEN=${GITHUB_TOKEN}\nPASSWORD=<your-password>\n"
     out, counts = redact(text, only=_SECRETS)

@@ -94,6 +94,7 @@ class TestPatterns:
             "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG",
             'client_secret = "abcdefghijkl"',
             'DB_PASSWORD = "hunter2hunter2"',
+            "PASSWORD_NAME=hunter2hunter2",
         ],
     )
     def test_prefixed_names(self, line):
@@ -103,7 +104,6 @@ class TestPatterns:
         "line",
         [
             "TOKEN_URL=https://auth.example.com/oauth/token",
-            "SECRET_NAME=projects/demo/secrets/db",
             "PASSWORD_FILE=/run/secrets/db_password",
             'token_endpoint = "https://auth.example.com/token"',
             "password-reset: https://example.com/reset",
@@ -142,6 +142,8 @@ class TestPatterns:
             "password" * 6000 + "=abcdefghij",
             "password" + " " * 50000 + "x",
             "secret=" + "*" * 50000 + ",",
+            "password=" + ("a" * 1100 + "-password=") * 45,
+            ('secret="' + "b" * 5000 + "\n") * 10,
         ],
         ids=[
             "repeated-keyword",
@@ -152,6 +154,8 @@ class TestPatterns:
             "long-identifier",
             "long-whitespace",
             "long-asterisks",
+            "capped-bare-repeats",
+            "capped-quoted-lines",
         ],
     )
     def test_assignment_scan_stays_linear(self, text):

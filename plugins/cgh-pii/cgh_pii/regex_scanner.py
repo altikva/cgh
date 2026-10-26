@@ -59,9 +59,9 @@ _API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
 # (`DB_PASSWORD=hunter2hunter2`). The name is one identifier of up to
 # about 130 characters with the keyword anywhere in it (GH_TOKEN,
 # client_secret, AWS_SECRET_ACCESS_KEY); a name ending in _URL, _URI,
-# _DIR, _FILE, _PATH, _NAME or _ENDPOINT points at a secret rather than
-# holding one and is skipped. The "value" group is the secret itself:
-# redaction masks only that part and keeps the name readable.
+# _DIR, _FILE, _PATH or _ENDPOINT points at a secret rather than holding
+# one and is skipped. The "value" group is the secret itself: redaction
+# masks only that part and keeps the name readable.
 #
 # A bare value runs to the next whitespace, stays on the name's line and
 # never ends on a comma or a semicolon, so a keyword argument in code
@@ -73,25 +73,84 @@ _API_TOKENS: tuple[tuple[str, re.Pattern], ...] = (
 # Scanning stays linear: every repeat is possessive or atomic, so a
 # failed attempt never backtracks, and the name and both values are
 # bounded, so each start position costs a bounded amount even when the
-# keyword repeats along one long line. A value longer than its bound
-# (1024 characters bare, 4096 quoted) is not matched at all rather than
-# cut short, so a match never masks a value partially.
-_ASSIGNMENT = re.compile(
+# keyword repeats along one long line. A value that reaches its bound
+# (1024 characters bare, 4096 quoted) still matches, without the end
+# checks, and _AssignmentPattern then extends it in code to its real end:
+# the next whitespace for a bare value, the closing quote or the end of
+# the line for a quoted one. A long token is therefore reported and
+# masked whole, never left in clear text past the bound.
+_ASSIGNMENT_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_])"
     r"(?>[A-Za-z0-9_]{0,64}?(?:password|passwd|api[_-]?key|secret|token))"
     r"[A-Za-z0-9_]{0,64}+(?![A-Za-z0-9_])"
-    r"(?<!_url)(?<!_uri)(?<!_dir)(?<!_file)(?<!_path)(?<!_name)(?<!_endpoint)"
+    r"(?<!_url)(?<!_uri)(?<!_dir)(?<!_file)(?<!_path)(?<!_endpoint)"
     r"(?:\s*+[:=]\s*+(?P<quote>[\"'])"
     r"|[ \t]*+[:=][ \t]*+(?![$<])(?!\*++(?!\S))(?![A-Za-z_]\w*+(?:\.\w++)++(?!\S)))"
-    r"(?P<value>(?(quote)[^\"']{8,4096}+|[^\s\"'`(){}\[\]]{8,1024}+(?<![,;])))"
-    r"(?(quote)[\"']|(?!\S))"
+    r"(?P<value>(?(quote)[^\"']{8,4096}+|[^\s\"'`(){}\[\]]{8,1024}+))"
+    # Ends: a full value, or a value cut by its bound (the next character
+    # still belongs to it), flagged by an empty capped_* group.
+    r"(?(quote)(?:[\"']|(?=[^\"'])(?P<capped_quoted>))"
+    r"|(?:(?<![,;])(?!\S)|(?=[^\s\"'`(){}\[\]])(?P<capped_bare>)))"
 )
+_BARE_TAIL = re.compile(r"\S*")
+_QUOTED_TAIL = re.compile(r"[^\"'\n]*[\"']?")
+
+
+class _AssignmentMatch:
+    """A match of _ASSIGNMENT_RE whose value may run past the regex bound:
+    start/end/group read like re.Match for group 0 and "value"."""
+
+    __slots__ = ("_end", "_m", "_text", "_value_end")
+
+    def __init__(self, m: re.Match, text: str, value_end: int, end: int) -> None:
+        self._m = m
+        self._text = text
+        self._value_end = value_end
+        self._end = end
+
+    def start(self, group: int | str = 0) -> int:
+        return self._m.start(group)
+
+    def end(self, group: int | str = 0) -> int:
+        if group == 0:
+            return self._end
+        if group == "value":
+            return self._value_end
+        return self._m.end(group)
+
+    def group(self, group: int | str = 0) -> str:
+        return self._text[self.start(group) : self.end(group)]
+
+
+class _AssignmentPattern:
+    """_ASSIGNMENT_RE plus the extension of a capped value to its real
+    end. finditer resumes after the extended match, so each character of
+    a long value is read once and the scan stays linear."""
+
+    groupindex = _ASSIGNMENT_RE.groupindex
+
+    def finditer(self, text: str):
+        pos = 0
+        while (m := _ASSIGNMENT_RE.search(text, pos)) is not None:
+            value_end = end = m.end()
+            if m.group("capped_bare") is not None:
+                value_end = end = _BARE_TAIL.match(text, m.end("value")).end()
+            elif m.group("capped_quoted") is not None:
+                end = _QUOTED_TAIL.match(text, m.end("value")).end()
+                value_end = end - 1 if text[end - 1 : end] in ("'", '"') else end
+            else:
+                value_end = m.end("value")
+            yield _AssignmentMatch(m, text, value_end, end)
+            pos = end
+
+
+_ASSIGNMENT = _AssignmentPattern()
 
 # Every secret.* kind, as (key, severity, pattern), in report order. The
 # scanner and the redactor both read this table, so a new secret kind is
 # detected and redacted from one entry. A pattern with a "value" group is
 # redacted on that group only.
-_SECRETS: tuple[tuple[str, str, re.Pattern], ...] = (
+_SECRETS: tuple[tuple[str, str, re.Pattern | _AssignmentPattern], ...] = (
     ("secret.aws_key", "block", _AWS_KEY),
     ("secret.private_key", "block", _PRIVATE_KEY),
     *((key, "block", pattern) for key, pattern in _API_TOKENS),

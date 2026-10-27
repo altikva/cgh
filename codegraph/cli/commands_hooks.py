@@ -493,22 +493,90 @@ def _ranges_advice(
             return
         if not hook_advice.read_advice_enabled(repo_root):
             return
-        from codegraph.core.utils import ro_sqlite_uri
-
-        conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
-        try:
-            rows = conn.execute(
-                "SELECT name, start_line, end_line FROM symbols "
-                "WHERE file_path IN (?, ?) ORDER BY start_line LIMIT ?",
-                (abs_path, rel_path, hook_advice.RANGES_ROWS),
-            ).fetchall()
-        finally:
-            conn.close()
+        rows = _symbol_ranges(fts_db, abs_path, rel_path)
         advice = hook_advice.ranges_advice(target, size, rows)
     except Exception:
         return
     if advice:
         _emit_nudge(advice)
+
+
+def _symbol_ranges(
+    fts_db: Path, abs_path: str, rel_path: str
+) -> list[tuple[str, int, int]]:
+    from codegraph.core.utils import ro_sqlite_uri
+
+    conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
+    try:
+        return conn.execute(
+            "SELECT name, start_line, end_line FROM symbols "
+            "WHERE file_path IN (?, ?) ORDER BY start_line LIMIT ?",
+            (abs_path, rel_path, hook_advice.RANGES_ROWS),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _emit_deny(reason: str) -> None:
+    """Deny the tool call with ``reason``, which Claude Code hands to the
+    model in place of the tool's output, then exit 0."""
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        },
+        sys.stdout,
+    )
+    sys.exit(0)
+
+
+def _answer_large_read(
+    payload: dict,
+    target: Path,
+    repo_root: Path,
+    fts_db: Path,
+    abs_path: str,
+    rel_path: str,
+    symbol_count: int,
+) -> None:
+    """Answer mode for a full Read of a text file past FULL_READ_ANSWER: deny
+    it with the file's plan, or return when the Read should run. It runs when
+    the file is small, binary or a notebook, when there is no session to
+    remember the deny in, and on the first retry after a deny."""
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return
+    if target.suffix.lower() in _READ_ADVICE_SKIP:
+        return
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return
+    if size <= hook_answers.FULL_READ_ANSWER or not target.is_file():
+        return
+    if hook_answers.is_binary(target):
+        return
+    if hook_answers.retry_after_deny(repo_root, session_id, abs_path):
+        # The plan is already in the transcript from the deny: say nothing.
+        sys.exit(0)
+    plan: str | None = None
+    if symbol_count:
+        if symbol_count >= _MIN_SYMBOLS_FOR_OUTLINE_HINT:
+            plan = hook_answers.outline_answer(repo_root, target, tail=False)
+        if plan is None:
+            try:
+                rows = _symbol_ranges(fts_db, abs_path, rel_path)
+                plan = hook_advice.ranges_advice(target, size, rows, bare=True)
+            except Exception:
+                plan = None
+    if plan is None:
+        plan = hook_answers.text_outline(target, size)
+    if not hook_answers.remember_deny(repo_root, session_id, abs_path):
+        return
+    _emit_deny(hook_answers.full_read_reason(rel_path, size, plan))
 
 
 def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
@@ -520,7 +588,9 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     a lock file, a log) gets a one-line hint to read a part of it instead,
     and one of a large indexed file a line with its main symbols' ranges.
     The suggestion is delivered via hookSpecificOutput.additionalContext.
-    Advisory: always exits 0.
+    With hook answers on, a full Read of a text file past 32 KB is denied
+    instead, the reason carrying the file's plan; repeating the Read lets it
+    through. Always exits 0.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -602,10 +672,16 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     symbol_count = (row or [0])[0]
+    answer_mode = hook_answers.enabled(Path(repo_root))
+    # Answer mode denies a full Read of a large text file and hands back its
+    # plan; parsed documents (pdf, docx...) are binaries and keep the hint.
+    if answer_mode and suffix not in PARSED_DOC_EXTS:
+        _answer_large_read(
+            payload, target, repo_root, fts_db, abs_path, rel_path, symbol_count
+        )
     if symbol_count == 0 and suffix not in PARSED_DOC_EXTS:
         _read_advice(target, repo_root)
 
-    answer_mode = hook_answers.enabled(Path(repo_root))
     if answer_mode and symbol_count >= _MIN_SYMBOLS_FOR_OUTLINE_HINT:
         answer = hook_answers.outline_answer(repo_root, target)
         if answer:

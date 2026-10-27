@@ -416,13 +416,14 @@ def _main_symbols(rows: list[tuple[str, int, int]]) -> list[tuple[str, int, int]
 
 
 def ranges_advice(
-    target: Path, size: int, rows: list[tuple[str, int, int]]
+    target: Path, size: int, rows: list[tuple[str, int, int]], bare: bool = False
 ) -> str | None:
     """A one-line hint for a full Read of a large indexed file: its main
     symbols with their line ranges, largest first when they do not all fit
     in the byte budget, else None. ``size`` is the file's size in bytes and
     ``rows`` are (name, start_line, end_line) from the FTS index; the caller
-    has already checked the read is full."""
+    has already checked the read is full. ``bare=True`` leaves out the file
+    name and the closing advice, for a caller that gives both itself."""
     if size < LARGE_FILE or not rows:
         return None
     top = _main_symbols(rows)
@@ -430,6 +431,8 @@ def ranges_advice(
         return None
     head = f"[cgh hook] {_short(target.name, _NAME_MAX)} ({_human_size(size)}): "
     tail = ". Read a range with offset/limit."
+    if bare:
+        head, tail = "Main parts: ", "."
 
     def item(r: tuple[str, int, int]) -> str:
         name, start, stop = r

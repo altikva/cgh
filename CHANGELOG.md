@@ -9,6 +9,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Hook answers deny a full Read of a large text file.** With hook
+  answers on, a Read without offset or limit of a text file over 32 KB
+  is refused, and the refusal carries the file's plan: its symbols or
+  sections with their line ranges, or for a file cgh does not index
+  (.patch, .tfvars, .txt, .json) its heading-like lines or ten anchors;
+  lock files and minified bundles get the anchors only.
+  The advisory hint was ignored on 7 of 17 full reads of such files in
+  the study transcripts. Repeating the same Read lets it through. Images,
+  PDFs and other binaries, ranged reads and answers off are unchanged.
 - **Grep-like text answers, opt-in.** `pattern_search`, `find_callers`,
   `search_symbols` and `symbol_lookup` take `format="text"`: one header
   line of metadata, then the rows under their file path, like ripgrep.

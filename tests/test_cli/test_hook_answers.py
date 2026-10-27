@@ -399,3 +399,132 @@ def test_answers_config_order_and_bad_files(monkeypatch, tmp_path, repo):
     (home / "config.toml").write_text('[hooks]\nanswers = "yes"\n')
     assert not ha.enabled(repo)  # only a real boolean counts
     assert not ha.enabled(tmp_path / "elsewhere")
+
+
+# --- full Read of a large text file -------------------------------------------
+
+
+def _read(monkeypatch, capsys, repo, path, **extra) -> dict:
+    """Run the Read hook on ``path`` and return its JSON output ({} when silent)."""
+    payload = {
+        "tool_input": {"file_path": str(path), **extra},
+        "cwd": str(repo),
+        "session_id": "sess-1",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        h.cmd_hook_precheck_read(argparse.Namespace())
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    return json.loads(out)["hookSpecificOutput"] if out else {}
+
+
+def _denied(out: dict) -> bool:
+    return out.get("permissionDecision") == "deny"
+
+
+def _big_py(repo):
+    src = repo / "app" / "billing.py"
+    src.write_text("".join(f"value_{i} = {i}  # padding\n" for i in range(1700)))
+    assert src.stat().st_size > 32 * 1024
+    return src
+
+
+def _big_txt(repo, name="notes.txt", size=40 * 1024):
+    path = repo / name
+    line = "plain words with nothing to outline in them\n"
+    path.write_text(line * (size // len(line) + 1))
+    return path
+
+
+def test_full_read_of_large_indexed_file_is_denied_with_outline(
+    monkeypatch, capsys, repo
+):
+    out = _read(monkeypatch, capsys, repo, _big_py(repo))
+    assert _denied(out)
+    reason = out["permissionDecisionReason"]
+    assert "Full Read of app/billing.py" in reason
+    assert "10-30  function  charge_card" in reason
+    assert "offset/limit" in reason
+    assert reason.count("offset/limit") == 1
+
+
+def test_full_read_of_large_unindexed_text_is_denied_with_anchors(
+    monkeypatch, capsys, repo
+):
+    out = _read(monkeypatch, capsys, repo, _big_txt(repo))
+    assert _denied(out)
+    reason = out["permissionDecisionReason"]
+    assert "Full Read of notes.txt (40 KB)" in reason
+    assert "lines along the file" in reason
+    assert "  1  plain words" in reason
+    assert len([ln for ln in reason.splitlines() if "plain words" in ln]) == 10
+
+
+def test_unindexed_patch_lists_its_files(monkeypatch, capsys, repo):
+    path = repo / "change.patch"
+    body = "".join(
+        f"diff --git a/f{i}.py b/f{i}.py\n" + "+an added line of the patch\n" * 400
+        for i in range(5)
+    )
+    path.write_text(body)
+    reason = _read(monkeypatch, capsys, repo, path)["permissionDecisionReason"]
+    assert "its parts" in reason
+    assert "  1  diff --git a/f0.py b/f0.py" in reason
+    assert "  402  diff --git a/f1.py b/f1.py" in reason
+
+
+def test_retry_right_after_a_deny_goes_through(monkeypatch, capsys, repo):
+    path = _big_txt(repo)
+    assert _denied(_read(monkeypatch, capsys, repo, path))
+    assert _read(monkeypatch, capsys, repo, path) == {}
+    # The retry cleared the record: a later full Read is answered again.
+    assert _denied(_read(monkeypatch, capsys, repo, path))
+
+
+def test_ranged_read_is_not_denied(monkeypatch, capsys, repo):
+    path = _big_txt(repo)
+    assert not _denied(_read(monkeypatch, capsys, repo, path, offset=1, limit=50))
+    assert not _denied(_read(monkeypatch, capsys, repo, path, limit=50))
+
+
+def test_file_under_32_kb_is_not_denied(monkeypatch, capsys, repo):
+    out = _read(monkeypatch, capsys, repo, _big_txt(repo, size=20 * 1024))
+    assert not _denied(out)
+
+
+@pytest.mark.parametrize("name", ["shot.png", "spec.pdf", "blob.bin"])
+def test_binaries_are_not_denied(monkeypatch, capsys, repo, name):
+    path = repo / name
+    path.write_bytes(b"\x89PNG\0\0" + b"\0\1\2\3" * 10_000)
+    assert not _denied(_read(monkeypatch, capsys, repo, path))
+
+
+def test_answers_off_keeps_the_hint(monkeypatch, capsys, repo):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "0")
+    out = _read(monkeypatch, capsys, repo, _big_txt(repo))
+    assert not _denied(out)
+    assert "offset/limit" in out.get("additionalContext", "")
+
+
+def test_no_session_id_is_not_denied(monkeypatch, capsys, repo):
+    path = _big_txt(repo)
+    payload = {"tool_input": {"file_path": str(path)}, "cwd": str(repo)}
+    ctx = _run(monkeypatch, capsys, h.cmd_hook_precheck_read, payload)
+    assert "offset/limit" in ctx
+
+
+def test_large_indexed_markdown_gets_its_section_ranges(monkeypatch, capsys, repo):
+    doc = repo / "GUIDE.md"
+    doc.write_text("# Guide\n" + "text of the guide\n" * 2500)
+    conn = sqlite3.connect(repo / ".codegraph" / "fts.db")
+    for i, (name, sl, el) in enumerate([("Setup", 2, 900), ("Usage", 901, 2501)]):
+        conn.execute(
+            "INSERT INTO symbols VALUES (?, 'md_section', ?, ?, ?, ?, '')",
+            (f"md{i}", name, str(doc), sl, el),
+        )
+    conn.commit()
+    conn.close()
+    reason = _read(monkeypatch, capsys, repo, doc)["permissionDecisionReason"]
+    assert "Main parts: Setup 2-900, Usage 901-2501." in reason
+    assert "[cgh hook]" not in reason

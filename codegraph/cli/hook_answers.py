@@ -13,11 +13,16 @@
 #                              owner when there is one
 #              outline_answer  a full read of an indexed source file: the
 #                              file's symbols with their line ranges
+#              text_outline    the plan of a large text file cgh does not
+#                              index, given when the Read hook denies a full
+#                              Read past FULL_READ_ANSWER (retry_after_deny
+#                              and remember_deny let the next one through)
 #              Both return None when cgh has nothing to add, so the hook stays
 #              silent rather than nudging on a search cgh cannot answer.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -360,7 +365,10 @@ def search_answer(
     )
 
 
-def outline_answer(root: Path, target: Path) -> str | None:
+def outline_answer(root: Path, target: Path, tail: bool = True) -> str | None:
+    """The symbols of an indexed source file with their line ranges, or None
+    below a handful of symbols. ``tail=False`` leaves out the closing line on
+    reading a part, for a caller that gives its own instruction."""
     conn = _fts(root)
     if conn is None:
         return None
@@ -387,5 +395,144 @@ def outline_answer(root: Path, target: Path) -> str | None:
     return (
         f"[cgh] Outline of {rel_path} from the code graph:\n"
         + "\n".join(lines)
-        + "\nIf you need one part, Read it with offset/limit instead of the whole file."
+        + (
+            "\nIf you need one part, Read it with offset/limit instead of the whole file."
+            if tail
+            else ""
+        )
+    )
+
+
+# --- full Read of a large text file -------------------------------------------
+
+# Past this size, a full Read of a text file is answered with its plan instead
+# of run: the study transcripts showed the advisory hint ignored on most full
+# reads of files this large.
+FULL_READ_ANSWER = 32 * 1024
+_SNIFF = 8192
+_TEXT_OUTLINE_MAX = 4 * 1024 * 1024
+_HEADINGS_MAX = 20
+_MIN_HEADINGS = 3
+_ANCHORS = 10
+_ANCHOR_TEXT = 70
+# Lines that open a part of a text file: a markdown heading, a file of a
+# patch, an INI or TOML section, a block in tfvars or HCL, a top-level key of
+# a JSON object holding an object or a list.
+_HEADING_RE = re.compile(
+    r"^(#{1,6}\s+\S"
+    r"|diff --git "
+    r"|\[\[?[^\]\n]+\]\]?\s*$"
+    r"|[A-Za-z_][\w.-]*\s*=\s*[\[{]\s*$"
+    r'| {0,2}"[^"\n]{1,60}"\s*:\s*[\[{])'
+)
+
+
+def is_binary(target: Path) -> bool:
+    """True when the start of the file holds a NUL byte, or cannot be read."""
+    try:
+        with target.open("rb") as fh:
+            return b"\0" in fh.read(_SNIFF)
+    except OSError:
+        return True
+
+
+def _anchor(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= _ANCHOR_TEXT else text[: _ANCHOR_TEXT - 3] + "..."
+
+
+def text_outline(target: Path, size: int) -> str:
+    """A plan of a text file cgh does not index: its heading-like lines with
+    their line numbers when it has a few, else its line count and evenly
+    spaced anchors, so a ranged Read can aim at a part."""
+    from codegraph.cli.hook_advice import _human_size
+
+    name = target.name
+    if size > _TEXT_OUTLINE_MAX:
+        return f"{name} ({_human_size(size)}), too large to outline here."
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return f"{name} ({_human_size(size)})."
+    total = len(lines)
+    head = f"{name} ({_human_size(size)}, {total:,} lines)"
+    headings = [(i + 1, ln) for i, ln in enumerate(lines) if _HEADING_RE.match(ln)]
+    if len(headings) >= _MIN_HEADINGS:
+        step = max(1, -(-len(headings) // _HEADINGS_MAX))
+        shown = headings[::step][:_HEADINGS_MAX]
+        rows = [f"  {n}  {_anchor(t)}" for n, t in shown]
+        if len(shown) < len(headings):
+            rows.append(f"  ({len(headings)} heading-like lines in all)")
+        return f"{head}, its parts:\n" + "\n".join(rows)
+    rows: list[str] = []
+    seen: set[int] = set()
+    for k in range(_ANCHORS):
+        start = k * total // _ANCHORS
+        # The first non-blank line at or just after the anchor.
+        n = next(
+            (j for j in range(start, min(total, start + 5)) if lines[j].strip()),
+            start,
+        )
+        if n < total and n not in seen:
+            seen.add(n)
+            rows.append(f"  {n + 1}  {_anchor(lines[n])}")
+    return f"{head}, lines along the file:\n" + "\n".join(rows)
+
+
+def _denied_path(root: Path, session_id: str) -> Path:
+    from codegraph.core.utils import ensure_dir
+
+    path = root / ".codegraph" / "sessions"
+    ensure_dir(path)
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
+    return path / f"read-denied-{safe}.json"
+
+
+def _load_denied(path: Path) -> list[str]:
+    try:
+        denied = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [p for p in denied if isinstance(p, str)] if isinstance(denied, list) else []
+
+
+def retry_after_deny(root: Path, session_id: str, file_path: str) -> bool:
+    """True when this session's last full Read of the file was denied: the
+    agent insists, so this one goes through and the record is cleared. A
+    later full Read of the same file is answered again."""
+    try:
+        path = _denied_path(root, session_id)
+        denied = _load_denied(path)
+        if file_path not in denied:
+            return False
+        path.write_text(
+            json.dumps([p for p in denied if p != file_path]), encoding="utf-8"
+        )
+    except OSError:
+        return False
+    return True
+
+
+def remember_deny(root: Path, session_id: str, file_path: str) -> bool:
+    """Record a denied full Read, so the retry goes through. False when the
+    record cannot be written: the caller then lets the Read run, since a deny
+    it cannot lift would block the file for the whole session."""
+    try:
+        path = _denied_path(root, session_id)
+        denied = _load_denied(path)
+        if file_path not in denied:
+            path.write_text(json.dumps([*denied, file_path]), encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def full_read_reason(rel_path: str, size: int, plan: str) -> str:
+    from codegraph.cli.hook_advice import _human_size
+
+    return (
+        f"[cgh] Full Read of {rel_path} ({_human_size(size)}) answered with its "
+        f"plan instead:\n{plan}\n"
+        "Re-read the part you need with offset/limit. If you need the whole "
+        "file, repeat the same Read and it goes through."
     )

@@ -415,6 +415,22 @@ _HEADINGS_MAX = 20
 _MIN_HEADINGS = 3
 _ANCHORS = 10
 _ANCHOR_TEXT = 70
+# Lock and generated files repeat the same keys hundreds of times: their
+# heading-like lines make no plan, the anchors do.
+_GENERATED_NAMES = frozenset(
+    {
+        "uv.lock", "poetry.lock", "Cargo.lock", "package-lock.json",
+        "pnpm-lock.yaml", "yarn.lock",
+    }
+)  # fmt: skip
+_GENERATED_SUFFIXES = (".min.js", ".map")
+
+
+def is_generated(target: Path) -> bool:
+    """True for a lock file or a generated bundle, outlined by anchors only."""
+    return target.name in _GENERATED_NAMES or target.name.endswith(_GENERATED_SUFFIXES)
+
+
 # Lines that open a part of a text file: a markdown heading, a file of a
 # patch, an INI or TOML section, a block in tfvars or HCL, a top-level key of
 # a JSON object holding an object or a list.
@@ -456,7 +472,11 @@ def text_outline(target: Path, size: int) -> str:
         return f"{name} ({_human_size(size)})."
     total = len(lines)
     head = f"{name} ({_human_size(size)}, {total:,} lines)"
-    headings = [(i + 1, ln) for i, ln in enumerate(lines) if _HEADING_RE.match(ln)]
+    headings = (
+        []
+        if is_generated(target)
+        else [(i + 1, ln) for i, ln in enumerate(lines) if _HEADING_RE.match(ln)]
+    )
     if len(headings) >= _MIN_HEADINGS:
         step = max(1, -(-len(headings) // _HEADINGS_MAX))
         shown = headings[::step][:_HEADINGS_MAX]

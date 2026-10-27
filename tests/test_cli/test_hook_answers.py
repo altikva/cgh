@@ -528,3 +528,17 @@ def test_large_indexed_markdown_gets_its_section_ranges(monkeypatch, capsys, rep
     reason = _read(monkeypatch, capsys, repo, doc)["permissionDecisionReason"]
     assert "Main parts: Setup 2-900, Usage 901-2501." in reason
     assert "[cgh hook]" not in reason
+
+
+def test_lock_file_gets_anchors_not_its_repeated_keys(monkeypatch, capsys, repo):
+    path = repo / "uv.lock"
+    block = (
+        '[[package]]\nname = "pkg"\nversion = "1.0"\n'
+        'wheels = [\n    { url = "https://files.example/pkg-1.0.whl" },\n]\n\n'
+    )
+    path.write_text("version = 1\n" + block * 600)
+    reason = _read(monkeypatch, capsys, repo, path)["permissionDecisionReason"]
+    assert "lines along the file" in reason
+    assert "its parts" not in reason
+    assert "heading-like" not in reason
+    assert len([ln for ln in reason.splitlines() if ln.startswith("  ")]) == 10

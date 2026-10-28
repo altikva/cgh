@@ -13,6 +13,8 @@
 #                              owner when there is one
 #              outline_answer  a full read of an indexed source file: the
 #                              file's symbols with their line ranges
+#                              (format_outline formats the rows of a file
+#                              parsed just now, see analysis/on_demand.py)
 #              text_outline    the plan of a large text file cgh does not
 #                              index, given when the Read hook denies a full
 #                              Read past FULL_READ_ANSWER (retry_after_deny
@@ -365,7 +367,9 @@ def search_answer(
     )
 
 
-def outline_answer(root: Path, target: Path, tail: bool = True) -> str | None:
+def outline_answer(
+    root: Path, target: Path, tail: bool = True, source: str | None = None
+) -> str | None:
     """The symbols of an indexed source file with their line ranges, or None
     below a handful of symbols. ``tail=False`` leaves out the closing line on
     reading a part, for a caller that gives its own instruction."""
@@ -385,15 +389,34 @@ def outline_answer(root: Path, target: Path, tail: bool = True) -> str | None:
         return None
     finally:
         conn.close()
+    return format_outline(rel_path, rows, tail=tail, source=source or FROM_GRAPH)
+
+
+# Where an outline comes from, said in its first line.
+FROM_GRAPH = "from the code graph"
+INDEXED_NOW = "from the code graph (indexed just now)"
+PARSED_NOW = "parsed just now, not in the index"
+
+
+def format_outline(
+    rel_path: str, rows: list, tail: bool = True, source: str = FROM_GRAPH
+) -> str | None:
+    """An outline from ``rows`` (kind, name, start line, end line), sections
+    left out, or None below a handful of symbols."""
+    rows = [r for r in rows if r[0] != "md_section"]
     if len(rows) < _MIN_OUTLINE_SYMBOLS:
         return None
     lines = [
         f"  {sl}-{el}  {kind}  {name}" for kind, name, sl, el in rows[:_MAX_OUTLINE]
     ]
     if len(rows) > _MAX_OUTLINE:
-        lines.append("  (more symbols: file_summary)")
+        lines.append(
+            "  (more symbols: file_summary)"
+            if source != PARSED_NOW
+            else "  (more symbols)"
+        )
     return (
-        f"[cgh] Outline of {rel_path} from the code graph:\n"
+        f"[cgh] Outline of {rel_path} {source}:\n"
         + "\n".join(lines)
         + (
             "\nIf you need one part, Read it with offset/limit instead of the whole file."

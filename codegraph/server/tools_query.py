@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 from codegraph.core.utils import short_path as _short_path
 from codegraph.server._budget import dumps_answer
@@ -1072,7 +1073,14 @@ def register(mcp) -> None:
         `format="text"` answers a grep-like layout instead of JSON (default:
         the [mcp] answer_format setting).
         """
+        from codegraph.analysis import on_demand
+
         results, warnings = _federate(_definitions_query(name, role, layer))
+        # Nothing by that name: a file written since its last index may
+        # define it. Index those now and look again, once.
+        fresh = [] if results else on_demand.catch_up(_srv._root)
+        if fresh:
+            results, warnings = _federate(_definitions_query(name, role, layer))
         if warnings and not (role or layer):
             # Same fallback as search_symbols: a child whose owner holds the
             # graph write lock still resolves the name through its FTS index.
@@ -1168,6 +1176,9 @@ def register(mcp) -> None:
                 payload["warnings"] = warnings
             return dumps_answer(payload)
         out = {"found": True, "name": name, "definitions": results, **verdict}
+        if fresh:
+            out["indexed_now"] = fresh
+            out["note"] = on_demand.note(fresh)
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
@@ -1203,10 +1214,18 @@ def register(mcp) -> None:
         the [mcp] answer_format setting).
         """
 
+        from codegraph.analysis import on_demand
         from codegraph.analysis.callers import callers_of
 
         callers, warnings = _federate(lambda conn: callers_of(conn, fn_name))
+        # No caller: one may sit in a file written since its last index.
+        fresh = [] if callers else on_demand.catch_up(_srv._root)
+        if fresh:
+            callers, warnings = _federate(lambda conn: callers_of(conn, fn_name))
         out = {"fn": fn_name, "callers": callers}
+        if fresh:
+            out["indexed_now"] = fresh
+            out["note"] = on_demand.note(fresh)
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
@@ -1359,8 +1378,18 @@ def register(mcp) -> None:
                 frontier = nxt
             return out
 
+        from codegraph.analysis import on_demand
+
         callees, warnings = _federate(query)
+        # Nothing found: the function may sit in a file written since its
+        # last index.
+        fresh = [] if callees else on_demand.catch_up(_srv._root)
+        if fresh:
+            callees, warnings = _federate(query)
         out = {"fn": fn_name, "max_depth": depth_cap, "callees": callees}
+        if fresh:
+            out["indexed_now"] = fresh
+            out["note"] = on_demand.note(fresh)
         if state["truncated"]:
             out["truncated"] = True
         if warnings:
@@ -1378,8 +1407,15 @@ def register(mcp) -> None:
         row's `kind` is "" for a plain import, "reexport" (JS / TS
         `export ... from`) or "dynamic" (`import('./x')`).
         """
+        from codegraph.analysis import on_demand
+
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
+        status = (
+            on_demand.ensure_indexed(_srv._root, Path(file_path))
+            if _srv._root
+            else "fresh"
+        )
 
         def query(conn):
             return [
@@ -1397,7 +1433,7 @@ def register(mcp) -> None:
             ]
 
         imports, warnings = _federate(query)
-        out = {"file": file_path, "imports": imports}
+        out = {"file": file_path, "imports": imports, **on_demand.answer_fields(status)}
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings
@@ -1747,9 +1783,19 @@ def register(mcp) -> None:
         (about 4 characters per token of JSON): the farthest files go
         first (with depth 1, from the longer of the two lists), and the
         answer gets `truncated: true` and `dropped` (how many).
+
+        A repo file the graph does not hold yet is indexed first
+        (`indexed_now: true`).
         """
+        from codegraph.analysis import on_demand
+
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
+        fresh = on_demand.answer_fields(
+            on_demand.ensure_indexed(_srv._root, Path(file_path))
+            if _srv._root
+            else "fresh"
+        )
 
         if depth == 1:
 
@@ -1788,6 +1834,7 @@ def register(mcp) -> None:
                 "depth": depth,
                 "depends_on": depends_on,
                 "depended_by": depended_by,
+                **fresh,
             }
             warnings = w1 + w2
             if warnings:
@@ -1813,7 +1860,7 @@ def register(mcp) -> None:
             return rows
 
         deps, warnings = _federate(run_reach)
-        payload = {"file": file_path, "depth": depth, "reachable": deps}
+        payload = {"file": file_path, "depth": depth, "reachable": deps, **fresh}
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings

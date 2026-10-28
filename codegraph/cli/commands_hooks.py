@@ -89,11 +89,12 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
             if root and isinstance(target, str)
             else []
         )
+        one_file = isinstance(target, str) and hook_answers.files_only([target], cwd)
         answer = (
             hook_answers.search_answer(root, pattern, scopes)
-            if root
-            and isinstance(pattern, str)
-            and not (isinstance(target, str) and hook_answers.files_only([target], cwd))
+            if root and isinstance(pattern, str) and not one_file
+            else _grep_one_file(root, cwd / target)
+            if root and one_file
             else None
         )
         if answer or advice:
@@ -119,6 +120,31 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         "to confirm a raw text search is what you want.",
     )
     _emit_nudge(nudge + (f"\n{advice}" if advice else ""))
+
+
+def _grep_one_file(root: Path, target: Path) -> str | None:
+    """A Grep inside one named file runs as asked. When that repo file is
+    missing from the index (or older there), the live owner indexes it now,
+    so the lookups that follow answer from the graph; nothing is parsed in
+    the hook, the Grep output already covers this file."""
+    try:
+        from codegraph.analysis import on_demand
+
+        rel = on_demand.relative(target, root)
+        if rel is None:
+            return None
+        count = _count_symbols(
+            root / ".codegraph" / "fts.db", str(target.resolve()), str(rel)
+        )
+        outcome = on_demand.for_hook(root, target, count, parse=False)
+    except Exception:
+        return None
+    if outcome is None or not outcome.indexed:
+        return None
+    return (
+        f"[cgh] {rel.as_posix()} was not in the index: indexed just now, so "
+        "symbol_lookup, file_summary and find_callers cover it."
+    )
 
 
 def _grep_advice(tool_input: dict, cwd: Path) -> str | None:
@@ -481,10 +507,17 @@ def _read_advice(target: Path, repo_root: Path) -> None:
 
 
 def _ranges_advice(
-    target: Path, repo_root: Path, fts_db: Path, abs_path: str, rel_path: str
+    target: Path,
+    repo_root: Path,
+    fts_db: Path,
+    abs_path: str,
+    rel_path: str,
+    parsed: list | None = None,
 ) -> None:
     """Emit the line-ranges hint for a full Read of a large indexed file, or
-    return when there is none. Advisory: any failure returns silently."""
+    return when there is none. ``parsed`` holds the rows of an in-memory
+    parse, used in place of the index. Advisory: any failure returns
+    silently."""
     if target.suffix.lower() in _READ_ADVICE_SKIP:
         return
     try:
@@ -493,7 +526,7 @@ def _ranges_advice(
             return
         if not hook_advice.read_advice_enabled(repo_root):
             return
-        rows = _symbol_ranges(fts_db, abs_path, rel_path)
+        rows = _symbol_ranges(fts_db, abs_path, rel_path, parsed)
         advice = hook_advice.ranges_advice(target, size, rows)
     except Exception:
         return
@@ -502,8 +535,12 @@ def _ranges_advice(
 
 
 def _symbol_ranges(
-    fts_db: Path, abs_path: str, rel_path: str
+    fts_db: Path, abs_path: str, rel_path: str, parsed: list | None = None
 ) -> list[tuple[str, int, int]]:
+    """The (name, start, end) rows of the file: from ``parsed`` when given,
+    else from the FTS index."""
+    if parsed is not None:
+        return [(n, s, e) for _, n, s, e in parsed[: hook_advice.RANGES_ROWS]]
     from codegraph.core.utils import ro_sqlite_uri
 
     conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
@@ -515,6 +552,53 @@ def _symbol_ranges(
         ).fetchall()
     finally:
         conn.close()
+
+
+def _count_symbols(fts_db: Path, abs_path: str, rel_path: str) -> int:
+    from codegraph.core.utils import ro_sqlite_uri
+
+    conn = sqlite3.connect(ro_sqlite_uri(fts_db), uri=True, timeout=0.5)
+    try:
+        row = conn.execute(
+            "SELECT count(*) FROM symbols WHERE file_path IN (?, ?)",
+            (abs_path, rel_path),
+        ).fetchone()
+    finally:
+        conn.close()
+    return (row or [0])[0]
+
+
+def _on_demand(
+    repo_root: Path,
+    target: Path,
+    fts_db: Path,
+    abs_path: str,
+    rel_path: str,
+    symbol_count: int,
+    answer_mode: bool,
+) -> tuple[int, list | None, str]:
+    """Make a file the index lacks (or holds in an older version) answerable
+    before the Read hook decides: the live owner indexes it, or with no
+    owner it is parsed in memory. Returns the symbol count, the rows of an
+    in-memory parse (None when the FTS holds them) and the outline's source
+    line. Only where the answer can change: answer mode, or a file large
+    enough for the ranges hint. Any failure keeps what the index said."""
+    unchanged = (symbol_count, None, hook_answers.FROM_GRAPH)
+    try:
+        if not answer_mode and target.stat().st_size < hook_advice.LARGE_FILE:
+            return unchanged
+        from codegraph.analysis import on_demand
+
+        outcome = on_demand.for_hook(repo_root, target, symbol_count)
+        if outcome is None:
+            return unchanged
+        if outcome.indexed:
+            count = _count_symbols(fts_db, abs_path, rel_path)
+            return count, None, hook_answers.INDEXED_NOW
+        rows = outcome.rows or []
+        return len(rows), rows, hook_answers.PARSED_NOW
+    except Exception:
+        return unchanged
 
 
 def _emit_deny(reason: str) -> None:
@@ -541,11 +625,14 @@ def _answer_large_read(
     abs_path: str,
     rel_path: str,
     symbol_count: int,
+    parsed: list | None = None,
+    source: str = hook_answers.FROM_GRAPH,
 ) -> None:
     """Answer mode for a full Read of a text file past FULL_READ_ANSWER: deny
     it with the file's plan, or return when the Read should run. It runs when
     the file is small, binary or a notebook, when there is no session to
-    remember the deny in, and on the first retry after a deny."""
+    remember the deny in, and on the first retry after a deny. ``parsed``
+    holds the rows of an in-memory parse, used in place of the index."""
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return
@@ -565,10 +652,16 @@ def _answer_large_read(
     plan: str | None = None
     if symbol_count:
         if symbol_count >= _MIN_SYMBOLS_FOR_OUTLINE_HINT:
-            plan = hook_answers.outline_answer(repo_root, target, tail=False)
+            plan = (
+                hook_answers.format_outline(rel_path, parsed, tail=False, source=source)
+                if parsed is not None
+                else hook_answers.outline_answer(
+                    repo_root, target, tail=False, source=source
+                )
+            )
         if plan is None:
             try:
-                rows = _symbol_ranges(fts_db, abs_path, rel_path)
+                rows = _symbol_ranges(fts_db, abs_path, rel_path, parsed)
                 plan = hook_advice.ranges_advice(target, size, rows, bare=True)
             except Exception:
                 plan = None
@@ -590,7 +683,10 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     The suggestion is delivered via hookSpecificOutput.additionalContext.
     With hook answers on, a full Read of a text file past 32 KB is denied
     instead, the reason carrying the file's plan; repeating the Read lets it
-    through. Always exits 0.
+    through. A file the index lacks or holds in an older version is first
+    indexed by the live owner, or parsed in memory without one (always for a
+    file outside the repo), then answered the same way; a gitignored file is
+    left alone. That step gives up past a 300 ms budget. Always exits 0.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -618,15 +714,24 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         if (parent / ".codegraph" / "fts.db").is_file():
             repo_root = parent
             break
+    # A file outside every cgh repo (a scratchpad, another checkout) read
+    # from a session in one: it is only ever parsed in memory, below.
+    outside = repo_root is None
     if repo_root is None:
-        sys.exit(0)
+        repo_root = hook_answers.repo_root(Path(payload.get("cwd") or os.getcwd()))
+        if repo_root is None:
+            sys.exit(0)
 
     # cgh's FTS stores file_path as the absolute path on disk (see
     # codegraph/fts.py). Older indexes may have stored relpaths, so try
     # both for forward/backward compatibility.
     try:
         abs_path = str(target.resolve())
-        rel_path = str(target.resolve().relative_to(repo_root.resolve()))
+        rel_path = (
+            abs_path
+            if outside
+            else str(target.resolve().relative_to(repo_root.resolve()))
+        )
     except ValueError:
         sys.exit(0)
 
@@ -673,24 +778,48 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
 
     symbol_count = (row or [0])[0]
     answer_mode = hook_answers.enabled(Path(repo_root))
+    parsed, source = None, hook_answers.FROM_GRAPH
+    if suffix not in PARSED_DOC_EXTS:
+        symbol_count, parsed, source = _on_demand(
+            repo_root, target, fts_db, abs_path, rel_path, symbol_count, answer_mode
+        )
+    if outside and not (parsed and symbol_count):
+        sys.exit(0)
     # Answer mode denies a full Read of a large text file and hands back its
     # plan; parsed documents (pdf, docx...) are binaries and keep the hint.
     if answer_mode and suffix not in PARSED_DOC_EXTS:
         _answer_large_read(
-            payload, target, repo_root, fts_db, abs_path, rel_path, symbol_count
+            payload,
+            target,
+            repo_root,
+            fts_db,
+            abs_path,
+            rel_path,
+            symbol_count,
+            parsed,
+            source,
         )
     if symbol_count == 0 and suffix not in PARSED_DOC_EXTS:
         _read_advice(target, repo_root)
 
     if answer_mode and symbol_count >= _MIN_SYMBOLS_FOR_OUTLINE_HINT:
-        answer = hook_answers.outline_answer(repo_root, target)
+        answer = (
+            hook_answers.format_outline(rel_path, parsed, source=source)
+            if parsed is not None
+            else hook_answers.outline_answer(repo_root, target, source=source)
+        )
         if answer:
             _emit_nudge(answer)
     # Answer mode gave no outline (or is off): a large file gets its main
     # line ranges in one line, in place of the longer tool list below.
     if symbol_count and suffix not in PARSED_DOC_EXTS:
-        _ranges_advice(target, repo_root, fts_db, abs_path, rel_path)
-    if symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT or answer_mode:
+        _ranges_advice(target, repo_root, fts_db, abs_path, rel_path, parsed)
+    # The tools below only know indexed files: none for an in-memory parse.
+    if (
+        symbol_count < _MIN_SYMBOLS_FOR_OUTLINE_HINT
+        or answer_mode
+        or parsed is not None
+    ):
         sys.exit(0)
 
     is_markdown = suffix in (".md", ".markdown") or suffix in PARSED_DOC_EXTS
@@ -706,8 +835,9 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
             f"  - search_symbols('<name>')    if you're after a specific definition\n"
         )
 
+    just_now = " just now" if source == hook_answers.INDEXED_NOW else ""
     _emit_nudge(
-        f"[cgh hook] '{rel_path}' is indexed by cgh ({symbol_count} symbols). "
+        f"[cgh hook] '{rel_path}' is indexed by cgh{just_now} ({symbol_count} symbols). "
         "Before a full Read, consider:\n"
         f"{hint}"
         "Then Read with offset/limit on the range you actually need. "

@@ -303,6 +303,8 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 | `compact_hint` | `bool` | `true` | A UserPromptSubmit hook says once, at 0.5, 1.5 and 3 MB of session transcript since the last compaction, that the session is large and suggests `/compact`, or a cgh checkpoint then `/clear`. `CGH_HOOK_COMPACT_HINT=1` or `0` overrides it |
 | `agent_rule` | `bool` | `true` | The Agent precheck appends one line to every sub-agent brief: locate code with the cgh MCP tools (`symbol_lookup`, `pattern_search`, `find_callers`) before Read or Grep, then Read only the returned ranges. It names the `mcp__cgh__` or `mcp__codegraph__` prefix when `.mcp.json` declares the server. The code locations for the brief stay behind `CGH_AGENT_LOCATIONS=1`. `CGH_HOOK_AGENT_RULE=1` or `0` overrides it |
 
+**On-demand indexing.** Before the Read precheck answers (in answer mode, or for a file of 12 KB or more), a repo file the index lacks or holds in an older version is indexed by the live owner, then answered from the graph; with no owner it is parsed in memory and nothing is written. A file outside the repo is only parsed in memory, a gitignored one is left alone, and plain text, logs and binary documents are skipped. A Grep in one such file has the owner index it. The MCP tools that take a file (`file_summary`, `imports_of`, `subgraph`, `doc_outline`) index it the same way, and `symbol_lookup`, `find_callers` and `find_callees` index the changed working-tree files once on a miss, then retry; their answer carries `indexed_now`. The step gives up after 300 ms; `CGH_ON_DEMAND_BUDGET_MS` sets the budget, and `0` turns it off.
+
 ---
 
 ## Global Config

@@ -14,8 +14,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   index, used to get only the heuristic plan, or nothing. The live owner
   now indexes that file first and the hook answers from the graph as for
   any indexed file; with no owner it is parsed in memory, nothing written.
-  A file outside the repo is only parsed in memory, a gitignored one is
-  left alone, and the step gives up past 300 ms
+  A file outside the repo, or under a cgh root that is the home
+  directory or not a git checkout, is only parsed in memory, a
+  gitignored one is left alone, and the step gives up past 300 ms
   (`CGH_ON_DEMAND_BUDGET_MS`, 0 turns it off). On the MCP side,
   `file_summary`, `imports_of`, `subgraph` and `doc_outline` index such a
   file before answering, and `symbol_lookup`, `find_callers` and

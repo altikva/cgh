@@ -18,6 +18,7 @@ import json
 import sqlite3
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -161,6 +162,31 @@ def test_file_outside_the_repo_is_parsed_and_never_written(
     assert owner.calls == []
     assert _fts_rows(repo) == 0
     assert not (repo / ".codegraph" / "graph.duckdb").exists()
+
+
+def test_home_directory_root_only_parses(monkeypatch, capsys, repo):
+    """A cgh index of the home directory is never written on demand: the
+    owner is not asked, the file is parsed in memory."""
+    owner = _with_owner(monkeypatch, _FakeOwner(repo))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: repo))
+    src = repo / "app.py"
+    src.write_text(_source())
+    ctx = _read(monkeypatch, capsys, src, repo)["additionalContext"]
+    assert "parsed just now, not in the index" in ctx
+    assert owner.calls == []
+    assert _fts_rows(repo) == 0
+
+
+def test_root_without_git_only_parses(monkeypatch, capsys, repo):
+    import shutil
+
+    shutil.rmtree(repo / ".git")
+    owner = _with_owner(monkeypatch, _FakeOwner(repo))
+    src = repo / "app.py"
+    src.write_text(_source())
+    ctx = _read(monkeypatch, capsys, src, repo)["additionalContext"]
+    assert "parsed just now, not in the index" in ctx
+    assert owner.calls == []
 
 
 def test_gitignored_file_is_left_alone(monkeypatch, capsys, repo):

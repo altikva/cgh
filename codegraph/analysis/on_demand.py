@@ -90,6 +90,20 @@ def eligible_type(target: Path) -> bool:
     return is_supported(target)
 
 
+def writable_root(root: Path) -> bool:
+    """True when on-demand indexing may write to the index of ``root``: a
+    git checkout that is not the home directory. A cgh index of the home
+    directory spans every checkout and scratch file below it, so a file
+    there is only ever parsed in memory."""
+    try:
+        resolved = root.resolve()
+        if resolved == Path.home().resolve():
+            return False
+    except (OSError, RuntimeError):
+        return False
+    return (resolved / ".git").exists()
+
+
 def relative(target: Path, root: Path) -> Path | None:
     """``target`` relative to ``root``, or None when it lies outside it."""
     try:
@@ -296,6 +310,8 @@ def ensure_indexed(root: Path, target: Path) -> Status:
             return "fresh"
     except Exception:
         return "failed"
+    if not writable_root(root):
+        return "transient"
     decision = classify(path, root, budget_s())
     if decision != "index":
         return decision
@@ -329,7 +345,7 @@ def catch_up(root: Path | None) -> list[str]:
     watcher has not reached), within the budget. Returns the repo-relative
     paths indexed, so the caller retries once when there are any."""
     budget = budget_s()
-    if root is None or budget <= 0:
+    if root is None or budget <= 0 or not writable_root(root):
         return []
     key = str(root)
     now = time.monotonic()
@@ -418,7 +434,10 @@ def for_hook(
     deadline = time.monotonic() + budget
     rel = relative(target, root)
     decision: str | None = None if rel is not None else "transient"
-    if rel is not None:
+    if rel is not None and not writable_root(root):
+        # The home directory, or no git checkout: never ask for a write.
+        decision = "transient"
+    elif rel is not None:
         status = _ask_owner(root, rel, budget)
         if status == "indexed":
             return HookOutcome(indexed=True)
@@ -477,4 +496,5 @@ __all__ = [
     "relative",
     "rows_of",
     "transient_rows",
+    "writable_root",
 ]

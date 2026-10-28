@@ -611,6 +611,14 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         cwd = payload.get("cwd") or os.getcwd()
         target = Path(cwd) / target
 
+    # An image read earlier in this session is still in the conversation:
+    # say so instead of letting the same capture be paid for twice.
+    from codegraph.cli.hook_images import reread_hint
+
+    image_hint = reread_hint(payload, target)
+    if image_hint:
+        _emit_nudge(image_hint)
+
     # Walk up to find the nearest .codegraph dir; that's the repo cgh
     # considers root for this file. Stops at filesystem root.
     repo_root: Path | None = None

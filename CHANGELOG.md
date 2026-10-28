@@ -23,6 +23,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `find_callees` index the changed working-tree files once on a miss and
   retry; the answer says `indexed_now`. A 40 KB Python file takes about
   120 ms to index (DuckDB), 50 ms (SQLite), 30 ms to parse in memory.
+- **A hint when an image is read twice in one session.** The Read hook
+  remembers each image (png, jpg, gif, webp, bmp, tiff) read in a
+  session, and a second Read of the same unchanged file gets a note that
+  it is still in the conversation above. Images were the largest read
+  cost in the token study, and a re-read pays the full price again. The
+  hint is advisory and on whether hook answers are on or off; a changed
+  file is not flagged, and PDFs are left alone.
 - **Hook answers deny a full Read of a large text file.** With hook
   answers on, a Read without offset or limit of a text file over 32 KB
   is refused, and the refusal carries the file's plan: its symbols or

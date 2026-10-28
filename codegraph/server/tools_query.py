@@ -1543,11 +1543,14 @@ def register(mcp) -> None:
                         return_fields=["name", "file_path", "start_line"],
                         limit=limit,
                     ),
+                    # One row more than `limit`: the unordered substring
+                    # rows may hold the exact name, which the dedup below
+                    # drops, and the answer must still see past `limit`.
                     *conn.find_nodes(
                         label,
                         contains={"name": query},
                         return_fields=["name", "file_path", "start_line"],
-                        limit=limit,
+                        limit=limit + 1,
                     ),
                 ]
                 for row in rows:

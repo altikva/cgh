@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from codegraph.server._budget import dumps_answer
 
@@ -165,7 +166,13 @@ def register(mcp) -> None:
         and last the symbol list loses its tail, with `truncated`,
         `symbols_total`, `dropped` and a `hint` naming the line the rest
         starts at. Each symbol keeps its name and line range.
+
+        A repo file the graph does not hold yet (new, or changed since its
+        last index) is indexed first: the answer then carries
+        `indexed_now: true` and `on_demand: "indexed"`. A gitignored file
+        is never indexed (`on_demand: "ignored"`).
         """
+        from codegraph.analysis import on_demand
         from codegraph.server._budget import (
             FILE_SUMMARY_MAX_BYTES,
             drop_parent_scope,
@@ -173,6 +180,13 @@ def register(mcp) -> None:
         )
 
         target = _abs(file_path)
+        # A repo file the graph lacks or holds in an older version is
+        # indexed now, then summarized (the owner holds the write connection).
+        status = (
+            on_demand.ensure_indexed(_srv._root, Path(target))
+            if _srv._root
+            else "fresh"
+        )
 
         def query(conn):
             rows: list[dict] = []
@@ -273,6 +287,13 @@ def register(mcp) -> None:
         }
         if truncated:
             payload["note"] = f"symbols capped at {_SYMBOL_CAP}"
+        if status not in ("fresh", "unsupported"):
+            payload["on_demand"] = status
+            if status == "indexed":
+                payload["indexed_now"] = True
+                payload["note"] = " ".join(
+                    filter(None, [payload.get("note"), on_demand.note(status)])
+                )
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings

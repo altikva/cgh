@@ -340,6 +340,39 @@ class SQLiteGraphDB:
             )
         self._conn.execute(sql, values)
 
+    def upsert_nodes(
+        self, label: str, key_field: str, rows: list[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Batched upsert_node: one multi-row statement per chunk. A key
+        given twice keeps its last props (one statement may not update the
+        same row twice)."""
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if not rows:
+            return
+        table = NODES[label].table
+        last = {key: props for key, props in rows}
+        keys = list(next(iter(last.values())).keys())
+        if any(list(props.keys()) != keys for props in last.values()):
+            raise ValueError(f"{label} rows need the same props")
+        cols = [key_field, *keys]
+        conflict = (
+            "DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in keys)
+            if keys
+            else "DO NOTHING"
+        )
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        items = list(last.items())
+        for chunk in _chunks(items, max(1, 400 // len(cols))):
+            self._conn.execute(
+                f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                + ", ".join(row_ph for _ in chunk)
+                + f" ON CONFLICT ({key_field}) {conflict}",
+                [v for key, props in chunk for v in (key, *props.values())],
+            )
+
     def ensure_edge(
         self,
         edge_type: str,

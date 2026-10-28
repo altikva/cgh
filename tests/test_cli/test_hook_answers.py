@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sqlite3
 
 import pytest
@@ -427,7 +428,15 @@ def _big_py(repo):
     src = repo / "app" / "billing.py"
     src.write_text("".join(f"value_{i} = {i}  # padding\n" for i in range(1700)))
     assert src.stat().st_size > 32 * 1024
+    _index_saw(repo, src)
     return src
+
+
+def _index_saw(repo, src):
+    """Date the FTS index after ``src``, as if the index had read it: the
+    fixture writes the rows before the file."""
+    stamp = src.stat().st_mtime + 5
+    os.utime(repo / ".codegraph" / "fts.db", (stamp, stamp))
 
 
 def _big_txt(repo, name="notes.txt", size=40 * 1024):

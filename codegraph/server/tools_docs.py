@@ -97,9 +97,20 @@ def register(mcp) -> None:
         """
         Return the heading outline (table of contents) of a Markdown file.
         Shows the hierarchical structure of sections with line numbers.
+        A repo file the graph does not hold yet is indexed first
+        (`indexed_now: true`).
         """
+        from pathlib import Path
+
+        from codegraph.analysis import on_demand
+
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
+        fresh = on_demand.answer_fields(
+            on_demand.ensure_indexed(_srv._root, Path(file_path))
+            if _srv._root
+            else "fresh"
+        )
 
         def query(conn):
             return conn.find_nodes(
@@ -128,7 +139,7 @@ def register(mcp) -> None:
             return dumps_answer(
                 {"file": file_path, "outline": [], "note": "No sections found"}
             )
-        return dumps_answer({"file": file_path, "outline": outline})
+        return dumps_answer({"file": file_path, "outline": outline, **fresh})
 
     @mcp.tool()
     @_logged_tool

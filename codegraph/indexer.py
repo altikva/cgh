@@ -727,40 +727,52 @@ def _ingest_code(
     stored here and appended to ``pending_calls`` as (rows, imported): their
     edges are created once the file's references are recorded, since the
     call rules read the base classes of the methods they may link to."""
-    for fn in idx.functions:
-        conn.upsert_node(
-            "Function",
-            "id",
-            fn.id,
-            {
-                "name": fn.name,
-                "file_path": fn.file_path,
-                "start_line": fn.start_line,
-                "end_line": fn.end_line,
-                "docstring": fn.docstring,
-            },
-        )
-        conn.ensure_edge("DEFINES_FN", fn.file_path, fn.id)
-
-    for cls in idx.classes:
-        conn.upsert_node(
-            "Class",
-            "id",
-            cls.id,
-            {
-                "name": cls.name,
-                "file_path": cls.file_path,
-                "start_line": cls.start_line,
-                "end_line": cls.end_line,
-                "docstring": cls.docstring,
-            },
-        )
-        conn.ensure_edge("DEFINES_CLASS", cls.file_path, cls.id)
-
-    for fn in idx.functions:
-        if fn.class_name:
-            class_id = f"{fn.file_path}::{fn.class_name}"
-            conn.ensure_edge("HAS_METHOD", class_id, fn.id)
+    # One batched statement per node label and edge type: a row at a time
+    # cost a database round trip per symbol, most of a file's index time.
+    conn.upsert_nodes(
+        "Function",
+        "id",
+        [
+            (
+                fn.id,
+                {
+                    "name": fn.name,
+                    "file_path": fn.file_path,
+                    "start_line": fn.start_line,
+                    "end_line": fn.end_line,
+                    "docstring": fn.docstring,
+                },
+            )
+            for fn in idx.functions
+        ],
+    )
+    conn.ensure_edges("DEFINES_FN", [(fn.file_path, fn.id) for fn in idx.functions])
+    conn.upsert_nodes(
+        "Class",
+        "id",
+        [
+            (
+                cls.id,
+                {
+                    "name": cls.name,
+                    "file_path": cls.file_path,
+                    "start_line": cls.start_line,
+                    "end_line": cls.end_line,
+                    "docstring": cls.docstring,
+                },
+            )
+            for cls in idx.classes
+        ],
+    )
+    conn.ensure_edges("DEFINES_CLASS", [(c.file_path, c.id) for c in idx.classes])
+    conn.ensure_edges(
+        "HAS_METHOD",
+        [
+            (f"{fn.file_path}::{fn.class_name}", fn.id)
+            for fn in idx.functions
+            if fn.class_name
+        ],
+    )
 
     # Precise CALLS (opt-in, Python only, jedi installed). When it runs we
     # skip the name-matched resolver for this file so edges aren't doubled,

@@ -68,6 +68,13 @@ class GraphDB(Protocol):
         CONFLICT (key_field) DO UPDATE SET ...``.
         """
 
+    def upsert_nodes(
+        self, label: str, key_field: str, rows: list[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Batched ``upsert_node`` of (key_value, props) rows, every row with
+        the same prop keys. A key given twice keeps its last props, as
+        sequential upserts would."""
+
     def ensure_edge(
         self,
         edge_type: str,

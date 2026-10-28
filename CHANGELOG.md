@@ -9,6 +9,20 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **On-demand indexing of a file the index lacks.** A full Read (or a
+  Grep in one file) of a repo file that is new, or changed since its last
+  index, used to get only the heuristic plan, or nothing. The live owner
+  now indexes that file first and the hook answers from the graph as for
+  any indexed file; with no owner it is parsed in memory, nothing written.
+  A file outside the repo, or under a cgh root that is the home
+  directory or not a git checkout, is only parsed in memory, a
+  gitignored one is left alone, and the step gives up past 300 ms
+  (`CGH_ON_DEMAND_BUDGET_MS`, 0 turns it off). On the MCP side,
+  `file_summary`, `imports_of`, `subgraph` and `doc_outline` index such a
+  file before answering, and `symbol_lookup`, `find_callers` and
+  `find_callees` index the changed working-tree files once on a miss and
+  retry; the answer says `indexed_now`. A 40 KB Python file takes about
+  120 ms to index (DuckDB), 50 ms (SQLite), 30 ms to parse in memory.
 - **A hint when an image is read twice in one session.** The Read hook
   remembers each image (png, jpg, gif, webp, bmp, tiff) read in a
   session, and a second Read of the same unchanged file gets a note that
@@ -119,6 +133,9 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Indexing a file writes its functions and classes in batches.** One
+  statement per symbol made a 40 KB Python file take about 330 ms on
+  DuckDB; it now takes about 120 ms, which also shortens full scans.
 - **`context_for_task` answers about 3.5 KB instead of 6 KB.** Agents in
   the work lots seldom followed up its memory, plan or knowledge snippets,
   which made up a quarter of each answer. These entries are now one-line

@@ -197,3 +197,41 @@ def test_text_hint_needs_a_session(monkeypatch, capsys, repo):
     doc = _text(repo)
     for _ in range(2):
         assert hook_images.text_reread_hint(_payload(doc, session=None), doc) is None
+
+
+def _deny(out: str) -> str | None:
+    spec = json.loads(out)["hookSpecificOutput"] if out else {}
+    if spec.get("permissionDecision") == "deny":
+        return spec.get("permissionDecisionReason", "")
+    return None
+
+
+def test_with_answers_another_agent_is_denied_with_the_plan_once(
+    monkeypatch, capsys, repo
+):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    reason = _deny(_run(monkeypatch, capsys, _agent(doc, "a2")))
+    assert reason and "another agent of this session read it in full" in reason
+    assert "repeat the same Read and it goes through" in reason
+    # The agent insists: its repeat goes through, silently.
+    assert _run(monkeypatch, capsys, _agent(doc, "a2")) == ""
+    # A third agent is answered again.
+    assert _deny(_run(monkeypatch, capsys, _agent(doc, "a3")))
+
+
+def test_with_answers_the_same_agent_only_gets_the_note(monkeypatch, capsys, repo):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    out = _run(monkeypatch, capsys, _agent(doc, "a1"))
+    assert _deny(out) is None and "still in the conversation" in _context(out)
+
+
+def test_without_answers_another_agent_only_gets_the_note(monkeypatch, capsys, repo):
+    monkeypatch.setenv("CGH_HOOK_ANSWERS", "0")
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    out = _run(monkeypatch, capsys, _agent(doc, "a2"))
+    assert _deny(out) is None and "another agent" in _context(out)

@@ -716,9 +716,17 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         _emit_nudge(image_hint)
     # The same for a text file read in full, by this agent or by another
     # agent of the session (parallel subagents reading one file).
-    text_hint = text_reread_hint(payload, target)
+    # With hook answers on, another agent's re-read is denied with the plan:
+    # a note beside the Read did not stop the read.
+    cwd = payload.get("cwd")
+    text_hint = text_reread_hint(
+        payload, target, hook_answers.enabled(Path(cwd) if cwd else target.parent)
+    )
     if text_hint:
-        _emit_nudge(text_hint)
+        text, deny = text_hint
+        if deny:
+            _emit_deny(text)
+        _emit_nudge(text)
 
     # Walk up to find the nearest .codegraph dir; that's the repo cgh
     # considers root for this file. Stops at filesystem root.

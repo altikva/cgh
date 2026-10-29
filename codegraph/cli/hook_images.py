@@ -13,8 +13,10 @@
 #              text_reread_hint does the same for a text file read in full
 #              (reads-<session>.json): parallel subagents of one session were
 #              seen reading the same file whole, so another agent's Read gets
-#              the file's outline to aim at the part it needs. Neither ever
-#              denies, and any failure returns None.
+#              the file's outline to aim at the part it needs. A note beside
+#              the Read did not stop the read, so with hook answers on that
+#              Read is denied with the plan instead, and repeating it goes
+#              through. Any failure returns None.
 
 from __future__ import annotations
 
@@ -160,10 +162,25 @@ def text_hint_text(name: str, size: int, at: float, other_agent: bool,
     return f"{head}: file_summary gives its outline with line ranges."
 
 
-def text_reread_hint(payload: dict, target: Path) -> str | None:
-    """Record this full Read of a text file and return a hint when the same
-    unchanged file was already read in full in this session: the same agent
-    still has it, another agent gets the outline. None for an image, a file
+def deny_text(name: str, size: int, at: float, plan: str) -> str:
+    kb = max(1, round(size / 1024))
+    when = time.strftime("%H:%M", time.localtime(at))
+    return (
+        f"[cgh] Full Read of {name} ({kb} KB) answered with its plan instead: "
+        f"another agent of this session read it in full at {when} and it has "
+        f"not changed.\n{plan}\nRead the part you need with offset/limit. If "
+        "you need the whole file, repeat the same Read and it goes through."
+    )
+
+
+def text_reread_hint(
+    payload: dict, target: Path, answers: bool = False
+) -> tuple[str, bool] | None:
+    """Record this full Read of a text file and, when the same unchanged file
+    was already read in full in this session, return (text, deny): the same
+    agent is told it still has it; another agent gets the outline, as a note,
+    or with ``answers`` as a deny carrying the plan (its repeat goes
+    through, and a denied Read is not recorded). None for an image, a file
     outside TEXT_REREAD_MIN..FULL_READ_ANSWER, a binary, a first or changed
     read, no session_id, or any error."""
     from codegraph.cli import hook_answers
@@ -197,12 +214,20 @@ def text_reread_hint(payload: dict, target: Path) -> str | None:
         prev = records.get(key)
         if prev and prev.get("fp") == digest:
             other = str(prev.get("agent", "")) != agent
+            at = float(prev.get("at", time.time()))
             outline = (
                 hook_answers.outline_answer(root, target, tail=False) if other else None
             )
-            return text_hint_text(
-                target.name, size, float(prev.get("at", time.time())), other, outline
-            )
+            if other and answers:
+                # One deny per agent: its repeat goes through, and another
+                # agent reading the same file is answered again.
+                denied = f"{key}#agent={agent}"
+                if hook_answers.retry_after_deny(root, session_id, denied):
+                    return None
+                if hook_answers.remember_deny(root, session_id, denied):
+                    plan = outline or hook_answers.text_outline(target, size)
+                    return deny_text(target.name, size, at, plan), True
+            return text_hint_text(target.name, size, at, other, outline), False
         records.pop(key, None)
         records[key] = {"fp": digest, "size": size, "at": time.time(), "agent": agent}
         _save(path, records)

@@ -9,8 +9,12 @@
 #              capture again pays its tokens twice. reread_hint records each
 #              image read per session (path, size, cheap fingerprint) under
 #              .codegraph/sessions/images-<session>.json and returns an
-#              advisory line when the same unchanged file comes back. It
-#              never denies, and any failure returns None.
+#              advisory line when the same unchanged file comes back.
+#              text_reread_hint does the same for a text file read in full
+#              (reads-<session>.json): parallel subagents of one session were
+#              seen reading the same file whole, so another agent's Read gets
+#              the file's outline to aim at the part it needs. Neither ever
+#              denies, and any failure returns None.
 
 from __future__ import annotations
 
@@ -62,9 +66,9 @@ def _root_for(target: Path, cwd: str | None) -> Path | None:
     return None
 
 
-def _record_path(root: Path, session_id: str) -> Path:
+def _record_path(root: Path, session_id: str, kind: str = "images") -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
-    return root / ".codegraph" / "sessions" / f"images-{safe}.json"
+    return root / ".codegraph" / "sessions" / f"{kind}-{safe}.json"
 
 
 def _load(path: Path) -> dict[str, dict]:
@@ -126,6 +130,81 @@ def reread_hint(payload: dict, target: Path) -> str | None:
             return hint_text(target.name, size, float(prev.get("at", time.time())))
         records.pop(key, None)
         records[key] = {"fp": digest, "size": size, "at": time.time()}
+        _save(path, records)
+    except Exception:
+        return None
+    return None
+
+
+# A full Read of a text file below this costs less than the hint; above
+# FULL_READ_ANSWER, answer mode denies it with its plan instead, and a
+# denied Read must not be recorded as read.
+TEXT_REREAD_MIN = 4 * 1024
+
+
+def text_hint_text(name: str, size: int, at: float, other_agent: bool,
+                   outline: str | None) -> str:  # fmt: skip
+    kb = max(1, round(size / 1024))
+    when = time.strftime("%H:%M", time.localtime(at))
+    if not other_agent:
+        return (
+            f"[cgh hook] {name} was already read in full in this session ({kb} KB, "
+            f"at {when}) and has not changed; it is still in the conversation above."
+        )
+    head = (
+        f"[cgh hook] {name} ({kb} KB) was read in full by another agent of this "
+        f"session at {when} and has not changed. Read only the part you need"
+    )
+    if outline:
+        return f"{head}, with offset/limit:\n{outline}"
+    return f"{head}: file_summary gives its outline with line ranges."
+
+
+def text_reread_hint(payload: dict, target: Path) -> str | None:
+    """Record this full Read of a text file and return a hint when the same
+    unchanged file was already read in full in this session: the same agent
+    still has it, another agent gets the outline. None for an image, a file
+    outside TEXT_REREAD_MIN..FULL_READ_ANSWER, a binary, a first or changed
+    read, no session_id, or any error."""
+    from codegraph.cli import hook_answers
+
+    try:
+        if target.suffix.lower() in IMAGE_EXTS:
+            return None
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not target.is_file():
+            return None
+        size = target.stat().st_size
+        if not TEXT_REREAD_MIN <= size <= hook_answers.FULL_READ_ANSWER:
+            return None
+        if hook_answers.is_binary(target):
+            return None
+        cwd = payload.get("cwd")
+        root = _root_for(target, cwd if isinstance(cwd, str) else None)
+        if root is None:
+            return None
+        fp = fingerprint(target)
+        if fp is None:
+            return None
+        digest, size = fp
+        agent = payload.get("agent_id")
+        agent = agent if isinstance(agent, str) else ""
+        key = str(target.resolve())
+        path = _record_path(root, session_id, "reads")
+        records = _load(path)
+        prev = records.get(key)
+        if prev and prev.get("fp") == digest:
+            other = str(prev.get("agent", "")) != agent
+            outline = (
+                hook_answers.outline_answer(root, target, tail=False) if other else None
+            )
+            return text_hint_text(
+                target.name, size, float(prev.get("at", time.time())), other, outline
+            )
+        records.pop(key, None)
+        records[key] = {"fp": digest, "size": size, "at": time.time(), "agent": agent}
         _save(path, records)
     except Exception:
         return None

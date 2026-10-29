@@ -140,3 +140,60 @@ def test_fingerprint_reads_both_edges(tmp_path):
     big.write_bytes(bytes(data))
     os.utime(big, ns=(st.st_atime_ns, st.st_mtime_ns))
     assert hook_images.fingerprint(big) != first
+
+
+def _text(repo, name="spec.md", size=10 * 1024):
+    doc = repo / name
+    doc.write_text("# Spec\n" + "line of the spec\n" * (size // 17))
+    return doc
+
+
+def _agent(path, agent, session="s1"):
+    p = _payload(path, session)
+    if agent is not None:
+        p["agent_id"] = agent
+    return p
+
+
+def test_text_read_twice_by_the_same_agent_is_flagged(monkeypatch, capsys, repo):
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    ctx = _context(_run(monkeypatch, capsys, _agent(doc, "a1")))
+    assert ctx.startswith("[cgh hook] spec.md was already read in full in this session")
+    assert ctx.endswith("it is still in the conversation above.")
+
+
+def test_text_read_by_another_agent_points_to_the_part_it_needs(
+    monkeypatch, capsys, repo
+):
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    ctx = _context(_run(monkeypatch, capsys, _agent(doc, "a2")))
+    assert "was read in full by another agent of this session" in ctx
+    assert "file_summary" in ctx or "offset/limit" in ctx
+    doc_out = json.loads(_run(monkeypatch, capsys, _agent(doc, "a3")))
+    assert "permissionDecision" not in doc_out["hookSpecificOutput"]
+
+
+def test_text_outside_the_size_band_is_not_tracked(monkeypatch, capsys, repo):
+    small = _text(repo, "small.md", 1024)
+    big = _text(repo, "big.md", 40 * 1024)
+    for doc in (small, big):
+        assert hook_images.text_reread_hint(_agent(doc, "a1"), doc) is None
+        assert hook_images.text_reread_hint(_agent(doc, "a2"), doc) is None
+
+
+def test_changed_text_and_ranged_reads_are_not_flagged(monkeypatch, capsys, repo):
+    doc = _text(repo)
+    assert _run(monkeypatch, capsys, _agent(doc, "a1")) == ""
+    doc.write_text(doc.read_text() + "one more line\n")
+    assert hook_images.text_reread_hint(_agent(doc, "a2"), doc) is None
+    ranged = _agent(doc, "a3")
+    ranged["tool_input"]["offset"] = 1
+    assert _run(monkeypatch, capsys, ranged) == ""
+
+
+def test_text_hint_needs_a_session(monkeypatch, capsys, repo):
+    doc = _text(repo)
+    for _ in range(2):
+        assert hook_images.text_reread_hint(_payload(doc, session=None), doc) is None

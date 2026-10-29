@@ -709,11 +709,16 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
 
     # An image read earlier in this session is still in the conversation:
     # say so instead of letting the same capture be paid for twice.
-    from codegraph.cli.hook_images import reread_hint
+    from codegraph.cli.hook_images import reread_hint, text_reread_hint
 
     image_hint = reread_hint(payload, target)
     if image_hint:
         _emit_nudge(image_hint)
+    # The same for a text file read in full, by this agent or by another
+    # agent of the session (parallel subagents reading one file).
+    text_hint = text_reread_hint(payload, target)
+    if text_hint:
+        _emit_nudge(text_hint)
 
     # Walk up to find the nearest .codegraph dir; that's the repo cgh
     # considers root for this file. Stops at filesystem root.

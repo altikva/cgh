@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **A text file already read in full in the session.** A full Read of a
+  text file between 4 KB and 32 KB that the session already read whole, and
+  that has not changed, gets a note: the same agent still has it; another
+  agent gets the file's outline to read only the part it needs. It never
+  blocks the Read. The token study saw three parallel subagents read one
+  file whole within seconds, three times in a day.
 - **On-demand indexing of a file the index lacks.** A full Read (or a
   Grep in one file) of a repo file that is new, or changed since its last
   index, used to get only the heuristic plan, or nothing. The live owner

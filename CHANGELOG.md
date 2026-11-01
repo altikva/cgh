@@ -359,6 +359,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   count too, quoted or not. `$VAR` and `${VAR}` references, `<placeholder>`
   values, `****`, names ending in `_URL` or `_PATH`, and code such as
   `token = self.token` are left alone.
+- **`cgh pii` now catches credentials in URLs and `;`-terminated values**
+  (cgh-pii 0.4.4). A password in a URL's userinfo
+  (`scheme://user:password@host`) is now a `secret.url_credential` finding
+  whatever the variable name, so `DATABASE_URL=postgres://app:...@db` and
+  `TOKEN_URL=https://user:...@host` no longer slip past the `_URL` skip;
+  redaction masks only the password and keeps the scheme, user and host
+  readable. A bare secret value may also end on a `;` (a connection string,
+  `Password=hunter2hunter2;`), while a `,`-terminated value stays out so a
+  keyword argument in code (`token=access_token,`) is not flagged.
 - **A file moved or deleted during `cgh index` no longer aborts the scan.**
   It is skipped. Before, a file that disappeared between the directory walk
   and its turn, for example a ticket another tool was moving, stopped the

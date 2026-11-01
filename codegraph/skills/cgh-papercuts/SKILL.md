@@ -1,6 +1,6 @@
 ---
 name: cgh-papercuts
-description: "MANDATORY reflex around tooling and environment failures. Whenever a tool, process, CLI, build, CI job, auth flow, or environment misbehaves in a way that is NOT the code you are writing, do two things without being asked. (1) BEFORE investigating, search this repo's papercuts for the symptom. (2) AFTER you have lost time to it and found the fix, record it. Concrete triggers: a background process wedged or a lock held (\"could not set lock\", \"database is locked\", \"resource busy\"); a CLI erroring on something you did not ask about (\"SERVICE_DISABLED\", \"permission denied\", quota/billing project mismatch); a CI job stuck \"queued\" forever or a push that never triggered a run; an auth token stale while another credential works fine; a flag or tool behaving unlike its docs; a reinstall that broke a resident daemon; a URL/value silently truncated; a slow path when a fast one exists. Do NOT wait for the user to ask; logging and reading papercuts is part of doing the work."
+description: "Read, then record, tooling or environment failures that cost time and are not the code you are writing. BEFORE investigating, search papercuts for the symptom; AFTER finding the fix, record it. Triggers: a wedged process or held lock ('database is locked', 'resource busy'), 'SERVICE_DISABLED' or 'permission denied', a CI job stuck queued, a push that never ran, a stale token while another works, a flag unlike its docs, a reinstall that broke a daemon."
 ---
 
 # Papercuts: read before you dig, record after you bleed

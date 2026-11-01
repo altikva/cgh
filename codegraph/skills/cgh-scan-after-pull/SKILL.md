@@ -1,6 +1,6 @@
 ---
 name: cgh-scan-after-pull
-description: Refresh the codegraph index after git operations that change many files. Trigger when the user mentions `git pull`, `git rebase`, `git merge`, `git checkout <branch>`, or "I just pulled/switched branches". Ensures symbol_lookup returns accurate results.
+description: "Refresh the cgh index after git operations that change many files, so symbol_lookup stays accurate. Trigger when the user mentions git pull, rebase, merge, or checkout <branch> ('I just pulled', 'switched branches')."
 ---
 
 # Refresh codegraph after git operations

@@ -1,6 +1,6 @@
 ---
 name: cgh-add-dir
-description: Add an external directory (sibling repo, related project) to the codegraph index so cross-repo symbol lookups work. Use when the user asks to include another repo/folder in the graph ("add ../frontend to codegraph", "include the infra repo in the graph", etc.).
+description: "Add an external directory (sibling repo, related project) to the cgh index for cross-repo symbol lookups, hot, no MCP restart. Use when the user asks to include another repo or folder in the graph ('add ../frontend to codegraph', 'include the infra repo')."
 ---
 
 # cgh add-dir

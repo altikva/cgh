@@ -1,6 +1,6 @@
 ---
 name: cgh-record-knowledge
-description: Persist patterns, decisions, gotchas, style preferences, and session digests into codegraph's knowledge store so they survive across sessions and context compactions. Complements cgh-use-memory (which is about READING). Triggers proactively after an "aha" moment, after diagnosing a non-obvious bug, or near the end of a long session.
+description: "Persist patterns, decisions, gotchas, style preferences and session digests into cgh's knowledge store so they survive across sessions and compactions (the write side; cgh-use-memory is the read side). Triggers after an 'aha' moment, after diagnosing a non-obvious bug, or near the end of a long session."
 ---
 
 # Record knowledge: codegraph write side

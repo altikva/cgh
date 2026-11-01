@@ -139,6 +139,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Shorter cgh skill descriptions.** The nine cgh-* skills' `description:`
+  fields ride in every session's skill listing. They dropped from about
+  3.9 KB to about 2.6 KB: each is now the trigger (what it is for and
+  when), the step-by-step staying in the skill body, loaded on demand. The
+  two reflex skills (artifacts, papercuts) keep their concrete trigger
+  cues so they still fire at the right moment.
 - **Slimmer MCP server instructions.** The guidance cgh sends in every
   session's context dropped from about 5.8 KB to about 3 KB: the long
   workflow matrix and federation walkthrough gave way to a short reflex

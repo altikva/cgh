@@ -89,3 +89,34 @@ def test_size_advice_still_fires_on_every_call(monkeypatch, capsys, repo):
     # The size line is about this call, not a repeated paragraph: it stays.
     assert first.splitlines()[-1] == second.splitlines()[-1]
     assert len(second.splitlines()) == 2
+
+
+def test_grep_hint_goes_silent_after_a_few_reminders(monkeypatch, capsys, repo):
+    payload = {
+        "tool_input": {"pattern": "charge_card"},
+        "cwd": str(repo),
+        "session_id": "s1",
+    }
+    outs = [
+        _ctx(monkeypatch, capsys, h.cmd_hook_precheck_grep, payload) for _ in range(5)
+    ]
+    # Full once, a one-line reminder a couple of times, then dropped: the
+    # paragraph has ridden the transcript long enough.
+    assert "symbol_lookup('charge_card')" in outs[0]
+    assert outs[1].startswith("[cgh hook] Grep on a bare identifier again")
+    assert outs[2].startswith("[cgh hook] Grep on a bare identifier again")
+    assert outs[3] == ""
+    assert outs[4] == ""
+
+
+def test_shell_hint_goes_silent_after_a_few_reminders(monkeypatch, capsys, repo):
+    def bash(cmd: str) -> str:
+        payload = {"tool_input": {"command": cmd}, "cwd": str(repo), "session_id": "sh"}
+        return _ctx(monkeypatch, capsys, h.cmd_hook_precheck_bash, payload)
+
+    outs = [bash("git grep -n foo") for _ in range(5)]
+    assert "pattern_search(pattern, glob?)" in outs[0]
+    assert outs[1].startswith("[cgh hook] `git grep` again")
+    assert outs[2].startswith("[cgh hook] `git grep` again")
+    assert outs[3] == ""
+    assert outs[4] == ""

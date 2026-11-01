@@ -9,6 +9,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Another agent's full re-read is answered with the plan.** With hook
+  answers on, a full Read of a text file another agent of the session
+  already read in full, unchanged, is denied with the file's outline;
+  repeating the same Read lets it through. The note alone arrived beside
+  the Read and did not stop it: four subagents still read one 17 KB file.
 - **A text file already read in full in the session.** A full Read of a
   text file between 4 KB and 32 KB that the session already read whole, and
   that has not changed, gets a note: the same agent still has it; another

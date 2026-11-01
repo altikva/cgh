@@ -86,13 +86,16 @@ _ASSIGNMENT_RE = re.compile(
     r"(?<!_url)(?<!_uri)(?<!_dir)(?<!_file)(?<!_path)(?<!_endpoint)"
     r"(?:\s*+[:=]\s*+(?P<quote>[\"'])"
     r"|[ \t]*+[:=][ \t]*+(?![$<])(?!\*++(?!\S))(?![A-Za-z_]\w*+(?:\.\w++)++(?!\S)))"
-    r"(?P<value>(?(quote)[^\"']{8,4096}+|[^\s\"'`(){}\[\]]{8,1024}+))"
+    r"(?P<value>(?(quote)[^\"']{8,4096}+|[^\s\"'`(){}\[\],;]{8,1024}+))"
     # Ends: a full value, or a value cut by its bound (the next character
-    # still belongs to it), flagged by an empty capped_* group.
+    # still belongs to it), flagged by an empty capped_* group. A bare
+    # value may end on a ';' (a .env line or a connection string,
+    # Password=hunter2hunter2;), but not on a ',' (a keyword argument in
+    # code, token=access_token,), which the comma separator keeps out.
     r"(?(quote)(?:[\"']|(?=[^\"'])(?P<capped_quoted>))"
-    r"|(?:(?<![,;])(?!\S)|(?=[^\s\"'`(){}\[\]])(?P<capped_bare>)))"
+    r"|(?:(?=;)|(?!\S)|(?=[^\s\"'`(){}\[\],;])(?P<capped_bare>)))"
 )
-_BARE_TAIL = re.compile(r"\S*")
+_BARE_TAIL = re.compile(r"[^\s\"'`(){}\[\],;]*")
 _QUOTED_TAIL = re.compile(r"[^\"'\n]*[\"']?")
 
 
@@ -146,6 +149,23 @@ class _AssignmentPattern:
 
 _ASSIGNMENT = _AssignmentPattern()
 
+# A password embedded in a URL's userinfo (scheme://user:password@host),
+# whatever the variable name. The assignment rule skips names ending in
+# _URL / _URI on purpose, so TOKEN_URL=https://user:pw@host leaks there,
+# and DATABASE_URL=postgres://app:s3cret@db has no secret keyword in the
+# name at all; both are caught here regardless of the name. The "value"
+# group is the password between the ':' and the '@': redaction masks only
+# it and keeps the scheme, user and host readable. The character classes
+# exclude ':' '/' '@' and whitespace, so every repeat is bounded and the
+# scan stays linear.
+_URL_CRED = re.compile(
+    r"(?i)(?<![A-Za-z0-9._+-])"
+    r"[a-z][a-z0-9+.-]{0,30}+://"
+    r"[^\s:/@]{1,128}+:"
+    r"(?P<value>[^\s:/@]{1,256}+)"
+    r"@[^\s/@]{1,256}+"
+)
+
 # Every secret.* kind, as (key, severity, pattern), in report order. The
 # scanner and the redactor both read this table, so a new secret kind is
 # detected and redacted from one entry. A pattern with a "value" group is
@@ -154,6 +174,7 @@ _SECRETS: tuple[tuple[str, str, re.Pattern | _AssignmentPattern], ...] = (
     ("secret.aws_key", "block", _AWS_KEY),
     ("secret.private_key", "block", _PRIVATE_KEY),
     *((key, "block", pattern) for key, pattern in _API_TOKENS),
+    ("secret.url_credential", "warn", _URL_CRED),
     ("secret.assignment", "warn", _ASSIGNMENT),
 )
 

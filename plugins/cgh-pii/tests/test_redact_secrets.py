@@ -56,12 +56,15 @@ def _fakes() -> dict[str, list[str]]:
             "rk" + "_live_" + _tail(30),
         ],
         "assignment": ["hunter2" + "-correct-" + "horse"],
+        "url_credential": ["s3cr3t" + "p4ss" + "w0rd"],
     }
 
 
 def _line(cat: str, value: str) -> str:
     if cat == "assignment":
         return 'password = "' + value + '"'
+    if cat == "url_credential":
+        return "DB_URL=postgres://app:" + value + "@db/app"
     return "value: " + value
 
 
@@ -311,3 +314,38 @@ class TestDocx:
         everything = "\n".join(body + cells)
         for value in values[:3]:
             assert value not in everything
+
+
+def test_url_credential_masks_only_the_password():
+    out, counts = redact("DATABASE_URL=postgres://app:s3cr3tp4ss@db/app", only=_SECRETS)
+    assert out == "DATABASE_URL=postgres://app:[URL_CREDENTIAL_1]@db/app"
+    assert counts == {"url_credential": 1}
+
+
+def test_url_credential_caught_in_a_url_suffixed_name():
+    # The assignment rule skips _URL names; the userinfo password still leaks.
+    out, counts = redact("TOKEN_URL=https://user:pa55word99@host", only=_SECRETS)
+    assert out == "TOKEN_URL=https://user:[URL_CREDENTIAL_1]@host"
+    assert counts == {"url_credential": 1}
+
+
+def test_plain_url_without_userinfo_is_left_alone():
+    text = "see https://example.com:8080/path?q=1 for the docs here"
+    out, counts = redact(text, only=_SECRETS)
+    assert out == text
+    assert counts == {}
+
+
+def test_semicolon_terminated_bare_value_is_masked():
+    value = _fakes()["assignment"][0]
+    out, counts = redact("PASSWORD=" + value + ";host=db", only=_SECRETS)
+    assert out == "PASSWORD=[ASSIGNMENT_1];host=db"
+    assert counts == {"assignment": 1}
+
+
+def test_comma_terminated_value_stays_code_safe():
+    # token=access_token, is a keyword argument in code, not a secret.
+    text = "call(token=access_token, timeout=30)"
+    out, counts = redact(text, only=_SECRETS)
+    assert out == text
+    assert counts == {}

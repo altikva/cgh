@@ -30,6 +30,13 @@ def register(mcp) -> None:
         pattern_search for a literal string. Federated across subrepos. Each result tagged with `scope`. The
         `limit` is applied per scope; scores are NOT renormalized across
         repos (BM25 is corpus-relative).
+
+        Every answer carries `confidence` (high when the index matched). When
+        the index finds nothing but the query is a single identifier that
+        occurs in text the index does not cover (a comment, a string, a file
+        it does not parse), the answer carries `text_matches` (a bounded grep,
+        {scope, file, line, text}) at medium confidence, so the result is
+        grep-complete without a second search in the shell.
         """
         from codegraph.analysis.federation import for_each_child_fts
         from codegraph.core.fts import fts_search as _fts
@@ -83,6 +90,21 @@ def register(mcp) -> None:
         all_results.sort(key=lambda x: -x["score"])
 
         out: dict = {"query": query, "results": all_results}
+        if all_results:
+            out["confidence"] = "high"
+        else:
+            # No FTS hit: grep-complete a single-identifier query, whose name
+            # may live in text the index does not cover (comments, strings, a
+            # file it does not parse). A sentence is left to symbol_lookup.
+            from codegraph.analysis.text_fallback import grep_term
+
+            texts = grep_term(_srv._root, query)
+            if texts:
+                out["text_matches"] = texts
+                out["text_match_source"] = "pattern_search"
+                out["confidence"] = "medium"
+            else:
+                out["confidence"] = "low"
         if warnings:
             out["partial"] = True
             out["warnings"] = warnings

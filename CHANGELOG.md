@@ -139,6 +139,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **Slimmer MCP server instructions.** The guidance cgh sends in every
+  session's context dropped from about 5.8 KB to about 3 KB: the long
+  workflow matrix and federation walkthrough gave way to a short reflex
+  list, keeping the search routing table and the must-not-miss lines
+  (prefer the tools over Read/Grep, knowledge_search is not a code search,
+  record and checkpoint before compaction). The detail lives in the cgh
+  rule file and the cgh-use-codegraph skill.
 - **Indexing a file writes its functions and classes in batches.** One
   statement per symbol made a 40 KB Python file take about 330 ms on
   DuckDB; it now takes about 120 ms, which also shortens full scans.

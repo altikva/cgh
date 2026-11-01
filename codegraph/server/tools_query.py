@@ -483,6 +483,18 @@ def register(mcp) -> None:
             if dirs:
                 out["next"] = call("pattern_search", pattern, glob=dirs[0]["glob"])
             return out
+        if payload.get("capped"):
+            # A full page returned, so more may exist past max_results. Not a
+            # complete answer: point at the full per-file total.
+            return {
+                "confidence": "medium",
+                "why": (
+                    f"Returned a full page of {payload.get('total')} hits at the "
+                    "max_results cap; more may exist. Raise max_results, narrow "
+                    "the pattern or glob, or count them all."
+                ),
+                "next": call("pattern_search", pattern, count_only=True),
+            }
         if payload.get("total"):
             return {"confidence": "high"}
         kind = "regex" if regex else "literal"
@@ -637,7 +649,11 @@ def register(mcp) -> None:
         `shown`, `more` counting the hits left out per file, and
         `top_dirs`, the directories holding most hits as globs with their
         counts, to pass back as `glob`. `count_only=True` answers hits per
-        file ({file, count}, busiest first) without the lines.
+        file ({file, count}, busiest first) without the lines. When a full
+        max_results page comes back and more may exist past the cap, the
+        answer sets `capped: true` at confidence medium, so the result is
+        not read as the complete set; raise max_results, narrow the pattern
+        or glob, or use count_only=True for the full per-file total.
 
         A sentence ("where are webhooks retried") is understood rather
         than grepped: the identifiers it names are searched, its words and
@@ -698,8 +714,10 @@ def register(mcp) -> None:
         # read + parse config.toml twice per query).
         children = resolve_children(_srv._root) if _srv._root else []
 
-        def grep(pat: str, rx: bool) -> tuple[list[dict], str]:
-            """Hits of ``pat`` over the parent, then each federated child."""
+        def grep(pat: str, rx: bool) -> tuple[list[dict], str, bool]:
+            """Hits of ``pat`` over the parent, then each federated child.
+            The third value is True when some scope returned a full
+            max_results page, so more matches may exist past the cap."""
             found: list[dict] = []
             hits, used = _search(
                 _srv._root,
@@ -709,6 +727,7 @@ def register(mcp) -> None:
                 regex=rx,
                 case_sensitive=case_sensitive,
             )
+            capped = len(hits) >= max_results
             found += [
                 {"scope": "parent", "file": h.file, "line": h.line, "text": h.text}
                 for h in hits
@@ -725,6 +744,7 @@ def register(mcp) -> None:
                     )
                 except Exception:
                     continue
+                capped = capped or len(child_hits) >= max_results
                 found += [
                     {
                         "scope": child.name,
@@ -734,9 +754,9 @@ def register(mcp) -> None:
                     }
                     for h in child_hits
                 ]
-            return found, used
+            return found, used, capped
 
-        all_hits, backend = grep(pattern, regex)
+        all_hits, backend, capped = grep(pattern, regex)
 
         # A sentence is understood, not only grepped. A plain-word query
         # that matched nothing literally gets the same second chance.
@@ -748,7 +768,7 @@ def register(mcp) -> None:
             if intent.identifiers:
                 alternation = "|".join(re.escape(i) for i in intent.identifiers[:6])
                 seen = {(h["scope"], h["file"], h["line"]) for h in all_hits}
-                more_hits, _ = grep(rf"\b(?:{alternation})\b", True)
+                more_hits, _, _ = grep(rf"\b(?:{alternation})\b", True)
                 all_hits += [
                     h
                     for h in more_hits
@@ -852,6 +872,10 @@ def register(mcp) -> None:
                     own["confidence"] = "medium"
                 payload.update(own)
             else:
+                # A full max_results page, not cut by the byte budget: more
+                # may exist past the cap, so say so rather than imply it is all.
+                if capped and not count_only and not payload.get("truncated"):
+                    payload["capped"] = True
                 payload.update(_grep_verdict(payload, pattern, glob, regex))
             if scopes:
                 payload["scopes"] = _shown_scopes(payload, scopes)

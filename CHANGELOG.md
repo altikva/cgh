@@ -144,6 +144,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **pattern_search says when a result is capped.** A search that filled a
+  full max_results page without hitting the byte budget used to read as the
+  complete set (confidence high), so an agent re-ran the search in the shell
+  to be sure it had everything. It now carries `capped: true` at medium
+  confidence with a `next` pointing at the full per-file count, so the cap
+  is explicit rather than silent.
 - **The cgh search nudge stops repeating once a session has seen it.** The
   PreToolUse hook that points a Grep or a shell code search at cgh's tools
   sent its full paragraph once per session, then a one-line reminder on

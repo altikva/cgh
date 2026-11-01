@@ -183,3 +183,25 @@ def test_long_pattern_fits_the_cap(plain):
 def test_sentence_fits_the_cap(federated):
     out = federated["pattern_search"]("où est calculé le total de la commande")
     _assert_capped(out)
+
+
+def test_capped_page_is_flagged_and_not_called_complete(plain):
+    # A small page over a pattern with more matches than max_results fits the
+    # byte budget, so it is not `truncated`, but it must not read as the whole
+    # set: it carries `capped` and drops to medium confidence with a next.
+    out = json.loads(plain["pattern_search"]("value", glob="*.py", max_results=3))
+    assert out["total"] == 3
+    assert out.get("truncated") is not True
+    assert out["capped"] is True
+    assert out["confidence"] == "medium"
+    assert "max_results" in out["why"]
+    assert out["next"]
+
+
+def test_complete_small_result_is_not_capped(plain):
+    # A pattern with fewer matches than max_results is the complete set: no
+    # `capped`, high confidence.
+    out = json.loads(plain["pattern_search"]("compute_total", glob="service_0/**"))
+    assert out["total"] >= 1
+    assert "capped" not in out
+    assert out["confidence"] == "high"

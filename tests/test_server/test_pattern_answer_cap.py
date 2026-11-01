@@ -215,9 +215,7 @@ def test_symbol_lookup_miss_is_grep_completed(plain):
     assert out["text_matches"]
     assert out["text_match_source"] == "pattern_search"
     assert out["confidence"] == "medium"
-    assert all(
-        {"scope", "file", "line", "text"} <= set(m) for m in out["text_matches"]
-    )
+    assert all({"scope", "file", "line", "text"} <= set(m) for m in out["text_matches"])
 
 
 def test_symbol_lookup_absent_name_has_no_text_matches(plain):

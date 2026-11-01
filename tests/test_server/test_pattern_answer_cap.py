@@ -205,3 +205,21 @@ def test_complete_small_result_is_not_capped(plain):
     assert out["total"] >= 1
     assert "capped" not in out
     assert out["confidence"] == "high"
+
+
+def test_symbol_lookup_miss_is_grep_completed(plain):
+    # compute_total is called but defined nowhere: no symbol, yet it occurs
+    # in text, so the miss is grep-completed inline.
+    out = json.loads(plain["symbol_lookup"]("compute_total"))
+    assert out["found"] is False
+    assert out["text_matches"]
+    assert out["text_match_source"] == "pattern_search"
+    assert out["confidence"] == "medium"
+    assert all({"scope", "file", "line", "text"} <= set(m) for m in out["text_matches"])
+
+
+def test_symbol_lookup_absent_name_has_no_text_matches(plain):
+    out = json.loads(plain["symbol_lookup"]("zzz_absent_name_xyz"))
+    assert out["found"] is False
+    assert "text_matches" not in out
+    assert out["confidence"] == "low"

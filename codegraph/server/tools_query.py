@@ -1060,6 +1060,34 @@ def register(mcp) -> None:
 
         return query
 
+    def _text_fallback(term: str, limit: int = 8) -> list[dict]:
+        """A bounded word-boundary grep for ``term`` over the parent and its
+        federated children, as compact {scope, file, line, text} rows. Makes
+        an index miss grep-complete: a name the graph models no symbol for may
+        still live in a comment, a string, a config value or a file type the
+        graph does not parse, which is what sends an agent back to the shell."""
+        from codegraph.analysis.federation import resolve_children
+        from codegraph.analysis.pattern import pattern_search as _search
+
+        if not _srv._root or not re.fullmatch(r"[A-Za-z_]\w*", term or ""):
+            return []
+        pat = rf"\b{re.escape(term)}\b"
+        roots = [_srv._root, *(resolve_children(_srv._root) or [])]
+        out: list[dict] = []
+        for root in roots:
+            scope = "parent" if root is _srv._root else root.name
+            try:
+                hits, _ = _search(root, pattern=pat, max_results=limit, regex=True)
+            except Exception:
+                continue
+            out += [
+                {"scope": scope, "file": h.file, "line": h.line, "text": h.text}
+                for h in hits
+            ]
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
     @mcp.tool()
     @_logged_tool
     def symbol_lookup(
@@ -1092,7 +1120,11 @@ def register(mcp) -> None:
         the FTS; `interpreted_as` and `expanded` say what was searched.
         Every answer has `confidence` (high, medium, low); a low or empty
         one says `why` and gives `next` (a call to try) and, for a near
-        miss, `candidates` (close names).
+        miss, `candidates` (close names). When no symbol is defined by that
+        name but it occurs in text (a comment, a string, a config value, or
+        a file the graph does not parse), the answer carries `text_matches`,
+        a bounded grep for the name ({scope, file, line, text}), so the
+        result is grep-complete without a second search in the shell.
 
         `format="text"` answers a grep-like layout instead of JSON (default:
         the [mcp] answer_format setting).
@@ -1195,6 +1227,20 @@ def register(mcp) -> None:
                     )
         if not results:
             payload = {"found": False, "name": name, **verdict}
+            # Grep-complete the miss: the name may live in text the graph
+            # models no symbol for, so give those hits here instead of
+            # letting the agent re-run the search in the shell.
+            texts = _text_fallback(name)
+            if texts:
+                payload["text_matches"] = texts
+                payload["text_match_source"] = "pattern_search"
+                if verdict.get("confidence") == "low":
+                    payload["confidence"] = "medium"
+                    payload["why"] = (
+                        f"No symbol named {name!r} is defined, but it occurs in "
+                        f"{len(texts)} place(s) in text (comments, strings, or "
+                        "files the graph does not model); see text_matches."
+                    )
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings

@@ -144,6 +144,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **symbol_lookup grep-completes a miss.** When no symbol is defined by the
+  name but it occurs in text (a comment, a string, a config value, or a file
+  the graph does not parse), the answer now carries `text_matches`, a bounded
+  grep for the name ({scope, file, line, text}), at medium confidence. The
+  result is grep-complete in one call, so the agent does not fall back to a
+  shell search. A truly absent name is unchanged (low, no text_matches).
 - **pattern_search says when a result is capped.** A search that filled a
   full max_results page without hitting the byte budget used to read as the
   complete set (confidence high), so an agent re-ran the search in the shell

@@ -1,6 +1,6 @@
 ---
 name: cgh-use-memory
-description: Check codegraph's memory + plan indexes BEFORE asking the user about preferences, before re-deriving facts from conversation history, and when the user hints at a past plan. Uses mcp__cgh__memory_search, memory_list, plan_search, plan_list.
+description: "Check cgh's memory and plan indexes before asking the user about preferences, before re-deriving facts from the conversation, and when the user hints at a past plan. Uses memory_search, memory_list, plan_search, plan_list."
 ---
 
 # Use codegraph memory + plan indexes

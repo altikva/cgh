@@ -144,6 +144,26 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **The cgh search nudge stops repeating once a session has seen it.** The
+  PreToolUse hook that points a Grep or a shell code search at cgh's tools
+  sent its full paragraph once per session, then a one-line reminder on
+  every search after, and that reminder rode in every later request. It now
+  drops after a couple of reminders: by then the session has seen it, and
+  the rule file and MCP instructions still carry the guidance. The size
+  advice, which is about the current command, still fires.
+- **Shorter cgh skill descriptions.** The nine cgh-* skills' `description:`
+  fields ride in every session's skill listing. They dropped from about
+  3.9 KB to about 2.6 KB: each is now the trigger (what it is for and
+  when), the step-by-step staying in the skill body, loaded on demand. The
+  two reflex skills (artifacts, papercuts) keep their concrete trigger
+  cues so they still fire at the right moment.
+- **Slimmer MCP server instructions.** The guidance cgh sends in every
+  session's context dropped from about 5.8 KB to about 3 KB: the long
+  workflow matrix and federation walkthrough gave way to a short reflex
+  list, keeping the search routing table and the must-not-miss lines
+  (prefer the tools over Read/Grep, knowledge_search is not a code search,
+  record and checkpoint before compaction). The detail lives in the cgh
+  rule file and the cgh-use-codegraph skill.
 - **Indexing a file writes its functions and classes in batches.** One
   statement per symbol made a 40 KB Python file take about 330 ms on
   DuckDB; it now takes about 120 ms, which also shortens full scans.
@@ -351,6 +371,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   count too, quoted or not. `$VAR` and `${VAR}` references, `<placeholder>`
   values, `****`, names ending in `_URL` or `_PATH`, and code such as
   `token = self.token` are left alone.
+- **`cgh pii` now catches credentials in URLs and `;`-terminated values**
+  (cgh-pii 0.4.4). A password in a URL's userinfo
+  (`scheme://user:password@host`) is now a `secret.url_credential` finding
+  whatever the variable name, so `DATABASE_URL=postgres://app:...@db` and
+  `TOKEN_URL=https://user:...@host` no longer slip past the `_URL` skip;
+  redaction masks only the password and keeps the scheme, user and host
+  readable. A bare secret value may also end on a `;` (a connection string,
+  `Password=hunter2hunter2;`), while a `,`-terminated value stays out so a
+  keyword argument in code (`token=access_token,`) is not flagged.
 - **A file moved or deleted during `cgh index` no longer aborts the scan.**
   It is skipped. Before, a file that disappeared between the directory walk
   and its turn, for example a ticket another tool was moving, stopped the

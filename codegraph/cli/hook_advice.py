@@ -480,12 +480,13 @@ def _state_path(root: Path, session_id: str) -> Path:
     return path / f"compact-{safe}.json"
 
 
-def seen_before(root: Path, session_id: str, kind: str) -> bool:
-    """True when this session already got the full hint of this kind; marks
-    it seen otherwise. A nudge rides in the transcript for the rest of the
-    session, so repeating the same paragraph on every Grep pays for it again
-    on every later request. Any failure counts as not seen: the full hint is
-    the safe fallback."""
+def hint_count(root: Path, session_id: str, kind: str) -> int:
+    """How many times this session already met a hint of this kind, then
+    records one more. 0 the first time. A nudge rides in the transcript for
+    the rest of the session and is resent on every later request, so the
+    full paragraph is sent once, a one-line reminder a couple of times, then
+    nothing once the session has clearly seen it. Any failure returns 0, so
+    the full hint is the safe fallback."""
     try:
         from codegraph.core.utils import ensure_dir
 
@@ -494,17 +495,21 @@ def seen_before(root: Path, session_id: str, kind: str) -> bool:
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
         path = path / f"hints-{safe}.json"
         try:
-            seen = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(seen, list):
-                seen = []
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            seen = []
-        if kind in seen:
-            return True
-        path.write_text(json.dumps([*seen, kind]), encoding="utf-8")
+            data = {}
+        if isinstance(data, list):
+            # Migrate the old seen-list format: a listed kind was shown once.
+            data = {k: 1 for k in data}
+        elif not isinstance(data, dict):
+            data = {}
+        prior = data.get(kind, 0)
+        count = prior if isinstance(prior, int) and prior >= 0 else 0
+        data[kind] = count + 1
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return count
     except OSError:
-        pass
-    return False
+        return 0
 
 
 def _last_boundary(transcript: Path, start: int, end: int) -> int | None:

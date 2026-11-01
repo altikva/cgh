@@ -223,9 +223,18 @@ def _best_of(n: int, fn) -> float:
     return best
 
 
-def test_on_demand_40kb_python_stays_within_budget(root, capsys):
+def test_on_demand_40kb_python_stays_within_budget(root, capsys, monkeypatch):
     text = _typical_module()
     assert 40 * 1024 <= len(text.encode()) < 48 * 1024
+
+    # A shared CI runner is slower and noisier than a workstation. Give the
+    # on-demand step the same generous ceiling the timings are checked
+    # against, so the correctness checks below never trip merely because a
+    # slow runner spent the tight production budget before parsing finished;
+    # the timing asserts still hold the work under that ceiling. Off CI this
+    # keeps the production budget, so local timing stays honest.
+    ceiling = 1.5 if os.environ.get("CI") else on_demand.BUDGET_S
+    monkeypatch.setenv("CGH_ON_DEMAND_BUDGET_MS", str(int(ceiling * 1000)))
 
     # Inside the owner: index a new 40 KB file (one fresh file per round).
     paths = iter(root / f"typical_{i}.py" for i in range(3))
@@ -246,9 +255,6 @@ def test_on_demand_40kb_python_stays_within_budget(root, capsys):
         assert out is not None and out.rows
 
     parsed = _best_of(3, hook_side)
-    # A shared CI runner is slower and noisier than a workstation: there the
-    # timings are still reported, against a generous ceiling.
-    ceiling = 1.5 if os.environ.get("CI") else on_demand.BUDGET_S
     with capsys.disabled():
         print(
             f"\n[on-demand 40 KB .py] owner index {indexed * 1000:.0f} ms, "

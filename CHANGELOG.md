@@ -144,6 +144,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **search_symbols and fts_search grep-complete a miss too.** Like
+  symbol_lookup, when no symbol or FTS entry matches but a single-identifier
+  query occurs in text (a comment, a string, a file the index does not
+  parse), the answer now carries `text_matches` (a bounded grep) at medium
+  confidence. fts_search also gains a `confidence` field (high on a hit, low
+  on a bare miss). The grep fallback is one shared helper across the three
+  tools, so an index miss is grep-complete in one call.
 - **symbol_lookup grep-completes a miss.** When no symbol is defined by the
   name but it occurs in text (a comment, a string, a config value, or a file
   the graph does not parse), the answer now carries `text_matches`, a bounded

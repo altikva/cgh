@@ -106,7 +106,8 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     # The identifier nudge is the same paragraph every time: full once per
-    # session, then one line. The size advice is about this call, so it stays.
+    # session, one line a few times, then dropped. The size advice is about
+    # this call, so it stays.
     nudge = _once_per_session(
         payload,
         cwd,
@@ -119,7 +120,10 @@ def cmd_hook_precheck_grep(args: argparse.Namespace) -> None:
         "Override: re-run Grep with a regex containing a metachar (e.g. '\\\\b' or '|') "
         "to confirm a raw text search is what you want.",
     )
-    _emit_nudge(nudge + (f"\n{advice}" if advice else ""))
+    message = "\n".join(m for m in (nudge, advice) if m)
+    if message:
+        _emit_nudge(message)
+    sys.exit(0)
 
 
 def _grep_one_file(root: Path, target: Path) -> str | None:
@@ -291,22 +295,33 @@ def _in_cgh_repo(start: Path) -> bool:
 _HINT_LABEL_RE = re.compile(r"`([^`]+)`")
 
 
-def _once_per_session(payload: dict, cwd: Path, kind: str, full: str) -> str:
+# The full static hint rides in the transcript and is resent on every later
+# request, so a session that keeps searching pays for it again each time. It
+# is sent in full once, as a one-line reminder this many times, then dropped:
+# by then the session has seen it, and the rule file and MCP instructions
+# still carry the guidance.
+_HINT_SHORT_REPEATS = 2
+
+
+def _once_per_session(payload: dict, cwd: Path, kind: str, full: str) -> str | None:
     """The full static hint the first time a session meets it, a one-line
-    reminder afterwards. Without a session id or a cgh root, always the full
-    hint."""
+    reminder the next few times, then None once the session has clearly seen
+    it. Without a session id or a cgh root, always the full hint."""
     from codegraph.core.config import find_codegraph_root
 
     session_id = payload.get("session_id")
     root = find_codegraph_root(cwd)
     if not isinstance(session_id, str) or not session_id or root is None:
         return full
-    if not hook_advice.seen_before(root, session_id, kind):
+    count = hook_advice.hint_count(root, session_id, kind)
+    if count == 0:
         return full
-    return (
-        f"[cgh hook] {kind} again: locate code with symbol_lookup / "
-        "pattern_search first (full hint earlier in this session)."
-    )
+    if count <= _HINT_SHORT_REPEATS:
+        return (
+            f"[cgh hook] {kind} again: locate code with symbol_lookup / "
+            "pattern_search first (full hint earlier in this session)."
+        )
+    return None
 
 
 def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
@@ -337,7 +352,9 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
         if hint:
             m = _HINT_LABEL_RE.search(hint)
             kind = f"`{m.group(1)}`" if m else "shell search"
-            _emit_nudge(_once_per_session(payload, Path(cwd), kind, hint))
+            nudge = _once_per_session(payload, Path(cwd), kind, hint)
+            if nudge:
+                _emit_nudge(nudge)
     # Nothing to say about locating code: maybe about the output size.
     if hook_advice.bash_advice_enabled(Path(cwd)):
         advice = hook_advice.bash_advice(command, Path(cwd))

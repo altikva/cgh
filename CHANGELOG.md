@@ -139,6 +139,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   tooling. Off by default for now.
 
 ### Changed
+- **The cgh search nudge stops repeating once a session has seen it.** The
+  PreToolUse hook that points a Grep or a shell code search at cgh's tools
+  sent its full paragraph once per session, then a one-line reminder on
+  every search after, and that reminder rode in every later request. It now
+  drops after a couple of reminders: by then the session has seen it, and
+  the rule file and MCP instructions still carry the guidance. The size
+  advice, which is about the current command, still fires.
 - **Shorter cgh skill descriptions.** The nine cgh-* skills' `description:`
   fields ride in every session's skill listing. They dropped from about
   3.9 KB to about 2.6 KB: each is now the trigger (what it is for and

@@ -496,6 +496,14 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     # only; on Windows it is a no-op, so the owner would stay tied to the
     # parent console and die when it closes. Pass the Windows creationflags
     # instead so the owner truly survives the launching shell.
+    #
+    # On Windows use CREATE_NO_WINDOW, not DETACHED_PROCESS: a GUI/windowless
+    # parent (the MCP client, or a federation parent spawning one owner per
+    # child) has no console to detach from, so DETACHED_PROCESS allocates a
+    # fresh console for each owner and the user sees a console window flash
+    # open per repo. CREATE_NO_WINDOW runs the owner with no console at all
+    # while CREATE_NEW_PROCESS_GROUP still frees it from the parent's group,
+    # and stdio is already redirected to owner.log, so no console is needed.
     log_path = repo_root / ".codegraph" / "owner.log"
     logf = open(log_path, "ab", buffering=0)  # noqa: SIM115  # lives for the daemon's lifetime
     popen_kwargs: dict = {
@@ -511,7 +519,7 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         )
     else:
         popen_kwargs["start_new_session"] = True

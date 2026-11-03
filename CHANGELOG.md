@@ -339,6 +339,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   Versions 0.18.x and earlier keep their original license.
 
 ### Fixed
+- **No console window flashes open per repo on Windows.** The owner was
+  launched with `DETACHED_PROCESS`, which allocates a fresh console when
+  the parent has none (an MCP client, or a federation parent starting one
+  owner per child), so a window flashed open for every repo. It now uses
+  `CREATE_NO_WINDOW`, keeping the owner detached and windowless; its
+  output already goes to `.codegraph/owner.log`.
 - **`cgh setup claude` keeps your settings readable and your own
   reindex hook.** Rewriting `.claude/settings.json`, `settings.local.json`
   or `.mcp.json` turned every non-ASCII character in your own entries

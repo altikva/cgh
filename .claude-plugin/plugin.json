@@ -1,6 +1,6 @@
 {
   "name": "cgh",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "cgh, the context graph hub: the project memory of your coding agents, shared across sessions, agents and repos, plus a code and document graph. 62 MCP tools that return exact file:line server-side, so navigation costs near-zero model tokens. Requires the cgh binary on PATH (uvx cgh, pip install cgh, or the standalone binary).",
   "author": {
     "name": "Joy Ndjama",

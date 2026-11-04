@@ -8,6 +8,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-04
+
 ### Added
 - **Another agent's full re-read is answered with the plan.** With hook
   answers on, a full Read of a text file another agent of the session
@@ -2863,7 +2865,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/altikva/cgh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/altikva/cgh/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/altikva/cgh/compare/v0.16.1...v0.17.0

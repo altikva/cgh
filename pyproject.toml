@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.18.0"
+version = "0.19.0"
 description = "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 62 MCP tools to Claude Code, Codex, Cursor, Gemini and IBM Bob. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]

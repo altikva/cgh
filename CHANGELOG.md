@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **The release's standalone binaries build on Linux and macOS, not only
+  Windows.** The binary smoke test ran `cgh index` with its working
+  directory set to a throwaway repo while pointing at the binary by a
+  relative path. On Linux and macOS a relative executable resolves against
+  that working directory, not the one the path was written from, so the
+  binary was reported missing and the leg failed; Windows resolves against
+  the launching directory, which hid it. The path is made absolute first.
+
 ## [0.19.0] - 2026-11-04
 
 ### Added

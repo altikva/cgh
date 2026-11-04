@@ -1,6 +1,6 @@
 ---
 name: cgh-record-knowledge
-description: Persist patterns, decisions, gotchas, style preferences, and session digests into codegraph's knowledge store so they survive across sessions and context compactions. Complements cgh-use-memory (which is about READING). Triggers proactively after an "aha" moment, after diagnosing a non-obvious bug, or near the end of a long session.
+description: "Persist patterns, decisions, gotchas, style preferences and session digests into cgh's knowledge store so they survive across sessions and compactions (the write side; cgh-use-memory is the read side). Triggers after an 'aha' moment, after diagnosing a non-obvious bug, or near the end of a long session."
 ---
 
 # Record knowledge: codegraph write side
@@ -13,7 +13,7 @@ survive context compaction and are surfaced automatically on future
 
 ## When to record (be proactive)
 
-Call `mcp__codegraph__knowledge_record` when you notice any of:
+Call `mcp__cgh__knowledge_record` when you notice any of:
 
 | Type | Example | `kind` |
 |---|---|---|
@@ -82,11 +82,13 @@ system warns about approaching limits):
 
 This is CRITICAL: without this step you restart from zero:
 
-1. `knowledge_list(limit=20)`: reload recent learnings
-2. `knowledge_search(query)`: targeted reload for the current task
-3. `memory_search(query)`: reload user preferences and feedback
-4. `plan_search(query)`: reload any active plan
-5. `knowledge_terms()`: see the full glossary of captured topics
+1. `resume(session_id)`: a short summary. Follow its standing
+   instructions. When `last_session` is your own (`own: true`), continue
+   from its next step; `resume(section="digests")` has the full checkpoint.
+2. Otherwise: `knowledge_list(limit=20)` for recent learnings,
+   `knowledge_search(query)` for the current task, `memory_search(query)`
+   for preferences and feedback, `plan_search(query)` for an active plan,
+   `knowledge_terms()` for the glossary of captured topics.
 
 ### Session start (new conversation)
 

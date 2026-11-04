@@ -1,12 +1,12 @@
 # Configuration
 
-codegraph uses a layered configuration system. Settings are resolved in order, with later sources overriding earlier ones.
+cgh uses a layered configuration system. Settings are resolved in order, with later sources overriding earlier ones.
 
 ---
 
 ## Resolution Order
 
-1. **Hardcoded defaults** (built into codegraph)
+1. **Hardcoded defaults** (built into cgh)
 2. **Global config**: `~/.codegraph/config.toml`
 3. **Project config**: `.codegraph/config.toml`
 4. **Environment variables**
@@ -95,6 +95,10 @@ auto_watch = true
 
 # Rebuild the index before accepting MCP connections.
 reindex_on_start = true
+
+# Default answer of pattern_search, find_callers, search_symbols and
+# symbol_lookup for agents: "json" or "text" (grep-like, fewer tokens).
+# answer_format = "json"
 
 [tools]
 # Which MCP tools tools/list shows: "all" (default) or "core".
@@ -241,6 +245,7 @@ module_sources = { "git::https://github.com/altikva/gcp-modules" = "../gcp-modul
 |-----|------|---------|-------------|
 | `auto_watch` | `bool` | `true` | Start file watcher alongside MCP server |
 | `reindex_on_start` | `bool` | `true` | Rebuild index when `cgh serve` starts |
+| `answer_format` | `str` | `"json"` | Default answer format of `pattern_search`, `find_callers`, `search_symbols` and `symbol_lookup` for agents. `"text"` answers a grep-like layout that weighs 6 to 53% fewer tokens (see [MCP_TOOLS.md](MCP_TOOLS.md)). A call's own `format` argument wins, `CGH_ANSWER_FORMAT=json` or `text` overrides the file, an unknown value keeps JSON. The `cgh` CLI and the hooks always get JSON. Read on every call, so a running owner takes a change at the next one |
 
 #### `[tools]`
 
@@ -286,6 +291,19 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 |-----|------|---------|-------------|
 | `checkpoint_every` | `int` | `40` | Tool calls without a cgh checkpoint before Bob's next prompt carries a reminder |
 | `checkpoint_gate` | `int` | `0` | When above 0, block one tool call past this many calls without a checkpoint, until the model saves. Re-run `cgh setup bob` after changing it |
+
+#### `[hooks]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `answers` | `bool` | `false` | The Grep, Read and Bash prechecks run the lookup themselves (definitions and callers of a searched name, the outline of a fully read indexed file) instead of pointing at a cgh tool. A full Read of a text file over 32 KB is denied with the file's plan (its symbols, sections or heading-like lines with their line numbers); repeating the same Read lets it through. `CGH_HOOK_ANSWERS=1` or `0` overrides it. Read on every hook call, so sessions already running take a change at their next search |
+| `bash_advice` | `bool` | `true` | The Bash precheck adds a one-line narrower form for a command known to print a lot (`pytest` without `-q`, `git log` without `-n`, `npm install` without `--silent`, `find` or `ls -R` over the whole tree, `cat` of a large file, `docker`/`kubectl logs` without `--tail`). Silent when the command is already piped, redirected or limited. `CGH_HOOK_BASH_ADVICE=1` or `0` overrides it |
+| `read_advice` | `bool` | `true` | Before a full Read (no `offset`/`limit`) of a file of 12 KB or more, the Read precheck adds a one-line hint under 300 bytes. For a file cgh does not index (JSON, a lock file, a log, generated code) it gives the size and line count: read a range, Grep for a pattern, or `head` it. For an indexed file it lists the main symbols with their line ranges (`parse 12-80, Index 82-240, +3 more`), unless answer mode already printed the outline. Silent for ranged reads and smaller files. `CGH_HOOK_READ_ADVICE=1` or `0` overrides it |
+| `grep_advice` | `bool` | `true` | Before a Grep in `output_mode: "content"` with no `head_limit` (or `head_limit: 0`), the Grep precheck adds a one-line hint under 300 bytes: set `head_limit`, narrow `glob`/`type`, use `files_with_matches` or `count`, or size it first with `pattern_search(count_only=True)`. Silent when a `glob`, `type` or subdirectory `path` narrows a specific pattern, when `path` is one file, and in the other output modes. A pattern that matches broadly (no literal of 4 characters, 3 or more alternatives, a word like `import` or `return`) gets the hint even with a glob. In answer mode the hint goes after the answer, in the same message. Only inside a cgh repo. `CGH_HOOK_GREP_ADVICE=1` or `0` overrides it |
+| `compact_hint` | `bool` | `true` | A UserPromptSubmit hook says once, at 0.5, 1.5 and 3 MB of session transcript since the last compaction, that the session is large and suggests `/compact`, or a cgh checkpoint then `/clear`. `CGH_HOOK_COMPACT_HINT=1` or `0` overrides it |
+| `agent_rule` | `bool` | `true` | The Agent precheck appends one line to every sub-agent brief: locate code with the cgh MCP tools (`symbol_lookup`, `pattern_search`, `find_callers`) before Read or Grep, then Read only the returned ranges. It names the `mcp__cgh__` or `mcp__codegraph__` prefix when `.mcp.json` declares the server. The code locations for the brief stay behind `CGH_AGENT_LOCATIONS=1`. `CGH_HOOK_AGENT_RULE=1` or `0` overrides it |
+
+**On-demand indexing.** Before the Read precheck answers (in answer mode, or for a file of 12 KB or more), a repo file the index lacks or holds in an older version is indexed by the live owner, then answered from the graph; with no owner it is parsed in memory and nothing is written. A file outside the repo, or under a cgh root that is the home directory or not a git checkout, is only parsed in memory, a gitignored one is left alone, and plain text, logs and binary documents are skipped. A Grep in one such file has the owner index it. The MCP tools that take a file (`file_summary`, `imports_of`, `subgraph`, `doc_outline`) index it the same way, and `symbol_lookup`, `find_callers` and `find_callees` index the changed working-tree files once on a miss, then retry; their answer carries `indexed_now`. The step gives up after 300 ms; `CGH_ON_DEMAND_BUDGET_MS` sets the budget, and `0` turns it off.
 
 ---
 
@@ -409,7 +427,7 @@ vendor/
 fixtures/*.json
 ```
 
-codegraph already respects `.gitignore` via `git ls-files`. The `.cghignore` is for files that are tracked by git but should not be indexed (e.g., generated code, vendored libs).
+cgh already respects `.gitignore` via `git ls-files`. The `.cghignore` is for files that are tracked by git but should not be indexed (e.g., generated code, vendored libs).
 
 ---
 
@@ -420,6 +438,7 @@ codegraph already respects `.gitignore` via `git ls-files`. The `.cghignore` is 
 | `CODEGRAPH_ROOT` | Override the project root directory | `/home/user/myproject` |
 | `CODEGRAPH_DIR` | Override the `.codegraph/` directory location | `/tmp/codegraph-index` |
 | `CODEGRAPH_AUTH_KEY` | MCP server auth key (auto-generated by `cgh init`) | `<token_urlsafe(32)>` |
+| `CGH_ANSWER_FORMAT` | Default agent answer format of the four search tools, overrides `[mcp] answer_format` | `text` |
 
 ### `CODEGRAPH_AUTH_KEY`
 
@@ -432,7 +451,7 @@ The MCP server auth key. Auto-generated by `cgh init` and stored in `.codegraph/
 
 ### `CODEGRAPH_ROOT`
 
-Overrides the project root. Useful when running codegraph from a different directory than the project:
+Overrides the project root. Useful when running cgh from a different directory than the project:
 
 ```bash
 CODEGRAPH_ROOT=/home/user/my-project cgh stats
@@ -448,7 +467,7 @@ CODEGRAPH_DIR=/tmp/my-project-codegraph cgh index
 
 ## File Discovery
 
-codegraph discovers files to index using this strategy:
+cgh discovers files to index using this strategy:
 
 1. **Git repos**: `git ls-files --exclude-standard` -- respects `.gitignore`, `.git/info/exclude`, and global gitignore
 2. **Non-git directories**: `os.walk` with `ignore_dirs` and `ignore_patterns` filtering

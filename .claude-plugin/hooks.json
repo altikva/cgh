@@ -27,6 +27,15 @@
             "command": "cgh _hook_precheck_bash"
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_precheck_agent"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -38,6 +47,16 @@
             "command": "cgh index --root . 2>/dev/null || true",
             "async": true,
             "statusMessage": "cgh: indexing changes"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cgh _hook_compact_hint"
           }
         ]
       }

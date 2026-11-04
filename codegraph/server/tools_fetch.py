@@ -2,7 +2,7 @@
 # __creation__ = 2026-08-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP tools to fetch a URL into the searchable index and
 #              query it. A fetch is gated network egress (http/https,
@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import json
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -35,8 +35,8 @@ def register(mcp) -> None:
         try:
             out = _fi(_srv._root, url, ttl_hours=ttl_hours, force=force, config=cfg)
         except FetchError as exc:
-            return json.dumps({"error": str(exc)})
-        return json.dumps(out)
+            return dumps_answer({"error": str(exc)})
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool
@@ -45,4 +45,4 @@ def register(mcp) -> None:
         network: reads the local index. Returns url, title, snippet."""
         from codegraph.analysis.fetch_index import search_fetched as _sf
 
-        return json.dumps({"results": _sf(_srv._root, query, limit=limit)})
+        return dumps_answer({"results": _sf(_srv._root, query, limit=limit)})

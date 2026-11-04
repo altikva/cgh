@@ -2,7 +2,7 @@
 # __creation__ = 2026-09-19
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh papercut` verb: log and search papercuts, the tooling and
 #              environment time-sinks that slow a session down, in this repo's
@@ -101,8 +101,13 @@ def cmd_papercut(args: argparse.Namespace) -> None:
     # An empty query lists the papercuts; a query narrows within them. The tag
     # lives in the FTS-indexed tags column, so matching it returns papercuts.
     search_term = f"{_TAG} {query}".strip() if query else _TAG
+    # A symptom typed in other words than the entry's still finds it.
     rows = knowledge_search(
-        search_term, kind="gotcha", limit=max(args.limit * 3, 30), repo_root=root
+        search_term,
+        kind="gotcha",
+        limit=max(args.limit * 3, 30),
+        repo_root=root,
+        recall=bool(query),
     )
     hits = [r for r in rows if _TAG in (r.get("tags") or "")][: args.limit]
 

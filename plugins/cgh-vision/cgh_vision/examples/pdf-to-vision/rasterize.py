@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # __author__ = "jndjama (Joy Ndjama)"
-# __licence__ = "MIT"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Rasterize each page of a PDF to a PNG with pypdfium2, so you can run
 # `cgh vision page-N.png` on the pages you care about. This is the manual

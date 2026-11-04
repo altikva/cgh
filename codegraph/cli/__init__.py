@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI package: shared console, helpers, and logo.
 
@@ -59,12 +59,12 @@ def status(message: str):
 
 
 LOGO = r"""[bold cyan]
-               _                            _
-  ___ ___   __| | ___  __ _ _ __ __ _ _ __ | |__
- / __/ _ \ / _` |/ _ \/ _` | '__/ _` | '_ \| '_ \
-| (_| (_) | (_| |  __/ (_| | | | (_| | |_) | | | |
- \___\___/ \__,_|\___|\__, |_|  \__,_| .__/|_| |_|
-                      |___/          |_|
+           _
+  ___ __ _| |__
+ / __/ _` | '_ \
+| (_| (_| | | | |
+ \___\__, |_| |_|
+     |___/
 [/bold cyan]"""
 
 

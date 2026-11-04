@@ -1,14 +1,15 @@
 {
   "name": "@altikva/cgh",
-  "version": "0.18.0",
-  "description": "Local code graph + memory + plans + knowledge for AI coding agents. Downloads and runs the standalone cgh binary; no Python required.",
+  "version": "0.19.0",
+  "description": "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Downloads and runs the standalone cgh binary; no Python required.",
   "bin": {
     "cgh": "bin/cgh.js"
   },
   "files": [
     "bin/",
     "lib/",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=18"
@@ -17,9 +18,10 @@
     "test": "node --test test/*.test.js"
   },
   "keywords": [
-    "code-graph",
     "cgh",
-    "codegraph",
+    "context-graph",
+    "code-graph",
+    "agent-memory",
     "mcp",
     "ai",
     "navigation"
@@ -34,5 +36,5 @@
     "url": "https://github.com/altikva/cgh/issues"
   },
   "author": "Joy Ndjama <joy.ndjama@altikva.com>",
-  "license": "MIT AND CC-BY-NC-SA-4.0"
+  "license": "Apache-2.0"
 }

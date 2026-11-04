@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-29
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Session continuity handlers wired into agent lifecycle
 #              hooks, plus `cgh memory review`. _hook_checkpoint records
@@ -147,13 +147,20 @@ def previous_session_recap(root: Path, current_session: str) -> str:
         text = str(text or "").strip()
         return text if len(text) <= limit else text[: limit - 3] + "..."
 
+    from codegraph.server.tools_session import digest_brief
+
+    # The goal and next step of the checkpoint, not its whole body: the
+    # recap is injected into the session context and re-read on every turn.
+    # resume(section="digests") has the rest.
     lines = ["Before this /clear, the previous session was working on:"]
     if model:
-        lines.append(f"Checkpoint: {model[0]['title']}\n{clip(model[0]['body'], 500)}")
+        brief = digest_brief(model[0]["body"], limit=240)
+        lines.append(f"Checkpoint: {model[0]['title']}")
+        lines += [f"{k.capitalize()}: {v}" for k, v in brief.items()]
     if auto:
-        lines.append(clip(auto[0]["body"], 900))
+        lines.append(clip(auto[0]["body"], 400))
     lines.append(
-        "To pick it up, call the codegraph `resume` tool with that task; if the "
+        "To pick it up, call the cgh `resume` tool with that task; if the "
         "user starts something new, ignore this."
     )
     return "\n".join(lines)
@@ -163,18 +170,14 @@ def print_resume_header(root: Path, payload: dict) -> str:
     """Print the resume header for ``root``; shared by the Claude Code and
     Bob SessionStart hooks. Prints nothing when the store is empty. Returns
     a one-line notice for the user ("" when there is nothing to say)."""
-    from codegraph.core.fts import get_fts_conn, list_plan_entries
+    from codegraph.server.tools_session import resume_counts
     from codegraph.state.call_log import knowledge_list
 
-    instructions = len(
-        knowledge_list(kind="standing_instruction", limit=50, repo_root=root)
-    )
-    digest_entries = knowledge_list(tag="session-digest", limit=50, repo_root=root)
-    digests = len(digest_entries)
-    try:
-        plans = len(list_plan_entries(get_fts_conn(root), limit=50))
-    except Exception:
-        plans = 0
+    # The same counts as the resume summary, so the header and the tool agree.
+    counts = resume_counts(root)
+    instructions = counts["standing_instructions"]
+    digests = counts["digests"]
+    plans = counts["plans"]
     notice = ""
 
     # A SessionStart fired with source "compact" means the conversation was
@@ -200,7 +203,7 @@ def print_resume_header(root: Path, payload: dict) -> str:
             print(
                 "This session was just compacted and cgh has NO "
                 "model-written digest for it, so the summary above is all "
-                "that survived. Call the codegraph `compact_session` tool "
+                "that survived. Call the cgh `compact_session` tool "
                 "now with what you did, the decisions you made, and the open "
                 "threads, so the next compaction does not lose them."
             )
@@ -230,8 +233,9 @@ def print_resume_header(root: Path, payload: dict) -> str:
         f"digest(s), {plans} plan(s)."
     )
     print(
-        "Call the codegraph `resume` tool (optionally with your task) "
-        "to load it before re-deriving anything."
+        "Call the cgh `resume` tool (optionally with your task) "
+        "to load it before re-deriving anything: a short summary, "
+        "detail on demand."
     )
     if payload.get("session_id"):
         print(

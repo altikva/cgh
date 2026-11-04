@@ -7,14 +7,19 @@
   <a href="https://pypi.org/project/cgh/"><img src="https://img.shields.io/pypi/pyversions/cgh" alt="Python versions"></a>
   <a href="https://www.npmjs.com/package/@altikva/cgh"><img src="https://img.shields.io/npm/v/%40altikva%2Fcgh?color=CB3837&label=npx" alt="npx"></a>
   <a href="https://github.com/altikva/cgh/actions/workflows/ci.yml"><img src="https://github.com/altikva/cgh/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%26%20CC%20BY--NC--SA-3DA639" alt="License: MIT and CC BY-NC-SA"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3DA639" alt="License: Apache-2.0"></a>
 </p>
 
-**Local code graph and shared memory for AI coding assistants.**
+**cgh, the context graph hub: the project memory of your coding agents.**
 
-Parses your repo into a graph of files, functions, classes, Terraform resources, and Markdown documentation -- then exposes it as an MCP server so Claude Code, Cursor, Codex, Gemini, and IBM Bob can do symbol-level lookups instead of reading entire files. On top of the graph: a knowledge and session memory every connected agent shares, and scanner findings (PII, secrets, confidentiality labels) that plugins check before sending a file to a cloud model.
+cgh is not a coding agent. It is an MCP server and a CLI that the agent you already use plugs into: Claude Code, Codex, Cursor, Gemini or IBM Bob. It keeps what those agents learn about a project, and it answers their questions about the code from a graph, so they find the code in fewer turns and pick up where the last session stopped.
 
-**Result:** 40-60% fewer context tokens on typical navigation tasks, learnings that survive context clears, and nothing leaving the machine without a gate.
+- **Shared project memory.** Knowledge, decisions, gotchas and session digests are stored per repo, with where each one came from (session, branch, commit, PR, files). Every connected agent reads the same store, it survives a `/clear` or a compaction, and it can be exported to another repo.
+- **A code and document graph.** Files, functions, classes, calls, imports, Terraform resources and Markdown sections are indexed locally. Lookups return an exact `file:line`, so the agent reads those lines instead of whole files. Sibling repos can be federated into one view.
+- **Faster navigation and continuity.** Fewer turns and fewer tokens per code question, measured below, and a resume bundle that hands the next session the standing instructions, recent digests and open plans.
+- **Gates on what leaves the machine.** Scanner findings (PII, secrets, confidentiality labels) are recorded in the graph, and plugins check them before a file goes to a cloud model.
+
+**Result:** code questions answered in fewer turns and fewer tokens, learnings that survive context clears, and nothing leaving the machine without a gate. On a whole ticket the bill stays the same: both figures are below.
 
 ```bash
 pip install cgh && cgh init && cgh serve
@@ -24,15 +29,21 @@ pip install cgh && cgh init && cgh serve
 
 ## Why cgh: the measured gains
 
-cgh's job is to keep an agent's working context small and its round-trips few. It answers code questions from the graph, returning exact `file:line`, instead of the agent reading whole files or grepping. That shows up as fewer context tokens and fewer turns, at equal correctness.
+cgh answers code questions from the graph, returning exact `file:line`, instead of the agent reading whole files or grepping. Two benchmarks measure what that buys, at two scales. Both compare cost only across runs that every arm got right, so a cheap wrong answer never reads as a saving.
 
-The figures below come from a two-arm benchmark: the same tasks run twice against the same repo, once with cgh available and once with Read/Grep only, scored on each session's token usage, turn count, and answer correctness. Cost is compared only across tasks both arms got right, so a cheap wrong answer never reads as a saving.
+**Per code question: fewer turns, fewer tokens.** A two-arm benchmark asks the same navigation questions (where is X defined, who calls Y, what breaks if Z changes) twice against the same repo, once with cgh and once with Read/Grep only, over five runs of 5 to 8 tasks:
 
-**On code-navigation tasks: about 40 to 60% fewer context tokens and 20 to 40% fewer turns, correctness unchanged.**
+| | with cgh, against Read/Grep only |
+|---|---|
+| turns | 18 to 40% fewer |
+| wall time | 19 to 36% faster |
+| billed tokens, cache included | 12 to 31% fewer in four runs, 5% more in one |
+| non-cached tokens (input and output, under 1% of the bill) | 33 to 61% fewer |
+| correct answers | unchanged (all correct in both arms) |
 
 The gap is widest on multi-file questions, where a graph beats text search. For "what breaks if I change `_backend`?", the agent has to follow call edges across a module:
 
-| | turns | context tokens |
+| | turns | non-cached tokens |
 |---|---|---|
 | Read / Grep | 13 | 2607 |
 | cgh | 6 | 886 |
@@ -42,6 +53,16 @@ That question is one command:
 <p align="center">
   <img src="https://raw.githubusercontent.com/altikva/cgh/main/assets/img/cgh-callers.svg" alt="cgh callers: the call graph of resolve_import rendered as a tree with exact file and line" width="820">
 </p>
+
+**Per ticket: the same bill, a faster agent.** A second benchmark replays already-merged tickets (API, front end, a Python service) from their parent commit: 78 runs, up to three per ticket and setup, judged blind against the merged pull request, with CI required. There, navigation is a small part of the work, and the per-question saving does not show in dollars:
+
+| | Claude Code alone, cgh as installed, cgh with a full ticket setup |
+|---|---|
+| cost per ticket, every token type priced | the same: all three within x0.96 to x1.04 of each other |
+| quality (blind judge, CI, the merged PR's own tests) | the same, within the run-to-run noise |
+| wall time | about 2x faster with the full ticket setup, which hands the agent the file locations at the start and routes its searches to cgh. That setup is not yet part of `cgh init` |
+
+So cgh makes finding code cheaper and quicker, and with the full ticket setup a ticket quicker, but not cheaper. Large token savings claimed for code graphs measure a single question against reading raw files, not a full piece of work.
 
 **Delegating writes.** The [`cgh-codegen`](plugins/cgh-codegen) plugin does the same for writes: predictable, pattern-following code (tests, stubs, config, boilerplate) is handed to a cheap or local model that mirrors an existing file, and the reference never enters the primary model's context. cgh picks the file to mirror from the graph, so selecting it costs zero model tokens.
 
@@ -71,7 +92,9 @@ pip install cgh                 # or: pipx install cgh / uv tool install cgh
 pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
 ```
 
-`cgh[plugins]` and `cgh[full]` bring cgh-docs, cgh-codegen and cgh-bugreport.
+`cgh[plugins]` and `cgh[full]` bring cgh-codegen and cgh-bugreport. PDF,
+Word, Excel, PowerPoint and CSV parsing is built in (it used to be the
+cgh-docs plugin, which cgh now ignores if it is still installed).
 cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
 understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
 
@@ -123,7 +146,7 @@ AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
     |  search_docs("reconciliation")
     |  context_for_task("fix auth bug")
     v
-MCP server (codegraph)          <-- stdio, no network
+MCP server (cgh)                <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
 DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based
@@ -157,6 +180,13 @@ Alongside them, Markdown becomes a heading tree with its links and code
 references, Terraform yields resources, variables and outputs, and JSON,
 TOML, YAML and SQL expose their structure as sections. Every one of them is
 searchable and reachable from the graph.
+
+Documents are read out of the box, no plugin needed: PDF pages, Word
+headings and tables, Excel sheets, PowerPoint slides with their speaker
+notes, and CSV / TSV summaries (header, size, first rows) all land in the
+index as sections, so `search_docs` and `cgh search --text` find what is
+inside them. Big files stay cheap: the size cap applies first and each
+format bounds its own work (see [docs/PARSERS.md](docs/PARSERS.md)).
 
 ---
 
@@ -193,6 +223,6 @@ searchable and reachable from the graph.
 
 ## License
 
-Dual-licensed under MIT **and** CC BY-NC-SA 4.0: both licenses apply together and you must comply with both. In practice that means non-commercial use, share-alike derivatives, attribution, and no warranty. Copyright (c) 2026 ALTIKVA. See [LICENSE](./LICENSE) or the canonical notice at https://www.altikva.com/licenses/LICENSE-1.0.
+Licensed under the [Apache License, Version 2.0](./LICENSE), from version 0.19 on. That covers cgh itself, the first-party plugins under `plugins/`, the SDK and the npx wrapper. Copyright 2026 ALTIKVA; see [NOTICE](./NOTICE).
 
-**Plugin exception**: a plugin that talks to cgh only through the documented plugin interfaces (the `cgh` entry-point group and the public plugin API) is not treated as a derivative work and may be licensed under any terms its author chooses, including commercial ones. Using cgh itself stays under the dual license whatever plugins are installed. Full wording in [LICENSE](./LICENSE).
+Versions 0.18.x and earlier were published under MIT and CC BY-NC-SA 4.0 and keep that license.

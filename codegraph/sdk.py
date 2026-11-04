@@ -2,11 +2,11 @@
 # __creation__ = 2026-07-31
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT (SDK embedding exception, see LICENSE)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The embedding surface: the one import path third-party
 #              code may rely on, with a stability contract (SDK_API,
-#              SemVer) and the MIT embedding grant from LICENSE.
+#              SemVer).
 #              Exposes cgh's bricks as explicit functions taking
 #              arguments instead of ambient repo state:
 #                scan_text          run installed scanners on content

@@ -2,11 +2,12 @@
 # __creation__ = 2026-10-10
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Read a git repo at a named ref without checking it out:
-#              grep_at_ref (git grep on a commit) and read_at_ref (one file,
-#              a line range). The repo is this project or one of the sibling
+#              grep_at_ref (git grep on a commit), read_at_ref (one file,
+#              a line range) and outline_of (its symbols, parsed from the
+#              text at that commit). The repo is this project or one of the sibling
 #              repos declared under [codegraph] siblings of the user's global
 #              ~/.codegraph/config.toml; resolve_repo refuses anything else. Refs go through the same validation as pinned
 #              Terraform module refs, and nothing ever reaches the network.
@@ -20,7 +21,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from codegraph.analysis.pattern import _MAX_LINE_LEN, PatternHit, _expand_braces
+from codegraph.analysis.pattern import (
+    _MAX_LINE_LEN,
+    PatternHit,
+    git_pathspecs,
+    git_regex_args,
+)
 from codegraph.analysis.terraform import git_env, git_toplevel, resolve_ref
 from codegraph.core.utils import quiet_subprocess_kwargs
 
@@ -166,12 +172,15 @@ def grep_at_ref(
     args = ["grep", "-n", "-I", "--no-color"]
     if not case_sensitive:
         args.append("-i")
-    args.append("-E" if regex else "-F")
     # "-e" so a pattern starting with "-" is never read as an option; the
-    # commit is a validated sha, so it cannot be one either.
-    args.extend(["-e", pattern, target.sha])
+    # commit is a validated sha, so it cannot be one either. A regex ERE
+    # cannot express, on a git without PCRE, goes to -E as written: there is
+    # no other backend for a tree at a commit.
+    rx_args = git_regex_args(pattern) if regex else ["-F", "-e", pattern]
+    args.extend(rx_args or ["-E", "-e", pattern])
+    args.append(target.sha)
     if glob:
-        args.extend(["--", *_expand_braces(glob)])
+        args.extend(["--", *git_pathspecs(glob)])
     try:
         r = _run_git(target.top, args)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -209,11 +218,8 @@ def _clean_path(path: str) -> str:
     return "/".join(parts)
 
 
-def read_at_ref(
-    target: RefTarget, path: str, start_line: int = 1, end_line: int = 0
-) -> dict:
-    """Lines ``start_line``..``end_line`` (1-based, inclusive; 0 = to the
-    end) of ``path`` at ``target.sha``, capped at 400 lines."""
+def blob_at_ref(target: RefTarget, path: str) -> tuple[str, str]:
+    """(clean path, text) of ``path`` at ``target.sha``."""
     rel = _clean_path(path)
     if not _SHA_RE.match(target.sha):
         raise RefError("unresolved ref")
@@ -223,9 +229,22 @@ def read_at_ref(
         raise RefError(f"git cat-file failed: {exc}") from exc
     if r.returncode != 0:
         raise RefError(f"{rel} does not exist at {target.ref}")
-    lines = r.stdout.splitlines()
+    return rel, r.stdout
+
+
+def slice_lines(rel: str, text: str, start_line: int = 1, end_line: int = 0) -> dict:
+    """Lines ``start_line``..``end_line`` (1-based, inclusive; 0 = to the
+    end) of ``text``, capped at 400 lines. A range that starts past the
+    end, or ends before it starts, is refused."""
+    lines = text.splitlines()
     total = len(lines)
     start = max(1, start_line)
+    if start_line < 0 or end_line < 0:
+        raise RefError("start_line and end_line must be positive")
+    if end_line and end_line < start:
+        raise RefError(f"end_line {end_line} is before start_line {start}")
+    if total and start > total:
+        raise RefError(f"start_line {start} is past the end ({total} lines)")
     end = total if end_line <= 0 else min(end_line, total)
     truncated = end - start + 1 > _MAX_READ_LINES
     if truncated:
@@ -241,3 +260,73 @@ def read_at_ref(
             for i in range(start, end + 1)
         ],
     }
+
+
+def read_at_ref(
+    target: RefTarget, path: str, start_line: int = 1, end_line: int = 0
+) -> dict:
+    """Lines ``start_line``..``end_line`` (1-based, inclusive; 0 = to the
+    end) of ``path`` at ``target.sha``, capped at 400 lines."""
+    rel, text = blob_at_ref(target, path)
+    return slice_lines(rel, text, start_line, end_line)
+
+
+# Formats whose parser reads a binary container: their text from git is not
+# what the parser expects, so no outline is attempted for them.
+_BINARY_DOC_EXTS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})
+
+
+def outline_of(rel: str, text: str) -> list[dict] | None:
+    """Symbols of ``text`` with their line ranges, parsed by the parser of
+    ``rel``'s language: [{name, kind, start_line, end_line}] in line order,
+    a method named Class.method. None when no parser handles the file or
+    the parse fails."""
+    import tempfile
+
+    from codegraph.parsers import get_parser_for_path
+
+    name = Path(rel).name
+    if Path(name).suffix.lower() in _BINARY_DOC_EXTS:
+        return None
+    parser = get_parser_for_path(name)
+    if parser is None:
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="cgh-ref-") as tmp:
+            p = Path(tmp) / name
+            p.write_text(text, encoding="utf-8")
+            idx = parser.parse(p)
+    except Exception as exc:  # a parser must not break a read
+        _log.debug("outline of %s failed: %s", rel, exc)
+        return None
+    out: list[dict] = []
+    for c in idx.classes:
+        out.append(_entry(c.name, c.kind, c.start_line, c.end_line))
+    for f in idx.functions:
+        qual = f"{f.class_name}.{f.name}" if f.class_name else f.name
+        out.append(_entry(qual, f.kind, f.start_line, f.end_line))
+    for r in idx.resources:
+        out.append(_entry(r.address or r.name, r.kind, r.start_line, r.end_line))
+    for s in idx.sections:
+        out.append(_entry(s.title, "section", s.start_line, s.end_line))
+    out.sort(key=lambda e: (e["start_line"], e["name"]))
+    return out
+
+
+def _entry(name: str, kind: str, start: int, end: int) -> dict:
+    return {
+        "name": name,
+        "kind": kind,
+        "start_line": start,
+        "end_line": max(start, end or start),
+    }
+
+
+def find_symbol(outline: list[dict], symbol: str) -> list[dict]:
+    """The outline entries ``symbol`` names: an exact name (Class.method
+    included) first, else the entries whose last dotted part matches."""
+    exact = [e for e in outline if e["name"] == symbol]
+    if exact:
+        return exact
+    tail = symbol.rsplit(".", 1)[-1]
+    return [e for e in outline if e["name"].rsplit(".", 1)[-1] == tail]

@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Tests for the `python -m cgh` entry shim: it runs the real CLI
 #              and its version mirrors codegraph, while codegraph stays the
@@ -21,8 +21,8 @@ def test_python_m_cgh_runs_and_shows_version():
         text=True,
     )
     assert out.returncode == 0
-    # The banner + "codegraph X.Y.Z" line both go to stdout.
-    assert "codegraph" in out.stdout
+    # The banner + "cgh X.Y.Z  context graph hub" line both go to stdout.
+    assert "context graph hub" in out.stdout
 
 
 def test_cgh_shim_version_matches_codegraph():

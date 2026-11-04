@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI commands: stats, logs, history, diff, doctor, compact.
 
@@ -313,8 +313,37 @@ def _stats_content(root: str) -> Group:
         renderables.append(
             Text.from_markup("[dim]MCP tool calls: 0 (no calls logged yet)[/dim]")
         )
+    recall = _recall_table(call_stats.get("knowledge_recall") or {})
+    if recall is not None:
+        renderables.append(recall)
 
     return Group(*renderables)
+
+
+def _recall_table(recall: dict) -> Table | None:
+    """How well knowledge_search answered: searches by confidence, and the
+    zero-hit and low-confidence rates. None before the first search."""
+    searches = int(recall.get("searches") or 0)
+    if not searches:
+        return None
+    counts = recall.get("by_confidence") or {}
+    table = Table(
+        title="Knowledge search recall", box=box.SIMPLE_HEAD, title_style="bold cyan"
+    )
+    table.add_column("Answer", style="bold")
+    table.add_column("Searches", justify="right")
+    for key, label in (
+        ("high", "high confidence"),
+        ("medium", "medium confidence"),
+        ("low", "low confidence"),
+        ("zero", "no hit"),
+    ):
+        table.add_row(label, f"{int(counts.get(key) or 0):,}")
+    table.add_section()
+    table.add_row("[bold]Total[/bold]", f"[bold]{searches:,}[/bold]")
+    table.add_row("Zero-hit rate", str(recall.get("zero_hit_rate", "0%")))
+    table.add_row("Low-confidence rate", str(recall.get("low_confidence_rate", "0%")))
+    return table
 
 
 _ORIGIN_LABELS = {
@@ -757,9 +786,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     # Freshness
     scan_line = _scan_line(payload["scan"], ss)
 
-    table = Table(
-        box=box.SIMPLE_HEAD, title="codegraph status", title_style="bold cyan"
-    )
+    table = Table(box=box.SIMPLE_HEAD, title="cgh status", title_style="bold cyan")
     table.add_column("", style="bold")
     table.add_column("", overflow="fold")
     table.add_row("Version", f"[cyan]{VERSION}[/cyan]")
@@ -1371,7 +1398,7 @@ def cmd_tail(args: argparse.Namespace) -> None:
     def _build():
         entries = _act_tail(root, n=n)
         table = Table(
-            title="codegraph activity",
+            title="cgh activity",
             box=box.SIMPLE_HEAD,
             title_style="bold cyan",
         )
@@ -1908,6 +1935,37 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         mcp_msg = "fastmcp not installed"
     checks.append(("MCP server", mcp_ok, mcp_msg))
 
+    # 10. MCP server name: an older cgh registered "codegraph"; the server
+    # still starts, but agents see mcp__codegraph__ tools and the allow
+    # rules drift from what this version writes. A rename blocker is worse:
+    # a deny / ask rule or a guard hook keyed on mcp__codegraph that the
+    # rename would void (or already voided), or a settings layer that cannot
+    # be read. That one is a failure, and blocks --strict.
+    from codegraph.integrations.mcp_name import (
+        MIGRATE_COMMAND,
+        legacy_findings,
+        rename_blockers,
+    )
+
+    blockers = rename_blockers(root)
+    rename_blocked = bool(blockers)
+    pending = sorted({rel for rel, _what in legacy_findings(root)})
+    if blockers:
+        name_ok = False
+        name_msg = (
+            f"rename blocked by {len(blockers)} restriction(s) keyed on "
+            "mcp__codegraph, see below"
+        )
+    elif pending:
+        name_ok = False
+        name_msg = (
+            f'still on the "codegraph" name in {", ".join(pending)}: '
+            f"run {MIGRATE_COMMAND}"
+        )
+    else:
+        name_ok, name_msg = True, "cgh"
+    checks.append(("MCP server name", name_ok, name_msg))
+
     # Display results
     table = Table(
         title="Health Check",
@@ -1933,6 +1991,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # Informational, not a failed check: the config still loads.
     for notice in notices:
         console.print(f"[yellow]!![/yellow] {notice}")
+    # What blocks the rename, each with its fix: cgh never edits these.
+    for b in blockers:
+        console.print(f"[red]!![/red] {_escape(str(b))}")
+    if blockers:
+        console.print(
+            f"[red]!![/red] then run {MIGRATE_COMMAND} (docs/UPGRADING-0.19.md)"
+        )
     # Informational too: an index from an older graph format still answers,
     # with fewer edges, until its one-time re-parse; never blocks --strict.
     # So is a store copied from another checkout: its answers point at that
@@ -2002,6 +2067,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             for name, ok, msg in checks
             if not ok
             and name != ".cghignore"
+            # A repo merely not migrated yet still works and does not block;
+            # a rename blocker (a restriction keyed on the old tool names)
+            # is a failure.
+            and not (name == "MCP server name" and not rename_blocked)
             and "not created yet" not in msg
             and "(optional)" not in msg
         ]
@@ -2033,6 +2102,7 @@ def _print_claude_audit(audit: dict) -> None:
         "partial": "[yellow]~~[/yellow]",
         "stale": "[yellow]~~[/yellow]",
         "misplaced": "[yellow]~~[/yellow]",
+        "legacy": "[yellow]~~[/yellow]",
     }
 
     tbl = Table(
@@ -2045,10 +2115,19 @@ def _print_claude_audit(audit: dict) -> None:
     tbl.add_column("Detail")
 
     m = audit["mcp_json"]
+    if m["status"] == "ok":
+        mcp_detail = "[green]present[/green]"
+    elif m["status"] == "legacy":
+        mcp_detail = (
+            '[yellow]still named "codegraph"[/yellow]  '
+            "[dim](run cgh setup migrate)[/dim]"
+        )
+    else:
+        mcp_detail = "[red]missing[/red]"
     tbl.add_row(
-        ".mcp.json (codegraph entry)",
+        ".mcp.json (cgh entry)",
         icon.get(m["status"], "[dim]?[/dim]"),
-        "[green]present[/green]" if m["status"] == "ok" else "[red]missing[/red]",
+        mcp_detail,
     )
 
     h = audit["hooks"]
@@ -2087,10 +2166,19 @@ def _print_claude_audit(audit: dict) -> None:
     tbl.add_row(".claude/skills/", icon.get(s["status"], "[dim]?[/dim]"), detail)
 
     u = audit["usage_block"]
+    if u["status"] == "ok":
+        usage_detail = f"[green]present[/green] ({u.get('path')})"
+    elif u["status"] == "stale":
+        usage_detail = (
+            f"[yellow]stale: {u.get('path')}, {u.get('bytes', 0)} B per session"
+            "[/yellow]"
+        )
+    else:
+        usage_detail = "[red]missing[/red]"
     tbl.add_row(
         "CLAUDE.md usage block",
         icon.get(u["status"], "[dim]?[/dim]"),
-        "[green]present[/green]" if u["status"] == "ok" else "[red]missing[/red]",
+        usage_detail,
     )
 
     console.print()

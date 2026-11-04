@@ -12,23 +12,27 @@ Control which plugins load per repo in `.codegraph/config.toml`:
 ```toml
 [plugins]
 # disabled = ["heavy-plugin"]     # skip without uninstalling
-# enabled = ["docs", "codegen"]   # allowlist mode: load ONLY these
+# enabled = ["codegen", "pii"]    # allowlist mode: load ONLY these
 
 [plugin.pii]                      # per-plugin settings, passed verbatim
 # scan_on_index = false
 ```
 
-A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. Plugins licensed under any terms are welcome: see the plugin exception in [LICENSE](./LICENSE).
+A broken or incompatible plugin degrades to a warning and a status line in `cgh plugins`, never a crash. Trust model: a plugin is Python executed with cgh's privileges, same as any pytest or flake8 plugin; install what you trust, pin versions, and use allowlist mode on sensitive repos. cgh is Apache-2.0, so a plugin may use any license its author chooses.
 
-First-party plugins live in [plugins/](../plugins) and install separately, so the core stays lean. `pip install "cgh[plugins]"` brings the first three:
+First-party plugins live in [plugins/](../plugins) and install separately, so the core stays lean. `pip install "cgh[plugins]"` brings the first two:
 
 | Plugin | What it adds | Install |
 |---|---|---|
-| `cgh-docs` | pdf, docx and xlsx files become searchable sections | `cgh[plugins]` |
 | `cgh-codegen` | boilerplate written by a cheap model, mirroring a reference file cgh picks from the graph | `cgh[plugins]` |
 | `cgh-bugreport` | crash reports built by allowlist, spooled locally, sent by hand to a private repo | `cgh[plugins]` |
 | `cgh-pii` | `cgh pii scan` for secrets on demand (exit 1 on a private or cloud key, for CI), `cgh pii redact` for documents | by name |
 | `cgh-vision` | `cgh vision <file>`: content inventory, diagram extraction to markdown + Mermaid, table and chart reading, local vision models | by name |
+cgh-docs (pdf, docx and xlsx parsers) is gone: cgh parses PDF, Word, Excel,
+PowerPoint and CSV itself (see [PARSERS.md](PARSERS.md)). An
+installed cgh-docs is reported `disabled` by `cgh plugins` and never
+imported, so it cannot replace the core parsers; uninstall it at leisure.
+
 cgh-pii and cgh-vision do not scan while cgh indexes unless you set
 `scan_on_index = true` in their `[plugin.<name>]` table (see
 [CONFIGURATION.md](CONFIGURATION.md)). The plugin interface for

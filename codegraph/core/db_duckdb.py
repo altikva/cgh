@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-01
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: DuckDB backend implementing the GraphDB protocol.
 #
@@ -113,9 +113,28 @@ class DuckDBGraphDB:
     def __init__(self, db_path: str, read_only: bool = False) -> None:
         # See _locked below: one owner shares this object across threads.
         self._lock = threading.RLock()
+        # Set by _locked once DuckDB reports a fatal error on this
+        # connection: from then on every statement fails, and the connection
+        # cache must drop this object instead of handing it out again.
+        self._invalidated = False
         self._conn = _connect_with_retry(db_path, read_only)
         if not read_only:
             init_schema(self._conn)
+
+    @property
+    def invalidated(self) -> bool:
+        """True once a fatal DuckDB error poisoned this connection."""
+        return self._invalidated
+
+    def healthy(self) -> bool:
+        """Run a trivial query; False when the database is invalidated."""
+        try:
+            self._conn.execute("SELECT 1").fetchall()
+        except duckdb.Error as exc:
+            if is_fatal_error(exc):
+                self._invalidated = True
+            return False
+        return True
 
     def execute(self, query: str, params: dict | None = None) -> QueryResult:
         # DuckDB's positional-only "?" placeholder doesn't accept a dict.
@@ -166,6 +185,39 @@ class DuckDBGraphDB:
                 f"ON CONFLICT ({key_field}) DO NOTHING"
             )
         self._conn.execute(sql, values)
+
+    def upsert_nodes(
+        self, label: str, key_field: str, rows: list[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Batched upsert_node: one multi-row statement per chunk. A key
+        given twice keeps its last props (one statement may not update the
+        same row twice)."""
+        from codegraph.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if not rows:
+            return
+        table = NODES[label].table
+        last = {key: props for key, props in rows}
+        keys = list(next(iter(last.values())).keys())
+        if any(list(props.keys()) != keys for props in last.values()):
+            raise ValueError(f"{label} rows need the same props")
+        cols = [key_field, *keys]
+        conflict = (
+            "DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in keys)
+            if keys
+            else "DO NOTHING"
+        )
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        items = list(last.items())
+        for chunk in _chunks(items, max(1, 400 // len(cols))):
+            self._conn.execute(
+                f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                + ", ".join(row_ph for _ in chunk)
+                + f" ON CONFLICT ({key_field}) {conflict}",
+                [v for key, props in chunk for v in (key, *props.values())],
+            )
 
     def ensure_edge(
         self,
@@ -865,11 +917,28 @@ class DuckDBGraphDB:
         return self._conn
 
 
+def is_fatal_error(exc: BaseException) -> bool:
+    """True for a DuckDB error that invalidates the whole database instance:
+    a FatalException (a failed checkpoint, "database has been invalidated"),
+    or an error DuckDB prefixes with "FATAL Error" (a corrupt ART index).
+    Every later statement on that instance fails until it is closed."""
+    if isinstance(exc, duckdb.FatalException):
+        return True
+    return isinstance(exc, duckdb.Error) and (
+        str(exc).lstrip().upper().startswith("FATAL ERROR")
+    )
+
+
 def _locked(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            except duckdb.Error as exc:
+                if is_fatal_error(exc):
+                    self._invalidated = True
+                raise
 
     return wrapper
 
@@ -893,4 +962,4 @@ def _lock_public_methods(cls: type) -> None:
 _lock_public_methods(DuckDBGraphDB)
 
 
-__all__ = ["DuckDBGraphDB", "DuckDBQueryResult"]
+__all__ = ["DuckDBGraphDB", "DuckDBQueryResult", "is_fatal_error"]

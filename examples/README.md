@@ -1,7 +1,7 @@
 # SDK examples
 
 Runnable demonstrations of the embedding surface (`codegraph.sdk`),
-the MIT-licensed way to use cgh's bricks inside your own agent,
+the supported way to use cgh's bricks inside your own agent,
 pipeline or API. One directory per case; each holds a comprehensive
 README (install steps included), the code, a sample config when there
 is something to customize, and a pytest suite showing how to test

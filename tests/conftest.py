@@ -8,6 +8,34 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_claude_settings_layers(tmp_path_factory, monkeypatch):
+    """The MCP rename reads the user's ~/.claude settings and the managed
+    settings to find restrictions it would void. Point both at an empty
+    directory so no test depends on the machine running it."""
+    from codegraph.integrations import mcp_name
+
+    fake_home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(mcp_name, "_home", lambda: fake_home)
+    monkeypatch.setattr(
+        mcp_name,
+        "managed_settings_paths",
+        lambda: [fake_home / "managed" / "managed-settings.json"],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_call_origin(monkeypatch):
+    """A test that runs a hook command in process sets CGH_ORIGIN=hook for
+    the rest of the run, and every later CLI call would then reach a live
+    owner as a hook, whose answers carry relative paths. Start each test
+    without it."""
+    monkeypatch.delenv("CGH_ORIGIN", raising=False)
+    # A shell that opted into text answers would turn every agent-origin
+    # tool answer in the suite into text.
+    monkeypatch.delenv("CGH_ANSWER_FORMAT", raising=False)
+
+
 @pytest.fixture
 def sample_python(tmp_path: Path) -> Path:
     """Create a sample Python file for parser tests."""

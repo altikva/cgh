@@ -3,7 +3,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -169,7 +169,7 @@ def _mark_stale(result, reason: str):
         return result
     payload["stale"] = True
     payload["stale_reason"] = reason
-    return json.dumps(payload, indent=2)
+    return _budget_dumps(payload)
 
 
 # Tools that fan out to federated subrepos and tag each row with `scope`.
@@ -224,7 +224,38 @@ def _add_scopes(result, scopes: dict | None):
     if payload.get("repo") or payload.get("ref"):
         return result
     payload["scopes"] = scopes
-    return json.dumps(payload, indent=2)
+    return _budget_dumps(payload)
+
+
+def _budget_dumps(payload: dict) -> str:
+    """A note added to an answer keeps it compact JSON with non-ASCII text
+    as is: indented, with every accent escaped, a capped 2.5 KB answer
+    came back over 4 KB."""
+    from codegraph.server._budget import dumps_answer
+
+    return dumps_answer(payload)
+
+
+def _hard_cap(tool: str, result, kwargs: dict):
+    """The ceiling held even when the structured cap failed: an over-cap
+    text answer is cut as plain text."""
+    from codegraph.server._budget import SIZE_ARGS, TOOL_CAPS, ToolCap, fit_wire
+
+    if not isinstance(result, str) or any(kwargs.get(a) for a in SIZE_ARGS):
+        return result
+    try:
+        return fit_wire(result, TOOL_CAPS.get(tool, ToolCap()).max_bytes)
+    except Exception:
+        return result
+
+
+# Callers whose answers skip the size ceiling: they are programs, not agents.
+_UNCAPPED_ORIGINS = frozenset({"cli", "hook"})
+
+# Callers whose answers get repo-relative paths plus one `root` to rebuild
+# the absolute path. The CLI keeps absolute paths: its commands open the
+# files they are handed and do their own shortening for display.
+_RELATIVE_ORIGINS = frozenset({"agent", "hook"})
 
 
 def _logged_tool(fn):
@@ -232,6 +263,9 @@ def _logged_tool(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        from codegraph.server._budget import cap_tool_answer
+        from codegraph.server._paths import relative_result
+        from codegraph.server._text import TEXT_TOOLS, resolve_format, text_answer
         from codegraph.state.call_log import log_call
 
         tool_name = fn.__name__
@@ -255,6 +289,30 @@ def _logged_tool(fn):
                     result = _add_scopes(result, _scope_commits(_root))
                 except Exception:
                     pass  # best-effort note: never fail the answer on it
+            if origin in _RELATIVE_ORIGINS:
+                try:
+                    result = relative_result(result, _root)
+                except Exception:
+                    _log.debug("relative paths failed for %s", tool_name, exc_info=True)
+            # The CLI and the hooks render or filter the full answer
+            # themselves; an agent re-reads every byte on each later turn.
+            # This is the last step, after every note above, and the cap is
+            # measured on the escaped text the agent receives.
+            if origin not in _UNCAPPED_ORIGINS:
+                try:
+                    result = cap_tool_answer(tool_name, result, kwargs)
+                except Exception:
+                    _log.debug("answer cap failed for %s", tool_name, exc_info=True)
+                    result = _hard_cap(tool_name, result, kwargs)
+            # The grep-like text answer, for agents only: the CLI and the
+            # hooks parse JSON. Rendered from the fitted answer and held to
+            # the same ceiling on the text itself.
+            if origin == "agent" and tool_name in TEXT_TOOLS:
+                try:
+                    if resolve_format(kwargs.get("format"), _root) == "text":
+                        result = text_answer(tool_name, result)
+                except Exception:
+                    _log.debug("text answer failed for %s", tool_name, exc_info=True)
             return result
         except Exception as exc:
             success = False
@@ -319,88 +377,36 @@ def _short_path(path: str) -> str:
 from codegraph.integrations.tool_guide import SEARCH_GUIDE
 
 mcp = FastMCP(
-    name="codegraph",
+    name="cgh",
     instructions=(
-        "Local code graph + Claude Code memory/plan index.\n\n"
+        "cgh, the context graph hub: the project memory of your coding agents,\n"
+        "plus a code and document graph and the Claude Code memory/plan index.\n\n"
         "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
-        "and line numbers so you only read the specific lines you need.\n\n"
-        + SEARCH_GUIDE
-        + "\n"
-        "Tool execution is SERVER-SIDE and costs zero model tokens. Only the\n"
-        "JSON response counts (capped + truncated). When in doubt: call the\n"
-        "tool. It is almost always cheaper than Read/Grep over full files.\n\n"
-        "Workflow matrix:\n"
-        "  • Task kickoff / broad question ('how does X work', 'where to add Y'):\n"
-        "       1. context_for_task(task, session_id?), merges code + memory + plans\n"
-        "       2. architecture_overview() or domain_map(keyword) for structure\n"
-        "       3. endpoints(path_pattern) for API questions\n"
-        "  • Known user preference territory (commit style, naming, workflow):\n"
-        "       1. memory_search(query, kind='feedback') BEFORE asking the user\n"
-        "  • User hints at a past plan ('the refactor we planned'):\n"
-        "       1. plan_search(query)\n"
-        "  • Problem that might have been solved before (saved gotchas, fixes):\n"
-        "       1. knowledge_search(query), notes from earlier sessions, not code\n"
-        "  • You learn something worth remembering:\n"
-        "       1. knowledge_record(title, body, kind, tags)\n"
-        "  • Context ~80% full (long session, many results):\n"
-        "       1. knowledge_record(...) for EVERY non-trivial insight\n"
-        "       2. checkpoint(session_id, digest), survives clears\n"
-        "       These survive compaction, raw conversation does NOT.\n"
-        "  • Session start (especially when a cgh header announces a\n"
-        "    resume bundle): resume(session_id?, task?), ONE call returns\n"
-        "    standing instructions + digests + knowledge + plans.\n"
-        "  • User states a durable rule or correction mid-session:\n"
-        "       1. knowledge_record(kind='standing_instruction', ...)\n"
-        "          It leads every future resume bundle.\n"
-        "  • After compaction / session resume / new session:\n"
-        "       1. knowledge_list(limit=20), reload recent learnings\n"
-        "       2. knowledge_search(query), targeted reload\n"
-        "       3. memory_search(query), user preferences + feedback\n"
-        "       4. plan_search(query), active plans\n"
-        "       CRITICAL: without reload you restart from zero.\n"
-        "  • Symbol lookup ('where is Foo', 'what calls Bar'):\n"
-        "       1. symbol_lookup / find_callers / find_callees\n"
-        "       2. search_symbols for a half-known name, fts_search for code\n"
-        "          described in words (a sentence, French or English)\n"
-        "       Call rows carry `resolution`: name / ambiguous are guesses.\n"
-        "  • Text/regex pattern search ('find every occurrence of X'):\n"
-        "       1. pattern_search(pattern, glob?), INSTEAD of Grep\n"
-        "          Returns {file, line, text}. Then Read only those lines.\n"
-        "          Also instead of git grep / grep -r / rg / sed -n in Bash.\n"
-        "  • After git pull / checkout / rebase:\n"
-        "       1. scan_status, then incremental_reindex if stale\n"
-        "  • A graph answer carrying `stale: true` comes from an index this\n"
-        "    cgh cannot fully trust (older graph format, e.g. during the\n"
-        "    one-time re-parse after an upgrade, or a copied store; see\n"
-        "    `stale_reason`). An empty result there proves nothing: confirm\n"
-        "    with pattern_search.\n"
-        "  • Adding an external dir: add_directory(path)\n"
-        "\n"
-        "FEDERATION (parent + subrepos):\n"
-        "  When the project declares `subrepos = […]` in config.toml, every\n"
-        "  read-side query tool (symbol_lookup, search_symbols, find_callers,\n"
-        "  find_callees, imports_of, subgraph, fts_search, pattern_search,\n"
-        "  search_docs, doc_outline, doc_refs, architecture_overview,\n"
-        "  domain_map, endpoints, find_dead_code) automatically fans out to\n"
-        "  each subrepo's read-only DB and aggregates results.\n"
-        "  • Each result has a `scope` field: 'parent' or '<subrepo-name>'.\n"
-        "    Use it to disambiguate when the same symbol exists in multiple\n"
-        "    repos, and to route file Read calls to the right tree.\n"
-        "  • The response's `scopes` map gives, per scope, the commit read:\n"
-        "    `head` + `branch` checked out, `indexed_commit` (what graph\n"
-        "    answers come from), `index_at_head`. Cite it when a change\n"
-        "    must name the commit it was checked against.\n"
-        "  • Cross-repo edges are NOT inferred, find_callers in subrepo A\n"
-        "    won't surface callers from subrepo B; subgraph imports stop at\n"
-        "    repo boundaries. Treat scopes as independent islands.\n"
-        "  • find_dead_code is per-scope: a 'dead' symbol may actually be\n"
-        "    called from another repo. Don't delete blindly across scopes.\n"
-        "  • If a child DB is locked or unavailable, the response includes\n"
-        "    `partial: true` and `warnings: [{scope, error}]`. Results are\n"
-        "    still useful, just incomplete for that scope. Re-query later.\n"
-        "  • Knowledge / memory / plans are NEVER federated, each project\n"
-        "    keeps its own. knowledge_search reads only the parent's store.\n"
-        "Only use Read for the exact line range returned above.\n"
+        "and line numbers so you only read the specific lines you need.\n"
+        "Paths are relative to the answer's `root` (a federated subrepo's\n"
+        "rows: to `roots[scope]`); join the two for a tool that wants an\n"
+        "absolute path, such as Read.\n\n" + SEARCH_GUIDE + "\n"
+        "Tool execution is SERVER-SIDE and costs zero model tokens; the JSON\n"
+        "response is capped. In doubt, call the tool: almost always cheaper\n"
+        "than Read/Grep over full files. knowledge_search is NOT a code\n"
+        "search, it reads saved notes, never the code.\n\n"
+        "Reflexes:\n"
+        "  • Session start / after compaction: resume(session_id?), ONE call\n"
+        "    returns standing instructions + digests + knowledge + plans; when\n"
+        "    last_session is your own, continue from its next step.\n"
+        "  • Context ~80% full: knowledge_record(...) then checkpoint(...);\n"
+        "    they survive compaction, raw conversation does NOT.\n"
+        "  • Durable rule stated mid-session: knowledge_record(\n"
+        "    kind='standing_instruction', ...), it leads every resume.\n"
+        "  • After git pull / checkout / rebase: scan_status, then\n"
+        "    incremental_reindex if stale. An answer tagged stale: true is\n"
+        "    not trustworthy when empty, confirm with pattern_search.\n"
+        "  • Federated repo (subrepos in config.toml): read tools fan out to\n"
+        "    each subrepo; every row carries a `scope`, use it to route Read\n"
+        "    and disambiguate. Cross-repo edges are not inferred; knowledge,\n"
+        "    memory and plans are never federated.\n"
+        "Only use Read for the exact line range a tool returned. Detail: the\n"
+        "cgh rule file and the cgh-use-codegraph skill.\n"
     ),
 )
 

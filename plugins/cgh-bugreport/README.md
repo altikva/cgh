@@ -1,6 +1,6 @@
 # cgh-bugreport
 
-Crash reports for [cgh](https://github.com/altikva/cgh) that keep the
+Crash reports for [cgh](https://github.com/altikva/cgh), the context graph hub, that keep the
 promise the rest of the product makes: nothing leaves the machine
 without a gate, and you see exactly what would.
 

@@ -1,7 +1,7 @@
 # cgh-pii
 
 Secret scanning and PII redaction for
-[cgh](https://github.com/altikva/cgh).
+[cgh](https://github.com/altikva/cgh), the context graph hub.
 
 ```bash
 pip install cgh-pii
@@ -57,7 +57,14 @@ cgh pii scan || { echo "secret in the tree"; exit 1; }
 |---|---|---|---|
 | `secret.aws_key` | AWS access key ids | block | on |
 | `secret.private_key` | PEM private key blocks | block | on |
-| `secret.assignment` | `password = "..."` style hardcoded credentials | warn | on |
+| `secret.anthropic_key` | Anthropic API keys (`sk-ant-...`) | block | on |
+| `secret.openai_key` | OpenAI project, service account and admin keys | block | on |
+| `secret.github_token` | GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) | block | on |
+| `secret.gitlab_token` | GitLab personal access tokens (`glpat-`) | block | on |
+| `secret.slack_token` | Slack tokens (`xoxb-`, `xoxp-`, ...) | block | on |
+| `secret.google_api_key` | Google API keys (`AIza...`) | block | on |
+| `secret.stripe_key` | Stripe live secret and restricted keys | block | on |
+| `secret.assignment` | `password = "..."` or `.env` style `DB_PASSWORD=...` hardcoded credentials | warn | on |
 | `pii.email` | email addresses | warn | `--pii` |
 | `pii.phone` | international-format phone numbers | warn | `--pii` |
 | `pii.iban` | IBANs, mod-97 validated | warn | `--pii` |
@@ -101,11 +108,21 @@ cgh pii redact report.docx --only person --out report.anon.docx
 ```
 
 `--only` limits the categories (`person`, `location`, `email`,
-`phone`, `iban`, `card`, `aws_key`, `private_key`; default: all).
+`phone`, `iban`, `card`, `other`, plus every `secret.*` key of the
+table above without its prefix: `aws_key`, `private_key`,
+`anthropic_key`, `openai_key`, `github_token`, `gitlab_token`,
+`slack_token`, `google_api_key`, `stripe_key`, `assignment`; default:
+all). An `assignment` keeps its variable name and masks only the
+value, quoted or not. A `private_key` match is the `-----BEGIN ... PRIVATE
+KEY-----` line only: the key body below it is not masked, so remove
+the whole block by hand.
 `--mode placeholder` (default) writes numbered tags `[PERSON_1]`,
 distinct within the document; `--mode pseudonym` writes a keyed
 `<pii.person:hex>`, the same token for the same value across documents
-when you export a stable `CGH_REDACT_SECRET` (16+ chars). From code:
+when you export a stable `CGH_REDACT_SECRET` (16+ chars). Secrets are
+the exception: a token or password gets a random pseudonym, the same
+within one run but never derived from its value, so nobody holding the
+output and the key can brute-force it back. From code:
 `codegraph.sdk.redact_text(text, only=["person"])`.
 
 Read the output before you share it. The same limits apply as above:
@@ -123,7 +140,7 @@ the regex tier misses what does not fit its patterns.
   redact PII split across runs, like a bold surname); unchanged
   paragraphs keep their formatting. A docx needs `--out` or
   `--in-place`. PDF is not supported: real pdf redaction needs an
-  AGPL library; extract the pdf text (see cgh-docs) and redact that.
+  AGPL library; extract the pdf text (cgh indexes it, or use pypdf) and redact that.
 
 ## The optional LLM tier
 

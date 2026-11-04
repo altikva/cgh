@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP tools for codegraph's knowledge store: record, search,
 #              list, terms (glossary), forget, outcome, and compact_session.
@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+
+from codegraph.server._budget import dumps_answer
 
 
 def _digest_tags(caller_tags: str) -> str:
@@ -24,6 +26,95 @@ def _digest_tags(caller_tags: str) -> str:
     if "session-digest" not in final:
         final = f"{final},session-digest"
     return final
+
+
+# Byte target for a knowledge_search answer. Every byte is re-read on each
+# later turn of the session, so a search answers with what decides the next
+# step and leaves the rest one knowledge_list(entry_id=...) call away.
+SEARCH_TARGET_BYTES = 2_500
+
+
+def _fit_search_answer(
+    payload: dict, drop_hits: bool, target: int = SEARCH_TARGET_BYTES
+) -> None:
+    """Bring a shaped knowledge_search answer near ``target`` bytes: first
+    the body heads of the briefs go, from the last one up, then (with
+    ``drop_hits``, i.e. the caller kept the default limit) the last briefs,
+    then the first hit's body is clipped further. The first hit always stays."""
+    from codegraph.server._budget import answer_bytes
+    from codegraph.state.knowledge_recall import clip
+
+    hits: list[dict] = payload.get("hits") or []
+    for h in reversed(hits[1:]):
+        if answer_bytes(payload) <= target:
+            return
+        if h.pop("body", None):
+            h["body_clipped"] = True
+    dropped = 0
+    while drop_hits and len(hits) > 1 and answer_bytes(payload) > target:
+        hits.pop()
+        dropped += 1
+    if dropped:
+        payload["dropped"] = dropped
+        payload["hint"] = "Pass a larger limit for more hits."
+    # Characters, not bytes, and escaping weighs more than one per quote or
+    # line break: measure again after each cut.
+    for _ in range(3):
+        excess = answer_bytes(payload) - target
+        if not hits or excess <= 0 or not isinstance(hits[0].get("body"), str):
+            break
+        body = hits[0]["body"]
+        keep = max(300, len(body) - excess - 16)
+        if keep >= len(body):
+            break
+        hits[0]["body"], _ = clip(body, keep)
+        hits[0]["body_clipped"] = True
+
+
+# Byte target for a knowledge_list answer at the default limit, for the same
+# reason. A caller who asks for a larger page only meets the 10 KB ceiling.
+LIST_TARGET_BYTES = 2_500
+
+
+def _fit_list_answer(payload: dict, target: int = LIST_TARGET_BYTES) -> int:
+    """Bring a knowledge_list answer near ``target`` bytes: first the body
+    heads of the briefs go, from the last one up (the first keeps its head),
+    then the last briefs. Sets ``dropped`` and a paging hint and points
+    ``next_offset`` at the first brief left out. Returns how many briefs
+    went."""
+    from codegraph.server._budget import answer_bytes
+
+    entries: list[dict] = payload.get("entries") or []
+    hint = "Page with offset=next_offset, or pass a larger limit for more."
+    # Room for the keys added below, should briefs have to go.
+    room = target - (
+        answer_bytes(
+            {
+                "dropped": 999,
+                "hint": hint,
+                "returned": 999,
+                "has_more": True,
+                "next_offset": 99_999,
+            }
+        )
+        - answer_bytes({})
+    )
+    for e in reversed(entries[1:]):
+        if answer_bytes(payload) <= target:
+            return 0
+        if e.pop("body", None):
+            e["body_clipped"] = True
+    dropped = 0
+    while len(entries) > 1 and answer_bytes(payload) > room:
+        entries.pop()
+        dropped += 1
+    if dropped:
+        payload["dropped"] = dropped
+        payload["hint"] = hint
+        payload["returned"] = len(entries)
+        payload["has_more"] = True
+        payload["next_offset"] = payload["offset"] + len(entries)
+    return dropped
 
 
 def register(mcp) -> None:
@@ -82,12 +173,12 @@ def register(mcp) -> None:
             )
         except Exception:
             pass
-        return json.dumps({"id": entry_id, "kind": kind, "title": title})
+        return dumps_answer({"id": entry_id, "kind": kind, "title": title})
 
     @mcp.tool()
     @_logged_tool
     def knowledge_search(
-        query: str, kind: str = "", limit: int = 10, scope: str = ""
+        query: str, kind: str = "", limit: int = 5, scope: str = ""
     ) -> str:
         """
         Search the NOTES saved by agents and people in earlier sessions
@@ -108,14 +199,30 @@ def register(mcp) -> None:
         that proved useful rank up, dead ends and corrected entries rank
         down, and every rated hit carries an `outcome` summary (status:
         preferred, useful, contested, dead_end, corrected or faded).
-        """
-        from codegraph.state.call_log import knowledge_search as _search
 
-        hits = _search(query, kind=kind or None, limit=limit, repo_root=_srv._root)
+        A sentence is fine, French or English: words are matched on their
+        stem, without accents or case, and with common synonyms (lock and
+        verrou, stale and périmé, token and jeton). Every hit carries a
+        `confidence` (high, medium or low) and the answer a best
+        `confidence`. When nothing matches, `suggestion` gives the
+        knowledge_record kind and tags to use once the problem is solved.
+
+        To stay small, the first hit carries its body (clipped near 1.5 KB)
+        and the others a brief: id, title, tags, confidence and the start
+        of the body. Read any entry whole with knowledge_list(entry_id=<id>).
+        """
+        from codegraph.state import knowledge_recall as _kr
+        from codegraph.state.call_log import knowledge_search as _search
+        from codegraph.state.call_log import record_recall_outcome
+
+        hits = _search(
+            query, kind=kind or None, limit=limit, repo_root=_srv._root, recall=True
+        )
         if scope == "all" and _srv._root is not None:
             from codegraph.analysis.federation import resolve_children
             from codegraph.state.call_log import knowledge_search_ro
 
+            items = _kr.concepts(query)
             for child in resolve_children(_srv._root):
                 for row in knowledge_search_ro(
                     child / ".codegraph" / "call_log.db",
@@ -124,12 +231,36 @@ def register(mcp) -> None:
                     limit=limit,
                 ):
                     row["scope"] = child.name
+                    head = f"{row['title']} {' '.join(row['tags'])}"
+                    row["confidence"] = (
+                        _kr.confidence(*_kr.coverage(items, head, row["body"]))
+                        or "high"
+                    )
                     hits.append(row)
-        return json.dumps(
-            {"query": query, "kind": kind or None, "total": len(hits), "hits": hits},
-            indent=2,
-            default=str,
-        )
+        grades = [h.get("confidence") for h in hits]
+        best = next((g for g in _kr.CONFIDENCE_ORDER if g in grades), None)
+        payload: dict = {
+            "query": query,
+            "kind": kind or None,
+            "total": len(hits),
+            "hits": hits,
+            "confidence": best or "none",
+        }
+        if best is None:
+            payload["suggestion"] = _kr.suggest_record(query, kind or None)
+        if _kr.shape_hits(hits) or len(hits) > 1:
+            payload["read_more"] = (
+                "knowledge_list(entry_id=<id>) returns one entry whole."
+            )
+        try:
+            record_recall_outcome(best or "zero", repo_root=_srv._root)
+        except Exception:
+            pass  # a stats write must never fail the search
+        from codegraph.server._budget import dumps_answer
+
+        payload = json.loads(json.dumps(payload, default=str))
+        _fit_search_answer(payload, drop_hits=limit <= _kr.DEFAULT_LIMIT)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -137,8 +268,9 @@ def register(mcp) -> None:
         kind: str = "",
         tag: str = "",
         session_id: str = "",
-        limit: int = 50,
+        limit: int = 10,
         offset: int = 0,
+        entry_id: int = 0,
     ) -> str:
         """
         Browse the notes saved in earlier sessions (not the code), newest
@@ -146,19 +278,38 @@ def register(mcp) -> None:
         before re-deriving. To find code use the code tools (symbol_lookup,
         fts_search, pattern_search, context_for_task).
 
+        Each entry comes as a brief: id, title, kind, tags, `recorded`
+        (UTC), outcome status when rated, and the first 200 characters of
+        the body. Pass entry_id to read one entry whole, body, file_refs and
+        `provenance` included (for instance a brief from here or from
+        knowledge_search); the other filters are then ignored.
+
         Pagination: pass `offset` to page through results. Response includes
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
-        follow up without counting locally. An entry promoted from another
-        worktree (`cgh knowledge promote`) carries a `provenance` object:
-        source branch, PR, worktree, origin id, promoted_at.
+        follow up without counting locally. At the default limit the answer
+        stays near 2.5 KB: the last briefs past it are left out, counted in
+        `dropped`, and `next_offset` points at the first one. A larger
+        explicit limit is only cut at the 10 KB ceiling.
 
         Entries with recorded outcomes are tiered first (useful, then
         unrated or contested, then dead ends, then corrected), newest
-        first inside each tier, and carry an `outcome` summary.
+        first inside each tier.
         """
+        from codegraph.server._budget import TOOL_CAPS, cap_answer, dumps_answer
         from codegraph.state.call_log import knowledge_count
         from codegraph.state.call_log import knowledge_list as _list
+        from codegraph.state.knowledge_recall import LIST_DEFAULT_LIMIT, list_brief
 
+        if entry_id:
+            from codegraph.state.call_log import knowledge_get
+
+            entry = knowledge_get(entry_id, repo_root=_srv._root)
+            if entry is None:
+                return dumps_answer({"error": f"no knowledge entry with id {entry_id}"})
+            return dumps_answer(
+                {"entry_id": entry_id, "total": 1, "returned": 1, "has_more": False,
+                 "entries": json.loads(json.dumps([entry], default=str))}
+            )  # fmt: skip
         entries = _list(
             kind=kind or None,
             tag=tag or None,
@@ -177,22 +328,43 @@ def register(mcp) -> None:
         # Fewer than a full page back means the list is exhausted, whatever a
         # (now-aligned) count says, so require a full page AND more counted.
         has_more = len(entries) == limit and (offset + len(entries)) < total
-        return json.dumps(
-            {
-                "kind": kind or None,
-                "tag": tag or None,
-                "session_id": session_id or None,
-                "total": total,
-                "offset": offset,
-                "limit": limit,
-                "returned": len(entries),
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
-                "entries": entries,
-            },
-            indent=2,
-            default=str,
-        )
+        payload = {
+            "kind": kind or None,
+            "tag": tag or None,
+            "session_id": session_id or None,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "returned": len(entries),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+            "entries": json.loads(
+                json.dumps([list_brief(e) for e in entries], default=str)
+            ),
+        }
+        if entries:
+            payload["read_more"] = (
+                "knowledge_list(entry_id=<id>) returns one entry whole."
+            )
+        if limit <= LIST_DEFAULT_LIMIT:
+            _fit_list_answer(payload)
+        # Cut here rather than in the shared wrapper so the page counters
+        # follow: the next page starts at the first entry left out.
+        spec = TOOL_CAPS["knowledge_list"]
+        hint = f"Answer cut to about {spec.max_bytes // 1000} KB. {spec.hint}"
+        first = payload["entries"][:1]
+        if cap_answer(payload, ["entries"], hint, spec.max_bytes):
+            if not payload["entries"] and first:
+                # One entry alone is over the ceiling: serve it with its body
+                # shortened rather than an empty page that never advances.
+                entry = dict(first[0])
+                entry["body"] = str(entry.get("body", ""))[: spec.max_bytes // 2]
+                entry["body_clipped"] = True
+                payload["entries"] = [entry]
+            payload["returned"] = len(payload["entries"])
+            payload["has_more"] = True
+            payload["next_offset"] = offset + payload["returned"]
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -205,12 +377,11 @@ def register(mcp) -> None:
         from codegraph.state.call_log import knowledge_terms as _terms
 
         terms = _terms(min_count=min_count, repo_root=_srv._root)
-        return json.dumps(
+        return dumps_answer(
             {
                 "total": len(terms),
                 "terms": [{"term": t, "count": n} for t, n in terms],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -220,7 +391,7 @@ def register(mcp) -> None:
         from codegraph.state.call_log import knowledge_forget as _forget
 
         ok = _forget(entry_id=entry_id, repo_root=_srv._root)
-        return json.dumps({"id": entry_id, "forgotten": ok})
+        return dumps_answer({"id": entry_id, "forgotten": ok})
 
     @mcp.tool()
     @_logged_tool
@@ -262,7 +433,7 @@ def register(mcp) -> None:
             # Plain relevance: the target must not depend on earlier verdicts.
             hits = _search(query, limit=1, repo_root=_srv._root, rank_outcomes=False)
             if not hits:
-                return json.dumps({"error": f"no knowledge entry matches {query!r}"})
+                return dumps_answer({"error": f"no knowledge entry matches {query!r}"})
             target, title = int(hits[0]["id"]), hits[0]["title"]
         try:
             outcome_id = knowledge_outcome_record(
@@ -275,7 +446,7 @@ def register(mcp) -> None:
                 repo_root=_srv._root,
             )
         except ValueError as exc:
-            return json.dumps({"error": str(exc)})
+            return dumps_answer({"error": str(exc)})
         entries, files = knowledge_outcome_scores(repo_root=_srv._root)
         refs = [f.strip() for f in file_refs.split(",") if f.strip()]
         out: dict = {"id": outcome_id, "verdict": verdict}
@@ -287,7 +458,7 @@ def register(mcp) -> None:
                 out["outcome"] = entries[target].summary()
         if refs:
             out["files"] = {f: files[f].summary() for f in refs if f in files}
-        return json.dumps(out, default=str)
+        return dumps_answer(out, default=str)
 
     @mcp.tool()
     @_logged_tool
@@ -324,7 +495,7 @@ def register(mcp) -> None:
             _log(_srv._root, "session_compact", f"{session_id} id={entry_id}")
         except Exception:
             pass
-        return json.dumps(
+        return dumps_answer(
             {
                 "id": entry_id,
                 "session_id": session_id,

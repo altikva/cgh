@@ -2,7 +2,7 @@
 # __creation__ = 2026-10-10
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: pattern_search(repo=, ref=) and file_at_ref read a declared
 #              sibling repo (or this one) at a branch it does not have checked
@@ -96,10 +96,13 @@ def test_search_sibling_at_a_branch_not_checked_out(setup):
     )
     assert out["backend"] == "git-grep-ref"
     assert out["repo"] == "api" and len(out["commit"]) == 40
-    assert [(h["file"], h["line"]) for h in out["hits"]] == [("app/models.py", 5)]
+    assert [(g["file"], g["hits"]) for g in out["files"]] == [
+        ("app/models.py", [[5, "class Association:"]])
+    ]
+    assert "scope" not in out["files"][0]
     # The working tree (main) does not have it.
     out = json.loads(t["pattern_search"]("class Association", repo="api"))
-    assert out["hits"] == []
+    assert out["files"] == []
 
 
 def test_file_at_ref_reads_a_line_range(setup):
@@ -114,6 +117,126 @@ def test_file_at_ref_reads_a_line_range(setup):
         (6, "    name = 'x'"),
     ]
     assert out["total_lines"] == 6 and out["truncated"] is False
+
+
+def test_file_at_ref_stops_at_the_answer_cap(setup):
+    """A long file read whole: the answer stays under the byte cap, ends on
+    a whole line and says where to go on."""
+    proj, *_, t = setup
+    (proj / "big.py").write_text(
+        "".join(f"value_{i} = '{'v' * 90}'\n" for i in range(400))
+    )
+    _git(proj, "add", "big.py")
+    _git(proj, "commit", "-qm", "big")
+    raw = t["file_at_ref"]("big.py", "main", start_line=1)
+    assert len(raw.encode()) <= 10_000
+    out = json.loads(raw)
+    assert out["truncated"] is True and "hint" in out
+    assert out["end_line"] == out["lines"][-1]["line"] < 400
+    assert out["next_start_line"] == out["end_line"] + 1
+    nxt = json.loads(
+        t["file_at_ref"]("big.py", "main", start_line=out["next_start_line"])
+    )
+    assert nxt["lines"][0]["line"] == out["end_line"] + 1
+
+
+def _commit(proj: Path, name: str, text: str) -> None:
+    (proj / name).write_text(text)
+    _git(proj, "add", name)
+    _git(proj, "commit", "-qm", name)
+
+
+_BIG_PY = (
+    '"""A module long enough to be outlined."""\n\n\n'
+    + "".join(
+        f"def fn_{i}(x):\n    return x + {i}  # {'p' * 120}\n\n\n" for i in range(40)
+    )
+    + "class Box:\n    def open(self):\n        return 1\n\n    def shut(self):\n"
+    "        return 0\n"
+)
+
+
+def test_large_file_without_range_answers_an_outline(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    raw = t["file_at_ref"]("mod.py", "main")
+    out = json.loads(raw)
+    assert "lines" not in out and "hint" in out
+    assert len(raw.encode()) < len(_BIG_PY.encode()) / 2
+    names = {e["name"]: e for e in out["outline"]}
+    assert names["fn_0"] == {"name": "fn_0", "kind": "function", "lines": "4-5"}
+    assert names["Box.shut"]["kind"] == "method"
+    assert out["total_lines"] == len(_BIG_PY.splitlines())
+
+
+def test_large_file_in_an_unparsed_language_answers_its_head(setup):
+    proj, *_, t = setup
+    _commit(proj, "notes.xyz", "".join(f"row {i} {'q' * 80}\n" for i in range(200)))
+    out = json.loads(t["file_at_ref"]("notes.xyz", "main"))
+    assert "outline" not in out and "lines" not in out
+    lines = [x["line"] for x in out["head"]]
+    # The first lines in order, as many as fit 4 KB as received.
+    assert lines == list(range(1, len(lines) + 1)) and 20 <= len(lines) <= 30
+    assert out["total_lines"] == 200 and "start_line" in out["hint"]
+
+
+def test_small_file_stays_whole(setup):
+    proj, *_, t = setup
+    _commit(proj, "small.py", "def a():\n    return 1\n")
+    out = json.loads(t["file_at_ref"]("small.py", "main"))
+    assert "outline" not in out
+    assert [x["text"] for x in out["lines"]] == ["def a():", "    return 1"]
+
+
+def test_symbol_answers_its_lines_only(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="Box.open"))
+    assert out["symbol"] == "Box.open" and out["kind"] == "method"
+    assert [x["text"].strip() for x in out["lines"]] == ["def open(self):", "return 1"]
+    # A bare method name finds it too.
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="shut"))
+    assert out["symbol"] == "Box.shut"
+    assert out["lines"][0]["text"].strip() == "def shut(self):"
+
+
+def test_symbol_on_a_sibling_branch(setup):
+    *_, t = setup
+    out = json.loads(
+        t["file_at_ref"]("app/models.py", "develop", repo="api", symbol="Association")
+    )
+    assert out["repo"] == "api"
+    assert (out["start_line"], out["end_line"]) == (5, 6)
+
+
+def test_unknown_symbol_is_refused(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", symbol="fn_9x"))
+    assert "no symbol 'fn_9x'" in out["error"]
+    out = json.loads(t["file_at_ref"]("notes.xyz", "main", symbol="a"))
+    assert "error" in out
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "needle"),
+    [(9, 3, "before start_line"), (50, 0, "past the end"), (-2, 0, "positive")],
+)
+def test_bad_range_is_refused(setup, start, end, needle):
+    *_, t = setup
+    out = json.loads(
+        t["file_at_ref"](
+            "app/models.py", "develop", repo="api", start_line=start, end_line=end
+        )
+    )
+    assert needle in out["error"]
+
+
+def test_end_line_alone_reads_from_the_top(setup):
+    proj, *_, t = setup
+    _commit(proj, "mod.py", _BIG_PY)
+    out = json.loads(t["file_at_ref"]("mod.py", "main", end_line=2))
+    assert [x["line"] for x in out["lines"]] == [1, 2]
 
 
 def test_own_repo_at_a_ref(setup):
@@ -136,7 +259,7 @@ def test_refusals(setup, kwargs, needle):
     *_, t = setup
     out = json.loads(t["pattern_search"]("x", **kwargs))
     assert needle in out["error"]
-    assert "hits" not in out
+    assert "files" not in out
 
 
 @pytest.mark.parametrize("path", ["../front/page.ts", "/etc/passwd", "app/../../x", ""])
@@ -195,4 +318,4 @@ def test_git_redirect_env_is_not_inherited(setup, monkeypatch, tmp_path):
     out = json.loads(
         t["pattern_search"]("class Association", repo="api", ref="develop")
     )
-    assert [h["file"] for h in out["hits"]] == ["app/models.py"]
+    assert [g["file"] for g in out["files"]] == ["app/models.py"]

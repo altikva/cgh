@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-31
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The deferred vision scanner: images picked up by the
 #              indexer run through the pipeline off the hot path.
@@ -97,7 +97,7 @@ class VisionScanner:
         auto = _as_bool(self.config.get("auto_extract", False))
 
         if suffix == ".pdf":
-            # PDFs are indexed and PII-scanned by cgh-docs on their extracted
+            # PDFs are indexed and PII-scanned by cgh core on their extracted
             # text; the vision scanner only touches them to write the
             # structured sidecar when auto-extract asks for it.
             if auto:

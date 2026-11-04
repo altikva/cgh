@@ -2,7 +2,7 @@
 # __creation__ = 2026-08-05
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh pii` verbs. scan [PATH...]: on-demand secret scan
 #              (PII patterns with --pii), exit 1 on a block-severity hit so
@@ -49,7 +49,8 @@ def make_cli_registrar(config: dict, repo_root=None):
             "--only",
             default="",
             help="Comma-separated categories: person,location,email,phone,"
-            "iban,card,aws_key,private_key,other (default: all)",
+            "iban,card,other, and one per secret.* scan key without its "
+            "prefix (aws_key,github_token,...) (default: all)",
         )
         p.add_argument(
             "--mode",
@@ -119,7 +120,7 @@ def _dispatch(args, config: dict, repo_root=None) -> None:
         err.print(
             f"[yellow]{src.suffix} is not supported.[/yellow] cgh pii redact "
             "handles text, markdown and docx. Extract the text of a pdf first "
-            "(see cgh-docs), then redact that."
+            "(cgh indexes it, or use pypdf), then redact that."
         )
         raise SystemExit(2)
     if src.suffix.lower() not in _TEXT_SUFFIXES:

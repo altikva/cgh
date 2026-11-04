@@ -2,7 +2,7 @@
 # __creation__ = 2026-07-31
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh vision <image> [--profile default|fast|photo]`:
 #              runs the routed pipeline on one image and prints the
@@ -146,7 +146,7 @@ def _run(args, config: dict) -> None:
             f"[red]cgh vision reads an image[/red] ({', '.join(sorted(_IMAGE_EXTS))}) "
             "or a pdf. "
             + (
-                "Extract a document's text with cgh-docs instead."
+                "cgh indexes a document's text itself (cgh search --text)."
                 if suffix in (".docx", ".xlsx", ".txt", ".md")
                 else "Convert this file to an image first."
             )

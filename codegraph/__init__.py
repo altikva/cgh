@@ -1,4 +1,4 @@
-"""codegraph, Local code graph index for AI coding assistants."""
+"""cgh (context graph hub): the project memory of coding agents."""
 
 from importlib.metadata import PackageNotFoundError, version
 

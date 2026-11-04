@@ -4,7 +4,7 @@
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2025 ALTIKVA."
 # __contributors__ = ["jndjama (Joy Ndjama)"]
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # __maintainer__ = "jndjama (Joy Ndjama)"
 # __email__ = "joy.ndjama@altikva.com"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -44,6 +44,8 @@ from codegraph.cli.commands_guard import (
 # Commands (imported from cli subpackage)
 # ---------------------------------------------------------------------------
 from codegraph.cli.commands_hooks import (
+    cmd_hook_compact_hint,
+    cmd_hook_precheck_agent,
     cmd_hook_precheck_bash,
     cmd_hook_precheck_grep,
     cmd_hook_precheck_read,
@@ -113,14 +115,14 @@ def _print_help():
     """Print a beautiful help screen when no command is given."""
     console.print(LOGO)
     console.print(
-        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  Local code graph index for AI coding assistants\n"
+        f"  [dim]v{VERSION}[/dim]  [dim]---[/dim]  context graph hub: the project memory of your coding agents\n"
     )
 
     sections = [
         (
             "Getting Started",
             [
-                ("init", "Initialize codegraph in any project (interactive wizard)"),
+                ("init", "Initialize cgh in any project (interactive wizard)"),
                 ("index", "Build / rebuild the code graph"),
                 ("serve", "Start MCP server (for Claude, Cursor, Codex, Gemini)"),
                 ("stop", "Stop this repo's owner + worker (alias of serve --stop)"),
@@ -196,7 +198,7 @@ def _print_help():
                 ),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
-                ("knowledge", "Promote a worktree's learnings to its main checkout"),
+                ("knowledge", "Promote, export or import a store's learnings"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -284,7 +286,7 @@ def _register_setup_and_serve(sub) -> None:
     """Register init, parsers, setup, index, watch, serve and the hidden precheck entry points."""
     # --- init ---
     p = sub.add_parser(
-        "init", help="Initialize codegraph in current directory (interactive wizard)"
+        "init", help="Initialize cgh in current directory (interactive wizard)"
     )
     _add_root(p)
     p.add_argument(
@@ -329,8 +331,19 @@ def _register_setup_and_serve(sub) -> None:
     p = sub.add_parser("setup", help="Generate integration files for AI tools")
     p.add_argument(
         "target",
-        choices=["claude", "cursor", "codex", "gemini", "bob", "all"],
-        help="Which AI tool to configure",
+        choices=["claude", "cursor", "codex", "gemini", "bob", "all", "migrate"],
+        help=(
+            "Which AI tool to configure; 'migrate' only renames an older "
+            "'codegraph' MCP server entry and its allow rules to 'cgh'"
+        ),
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "migrate only: rename even when a deny/ask rule, a hook matcher or "
+            "an unreadable settings file would no longer apply to mcp__cgh tools"
+        ),
     )
     _add_root(p)
 
@@ -402,6 +415,9 @@ def _register_setup_and_serve(sub) -> None:
     sub.add_parser("_hook_precheck_grep", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_read", help=argparse.SUPPRESS)
     sub.add_parser("_hook_precheck_bash", help=argparse.SUPPRESS)
+    sub.add_parser("_hook_compact_hint", help=argparse.SUPPRESS)
+    # Sub-agent brief: the cgh rule, plus locations with CGH_AGENT_LOCATIONS=1.
+    sub.add_parser("_hook_precheck_agent", help=argparse.SUPPRESS)
 
 
 def _register_inspect(sub) -> None:
@@ -681,7 +697,7 @@ def _register_inspect(sub) -> None:
     _add_root(p)
 
     # --- doctor ---
-    p = sub.add_parser("doctor", help="Health check: verify all codegraph components")
+    p = sub.add_parser("doctor", help="Health check: verify all cgh components")
     _add_root(p)
     p.add_argument(
         "--strict",
@@ -923,10 +939,12 @@ def main() -> None:
         return
     if sys.argv[1] in ("--version", "-V"):
         console.print(LOGO)
-        console.print(f"  [bold cyan]codegraph[/bold cyan] {VERSION}")
+        console.print(
+            f"  [bold cyan]cgh[/bold cyan] {VERSION}  [dim]context graph hub[/dim]"
+        )
         return
 
-    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
+    ap = _LogoArgumentParser(prog="cgh", add_help=False)
     _add_root(ap)
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
@@ -977,9 +995,7 @@ def main() -> None:
         if discovered is not None and discovered != Path(args.root).resolve():
             from rich.console import Console as _Console
 
-            _Console(stderr=True).print(
-                f"[dim]Using codegraph root: {discovered}[/dim]"
-            )
+            _Console(stderr=True).print(f"[dim]Using cgh root: {discovered}[/dim]")
             args.root = str(discovered)
 
     dispatch = {
@@ -994,6 +1010,8 @@ def main() -> None:
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,
         "_hook_precheck_bash": cmd_hook_precheck_bash,
+        "_hook_compact_hint": cmd_hook_compact_hint,
+        "_hook_precheck_agent": cmd_hook_precheck_agent,
         "stats": cmd_stats,
         "status": cmd_status,
         "backend": cmd_backend,

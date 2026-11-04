@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-07
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Tests for the graph-insight MCP tools (file_summary, impact_of,
 #              path_between, import_cycles). Builds a tiny indexed repo in a
@@ -18,6 +18,7 @@ import pytest
 import codegraph.server as _srv
 from codegraph.core.db import reset_connection
 from codegraph.indexer import index_file
+from codegraph.server._budget import FILE_SUMMARY_MAX_BYTES
 from codegraph.server.tools_insight import register as register_insight
 from codegraph.server.tools_query import register as register_query
 
@@ -192,3 +193,100 @@ def test_search_symbols_role_filter(insight_tools):
 
     out2 = json.loads(tools["search_symbols"]("widget", role="other"))
     assert any(r["name"] == "widget" for r in out2["results"])
+
+
+def test_file_summary_of_a_huge_file_stays_under_the_cap(insight_tools):
+    """Hundreds of documented functions: the answer is cut to about 2 KB,
+    stays valid JSON, and says it was cut, how many symbols there are and
+    where the ones left out start."""
+    root = insight_tools
+    src = root / "huge.py"
+    src.write_text(
+        "".join(
+            f'def function_number_{i}():\n    """{"Doc " * 40}"""\n    return {i}\n\n'
+            for i in range(180)
+        ),
+        encoding="utf-8",
+    )
+    index_file(src, root)
+
+    raw = _register("insight")["file_summary"](str(src))
+    assert len(raw.encode()) <= FILE_SUMMARY_MAX_BYTES
+    out = json.loads(raw)
+    assert out["truncated"] is True and out["dropped"] > 0
+    assert out["symbols_total"] == 180
+    assert out["dropped"] == 180 - len(out["functions"])
+    first_cut = 4 * len(out["functions"]) + 1
+    assert f"start at line {first_cut} or later" in out["hint"]
+    assert "symbol_lookup" in out["hint"]
+    # Docstrings go before any symbol: the ones shown keep no doc.
+    assert all("doc" not in f for f in out["functions"])
+    assert out["functions"][0]["name"] == "function_number_0"
+    # No federated child: rows carry no scope tag.
+    assert "scope" not in out["functions"][0]
+
+
+def test_search_symbols_limit_counts_all_kinds(insight_tools):
+    """`limit` bounds the whole answer, an exact name ranked first, and the
+    rest is reported as truncated."""
+    root = insight_tools
+    body = "".join(f"def widget_{i}():\n    return {i}\n\n" for i in range(30))
+    body += "".join(f"class Widget{i}:\n    pass\n\n" for i in range(30))
+    body += "def widget():\n    return 0\n"
+    (root / "many.py").write_text(body, encoding="utf-8")
+    index_file(root / "many.py", root)
+
+    out = json.loads(_register("query")["search_symbols"]("widget", limit=10))
+    assert len(out["results"]) == 10
+    assert out["results"][0]["name"] == "widget"
+    assert out["total"] > 10 and out["truncated"] is True
+    assert "hint" in out
+    assert "scope" not in out["results"][0]
+
+
+def test_search_symbols_answer_is_capped(insight_tools):
+    root = insight_tools
+    body = "".join(
+        f"def widget_with_a_rather_long_name_number_{i}():\n    return {i}\n\n"
+        for i in range(300)
+    )
+    (root / "lots.py").write_text(body, encoding="utf-8")
+    index_file(root / "lots.py", root)
+
+    raw = _register("query")["search_symbols"]("widget", limit=300)
+    assert len(raw.encode()) <= 10_000
+    out = json.loads(raw)
+    assert out["truncated"] is True and out["dropped"] > 0
+
+
+def test_file_summary_clips_docstrings_before_cutting_symbols(insight_tools):
+    """A file whose docstrings alone push it past the ceiling keeps every
+    symbol with its line range; only the docstrings shrink."""
+    root = insight_tools
+    src = root / "documented.py"
+    src.write_text(
+        "".join(
+            f'def fn_{i}():\n    """{"Explains a lot. " * 12}"""\n    return {i}\n\n'
+            for i in range(20)
+        ),
+        encoding="utf-8",
+    )
+    index_file(src, root)
+
+    raw = _register("insight")["file_summary"](str(src))
+    assert len(raw.encode()) <= FILE_SUMMARY_MAX_BYTES
+    out = json.loads(raw)
+    assert [f["name"] for f in out["functions"]] == [f"fn_{i}" for i in range(20)]
+    assert all(f["lines"] for f in out["functions"])
+    assert all(len(f.get("doc", "")) <= 60 for f in out["functions"])
+    assert "symbols_total" not in out
+
+
+def test_file_summary_without_docstrings_carries_no_doc_key(insight_tools):
+    root = insight_tools
+    src = root / "bare.py"
+    src.write_text("def bare():\n    return 1\n", encoding="utf-8")
+    index_file(src, root)
+
+    out = json.loads(_register("insight")["file_summary"](str(src)))
+    assert out["functions"] == [{"name": "bare", "lines": "1-2"}]

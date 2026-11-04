@@ -1,8 +1,23 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), codegraph exposes 62 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 62 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
+
+Every answer an agent gets stays under a size ceiling: about 10 KB, 4 KB for `context_for_task`, 2.5 KB for `pattern_search`, 2 KB for `file_summary`. A longer answer drops whole list items from its tail, so the JSON stays valid, and carries `truncated: true`, `dropped` and a `hint` on how to narrow the call. A tool given `max_tokens` or `budget_kb` keeps that budget instead, and calls from the `cgh` CLI and the hooks get the whole answer.
+
+`pattern_search`, `find_callers`, `search_symbols` and `symbol_lookup` take `format="json"` (the default) or `format="text"`. Text is a grep-like layout that weighs fewer tokens than the same compact JSON (measured on cgh's own index: 6% for `pattern_search`, 34% for `symbol_lookup`, 42% for `search_symbols`, 53% for `find_callers`): one header line of `key=value` metadata (`confidence`, `total`, `truncated`, `root`, `top_dirs`, `hint`, `next`...), then the rows under their file path, and one `[scope]` section per scope in a federated answer:
+
+```
+pattern=wire_bytes backend=git-grep total=3 confidence=high root=/work/cgh
+codegraph/server/_budget.py
+  113: def wire_bytes(text: str) -> int:
+tests/test_server/test_wire_caps.py
+  12: from codegraph.server._budget import wire_bytes
+  40: assert wire_bytes(out) <= cap
+```
+
+`find_callers` and `search_symbols` rows read `  line name...` under their path (`  102 register resolved`, `  108 function answer_bytes`); `symbol_lookup` writes one line per definition, `path:start-end kind name`, with the doc on the next indented line. Other fields follow as `key=value`. A value is bare when it is a plain word or path and compact JSON otherwise; a hit text holding a newline, a tab or a leading quote is JSON-quoted. Null and empty values are left out. A cut `pattern_search` answer ends with a `[cut]` section counting the hits left out per file. Text answers hold the same size ceiling, measured on the text. Without `format`, the `[mcp] answer_format` setting decides (see [CONFIGURATION.md](CONFIGURATION.md)); the `cgh` CLI and the hooks always get JSON.
 
 ### Architecture Awareness (call these FIRST)
 
@@ -25,7 +40,7 @@ In a federated project (`subrepos` in `config.toml`), the tools that fan out tag
 | `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
-| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning `{file, line, text}`, instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
+| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
 | `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |
@@ -115,7 +130,7 @@ queried name keeps the most certain one.
 |------|-------------|
 | `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions |
 | `knowledge_search(query, kind?, limit?, scope?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes |
-| `knowledge_list(kind?, tag?, session_id?, limit?, offset?)` | Browse saved notes: useful entries first, corrected ones last, newest first inside each tier |
+| `knowledge_list(kind?, tag?, session_id?, limit?, offset?, entry_id?)` | Browse saved notes as briefs, 10 per page near 2.5 KB: useful entries first, corrected ones last, newest first inside each tier. `entry_id` reads one entry whole |
 | `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[codegraph] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
 | `knowledge_terms(min_count?)` | Every tag with its count: the glossary of captured topics |
 | `knowledge_forget(entry_id)` | Delete one entry and its outcomes |

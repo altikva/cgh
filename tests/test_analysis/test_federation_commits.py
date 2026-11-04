@@ -2,7 +2,7 @@
 # __creation__ = 2026-10-11
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Federated answers name the commit each scope is read at: the
 #              checked-out HEAD and branch, the commit its index was built at,
@@ -90,7 +90,7 @@ def fed(tmp_path, monkeypatch):
 def test_federated_answer_names_each_scope_commit(fed):
     _parent, child, t = fed
     out = json.loads(t["pattern_search"]("needle_fn"))
-    assert {h["scope"] for h in out["hits"]} == {"api"}
+    assert {g["scope"] for g in out["files"]} == {"api"}
     api = out["scopes"]["api"]
     assert api["head"] == _git(child, "rev-parse", "HEAD")
     assert api["branch"] == "develop"

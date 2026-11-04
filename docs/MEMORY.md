@@ -4,9 +4,13 @@ cgh is the memory that survives context clears, shared by every agent
 that connects:
 
 - **`checkpoint` / `resume`** (MCP): save a session digest before a
-  clear; get back ONE ranked, budget-capped bundle: standing
-  instructions first, then digests, task-relevant knowledge, open
-  plans, and recent file summaries.
+  clear; `resume` answers with a summary of about 2 KB: the standing
+  instructions, the last session's goal and next step, known dead ends
+  and the counts of what is stored. `resume(detail=True)` returns the
+  whole ranked, budget-capped bundle (digests, task-relevant knowledge,
+  open plans, recent file summaries), and `resume(section=...)` one part
+  of it: `instructions`, `digests`, `dead_ends`, `knowledge`, `plans` or
+  `summaries`.
 - **Automatic in Claude Code**: hooks record a checkpoint marker at
   compaction and session end, and a two-line header at session start
   announces the bundle; the full bundle loads only when used.

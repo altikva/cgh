@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: CLI commands: graph visualization and add-dir.
 
@@ -185,7 +185,7 @@ def cmd_graph(args: argparse.Namespace) -> None:
             f"  [dim]File:[/dim] {out}\n"
             f"  [dim]Scope:[/dim] {scope}\n"
             f"  [dim]Nodes:[/dim] {max_nodes} max",
-            title="[bold cyan]codegraph[/bold cyan]",
+            title="[bold cyan]cgh[/bold cyan]",
             border_style="cyan",
         )
     )
@@ -241,7 +241,7 @@ def _graph_explore(args: argparse.Namespace, root: str) -> None:
             f"[dim]with[/dim] {len(payload.get('imports', [])):,} [dim]imports[/dim]\n"
             f"  [dim]Symbols:[/dim] {totals.get('symbols_shown', 0):,} "
             f"[dim]most-called of[/dim] {totals.get('functions', 0):,}",
-            title="[bold cyan]codegraph[/bold cyan]",
+            title="[bold cyan]cgh[/bold cyan]",
             border_style="cyan",
         )
     )

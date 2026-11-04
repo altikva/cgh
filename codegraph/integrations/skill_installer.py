@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Ship codegraph skills and deploy them per AI tool.
 #
@@ -58,17 +58,17 @@ than reading.
 **Workflow matrix, when to call what**
 
 - **Task kickoff / new feature** (*"how does X work"*, *"where to add Y"*):
-  1. `mcp__codegraph__context_for_task(task, session_id=<id>)`
+  1. `mcp__cgh__context_for_task(task, session_id=<id>)`
 , merges graph + memory + plans + knowledge in one call
-  2. `mcp__codegraph__architecture_overview()` or `domain_map(keyword)`
-  3. `mcp__codegraph__endpoints(path_pattern)` for API questions
+  2. `mcp__cgh__architecture_overview()` or `domain_map(keyword)`
+  3. `mcp__cgh__endpoints(path_pattern)` for API questions
 - **Symbol lookup** (*"where is X defined"*, *"what calls Y"*):
   1. `symbol_lookup` / `find_callers` / `find_callees`
   2. `search_symbols` for a half-known name, `fts_search` for code described
      in words (a sentence is fine, French or English)
 - **Text/regex pattern search** (*"find every occurrence of X"*):
   1. `pattern_search(pattern, glob?, max_results?)`, INSTEAD of Grep.
-     Returns structured {file, line, text}. Then Read only those lines.
+     Returns hits grouped by file, with line numbers. Then Read only those lines.
   2. The same holds in the shell: `git grep`, `grep -r`, `rg`, `find -name`
      and `sed -n` / `cat` on a source file are Grep and Read by another
      route. Locate with cgh first; keep shell search for logs and files
@@ -96,7 +96,9 @@ than reading.
      <symptom>", body="Symptom ... Fix ...", kind="gotcha", tags="papercut,
      <tool>")`, so the next session does not re-pay it. `cgh papercut add` is
      the no-MCP backup; `cgh papercut` lets the human read the list.
-- **About to inspect a file cgh can't parse** (pdf, image, office doc) and
+- **About to inspect a file cgh can't parse** (an image, a legacy office file
+  such as doc/xls/ppt; pdf, docx, xlsx, pptx and csv ARE parsed, use
+  `search_docs` / `doc_outline` for those) and
   **after** you do: it is opaque, so treat it as a cache.
   1. BEFORE reading: the Read hook surfaces any saved summary automatically;
      outside Claude Code, `cgh artifact recall <path>` first. Use a fresh
@@ -172,11 +174,13 @@ shrinks and reload it after.
   lifecycle hooks only record what changed, not why.
 
 - **Immediately after context compaction / session resume**:
-  1. `knowledge_list(limit=20)`, reload recent learnings
-  2. `knowledge_search(query)`, targeted reload for the current task
-  3. `memory_search(query)`, reload user preferences and feedback
-  4. `plan_search(query)`, reload any active plan
-  5. This is CRITICAL: without this step you restart from zero. With it,
+  1. `resume(session_id)`: a short summary. Follow its standing
+     instructions. When `last_session` is your own (`own: true`), continue
+     from its next step; `resume(section="digests")` has the full checkpoint.
+  2. Otherwise: `knowledge_list(limit=20)` for recent learnings,
+     `knowledge_search(query)` for the current task, `memory_search(query)`
+     for preferences and feedback, `plan_search(query)` for an active plan.
+  3. This is CRITICAL: without this step you restart from zero. With it,
      you resume with full cross-session continuity.
 
 - **Session start** (new conversation on this project):
@@ -548,6 +552,95 @@ def _remove_legacy_usage_block(project_root: Path) -> None:
             )
 
 
+# The Claude Code rule, short on purpose: Claude Code loads a rules file into
+# every session, while a skill's body loads only when its situation arises.
+# Measured on real sessions, the full guidance cost about 7 KB per session
+# start and was followed by a cgh call one time in five. Here only the tool
+# picker and the rules an agent must not miss; the rest lives in the bundled
+# skills named below. Agents without skills keep the full _USAGE_BODY.
+_USAGE_BODY_CLAUDE = (
+    """## cgh: use its MCP tools before Read and Grep
+
+This repo is indexed by cgh: code graph, docs, memory, plans and knowledge,
+over MCP. Tool calls run server-side; only their capped answer costs tokens.
+
+```
+"""
+    + SEARCH_GUIDE
+    + """```
+
+- Locate with cgh first. `git grep`, `rg`, `find` and `sed -n` on a source
+  file are Grep and Read by another route. Then Read only the lines cgh gave.
+- Tooling fails (a wedged process, a held lock, a stale token): first
+  `knowledge_search("papercut <symptom>")`; once fixed, record it with
+  `knowledge_record(kind="gotcha", tags="papercut, <tool>")`.
+- After a compaction or at session start: `resume()` reloads the last
+  session's decisions and knowledge.
+
+Details, loaded when the situation arises: the `cgh-use-codegraph`
+(navigation, federation), `cgh-use-memory` (preferences, plans, knowledge),
+`cgh-papercuts`, `cgh-artifacts` (opaque files, `tags="artifact"`),
+`cgh-checkpoint` (before /clear or a long sub-task) and
+`cgh-scan-after-pull` skills.
+"""
+)
+
+# What `.claude/rules/cgh-usage.md` holds once written by this version.
+CLAUDE_RULE_TEXT = "# When to use the cgh MCP tools\n\n" + _USAGE_BODY_CLAUDE
+
+
+def _usage_block(tool: str) -> str:
+    """The marker block for a root rules file. Claude Code gets the short
+    body even here, on a version without the rules directory: its skills are
+    installed either way, and the root CLAUDE.md is loaded into every session
+    just like a rules file. Codex and Gemini have no skills and keep the full
+    text."""
+    body = _USAGE_BODY_CLAUDE if tool == "claude" else _USAGE_BODY
+    return (
+        _USAGE_BLOCK_START + "\n\n" + body.rstrip() + "\n\n" + _USAGE_BLOCK_END + "\n"
+    )
+
+
+def claude_usage_status(project_root: Path) -> dict[str, object]:
+    """Where the Claude Code usage guidance sits and whether it is current.
+
+    status is "ok" (one current copy), "missing", or "stale": the rules file
+    or the CLAUDE.md block differs from what this version writes (an older,
+    longer text), or both are present and the guidance is paid twice per
+    session. bytes is what the session start pays for it today."""
+    rules_file = project_root / ".claude" / "rules" / "cgh-usage.md"
+    block_re = re.compile(
+        re.escape(_USAGE_BLOCK_START) + r".*?" + re.escape(_USAGE_BLOCK_END) + r"\n?",
+        re.DOTALL,
+    )
+    block = None
+    claude_md = project_root / "CLAUDE.md"
+    if claude_md.is_file():
+        try:
+            # errors="replace": a user CLAUDE.md may not be UTF-8; we only
+            # look for our marker block, so never crash on it.
+            m = block_re.search(claude_md.read_text(encoding="utf-8", errors="replace"))
+            block = m.group(0) if m else None
+        except OSError:
+            block = None
+    rule = None
+    if rules_file.is_file():
+        try:
+            rule = rules_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            rule = None
+    paid = len((rule or "").encode()) + len((block or "").encode())
+    if rule is None and block is None:
+        return {"status": "missing", "path": ".claude/rules/cgh-usage.md", "bytes": 0}
+    if rule is not None:
+        current = rule == CLAUDE_RULE_TEXT and block is None
+        path = ".claude/rules/cgh-usage.md" + (" + CLAUDE.md" if block else "")
+    else:
+        current = block == _usage_block("claude")
+        path = "CLAUDE.md"
+    return {"status": "ok" if current else "stale", "path": path, "bytes": paid}
+
+
 def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     """
     Inject a "when to use codegraph" block into the agent's root rules file.
@@ -570,7 +663,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         _ensure_dir(target.parent)
         mdc = (
             "---\n"
-            "description: When and how to use the codegraph MCP tools for this repo.\n"
+            "description: When and how to use the cgh MCP tools for this repo.\n"
             "alwaysApply: true\n"
             "---\n\n" + _USAGE_BODY
         )
@@ -583,7 +676,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         target = project_root / ".bob" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
         target.write_text(
-            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
+            "# When to use the cgh MCP tools\n\n" + _USAGE_BODY,
             encoding="utf-8",
         )
         return str(target)
@@ -593,10 +686,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
         # Claude Code, versioned with the repo, overwritten on update.
         target = project_root / ".claude" / "rules" / "cgh-usage.md"
         _ensure_dir(target.parent)
-        target.write_text(
-            "# When to use the codegraph MCP tools\n\n" + _USAGE_BODY,
-            encoding="utf-8",
-        )
+        target.write_text(CLAUDE_RULE_TEXT, encoding="utf-8")
         _remove_legacy_usage_block(project_root)
         return str(target)
 
@@ -610,14 +700,7 @@ def install_usage_guidelines(project_root: str | Path, tool: str) -> str | None:
     else:
         return None
 
-    block = (
-        _USAGE_BLOCK_START
-        + "\n\n"
-        + _USAGE_BODY.rstrip()
-        + "\n\n"
-        + _USAGE_BLOCK_END
-        + "\n"
-    )
+    block = _usage_block(tool)
 
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="replace")

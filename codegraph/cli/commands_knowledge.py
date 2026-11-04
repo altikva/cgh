@@ -2,7 +2,7 @@
 # __creation__ = 2026-09-27
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: `cgh knowledge promote`: carry durable learnings from a per-ticket
 #              worktree's store into its main checkout at merge, so a torn-down
@@ -16,6 +16,8 @@
 #              `cgh knowledge outcome` records whether relying on an entry or
 #              a file worked (useful, dead_end, corrected); `cgh knowledge
 #              outcomes` shows the derived standing of rated entries and files.
+#              `cgh knowledge export` / `import` move a filtered store between
+#              checkouts as JSON Lines (wraps state/knowledge_transfer).
 
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ from codegraph.cli import console
 
 def register_knowledge_parser(sub) -> None:
     kp = sub.add_parser(
-        "knowledge", help="Knowledge store maintenance (promote, outcomes)"
+        "knowledge",
+        help="Knowledge store maintenance (promote, outcomes, export, import)",
     )
     ksub = kp.add_subparsers(dest="knowledge_cmd")
     pr = ksub.add_parser(
@@ -113,6 +116,56 @@ def register_knowledge_parser(sub) -> None:
     ol = ksub.add_parser("outcomes", help="Show rated entries and files")
     ol.add_argument("--limit", type=int, default=20, help="Rows per section")
     ol.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    ex = ksub.add_parser(
+        "export", help="Write the knowledge store as JSON Lines, optionally filtered"
+    )
+    ex.add_argument("--root", default=os.getcwd(), help="Store to read")
+    when = ex.add_mutually_exclusive_group()
+    when.add_argument(
+        "--before",
+        default="",
+        metavar="TIME",
+        help="Only entries with ts strictly before TIME (epoch or ISO date, UTC "
+        "when no zone)",
+    )
+    when.add_argument(
+        "--before-commit",
+        dest="before_commit",
+        default="",
+        metavar="REV",
+        help="Like --before, at the committer date of REV resolved in --root",
+    )
+    ex.add_argument(
+        "--exclude-tag",
+        dest="exclude_tags",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Drop entries with a tag matching GLOB (repeatable). Provenance "
+        "matches too, as pr:<source_pr>, branch:<source_branch>, "
+        "commit:<source_commit> and session:<source_session>",
+    )
+    ex.add_argument(
+        "--kinds", default="", help="Comma-separated kinds to keep (default: all)"
+    )
+    ex.add_argument(
+        "--include-digests",
+        dest="include_digests",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep session digests and checkpoints (default: yes; the other "
+        "filters apply to them either way)",
+    )
+
+    im = ksub.add_parser(
+        "import", help="Load a `cgh knowledge export` JSON Lines file into a store"
+    )
+    im.add_argument("--root", default=os.getcwd(), help="Store to write")
+    im.add_argument(
+        "file", nargs="?", default="-", help="JSON Lines file, or - for stdin"
+    )
+    im.add_argument("--json", action="store_true", help="Machine-readable output")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -256,8 +309,106 @@ def _cmd_outcomes(args: argparse.Namespace) -> None:
             )
 
 
+def _err(msg: str) -> None:
+    import sys
+
+    print(msg, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _cmd_export(args: argparse.Namespace) -> None:
+    import sys
+
+    from codegraph.state.knowledge_transfer import (
+        KnowledgeTransferError,
+        commit_time,
+        export_records,
+        parse_time,
+    )
+
+    root = Path(os.path.abspath(args.root)).resolve()
+    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()] or None
+    try:
+        before = None
+        if args.before_commit:
+            before = commit_time(root, args.before_commit)
+        elif args.before:
+            before = parse_time(args.before)
+        records = export_records(
+            root,
+            before=before,
+            exclude_tags=args.exclude_tags,
+            kinds=kinds,
+            include_digests=args.include_digests,
+        )
+    except KnowledgeTransferError as exc:
+        _err(f"cgh knowledge export: {exc}")
+        return
+    out = sys.stdout
+    for rec in records:
+        out.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+    out.flush()
+
+
+def _cmd_import(args: argparse.Namespace) -> None:
+    import sys
+
+    from codegraph.state.ipc import is_owner_alive, read_owner_pid
+    from codegraph.state.knowledge_transfer import (
+        KnowledgeTransferError,
+        import_records,
+    )
+
+    root = Path(os.path.abspath(args.root)).resolve()
+    if not (root / ".codegraph").is_dir():
+        _err(f"cgh knowledge import: no .codegraph store under {root} (run cgh init)")
+    if is_owner_alive(root):
+        _err(
+            f"cgh knowledge import: a cgh owner is running on {root} "
+            f"(pid {read_owner_pid(root)}) and holds its store.\n"
+            f"Stop it first, then re-run: cgh stop --root {root}"
+        )
+
+    def _lines():
+        fh = (
+            sys.stdin if args.file == "-" else open(args.file, encoding="utf-8")  # noqa: SIM115
+        )
+        try:
+            for n, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise KnowledgeTransferError(f"line {n}: {exc}") from exc
+        finally:
+            if fh is not sys.stdin:
+                fh.close()
+
+    try:
+        counts = import_records(root, _lines())
+    except (KnowledgeTransferError, OSError) as exc:
+        _err(f"cgh knowledge import: {exc}")
+        return
+    if args.json:
+        print(json.dumps({**counts, "root": str(root)}))
+        return
+    console.print(
+        f"[green]Imported[/green] {counts['imported']} entr(y/ies) into {root.name}, "
+        f"{counts['skipped_duplicate']} already present; "
+        f"{counts['outcomes_imported']} outcome(s) imported, "
+        f"{counts['outcomes_skipped']} skipped."
+    )
+
+
 def cmd_knowledge(args: argparse.Namespace) -> None:
     sub = getattr(args, "knowledge_cmd", None)
+    if sub == "export":
+        _cmd_export(args)
+        return
+    if sub == "import":
+        _cmd_import(args)
+        return
     if sub == "outcome":
         _cmd_outcome(args)
         return
@@ -267,7 +418,8 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
     if sub != "promote":
         console.print(
             "[yellow]Usage:[/yellow] cgh knowledge promote --to <checkout> | "
-            "outcome <verdict> [--id N | --query Q] [--file F] | outcomes"
+            "outcome <verdict> [--id N | --query Q] [--file F] | outcomes | "
+            "export [--before-commit REV] [--exclude-tag GLOB] | import [FILE]"
         )
         raise SystemExit(2)
 

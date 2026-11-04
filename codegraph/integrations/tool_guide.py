@@ -2,11 +2,11 @@
 # __creation__ = 2026-10-08
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The "which tool answers which question" guide, shared by the
 #              MCP server instructions and the usage rules installed for each
-#              agent. Tool names are written bare (no mcp__codegraph__
+#              agent. Tool names are written bare (no mcp__cgh__
 #              prefix) because each agent spells the MCP prefix differently.
 
 from __future__ import annotations

@@ -2,13 +2,13 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP tools for Claude Code plan files: plan_search + plan_list.
 
 from __future__ import annotations
 
-import json
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -34,7 +34,7 @@ def register(mcp) -> None:
 
         conn = get_fts_conn(_srv._root)
         hits = _search(conn, query, limit=limit)
-        return json.dumps(
+        return dumps_answer(
             {
                 "query": query,
                 "total": len(hits),
@@ -49,8 +49,7 @@ def register(mcp) -> None:
                     }
                     for h in hits
                 ],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -70,7 +69,7 @@ def register(mcp) -> None:
 
         conn = get_fts_conn(_srv._root)
         hits = list_plan_entries(conn, agent_only=agent_only, limit=limit)
-        return json.dumps(
+        return dumps_answer(
             {
                 "agent_only": agent_only,
                 "total": len(hits),
@@ -84,8 +83,7 @@ def register(mcp) -> None:
                     }
                     for h in hits
                 ],
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -98,4 +96,4 @@ def register(mcp) -> None:
         from codegraph.claude_state.plans import scan_plan_dir
 
         stats = scan_plan_dir(_srv._root, verbose=False)
-        return json.dumps(stats, indent=2)
+        return dumps_answer(stats)

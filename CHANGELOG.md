@@ -8,6 +8,418 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-04
+
+### Added
+- **Another agent's full re-read is answered with the plan.** With hook
+  answers on, a full Read of a text file another agent of the session
+  already read in full, unchanged, is denied with the file's outline;
+  repeating the same Read lets it through. The note alone arrived beside
+  the Read and did not stop it: four subagents still read one 17 KB file.
+- **A text file already read in full in the session.** A full Read of a
+  text file between 4 KB and 32 KB that the session already read whole, and
+  that has not changed, gets a note: the same agent still has it; another
+  agent gets the file's outline to read only the part it needs. It never
+  blocks the Read. The token study saw three parallel subagents read one
+  file whole within seconds, three times in a day.
+- **On-demand indexing of a file the index lacks.** A full Read (or a
+  Grep in one file) of a repo file that is new, or changed since its last
+  index, used to get only the heuristic plan, or nothing. The live owner
+  now indexes that file first and the hook answers from the graph as for
+  any indexed file; with no owner it is parsed in memory, nothing written.
+  A file outside the repo, or under a cgh root that is the home
+  directory or not a git checkout, is only parsed in memory, a
+  gitignored one is left alone, and the step gives up past 300 ms
+  (`CGH_ON_DEMAND_BUDGET_MS`, 0 turns it off). On the MCP side,
+  `file_summary`, `imports_of`, `subgraph` and `doc_outline` index such a
+  file before answering, and `symbol_lookup`, `find_callers` and
+  `find_callees` index the changed working-tree files once on a miss and
+  retry; the answer says `indexed_now`. A 40 KB Python file takes about
+  120 ms to index (DuckDB), 50 ms (SQLite), 30 ms to parse in memory.
+- **A hint when an image is read twice in one session.** The Read hook
+  remembers each image (png, jpg, gif, webp, bmp, tiff) read in a
+  session, and a second Read of the same unchanged file gets a note that
+  it is still in the conversation above. Images were the largest read
+  cost in the token study, and a re-read pays the full price again. The
+  hint is advisory and on whether hook answers are on or off; a changed
+  file is not flagged, and PDFs are left alone.
+- **Hook answers deny a full Read of a large text file.** With hook
+  answers on, a Read without offset or limit of a text file over 32 KB
+  is refused, and the refusal carries the file's plan: its symbols or
+  sections with their line ranges, or for a file cgh does not index
+  (.patch, .tfvars, .txt, .json) its heading-like lines or ten anchors;
+  lock files and minified bundles get the anchors only.
+  The advisory hint was ignored on 7 of 17 full reads of such files in
+  the study transcripts. Repeating the same Read lets it through. Images,
+  PDFs and other binaries, ranged reads and answers off are unchanged.
+- **Grep-like text answers, opt-in.** `pattern_search`, `find_callers`,
+  `search_symbols` and `symbol_lookup` take `format="text"`: one header
+  line of metadata, then the rows under their file path, like ripgrep.
+  On cgh's own index it weighs 6% (pattern_search) to 53% (find_callers)
+  fewer tokens than compact JSON, under the same size ceiling. Make it
+  the agents' default with `[mcp] answer_format = "text"` or
+  `CGH_ANSWER_FORMAT=text`; the default stays JSON, and the CLI and hooks
+  always get JSON.
+- **A hint before an unbounded content Grep.** A Grep in content mode
+  with no `head_limit` over the whole tree, or with a pattern that matches
+  broadly, returned every matching line, even with hook answers on (the
+  hook ignored the output mode). It now gets one line suggesting
+  `head_limit`, a narrower glob, `files_with_matches`/`count`, or
+  `pattern_search(count_only=True)`. Turn it off with
+  `[hooks] grep_advice = false` or `CGH_HOOK_GREP_ADVICE=0`.
+- **`file_at_ref` answers an outline for a large file.** Read with no
+  range, a file past about 4 KB came back whole, up to 10 KB per call. It
+  now comes back as its symbols with line ranges, parsed from the file at
+  that ref (or its first 30 lines for a language cgh does not parse), with
+  a hint to ask for a part. The new `symbol` argument reads one definition,
+  and a bad range is refused. Small files and explicit ranges are
+  unchanged; `start_line` now defaults to 0, meaning not set.
+- **Sub-agents get the cgh rule.** Exploration sub-agents had the MCP
+  tools but not the session's rule, so they fell back to Read and Grep. A
+  PreToolUse hook on Agent now appends one line to each sub-agent brief:
+  locate with `symbol_lookup`, `pattern_search` or `find_callers` first,
+  then Read only the returned ranges. `cgh init` and `cgh setup claude`
+  install it by default; run `cgh setup claude` in an existing repo to get
+  it. Opt out with `[hooks] agent_rule = false` or `CGH_HOOK_AGENT_RULE=0`.
+  The code locations stay behind `CGH_AGENT_LOCATIONS=1`.
+- **Search tools understand a sentence.** `pattern_search`,
+  `search_symbols` and `symbol_lookup` given a question in French or
+  English ("where are webhooks retried") look up the identifiers it names
+  and search its words, plus built-in synonyms, over symbols, docstrings
+  and docs, and say so in `interpreted_as`. Each answer now carries
+  `confidence`, and a low or empty one says `why` and gives `next`, a call
+  to try instead. Definitions and widely imported files rank first. A cut
+  `pattern_search` names the directories holding most hits in `top_dirs`
+  and its hint, and `count_only=True` returns hits per file without the
+  lines. Existing fields are unchanged.
+- **`knowledge_search` understands a free-text symptom.** Two searches in
+  three came back empty because agents describe a problem in other words
+  than the entry. Words now match on their stem, without accents or case,
+  and through a small French and English synonym table (lock and verrou,
+  stale and périmé, token and jeton). Every hit carries a `confidence`
+  (high, medium or low) and weak matches still come back. When nothing
+  matches, the answer suggests the `knowledge_record` kind and tags to use
+  once the problem is solved. `cgh stats` shows the zero-hit and
+  low-confidence rates, from local counts that never store the query.
+  To keep answers near 2.5 KB, the default limit drops from 10 to 5. The
+  first hit keeps its body (clipped near 1.5 KB) and the others come as
+  briefs (id, title, tags, confidence, body start); read one whole with the
+  new `knowledge_list(entry_id=...)`. `cgh papercut <query>` gets the same
+  matching.
+- **Hook hints that keep a session small.** The Bash precheck adds a
+  one-line narrower form for chatty commands (`pytest -q`, `git log -n 20`,
+  `--silent` installs, `--tail 50` on logs, `head` for a large `cat`), and a
+  new UserPromptSubmit hook says once per size threshold (0.5, 1.5 and 3 MB
+  of transcript since the last compaction) that `/compact`, or a checkpoint
+  then `/clear`, would help. Old tool output is about a fifth of every
+  request. Both are advisory and on by default; turn them off with
+  `[hooks] bash_advice = false` or `compact_hint = false`. Re-run
+  `cgh setup claude` to install the new hook.
+- **A hint before reading a large file cgh does not index.** A full Read
+  of a file of 32 KB or more that the index does not hold (JSON, lock
+  files, logs, generated code) now gets one line with its size and line
+  count, suggesting `offset`/`limit`, Grep or `head`. Turn it off with
+  `[hooks] read_advice = false` or `CGH_HOOK_READ_ADVICE=0`. The Bash
+  search nudge also stops firing on a heredoc whose text mentions grep.
+- **Code locations for sub-agents (opt-in).** Run `cgh init` with
+  `CGH_AGENT_LOCATIONS=1` to install a hook that appends to a sub-agent's
+  brief the code locations cgh finds for it, so it starts from file:line
+  instead of exploring the tree. Off by default until a bench measures it.
+- **`cgh knowledge export` and `cgh knowledge import`.** Copy a knowledge
+  store between checkouts as JSON Lines, filtered by time (`--before`,
+  `--before-commit`), tag glob (`--exclude-tag`, provenance included as
+  `pr:`/`branch:` pseudo-tags) and kind. Digests and checkpoints follow the
+  same filters. Import is lossless and deduplicated, and refuses while an
+  owner runs on the target. Lets a replay worktree start from what the main
+  checkout knew before a ticket, without what that ticket taught it.
+- **Hooks that answer instead of nudging (experimental, opt-in).** With
+  `CGH_HOOK_ANSWERS=1`, the Grep, Read and Bash prechecks run the lookup
+  themselves. A search for a name gets its definitions and callers, and a
+  full read of an indexed source file gets its outline. They stay silent
+  when cgh has nothing to add or when the search names its files one by
+  one. A name defined in many places is narrowed by the search itself (its
+  directory, a `def`/`class` keyword, a `Class.` qualifier, tests left out)
+  and capped at four definitions. Agents mostly ignored
+  the advisory nudges. On a three-ticket pilot, answers cut cost by 15% and
+  time by two thirds against the same setup with nudges; over 54 runs, a
+  plain `cgh init` with answers matched the cost of the full sprint
+  tooling. Off by default for now.
+
+### Changed
+- **search_symbols and fts_search grep-complete a miss too.** Like
+  symbol_lookup, when no symbol or FTS entry matches but a single-identifier
+  query occurs in text (a comment, a string, a file the index does not
+  parse), the answer now carries `text_matches` (a bounded grep) at medium
+  confidence. fts_search also gains a `confidence` field (high on a hit, low
+  on a bare miss). The grep fallback is one shared helper across the three
+  tools, so an index miss is grep-complete in one call.
+- **symbol_lookup grep-completes a miss.** When no symbol is defined by the
+  name but it occurs in text (a comment, a string, a config value, or a file
+  the graph does not parse), the answer now carries `text_matches`, a bounded
+  grep for the name ({scope, file, line, text}), at medium confidence. The
+  result is grep-complete in one call, so the agent does not fall back to a
+  shell search. A truly absent name is unchanged (low, no text_matches).
+- **pattern_search says when a result is capped.** A search that filled a
+  full max_results page without hitting the byte budget used to read as the
+  complete set (confidence high), so an agent re-ran the search in the shell
+  to be sure it had everything. It now carries `capped: true` at medium
+  confidence with a `next` pointing at the full per-file count, so the cap
+  is explicit rather than silent.
+- **The cgh search nudge stops repeating once a session has seen it.** The
+  PreToolUse hook that points a Grep or a shell code search at cgh's tools
+  sent its full paragraph once per session, then a one-line reminder on
+  every search after, and that reminder rode in every later request. It now
+  drops after a couple of reminders: by then the session has seen it, and
+  the rule file and MCP instructions still carry the guidance. The size
+  advice, which is about the current command, still fires.
+- **Shorter cgh skill descriptions.** The nine cgh-* skills' `description:`
+  fields ride in every session's skill listing. They dropped from about
+  3.9 KB to about 2.6 KB: each is now the trigger (what it is for and
+  when), the step-by-step staying in the skill body, loaded on demand. The
+  two reflex skills (artifacts, papercuts) keep their concrete trigger
+  cues so they still fire at the right moment.
+- **Slimmer MCP server instructions.** The guidance cgh sends in every
+  session's context dropped from about 5.8 KB to about 3 KB: the long
+  workflow matrix and federation walkthrough gave way to a short reflex
+  list, keeping the search routing table and the must-not-miss lines
+  (prefer the tools over Read/Grep, knowledge_search is not a code search,
+  record and checkpoint before compaction). The detail lives in the cgh
+  rule file and the cgh-use-codegraph skill.
+- **Indexing a file writes its functions and classes in batches.** One
+  statement per symbol made a 40 KB Python file take about 330 ms on
+  DuckDB; it now takes about 120 ms, which also shortens full scans.
+- **`context_for_task` answers about 3.5 KB instead of 6 KB.** Agents in
+  the work lots seldom followed up its memory, plan or knowledge snippets,
+  which made up a quarter of each answer. These entries are now one-line
+  pointers (title, plus the plan file or the knowledge id), `related`
+  lists five files at most, the subsystem no longer repeats in the
+  markdown, `max_nodes` defaults to 10 and the cap is 4 KB. Fetch an
+  entry's text with `memory_search`, `plan_search` or `knowledge_search`.
+- **Tool answers use repo-relative paths.** Every JSON answer an agent or
+  a hook receives gives its file paths relative to the repo root, plus one
+  `root` field to rebuild the absolute path a Read needs. Rows of a
+  federated subrepo are relative to that subrepo, whose root is under
+  `roots[scope]`. The repeated prefix was about an eighth of an answer's
+  bytes. Paths under no root stay absolute, and `cgh` CLI commands still
+  get absolute paths. A client that opened the `file` fields as they came
+  should now join them to `root`.
+- **`knowledge_list` answers with briefs.** One default call answered
+  about 10 KB: 50 entries, each with its body. The default limit is now
+  10 and each entry a brief (id, title, kind, tags, `recorded`, outcome
+  status, start of the body), the answer staying near 2.5 KB with
+  `dropped` and `next_offset` when briefs are left out. Read an entry
+  whole with `entry_id`; pass a larger `limit` for a bigger page, still
+  capped at 10 KB.
+- **Less cgh text in each session's context.** On a Claude Code without
+  the rules directory, `cgh init` wrote the full 10 KB guidance into
+  `CLAUDE.md`; it now writes the same 2.3 KB rule as the rules directory.
+  `cgh doctor` marks an older, longer copy, or a rule doubled by a leftover
+  `CLAUDE.md` block, as `stale`. The Grep and shell-search hints are given
+  in full once per session, then as one line. Migration: run `cgh setup
+  claude` where doctor says `stale`. `docs/INTEGRATIONS.md` explains what a
+  repo's own rules weigh and how to trim them.
+- **`pattern_search` and `file_summary` answers weigh less than a Read.**
+  A token study found broad searches at their 4 KB ceiling and summaries
+  of large files up to 7.5 KB, when a Read averaged 3.5 KB. `pattern_search`
+  now stops at about 2.5 KB and `file_summary` at about 2 KB. A cut search
+  still gives `top_dirs`, the per-file counts and the way to narrow; a cut
+  summary keeps each symbol's name and line range, shortens docstrings and
+  import lists first, and says how many symbols there are and the line the
+  rest starts at.
+- **The Read hint fires on mid-size files.** Whole-file Reads of 4 to 30
+  KB were the largest token cost and no hint reached them. A full Read of
+  an indexed file of 12 KB or more now gets one line with its main symbols
+  and their line ranges, unless answer mode already printed the outline.
+  The unindexed-file hint and the `cat` advice now start at 12 KB instead
+  of 32 KB. Same opt-out: `[hooks] read_advice = false`.
+- **`context_for_task` answers can be acted on without reading files.**
+  Paths are repo-relative, each symbol carries its line range and one to
+  three short lines saying why it was picked (the matching docstring
+  sentence, a call site or a source line), the files come as `start_here`
+  (three at most) and `related`, and `next` names the one call or ranged
+  Read to make next. Federated subrepos are searched too, their files
+  written `<scope>:<path>`. Agents explored after nearly every call, since
+  the answer said where to look but not what was there. `files_referenced`
+  is replaced by `start_here` plus `related`.
+- **`resume` answers with a summary by default.** It returns about 2 KB:
+  the standing instructions (a long one is clipped only when space runs
+  out, and the answer then says to read it in full before acting), the
+  last session's goal and next step, the known dead ends and the counts of
+  digests, knowledge and plans. The full bundle measured 8 KB per call on
+  real sessions, re-read on every later turn. Get the detail with
+  `resume(detail=True)` (`full=True` still works) or one part with
+  `resume(section="instructions" | "digests" | "dead_ends" | "knowledge" |
+  "plans" | "summaries")`. The answer for a session with a checkpoint
+  (mode "session") is folded into the summary, under `last_session` with
+  `own: true`. The `/clear` recap the SessionStart hook injects shrinks the
+  same way, to the checkpoint's goal and next step.
+- **Hook answers can be turned on from a config file.** `answers = true`
+  under `[hooks]`, in a repo's `.codegraph/config.toml` or in
+  `~/.codegraph/config.toml`, turns on the answer mode that only
+  `CGH_HOOK_ANSWERS=1` enabled before. Hooks read the file on every call, so
+  sessions already running pick it up at their next search, where the
+  variable only reached sessions started after it was set. The variable
+  still wins when set, to `1` or `0`.
+- **The Claude Code rule is short; the details load on demand.** The
+  `.claude/rules/cgh-usage.md` that `cgh init` writes drops from about
+  10 KB to 2.3 KB: the tool picker, locate-with-cgh-first, papercuts and
+  `resume()`, then the bundled skills by name. Claude Code loads a rules file
+  into every session but a skill only when its situation arises; on real
+  sessions the full text was followed by a cgh call one time in five.
+  Codex, Gemini, Cursor and Bob keep the full guidance. Migration: run
+  `cgh init` (or `cgh setup`) again in a repo to rewrite its rule.
+- **Tool answers stay small.** Every byte of an answer is re-read on each
+  later turn of the session, and real sessions measured `pattern_search`
+  at 4.4 KB a call, `file_at_ref` at 7.4 KB, `search_symbols` at 15.8 KB
+  and one `file_summary` at 43.7 KB. `pattern_search` now stops at about
+  4 KB, groups hits by file and clips each line to about 160 characters
+  around the match. `search_symbols` applies `limit` to all kinds together
+  (it used to apply it to each kind, up to four times the rows), an exact
+  name first. `file_summary`, `file_at_ref` and `search_symbols` stop at
+  about 10 KB. A cut answer says `truncated: true`, with `more` or
+  `dropped` and a hint on how to narrow. Answers are compact JSON, and rows
+  carry `scope` only when some come from a federated child.
+  Every other tool now has a ceiling too, about 10 KB, and
+  `context_for_task` about 6 KB, its best symbols kept first; what it
+  leaves out comes back on the next call with the same `session_id`. On
+  this repo
+  `find_dead_code` went from 846 KB to 10 KB, `impact_of` on a hub function
+  from 150 KB, `knowledge_list` from 73 KB, `find_callees` from 43 KB and
+  `context_for_task` from 9 to 16 KB down to under 6. `knowledge_list`
+  sets `next_offset` to the first entry left out. A tool given
+  `max_tokens` (`impact_of`, `subgraph`) or `budget_kb` (`resume`) keeps
+  that budget, and calls from the `cgh` CLI and the hooks get the whole
+  answer.
+  Migration: `pattern_search` returns `files: [{file, hits: [[line,
+  text]]}]` instead of `hits: [{scope, file, line, text}]`, and its `note`
+  is now `hint`; `file_at_ref` adds `next_start_line` when it stops early.
+- **`resume(session_id)` answers short.** For a session that wrote a
+  checkpoint, `resume` now returns that checkpoint, the standing
+  instructions, the known dead ends and up to 3 entries matching the task,
+  instead of the whole project bundle; `full=True` brings the bundle back.
+  The reload instructions no longer send the agent to `knowledge_list`
+  after such a resume. In a bench, a resumed agent re-read 10 KB and more of
+  other sessions' digests, and once launched a sub-agent to find its own
+  checkpoint.
+- **PDF, Word, Excel, PowerPoint and CSV are read out of the box.** The
+  pdf, docx and xlsx parsers of the cgh-docs plugin are now part of cgh,
+  joined by pptx (slide text, tables, speaker notes) and a CSV / TSV
+  summary (header, size, first rows; at most 1,000 rows read). Most
+  installs had no plugin, so cgh read none of these files before.
+  Each format works under fixed limits, and an office file that would
+  inflate past 64 MB, or looks like a zip bomb, is skipped before it is
+  opened (see docs/PARSERS.md).
+  Existing indexes pick the files up on the next index, no full re-parse.
+  cgh-docs is no longer published and an installed copy is ignored with a
+  notice: uninstall it. These formats no longer count as opaque artifacts.
+
+- **The MCP server is named `cgh`.** `cgh init` and `cgh setup` register
+  it as `cgh` instead of `codegraph`, so agents see `mcp__cgh__<tool>` and
+  the Claude allow rules are `mcp__cgh` / `mcp__cgh__*`. The product has
+  one name everywhere. Migration: run `cgh setup migrate` once per repo
+  (`cgh init` and `cgh setup <tool>` do it too). It moves the old entry in
+  `.mcp.json`, `.cursor/mcp.json` and `.bob/mcp.json` with its settings
+  and renames the `mcp__codegraph` allow rules in `.claude/settings*.json`;
+  deny and ask rules keep the original and gain a `mcp__cgh` twin. The
+  rename is refused, and the repo stays on `codegraph`, while a deny / ask
+  rule in user or managed settings, a hook matcher, or an unreadable
+  settings file would stop applying to the new names (`--force`
+  overrides). `cgh doctor` flags a repo still on the old name, and fails
+  on a refused rename. See [docs/UPGRADING-0.19.md](docs/UPGRADING-0.19.md).
+
+- **Name: cgh, the context graph hub.** The banner, `--version` line,
+  README and package descriptions now present cgh as the project memory of
+  your coding agents, plus a code and document graph. Nothing to migrate
+  beyond the MCP server rename above: the command, the PyPI and npm
+  packages, the `codegraph` import and the `.codegraph/` directory keep
+  their names.
+
+- **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
+  npx wrapper are now Apache-2.0 only, replacing MIT and CC BY-NC-SA 4.0
+  and its SDK and plugin exceptions. Apache-2.0 allows commercial use and
+  carries an explicit patent grant, which makes cgh easier to adopt.
+  Versions 0.18.x and earlier keep their original license.
+
+### Fixed
+- **No console window flashes open per repo on Windows.** The owner was
+  launched with `DETACHED_PROCESS`, which allocates a fresh console when
+  the parent has none (an MCP client, or a federation parent starting one
+  owner per child), so a window flashed open for every repo. It now uses
+  `CREATE_NO_WINDOW`, keeping the owner detached and windowless; its
+  output already goes to `.codegraph/owner.log`.
+- **`cgh setup claude` keeps your settings readable and your own
+  reindex hook.** Rewriting `.claude/settings.json`, `settings.local.json`
+  or `.mcp.json` turned every non-ASCII character in your own entries
+  (accented letters or emoji) into `\uXXXX`; they now stay as written. A
+  commit hook you wrote yourself that already runs `cgh index` now counts as the
+  reindex-on-commit hook, so setup no longer adds a second one and every
+  commit reindexes once; a copy an earlier setup added next to it is
+  removed. A cgh hook is also recognised when it is not the first command
+  of its entry.
+- **`pattern_search` reads the same regex and glob on every backend.**
+  Without ripgrep, git grep ran the pattern as POSIX ERE, so `\w`, `\d`
+  and `\b` found nothing. The pattern is now Python-style everywhere:
+  git grep uses `-P` when git has PCRE, else POSIX classes, else the
+  Python backend. A glob with no `/` such as `module_*.py` now matches in
+  subfolders on every backend, and a glob with a `/` such as `api/**`
+  works with ripgrep, where it matched nothing. `ref=` searches get the
+  same fix.
+- **`pattern_search` answers stay under 2.5 KB.** In a federated project,
+  adding the `scopes` note re-wrote the answer as indented JSON with every
+  accent escaped, so capped answers reached 4 to 5.7 KB. The answer now
+  stays compact, names only the scopes it shows, and its size is checked
+  on the text the agent receives. Other federated tools also stay compact.
+- **Every tool's size cap now holds on what the agent receives.** Caps were
+  measured on the raw answer, but the agent gets it escaped inside a
+  structured-content envelope, about 10% larger, so answers arrived over
+  their cap (file_summary at 2.1 KB against 2 KB). The caps keep their
+  values; a large JSON list is now trimmed under `items` instead of passing
+  whole. Every tool also answers compact JSON, with no indentation or
+  spaces after separators, so symbol_lookup answers weigh about 23% less.
+  Clients that parse the JSON see no change.
+- **`cgh pii scan` now finds provider API tokens** (cgh-pii 0.4.1). It
+  caught AWS keys but missed Anthropic, OpenAI, GitHub, GitLab, Slack,
+  Google and Stripe live keys. Each is now a `secret.*` finding at block
+  severity, so `cgh pii scan` exits 1 on them and a guard that blocks on
+  secrets stops them.
+- **`cgh pii redact` now masks API tokens** (cgh-pii 0.4.2). It only knew
+  AWS and private keys, so the tokens `cgh pii scan` reports came out in
+  clear text. Every `secret.*` kind of the scanner is now a redaction
+  category (`github_token` gives `[GITHUB_TOKEN_1]`), and a hardcoded
+  `password = "..."` keeps its name with the value masked. In pseudonym
+  mode a secret gets a random pseudonym per run instead of a keyed hash
+  of its value, so it cannot be brute-forced from the output.
+- **`cgh pii` now catches unquoted secret assignments** (cgh-pii 0.4.3).
+  Only `password = "..."` was matched, so a `.env` or shell line such as
+  `PASSWORD=hunter2hunter2` was neither reported nor masked. A bare value
+  of 8 characters or more now counts, and redaction masks only the value,
+  however long it is.
+  Prefixed names such as `DB_PASSWORD`, `GH_TOKEN` or `client_secret` now
+  count too, quoted or not. `$VAR` and `${VAR}` references, `<placeholder>`
+  values, `****`, names ending in `_URL` or `_PATH`, and code such as
+  `token = self.token` are left alone.
+- **`cgh pii` now catches credentials in URLs and `;`-terminated values**
+  (cgh-pii 0.4.4). A password in a URL's userinfo
+  (`scheme://user:password@host`) is now a `secret.url_credential` finding
+  whatever the variable name, so `DATABASE_URL=postgres://app:...@db` and
+  `TOKEN_URL=https://user:...@host` no longer slip past the `_URL` skip;
+  redaction masks only the password and keeps the scheme, user and host
+  readable. A bare secret value may also end on a `;` (a connection string,
+  `Password=hunter2hunter2;`), while a `,`-terminated value stays out so a
+  keyword argument in code (`token=access_token,`) is not flagged.
+- **A file moved or deleted during `cgh index` no longer aborts the scan.**
+  It is skipped. Before, a file that disappeared between the directory walk
+  and its turn, for example a ticket another tool was moving, stopped the
+  whole index with `FileNotFoundError`.
+- **A reindex no longer reports success after a fatal DuckDB error.** When
+  the database was invalidated mid-run (a failed checkpoint, a corrupt
+  index), `incremental_reindex` still returned `mode: incremental`, marked
+  the index fresh and left the poisoned connection cached, so every later
+  query failed. The connection is now dropped and reopened, and a run whose
+  writes did not all land rebuilds the graph from source (reported as
+  `mode: rebuilt_after_fatal`) or fails without marking the index fresh. A
+  sanity check after each run also lists half-written files as errors.
+
 ## [0.18.0] - 2026-10-13
 
 ### Added
@@ -2446,7 +2858,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/altikva/cgh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/altikva/cgh/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/altikva/cgh/compare/v0.16.1...v0.17.0

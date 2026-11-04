@@ -2,14 +2,15 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP docs tools: search_docs, doc_outline, doc_refs.
 
 from __future__ import annotations
 
-import json
 import os
+
+from codegraph.server._budget import dumps_answer
 
 
 def register(mcp) -> None:
@@ -88,9 +89,7 @@ def register(mcp) -> None:
             for row in rows:
                 row["scope"] = scope
                 results.append(row)
-        return json.dumps(
-            {"query": q_str, "results": results, "count": len(results)}, indent=2
-        )
+        return dumps_answer({"query": q_str, "results": results, "count": len(results)})
 
     @mcp.tool()
     @_logged_tool
@@ -98,9 +97,20 @@ def register(mcp) -> None:
         """
         Return the heading outline (table of contents) of a Markdown file.
         Shows the hierarchical structure of sections with line numbers.
+        A repo file the graph does not hold yet is indexed first
+        (`indexed_now: true`).
         """
+        from pathlib import Path
+
+        from codegraph.analysis import on_demand
+
         if not os.path.isabs(file_path) and _srv._root:
             file_path = str(_srv._root / file_path)
+        fresh = on_demand.answer_fields(
+            on_demand.ensure_indexed(_srv._root, Path(file_path))
+            if _srv._root
+            else "fresh"
+        )
 
         def query(conn):
             return conn.find_nodes(
@@ -126,10 +136,10 @@ def register(mcp) -> None:
                     }
                 )
         if not outline:
-            return json.dumps(
+            return dumps_answer(
                 {"file": file_path, "outline": [], "note": "No sections found"}
             )
-        return json.dumps({"file": file_path, "outline": outline}, indent=2)
+        return dumps_answer({"file": file_path, "outline": outline, **fresh})
 
     @mcp.tool()
     @_logged_tool
@@ -213,11 +223,10 @@ def register(mcp) -> None:
             for r in rows:
                 r["scope"] = scope
                 results.append(r)
-        return json.dumps(
+        return dumps_answer(
             {
                 "symbol": symbol_name,
                 "doc_references": results,
                 "count": len(results),
-            },
-            indent=2,
+            }
         )

@@ -2,7 +2,7 @@
 # __creation__ = 2026-04-12
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: MCP visualization tools: visualize_graph, graph_stats.
 #              Thin MCP facade over codegraph.viz.graphviews (one
@@ -10,8 +10,7 @@
 
 from __future__ import annotations
 
-import json
-
+from codegraph.server._budget import dumps_answer
 from codegraph.viz.graphviews import (
     viz_call_graph,
     viz_class_hierarchy,
@@ -91,7 +90,7 @@ def register(mcp) -> None:
             # because the owner holds the write lock.
             from codegraph.viz.graphdata import build_graph_payload
 
-            return json.dumps(
+            return dumps_answer(
                 {
                     "scope": "explore",
                     "format": "json",
@@ -101,10 +100,10 @@ def register(mcp) -> None:
 
         generator = generators.get(scope)
         if generator is None:
-            return json.dumps({"error": f"Unknown scope: {scope}"})
+            return dumps_answer({"error": f"Unknown scope: {scope}"})
         diagram = generator()
 
-        return json.dumps(
+        return dumps_answer(
             {
                 "scope": scope,
                 "format": format,
@@ -114,8 +113,7 @@ def register(mcp) -> None:
                     if format == "mermaid"
                     else "Render with: dot -Tsvg graph.dot -o graph.svg"
                 ),
-            },
-            indent=2,
+            }
         )
 
     @mcp.tool()
@@ -137,7 +135,7 @@ def register(mcp) -> None:
                 "MdSection",
             )
         }
-        return json.dumps(stats, indent=2)
+        return dumps_answer(stats)
 
     @mcp.tool()
     @_logged_tool
@@ -202,7 +200,7 @@ def register(mcp) -> None:
 
         import time as _t
 
-        return json.dumps(
+        return dumps_answer(
             {
                 "nodes": nodes,
                 "nodes_total": sum(nodes.values()),
@@ -211,6 +209,5 @@ def register(mcp) -> None:
                 "scan": ss,
                 "tools": tools,
                 "sampled_at": _t.time(),
-            },
-            indent=2,
+            }
         )

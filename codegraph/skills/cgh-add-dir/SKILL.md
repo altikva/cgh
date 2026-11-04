@@ -1,6 +1,6 @@
 ---
 name: cgh-add-dir
-description: Add an external directory (sibling repo, related project) to the codegraph index so cross-repo symbol lookups work. Use when the user asks to include another repo/folder in the graph ("add ../frontend to codegraph", "include the infra repo in the graph", etc.).
+description: "Add an external directory (sibling repo, related project) to the cgh index for cross-repo symbol lookups, hot, no MCP restart. Use when the user asks to include another repo or folder in the graph ('add ../frontend to codegraph', 'include the infra repo')."
 ---
 
 # cgh add-dir
@@ -18,7 +18,7 @@ The user wants to extend the current codegraph with another directory:
 
 **Prefer the MCP tool**: it handles everything in one call:
 
-1. Call `mcp__codegraph__add_directory` with the path (absolute or relative to the repo root).
+1. Call `mcp__cgh__add_directory` with the path (absolute or relative to the repo root).
 2. Report the result to the user (indexed count, whether the watcher was extended).
 
 The tool:
@@ -38,7 +38,7 @@ cgh add-dir remove <path>  # remove
 ```
 
 After a CLI `add`, you must tell the user to either:
-- Ask you to re-run a scan (`mcp__codegraph__scan_repo`), OR
+- Ask you to re-run a scan (`mcp__cgh__scan_repo`), OR
 - Restart the MCP server (`/mcp` in Claude Code → reconnect codegraph)
 
 The MCP-tool path is preferred because it avoids the restart step.
@@ -46,8 +46,8 @@ The MCP-tool path is preferred because it avoids the restart step.
 ## Verifying it worked
 
 After adding, you can confirm:
-- `mcp__codegraph__graph_stats`: node counts should have increased
-- `mcp__codegraph__search_symbols` with a symbol from the new dir: should return a hit
+- `mcp__cgh__graph_stats`: node counts should have increased
+- `mcp__cgh__search_symbols` with a symbol from the new dir: should return a hit
 
 ## Don't
 

@@ -1,6 +1,6 @@
 ---
 name: cgh-use-codegraph
-description: Use codegraph MCP tools BEFORE reading files when navigating code. Triggers on symbol lookups ("where is X defined", "what calls Y"), multi-file exploration ("how does X work"), and task kickoff. Saves 60-90% of exploration tokens.
+description: "Use cgh MCP tools before reading files to navigate code; they return exact paths and line ranges in fewer turns than Read/Grep. Triggers on symbol lookups ('where is X', 'what calls Y'), multi-file exploration ('how does X work'), and task kickoff."
 ---
 
 # Use codegraph before reading files
@@ -19,18 +19,18 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 
 | Situation | Tool to call first |
 |---|---|
-| "Where is `X` defined?" | `mcp__codegraph__symbol_lookup(name="X")` |
-| "What calls `fn`?" / "Who uses `fn`?" | `mcp__codegraph__find_callers(fn_name="fn")` |
-| "What does `fn` call?" | `mcp__codegraph__find_callees(fn_name="fn")` |
-| "Trace the flow from `fn`" (multi-hop) | `mcp__codegraph__find_callees(fn_name="fn", max_depth=N)`: one call returns the ordered chain, don't chain single hops |
-| "What breaks if I change `X`?" | `mcp__codegraph__impact_of(symbol_or_file="X", max_depth=N)` |
-| Fuzzy / partial name | `mcp__codegraph__search_symbols(query="...")` |
-| Full-text (docstrings, names) | `mcp__codegraph__fts_search(query="...")` |
-| **Regex / substring over files** | `mcp__codegraph__pattern_search(pattern, glob?)`: INSTEAD of Grep |
-| "How does [feature] work?": starting a non-trivial task | `mcp__codegraph__context_for_task(task="...")` |
-| "What docs mention `X`?" | `mcp__codegraph__search_docs` / `doc_refs` |
-| "Blast radius of `file.py`" | `mcp__codegraph__subgraph(file_path="...")` |
-| "Is `fn` dead / unused?" | `mcp__codegraph__find_dead_code` |
+| "Where is `X` defined?" | `mcp__cgh__symbol_lookup(name="X")` |
+| "What calls `fn`?" / "Who uses `fn`?" | `mcp__cgh__find_callers(fn_name="fn")` |
+| "What does `fn` call?" | `mcp__cgh__find_callees(fn_name="fn")` |
+| "Trace the flow from `fn`" (multi-hop) | `mcp__cgh__find_callees(fn_name="fn", max_depth=N)`: one call returns the ordered chain, don't chain single hops |
+| "What breaks if I change `X`?" | `mcp__cgh__impact_of(symbol_or_file="X", max_depth=N)` |
+| Fuzzy / partial name | `mcp__cgh__search_symbols(query="...")` |
+| Full-text (docstrings, names) | `mcp__cgh__fts_search(query="...")` |
+| **Regex / substring over files** | `mcp__cgh__pattern_search(pattern, glob?)`: INSTEAD of Grep |
+| "How does [feature] work?": starting a non-trivial task | `mcp__cgh__context_for_task(task="...")` |
+| "What docs mention `X`?" | `mcp__cgh__search_docs` / `doc_refs` |
+| "Blast radius of `file.py`" | `mcp__cgh__subgraph(file_path="...")` |
+| "Is `fn` dead / unused?" | `mcp__cgh__find_dead_code` |
 
 ## Workflow
 
@@ -55,5 +55,19 @@ cheaper than reading. Default bias: call the tool, don't hesitate.
 
 The graph reflects the last scan, not the live working tree. If the user
 mentions recent `git pull`, `checkout`, `rebase`, or major edits, call
-`mcp__codegraph__scan_status` first. If `fresh=false`, call
-`mcp__codegraph__scan_repo` before trusting symbol results.
+`mcp__cgh__scan_status` first. If `fresh=false`, call
+`mcp__cgh__scan_repo` before trusting symbol results.
+
+## Federated workspaces
+
+When `.codegraph/config.toml` declares `subrepos` (`cgh federate list`), the
+read tools fan out to each subrepo and tag every result with `scope`:
+`parent` or the subrepo's name. Read a child's files under the child's path.
+
+- Cross-repo calls and imports are not inferred: run a trace once per scope.
+- `find_dead_code` is per scope. A symbol dead in one scope may be called
+  from another, so never delete on a single-scope verdict.
+- `partial: true` with `warnings` means a child was locked or out of date:
+  the results are incomplete for that scope, so query again in a moment.
+- `knowledge_*`, `memory_*` and `plan_*` are not federated: each repo keeps
+  its own.

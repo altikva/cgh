@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.2"
 description = "Pattern-matched code generation for cgh: a cheap model writes boilerplate that mirrors a reference file cgh picks from the graph"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
 # cgh is a peer dependency, deliberately not declared: the plugin only
 # ever loads through cgh's entry-point group, so it is inert without cgh

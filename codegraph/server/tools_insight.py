@@ -2,7 +2,7 @@
 # __creation__ = 2026-06-07
 # __author__ = "jndjama (Joy Ndjama)"
 # __copyright__ = "Copyright 2026 ALTIKVA."
-# __licence__ = "MIT & CC BY-NC-SA (https://www.altikva.com/licenses/LICENSE-1.0)"
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: Read-only graph-insight MCP tools built over the GraphDB
 #              protocol: file_summary (one-shot file orientation),
@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
-import json
 import os
+from pathlib import Path
+
+from codegraph.server._budget import dumps_answer
 
 # Hard caps so a pathological graph never blows up the JSON response.
 _SYMBOL_CAP = 200
@@ -32,6 +34,78 @@ _CALLS_NOTE = (
     "over-count: a caller listed here may resolve to a same-named symbol "
     "in another file. Treat as a candidate set, not ground truth."
 )
+
+
+# What file_summary keeps of a docstring once the answer is over its ceiling,
+# and of the lists of import edges, before the symbol list itself is cut.
+_SUMMARY_DOC_CLIP = 60
+_SUMMARY_MODULE_DOC_CLIP = 160
+_SUMMARY_EDGES_KEPT = 3
+# Room kept for the hint and the counts added when the symbol list is cut.
+_SUMMARY_HINT_ROOM = 300
+
+
+def _first_line(row: dict) -> int:
+    """Start line of a symbol row, from its "start-end" range."""
+    try:
+        return int(str(row.get("lines", "")).split("-", 1)[0])
+    except ValueError:
+        return 0
+
+
+def _fit_summary(payload: dict, max_bytes: int) -> None:
+    """Bring a file_summary answer under ``max_bytes``, keeping each symbol's
+    name and line range. Docstring heads go first (clipped, then dropped from
+    the last symbol up), then the module doc is clipped and the import lists
+    shortened to a few rows, then to their totals, and only then the symbol list
+    loses its tail, with `symbols_total`, `dropped` and a hint saying where
+    the rest starts."""
+    from codegraph.server._budget import answer_bytes
+
+    symbols = payload["functions"] + payload["classes"]
+    for row in symbols:
+        if not row.get("doc"):
+            row.pop("doc", None)
+    if answer_bytes(payload) <= max_bytes:
+        return
+    budget = max_bytes - _SUMMARY_HINT_ROOM
+    for row in symbols:
+        if len(row.get("doc", "")) > _SUMMARY_DOC_CLIP:
+            row["doc"] = row["doc"][:_SUMMARY_DOC_CLIP]
+    for row in reversed(symbols):
+        if answer_bytes(payload) <= budget:
+            return
+        row.pop("doc", None)
+    payload["module_doc"] = payload["module_doc"][:_SUMMARY_MODULE_DOC_CLIP]
+    # The symbols matter more here than the import edges imports_of lists:
+    # the edges shrink to a few rows, then to their totals alone.
+    for kept in (_SUMMARY_EDGES_KEPT, 0):
+        for key in ("imported_by", "imports"):
+            rows = payload[key]
+            if len(rows) > kept and answer_bytes(payload) > budget:
+                payload.setdefault(f"{key}_total", len(rows))
+                del rows[kept:]
+                payload["truncated"] = True
+                payload["hint"] = "Import lists cut to fit: imports_of for every edge."
+    if answer_bytes(payload) <= budget:
+        return
+    total = len(symbols)
+    functions, classes = payload["functions"], payload["classes"]
+    cut: list[dict] = []
+    while answer_bytes(payload) > budget and len(functions) + len(classes) > 1:
+        longest = functions if len(functions) >= len(classes) else classes
+        cut.append(longest.pop())
+    if not cut:
+        return
+    start = min(_first_line(r) for r in cut)
+    payload["truncated"] = True
+    payload["symbols_total"] = total
+    payload["dropped"] = (payload.get("dropped") or 0) + len(cut)
+    payload["hint"] = (
+        f"Symbol list cut to fit: {total - len(cut)} of {total} shown, the "
+        f"others start at line {start} or later. symbol_lookup(name) for one "
+        "symbol, imports_of for the import edges, or Read a line range."
+    )
 
 
 def register(mcp) -> None:
@@ -85,9 +159,34 @@ def register(mcp) -> None:
 
         Federated: the file may live in the parent or in any subrepo, so we
         query all scopes and aggregate. Each symbol / import row carries a
-        `scope` tag. Symbols are capped at 200 with a truncation note.
+        `scope` tag when some come from a federated child. Symbols are
+        capped at 200 with a truncation note, and the answer at about
+        2 KB: past that, docstring heads are clipped then dropped, the
+        import lists keep a few rows (`imports_total`, `imported_by_total`),
+        and last the symbol list loses its tail, with `truncated`,
+        `symbols_total`, `dropped` and a `hint` naming the line the rest
+        starts at. Each symbol keeps its name and line range.
+
+        A repo file the graph does not hold yet (new, or changed since its
+        last index) is indexed first: the answer then carries
+        `indexed_now: true` and `on_demand: "indexed"`. A gitignored file
+        is never indexed (`on_demand: "ignored"`).
         """
+        from codegraph.analysis import on_demand
+        from codegraph.server._budget import (
+            FILE_SUMMARY_MAX_BYTES,
+            drop_parent_scope,
+            dumps_answer,
+        )
+
         target = _abs(file_path)
+        # A repo file the graph lacks or holds in an older version is
+        # indexed now, then summarized (the owner holds the write connection).
+        status = (
+            on_demand.ensure_indexed(_srv._root, Path(target))
+            if _srv._root
+            else "fresh"
+        )
 
         def query(conn):
             rows: list[dict] = []
@@ -188,10 +287,19 @@ def register(mcp) -> None:
         }
         if truncated:
             payload["note"] = f"symbols capped at {_SYMBOL_CAP}"
+        if status not in ("fresh", "unsupported"):
+            payload["on_demand"] = status
+            if status == "indexed":
+                payload["indexed_now"] = True
+                payload["note"] = " ".join(
+                    filter(None, [payload.get("note"), on_demand.note(status)])
+                )
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        drop_parent_scope(functions + classes + imports + imported_by)
+        _fit_summary(payload, FILE_SUMMARY_MAX_BYTES)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -595,7 +703,7 @@ def register(mcp) -> None:
             # Impacted nodes come nearest first: the farthest go first.
             if fit_tokens(payload, ["impacted"], max_tokens):
                 payload["count"] = len(payload["impacted"])
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -631,7 +739,7 @@ def register(mcp) -> None:
             min_confidence=float(min_confidence),
             limit=int(limit),
         )
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -659,7 +767,7 @@ def register(mcp) -> None:
         """
         edge = (edge or "CALLS").upper()
         if edge not in {"CALLS", "IMPORTS"}:
-            return json.dumps(
+            return dumps_answer(
                 {"found": False, "error": f"unsupported edge type: {edge}"}
             )
         is_calls = edge == "CALLS"
@@ -784,7 +892,7 @@ def register(mcp) -> None:
             if warnings:
                 payload["partial"] = True
                 payload["warnings"] = warnings
-            return json.dumps(payload, indent=2)
+            return dumps_answer(payload)
 
         scope, found = results
         chain = found["path"]
@@ -802,7 +910,7 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)
 
     @mcp.tool()
     @_logged_tool
@@ -837,4 +945,4 @@ def register(mcp) -> None:
         if warnings:
             payload["partial"] = True
             payload["warnings"] = warnings
-        return json.dumps(payload, indent=2)
+        return dumps_answer(payload)

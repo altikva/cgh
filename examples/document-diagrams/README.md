@@ -38,8 +38,8 @@ with identities (IPs, hostnames) separated from labels.
 
 ## Same result without writing code
 
-Partially, today. Inside an indexed repo, **cgh-docs** turns the TEXT
-of pdf/docx/xlsx into searchable sections (`cgh init`, then the
+Partially, today. Inside an indexed repo, cgh turns the TEXT of
+pdf/docx/xlsx/pptx into searchable sections (`cgh init`, then the
 `search_docs` and `doc_outline` MCP tools, or `cgh outline` for
 markdown), and standalone images in the repo go through the vision
 scanner automatically. What the CLI does not do yet is pull the

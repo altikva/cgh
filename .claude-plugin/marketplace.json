@@ -5,22 +5,22 @@
     "url": "https://github.com/altikva"
   },
   "metadata": {
-    "description": "Local code graph + memory + plans + knowledge for AI coding agents.",
+    "description": "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph.",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "cgh",
       "source": "./",
-      "description": "62 MCP tools for code navigation (symbol lookup, call graph, imports, docs) plus cross-session memory, plans, and knowledge. Tool execution is server-side, so responses cost near-zero model tokens. Requires the cgh binary on PATH.",
-      "version": "0.18.0",
+      "description": "The context graph hub: memory, plans and knowledge shared across sessions and agents, plus 62 MCP tools for code navigation (symbol lookup, call graph, imports, docs). Tool execution is server-side, so responses cost near-zero model tokens. Requires the cgh binary on PATH.",
+      "version": "0.19.0",
       "author": {
         "name": "Joy Ndjama",
         "email": "joy.ndjama@altikva.com"
       },
       "homepage": "https://github.com/altikva/cgh",
-      "license": "MIT AND CC-BY-NC-SA-4.0",
-      "keywords": ["code-graph", "mcp", "memory", "navigation"]
+      "license": "Apache-2.0",
+      "keywords": ["context-graph", "code-graph", "mcp", "memory", "agent-memory", "navigation"]
     }
   ]
 }

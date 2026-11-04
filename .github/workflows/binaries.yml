@@ -1,0 +1,31 @@
+# Rebuild the standalone binaries for an already-published release and attach
+# them to it, WITHOUT republishing to PyPI or cutting a new version.
+#
+# Use when a release shipped to PyPI but a binary leg failed, or a binary fix
+# landed after the tag. Pick a `ref` that already carries the fix (a branch,
+# tag or SHA) whose runtime is the same as the released version, and the
+# existing Release `tag` to attach the rebuilt assets to.
+
+name: Rebuild standalone binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (branch, tag or SHA) to build from. Use one that carries the binary-smoke fix.
+        required: true
+        default: develop
+        type: string
+      tag:
+        description: Existing GitHub Release tag to attach the binaries to (e.g. v0.19.0).
+        required: true
+        type: string
+
+jobs:
+  binaries:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_binaries.yml
+    with:
+      build_ref: ${{ inputs.ref }}
+      release_tag: ${{ inputs.tag }}

@@ -92,8 +92,21 @@ def write_fixtures(root: Path) -> None:
     )
 
 
+def _resolve_cgh(arg: str) -> str:
+    """Return an absolute path to the cgh binary, or a bare name unchanged.
+
+    index and search below run with cwd set to a throwaway repo. On POSIX a
+    relative executable is resolved against the child's cwd, not the parent's,
+    so a path like "./out/cgh-macos-arm64" is not found there; Windows resolves
+    against the parent's cwd, which is why it alone passed. A bare command name
+    with no path (e.g. "cgh") is left alone so PATH lookup still works.
+    """
+    p = Path(arg)
+    return str(p.resolve()) if p.exists() else arg
+
+
 def main(argv: list[str]) -> int:
-    cgh = argv[1] if len(argv) > 1 else "cgh"
+    cgh = _resolve_cgh(argv[1]) if len(argv) > 1 else "cgh"
     root = Path(argv[2]) if len(argv) > 2 else Path(tempfile.mkdtemp(prefix="cgh-"))
     root.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)

@@ -45,8 +45,14 @@ ALLOW_PATTERNS = (f"mcp__{SERVER_KEY}", f"{TOOL_PREFIX}*")
 LEGACY_ALLOW_PATTERNS = (f"mcp__{LEGACY_SERVER_KEY}", f"{LEGACY_TOOL_PREFIX}*")
 
 # The client configs cgh writes an MCP server entry into, relative to the
-# repo root: Claude, Codex and Gemini share .mcp.json.
-MCP_CONFIG_FILES = (".mcp.json", ".cursor/mcp.json", ".bob/mcp.json")
+# repo root. Claude and Codex share .mcp.json; Gemini CLI reads its MCP
+# servers from .gemini/settings.json, not .mcp.json.
+MCP_CONFIG_FILES = (
+    ".mcp.json",
+    ".cursor/mcp.json",
+    ".bob/mcp.json",
+    ".gemini/settings.json",
+)
 # The Claude settings files cgh manages, relative to the repo root.
 CLAUDE_SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
 

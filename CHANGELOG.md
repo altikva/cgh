@@ -8,6 +8,13 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **`cgh setup gemini` registers the server where Gemini CLI reads it.** The
+  Gemini MCP entry was written to the repo-root `.mcp.json`, which Gemini CLI
+  does not read, so the server never attached. It now goes in
+  `.gemini/settings.json` under `mcpServers` (project scope), the file the
+  Gemini CLI actually loads; the rename migration and doctor look there too.
+
 ## [0.19.1] - 2026-11-04
 
 ### Fixed

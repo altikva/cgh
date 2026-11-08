@@ -91,3 +91,19 @@ def test_cmd_semantic_prints_the_relevant_symbol(tmp_path, capsys):
     )
     out = capsys.readouterr().out
     assert "rotate_owner_log" in out
+
+
+def test_corpus_cache_distinguishes_databases(tmp_path):
+    # Two FTS databases with identical symbol count and newest rowid must not
+    # share a cached corpus (the federation collision the db path guards).
+    a = get_fts_conn(tmp_path / "a")
+    b = get_fts_conn(tmp_path / "b")
+    upsert_symbol(a, "x", "function", "alpha_rotate", "f.py", 1, 2, "rotate the log")
+    upsert_symbol(b, "x", "function", "beta_accents", "g.py", 1, 2, "strip accents")
+    commit(a)
+    commit(b)
+    clear_cache()
+    ha = semantic_search(a, "rotate the log", limit=1, mode="lexical")
+    hb = semantic_search(b, "rotate the log", limit=1, mode="lexical")
+    assert ha[0].name == "alpha_rotate"
+    assert hb[0].name == "beta_accents"

@@ -33,11 +33,23 @@ def test_unknown_mode_is_rejected():
 def test_semantic_search_ranks_the_relevant_symbol_first(tmp_path):
     conn = get_fts_conn(tmp_path)
     upsert_symbol(
-        conn, "s1", "function", "rotate_owner_log", "a.py", 10, 20,
+        conn,
+        "s1",
+        "function",
+        "rotate_owner_log",
+        "a.py",
+        10,
+        20,
         "Rotate the owner log when it grows too large",
     )
     upsert_symbol(
-        conn, "s2", "function", "fold_accents", "b.py", 3, 4,
+        conn,
+        "s2",
+        "function",
+        "fold_accents",
+        "b.py",
+        3,
+        4,
         "Strip accents from a word",
     )
     commit(conn)
@@ -61,13 +73,21 @@ def test_cmd_semantic_prints_the_relevant_symbol(tmp_path, capsys):
 
     conn = get_fts_conn(tmp_path)
     upsert_symbol(
-        conn, "s1", "function", "rotate_owner_log", "a.py", 10, 20,
+        conn,
+        "s1",
+        "function",
+        "rotate_owner_log",
+        "a.py",
+        10,
+        20,
         "Rotate the owner log when it grows too large",
     )
     commit(conn)
     clear_cache()
     cmd_semantic(
-        SimpleNamespace(query="rotate the log file", root=str(tmp_path), limit=5, mode="lexical")
+        SimpleNamespace(
+            query="rotate the log file", root=str(tmp_path), limit=5, mode="lexical"
+        )
     )
     out = capsys.readouterr().out
     assert "rotate_owner_log" in out

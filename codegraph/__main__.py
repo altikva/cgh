@@ -134,7 +134,10 @@ def _print_help():
             "Query",
             [
                 ("search", "Fuzzy search symbols by name; --text for free-text prose"),
-                ("semantic", "Semantic (vector) search over symbols; --mode neural for the model"),
+                (
+                    "semantic",
+                    "Semantic (vector) search over symbols; --mode neural for the model",
+                ),
                 ("lookup", "Find exact symbol definition"),
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),

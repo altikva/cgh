@@ -20,11 +20,11 @@ import pytest
 
 from codegraph.integrations import mcp_name
 
-# Where each client's MCP config lives. Claude and Codex share .mcp.json;
-# Gemini CLI reads its MCP servers from .gemini/settings.json.
+# Where each client's JSON MCP config lives. Claude uses .mcp.json; Gemini
+# reads .gemini/settings.json. Codex uses TOML (.codex/config.toml) and is
+# covered by its own tests below, not this JSON-shaped parametrisation.
 CLIENT_FILES = {
     "claude": ".mcp.json",
-    "codex": ".mcp.json",
     "gemini": ".gemini/settings.json",
     "cursor": ".cursor/mcp.json",
     "bob": ".bob/mcp.json",
@@ -570,3 +570,41 @@ def test_doctor_reports_a_blocker_as_a_strict_failure(tmp_path, monkeypatch, cap
     strict = next(line for line in out.splitlines() if line.startswith("strict:"))
     assert "MCP server name" in strict
     assert "mcp__codegraph__scan_repo" in out
+
+
+# ---------------------------------------------------------------------------
+# Codex: a TOML config, not .mcp.json
+# ---------------------------------------------------------------------------
+
+
+def test_codex_writes_toml_mcp_servers(tmp_path, no_cli_on_path):
+    import tomllib
+
+    from codegraph.cli.commands_init import _install_integration
+
+    _install_integration(tmp_path, "codex")
+    cfg = tmp_path / ".codex" / "config.toml"
+    assert cfg.is_file()
+    assert not (tmp_path / ".mcp.json").exists()
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert list(data["mcp_servers"]) == ["cgh"]
+    assert data["mcp_servers"]["cgh"]["command"]
+
+
+def test_codex_preserves_existing_toml(tmp_path, no_cli_on_path):
+    import tomllib
+
+    from codegraph.cli.commands_init import _install_integration
+
+    cfgdir = tmp_path / ".codex"
+    cfgdir.mkdir()
+    (cfgdir / "config.toml").write_text(
+        '# my codex config\nmodel = "o3"\n\n[mcp_servers.other]\ncommand = "x"\n',
+        encoding="utf-8",
+    )
+    _install_integration(tmp_path, "codex")
+    text = (cfgdir / "config.toml").read_text(encoding="utf-8")
+    assert "# my codex config" in text  # comment preserved
+    data = tomllib.loads(text)
+    assert data["model"] == "o3"
+    assert set(data["mcp_servers"]) == {"other", "cgh"}

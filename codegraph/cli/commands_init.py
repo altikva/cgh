@@ -2099,6 +2099,38 @@ def _write_mcp_entry(path: Path, entry: dict, blocked: bool) -> None:
     write_json_file(path, data)
 
 
+def _write_mcp_entry_toml(path: Path, entry: dict, blocked: bool) -> None:
+    """Register the cgh server in a TOML client config (Codex config.toml).
+
+    Codex reads MCP servers from a [mcp_servers.<name>] table, not from the
+    JSON .mcp.json. Comments and other tables the user wrote are preserved;
+    settings they added to the entry (env, a longer timeout) are kept and the
+    command and its arguments are refreshed. Other servers are untouched."""
+    import tomlkit
+
+    from codegraph.integrations.mcp_name import migrate_servers, server_key_for
+
+    doc = (
+        tomlkit.parse(path.read_text(encoding="utf-8"))
+        if path.exists()
+        else tomlkit.document()
+    )
+    servers = doc.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = tomlkit.table()
+        doc["mcp_servers"] = servers
+    if not blocked:
+        migrate_servers(servers)
+    key = server_key_for(servers, blocked)
+    previous = servers.get(key)
+    merged = {**(previous if isinstance(previous, dict) else {}), **entry}
+    table = tomlkit.table()
+    for k, v in merged.items():
+        table[k] = v
+    servers[key] = table
+    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+
 def print_rename_blockers(blockers: list, forced: bool = False) -> None:
     """Say what stops the codegraph to cgh rename, and how to clear it."""
     from codegraph.integrations.mcp_name import MIGRATE_COMMAND, UPGRADING_DOC
@@ -2267,10 +2299,15 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         _skills_line(".cursor/rules/", install_cursor(root))
 
     elif tool == "codex":
-        mcp_path = root / ".mcp.json"
-        _write_mcp_entry(mcp_path, mcp_entry, blocked)
+        # Codex CLI reads MCP servers from a [mcp_servers] table in
+        # .codex/config.toml (project scope, trusted projects), not from the
+        # repo-root .mcp.json, so write the entry there.
+        codex_dir = root / ".codex"
+        ensure_dir(codex_dir)
+        mcp_path = codex_dir / "config.toml"
+        _write_mcp_entry_toml(mcp_path, mcp_entry, blocked)
         console.print(
-            "    [green]+[/green] .mcp.json [dim](MCP server for Codex)[/dim]"
+            "    [green]+[/green] .codex/config.toml [dim](MCP server for Codex)[/dim]"
         )
         _skills_line("AGENTS.md", install_codex(root))
 

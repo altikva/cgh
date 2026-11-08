@@ -9,6 +9,12 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Fixed
+- **`cgh setup codex` registers the server where Codex CLI reads it.** The
+  Codex MCP entry was written to the repo-root `.mcp.json`, which Codex CLI
+  does not read. It now goes in `.codex/config.toml` as a `[mcp_servers.cgh]`
+  table (project scope, trusted projects), the TOML file Codex actually
+  loads; existing config, comments and other servers are preserved. For a
+  global install, put the same table in `~/.codex/config.toml`.
 - **`cgh setup gemini` registers the server where Gemini CLI reads it.** The
   Gemini MCP entry was written to the repo-root `.mcp.json`, which Gemini CLI
   does not read, so the server never attached. It now goes in

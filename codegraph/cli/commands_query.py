@@ -1625,3 +1625,34 @@ def cmd_outline(args: argparse.Namespace) -> None:
         node_stack.append((level, child))
 
     console.print(tree)
+
+
+def cmd_semantic(args: argparse.Namespace) -> None:
+    """Semantic (vector) search over symbol names and docstrings: embed the
+    query and rank symbols by cosine. Reads the FTS directly, so it works
+    while an owner holds the graph lock."""
+    root = os.path.abspath(args.root)
+    query = args.query
+    if not query:
+        console.print("[red]A query is required.[/red]")
+        raise SystemExit(2)
+    limit = args.limit if args.limit is not None else 15
+    mode = getattr(args, "mode", None) or "lexical"
+    from codegraph.core.embedder import EmbedderUnavailable
+    from codegraph.core.fts import get_fts_conn
+    from codegraph.core.semantic import semantic_search
+
+    try:
+        conn = get_fts_conn(root)
+        hits = semantic_search(conn, query, limit=limit, mode=mode)
+    except EmbedderUnavailable as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise SystemExit(1) from None
+    if not hits:
+        console.print(
+            "[dim]No results. Is the repo indexed? Run `cgh index` first.[/dim]"
+        )
+        return
+    for h in hits:
+        where = f"{_short_path(h.file_path, root)}:{h.line}"
+        console.print(f"[green]{h.score:.3f}[/green]  {h.name}  [dim]{where}[/dim]")

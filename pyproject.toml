@@ -53,6 +53,8 @@ dependencies = [
     # json_response argument, which the owner passes: it could not start.
     "fastmcp>=2.13,<5",
     "rank-bm25>=0.2",
+    # Vector math for semantic search (cosine over symbol embeddings).
+    "numpy>=1.26",
     "rich>=13.0",
     "questionary>=2.0",
     # Used directly by the YAML section parser; declared so the nested
@@ -72,6 +74,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Opt-in neural embeddings for semantic search (fastembed / bge-small,
+# ~90 MB model downloaded on first use). Kept out of the core and the
+# standalone binary; the lexical embedder is the always-available default.
+neural = ["fastembed>=0.4"]
 # The first-party plugins most installs want, in one go (the document
 # parsers that used to come as cgh-docs are part of the core now):
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"

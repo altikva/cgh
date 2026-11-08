@@ -2275,10 +2275,14 @@ def _install_integration(root: Path, tool: str, overwrite_skills: bool = True) -
         _skills_line("AGENTS.md", install_codex(root))
 
     elif tool == "gemini":
-        mcp_path = root / ".mcp.json"
+        # Gemini CLI reads MCP servers from .gemini/settings.json (project
+        # scope), not from the repo-root .mcp.json, so the entry goes there.
+        mcp_path = root / ".gemini" / "settings.json"
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
         _write_mcp_entry(mcp_path, mcp_entry, blocked)
         console.print(
-            "    [green]+[/green] .mcp.json [dim](MCP server for Gemini)[/dim]"
+            "    [green]+[/green] .gemini/settings.json "
+            "[dim](MCP server for Gemini)[/dim]"
         )
         _skills_line("GEMINI.md", install_gemini(root))
 

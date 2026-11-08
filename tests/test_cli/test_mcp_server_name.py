@@ -20,11 +20,12 @@ import pytest
 
 from codegraph.integrations import mcp_name
 
-# Where each client's MCP config lives; claude, codex and gemini share one.
+# Where each client's MCP config lives. Claude and Codex share .mcp.json;
+# Gemini CLI reads its MCP servers from .gemini/settings.json.
 CLIENT_FILES = {
     "claude": ".mcp.json",
     "codex": ".mcp.json",
-    "gemini": ".mcp.json",
+    "gemini": ".gemini/settings.json",
     "cursor": ".cursor/mcp.json",
     "bob": ".bob/mcp.json",
 }

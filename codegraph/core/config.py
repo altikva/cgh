@@ -31,8 +31,8 @@
 #   answer_format = "json"    # or "text": grep-like answers, see _text.py
 #
 #   [tools]
-#   expose = "all"            # or "core": what tools/list shows, see
-#   extra = []                # codegraph/server/tool_exposure.py
+#   expose = "auto"           # or "all" / "core": what tools/list shows,
+#   extra = []                # see codegraph/server/tool_exposure.py
 
 from __future__ import annotations
 
@@ -74,8 +74,8 @@ DEAD_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
 _log = logging.getLogger(__name__)
 
 # Values [tools] expose accepts. Anything else falls back to "all", so a
-# typo never hides a tool.
-TOOL_EXPOSE_MODES: tuple[str, ...] = ("all", "core")
+# typo never hides a tool. "auto" resolves per client (see resolve_expose).
+TOOL_EXPOSE_MODES: tuple[str, ...] = ("auto", "all", "core")
 
 # Values [mcp] answer_format and CGH_ANSWER_FORMAT accept; anything else
 # keeps "json".
@@ -325,12 +325,13 @@ class CodegraphConfig:
     plugins_disabled: list[str] = field(default_factory=list)
     plugin_tables: dict[str, dict] = field(default_factory=dict)
 
-    # [tools]: which MCP tools tools/list shows. "all" (the default) lists
-    # every tool; "core" lists the core set plus tools_extra plus every
-    # plugin tool. Hidden tools stay callable by name. An unknown expose
-    # value loads as "all" and keeps the raw value in tools_expose_invalid
-    # for the notice.
-    tools_expose: str = "all"
+    # [tools]: which MCP tools tools/list shows. "auto" (the default) lists
+    # every tool to a tool-search client (Claude Code, which then defers the
+    # non-core tail) and only the core set to every other client; "all" lists
+    # every tool; "core" lists the core set plus tools_extra plus every plugin
+    # tool. Hidden tools stay callable by name. An unknown expose value loads
+    # as "all" and keeps the raw value in tools_expose_invalid for the notice.
+    tools_expose: str = "auto"
     tools_extra: list[str] = field(default_factory=list)
     tools_expose_invalid: str | None = None
 
@@ -602,11 +603,14 @@ reindex_on_start = true
 # answer_format = "json"
 
 [tools]
-# Which MCP tools tools/list shows. "all" lists every tool. "core" lists a
-# small core set plus the names in extra plus every plugin tool, for
-# clients that load every tool schema into the context. A hidden tool
-# stays callable by name, but an agent only calls what it sees listed.
-# expose = "all"
+# Which MCP tools tools/list shows. "auto" (the default) lists every tool
+# to a client that carries tool search (Claude Code, which defers the rest
+# itself) and only the core set to every other client, so clients that load
+# every schema into the context are not flooded. "all" lists every tool;
+# "core" lists a small core set plus the names in extra plus every plugin
+# tool. A hidden tool stays callable by name, but an agent only calls what
+# it sees listed.
+# expose = "auto"
 # extra = ["find_callees", "impact_of"]
 
 [plugins]

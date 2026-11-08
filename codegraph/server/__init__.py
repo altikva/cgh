@@ -410,6 +410,42 @@ mcp = FastMCP(
     ),
 )
 
+# Tool-search deferral hint (B of issue #527): a client with tool search on
+# (Claude Code) keeps only the tools marked anthropic/alwaysLoad in every
+# request's definitions and defers the rest, still callable on demand via
+# ToolSearch. Mark the core set so navigation/kickoff/continuity stay upfront
+# while the long tail defers, cutting cgh's per-request tool-schema bytes. The
+# _meta key is Claude-Code-specific and ignored by other clients (no-op), and
+# this wraps the registration decorator so every core tool is marked in one
+# place, from the same CORE_TOOLS that [tools] expose = "core" uses.
+from codegraph.core.tool_exposure import CORE_TOOLS as _CORE_TOOLS
+
+_orig_tool = mcp.tool
+
+
+def _tool_marking_core(name_or_fn=None, **kwargs):
+    def _mark(fn):
+        name = kwargs.get("name") or getattr(fn, "__name__", None)
+        if name in _CORE_TOOLS:
+            kwargs["meta"] = {
+                **(kwargs.get("meta") or {}),
+                "anthropic/alwaysLoad": True,
+            }
+        return fn
+
+    if callable(name_or_fn) and not isinstance(name_or_fn, str):
+        _mark(name_or_fn)
+        return _orig_tool(name_or_fn, **kwargs)
+
+    def deco(fn):
+        _mark(fn)
+        return _orig_tool(fn, **kwargs)
+
+    return deco
+
+
+mcp.tool = _tool_marking_core
+
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from codegraph.server.tools_arch import register as _register_arch
 from codegraph.server.tools_docs import register as _register_docs

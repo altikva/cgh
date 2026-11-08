@@ -10,18 +10,17 @@ cgh init
 cgh index
 ```
 
-Then configure Codex to use cgh as MCP server:
+`cgh init codex` writes the server into `.codex/config.toml` (project scope),
+the file Codex CLI reads MCP servers from. The entry looks like:
 
-```json
-{
-  "mcpServers": {
-    "cgh": {
-      "command": "cgh",
-      "args": ["serve", "--root", ".", "--watch", "--reindex"]
-    }
-  }
-}
+```toml
+[mcp_servers.cgh]
+command = "cgh"
+args = ["serve", "--root", ".", "--watch", "--reindex"]
 ```
+
+Codex loads a project `.codex/config.toml` only in trusted projects; for a
+global install put the same `[mcp_servers.cgh]` table in `~/.codex/config.toml`.
 
 ## AGENTS.md instructions
 

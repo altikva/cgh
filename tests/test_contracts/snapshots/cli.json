@@ -57,6 +57,7 @@
     "report",
     "reset",
     "search",
+    "semantic",
     "serve",
     "setup",
     "shared-types",
@@ -739,6 +740,19 @@
           "-n",
           "-o",
           "-t"
+        ],
+        "positionals": [
+          "query"
+        ]
+      },
+      "semantic": {
+        "options": [
+          "--help",
+          "--limit",
+          "--mode",
+          "--root",
+          "-h",
+          "-n"
         ],
         "positionals": [
           "query"

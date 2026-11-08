@@ -88,6 +88,7 @@ from codegraph.cli.commands_query import (
     cmd_packages,
     cmd_report,
     cmd_search,
+    cmd_semantic,
     cmd_shared_types,
     cmd_why,
 )
@@ -133,6 +134,7 @@ def _print_help():
             "Query",
             [
                 ("search", "Fuzzy search symbols by name; --text for free-text prose"),
+                ("semantic", "Semantic (vector) search over symbols; --mode neural for the model"),
                 ("lookup", "Find exact symbol definition"),
                 ("callers", "Who calls this function? (tree view)"),
                 ("callees", "What does this function call? (tree view)"),
@@ -516,6 +518,20 @@ def _register_inspect(sub) -> None:
     p.add_argument("--case", "-s", action="store_true", help="case-sensitive match")
     p.add_argument("--json", action="store_true")
     _add_root(p)
+
+    p = sub.add_parser(
+        "semantic",
+        help="Semantic (vector) search over symbol names and docstrings",
+    )
+    p.add_argument("query", help="What the code does, in words")
+    _add_root(p)
+    p.add_argument("--limit", "-n", type=int, default=15, help="Max results")
+    p.add_argument(
+        "--mode",
+        choices=["lexical", "neural"],
+        default="lexical",
+        help="Embedder: lexical (offline default) or neural (needs cgh[neural])",
+    )
 
     p = sub.add_parser(
         "search", help="Search symbols by name (fuzzy), or free text with --text"
@@ -1025,6 +1041,7 @@ def main() -> None:
         "logs": cmd_logs,
         "grep": cmd_grep,
         "search": cmd_search,
+        "semantic": cmd_semantic,
         "lookup": cmd_lookup,
         "callers": cmd_callers,
         "callees": cmd_callees,

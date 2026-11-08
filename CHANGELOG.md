@@ -8,6 +8,15 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Semantic search over symbols (`cgh semantic`).** A vector search that
+  ranks symbols by how close their name and docstring are in meaning to the
+  query, for when you know what the code does but not what it is called. The
+  default embedder is lexical, offline and in the standalone binary;
+  `--mode neural` uses an opt-in model (`pip install cgh[neural]`), which a
+  measured benchmark found is the one that lifts recall on paraphrased
+  queries. MCP exposure and hybrid fusion with the BM25 index come next.
+
 ### Fixed
 - **`cgh setup codex` registers the server where Codex CLI reads it.** The
   Codex MCP entry was written to the repo-root `.mcp.json`, which Codex CLI

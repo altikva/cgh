@@ -112,6 +112,74 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
+    def semantic_search(query: str, limit: int = 15, mode: str = "lexical") -> str:
+        """
+        Find CODE about a concept by MEANING, not keywords: a vector search
+        over symbol names and docstrings, ranked by cosine similarity to the
+        query. Reach for it when fts_search misses because the words differ
+        from the code's ("make the path absolute" finding a helper documented
+        as "resolve the binary"); use fts_search for keyword/BM25 recall and
+        symbol_lookup when you know the name.
+
+        `mode` is 'lexical' (offline default, in the binary) or 'neural' (needs
+        the cgh[neural] extra and a small model); neural lifts recall on
+        paraphrased queries. Federated across subrepos, each result carries its
+        `scope`. Scores are cosine in [-1, 1], comparable across scopes.
+        """
+        from codegraph.analysis.federation import for_each_child_fts
+        from codegraph.core.embedder import EmbedderUnavailable, get_embedder
+        from codegraph.core.semantic import semantic_search as _sem
+
+        try:
+            embedder = get_embedder(mode)
+        except (EmbedderUnavailable, ValueError) as exc:
+            return dumps_answer(
+                {"query": query, "mode": mode, "error": str(exc), "results": []}
+            )
+
+        def _hit_to_dict(h, scope):
+            return {
+                "scope": scope,
+                "name": h.name,
+                "file": h.file_path,
+                "line": h.line,
+                "score": round(h.score, 4),
+            }
+
+        all_results: list[dict] = []
+        warnings: list[dict] = []
+        try:
+            parent = _sem(_get_fts(), query, limit=limit, embedder=embedder)
+            all_results.extend(_hit_to_dict(h, "parent") for h in parent)
+        except Exception as exc:
+            warnings.append(
+                {"scope": "parent", "error": f"{type(exc).__name__}: {exc}"}
+            )
+
+        if _srv._root is not None:
+            for scoped in for_each_child_fts(
+                _srv._root,
+                lambda c, _r: _sem(c, query, limit=limit, embedder=embedder),
+            ):
+                if scoped.error:
+                    warnings.append({"scope": scoped.scope, "error": scoped.error})
+                    continue
+                all_results.extend(
+                    _hit_to_dict(h, scoped.scope) for h in scoped.payload or []
+                )
+
+        all_results.sort(key=lambda x: -x["score"])
+        if limit:
+            all_results = all_results[:limit]
+        out: dict = {"query": query, "mode": mode, "results": all_results}
+        out["confidence"] = "high" if all_results else "low"
+        if warnings:
+            out["partial"] = True
+            out["warnings"] = warnings
+        return dumps_answer(out)
+
+    @mcp.tool()
+    @_logged_tool
     def find_dead_code(
         file_path: str = "",
         include_private: bool = False,

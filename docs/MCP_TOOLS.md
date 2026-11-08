@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), cgh exposes 62 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 63 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -89,6 +89,7 @@ queried name keeps the most certain one.
 | Tool | Description |
 |------|-------------|
 | `fts_search(query, limit?, kind?)` | BM25-ranked full-text search over names + docstrings |
+| `semantic_search(query, limit?, mode?)` | Vector search over names + docstrings by meaning (cosine); `mode` lexical (default) or neural (opt-in `cgh[neural]`) |
 | `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task; the rationale comments of the served functions and classes come along (a few, short) in `rationale` and under each symbol |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
 | `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[codegraph] allow_fetch = true`) |

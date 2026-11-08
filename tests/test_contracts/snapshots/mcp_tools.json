@@ -830,6 +830,24 @@
       "query"
     ]
   },
+  "semantic_search": {
+    "properties": {
+      "limit": {
+        "default": 15,
+        "type": "integer"
+      },
+      "mode": {
+        "default": "lexical",
+        "type": "string"
+      },
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
   "session_reset": {
     "properties": {
       "session_id": {

@@ -21,10 +21,11 @@ import numpy as np
 
 from codegraph.core.embedder import Embedder, get_embedder
 
-# Cache: (mode, count, max_rowid) -> _Corpus. Keyed so any insert, delete or
-# reindex (which changes the count or the newest rowid) invalidates it.
-_CACHE: dict[tuple[str, int, int], _Corpus] = {}
-_CACHE_LIMIT = 4
+# Cache: (db_path, mode, count, max_rowid) -> _Corpus. The db path keeps
+# federated scopes apart (two subrepos could share a count and newest rowid);
+# the count and rowid invalidate on any insert, delete or reindex.
+_CACHE: dict[tuple[str, str, int, int], _Corpus] = {}
+_CACHE_LIMIT = 8
 
 
 @dataclass
@@ -45,11 +46,13 @@ class SemanticHit:
     score: float
 
 
-def _corpus_key(conn: sqlite3.Connection, mode: str) -> tuple[str, int, int]:
+def _corpus_key(conn: sqlite3.Connection, mode: str) -> tuple[str, str, int, int]:
+    dbs = conn.execute("PRAGMA database_list").fetchall()
+    path = next((r[2] for r in dbs if r[1] == "main"), "") or ""
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM symbols"
     ).fetchone()
-    return (mode, int(row[0]), int(row[1]))
+    return (path, mode, int(row[0]), int(row[1]))
 
 
 def _build_corpus(conn: sqlite3.Connection, embedder: Embedder) -> _Corpus:

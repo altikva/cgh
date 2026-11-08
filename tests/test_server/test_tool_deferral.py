@@ -17,11 +17,16 @@ from codegraph.core.tool_exposure import CORE_TOOLS
 def _listed_tools():
     import codegraph.server as srv
 
-    try:
-        tools = asyncio.run(srv.mcp.list_tools(run_middleware=False))
-    except TypeError:
-        tools = asyncio.run(srv.mcp.list_tools())
-    return {t.name: t for t in tools}
+    mcp = srv.mcp
+    # Mirror registered_tool_names' version handling: the oldest fastmcp floor
+    # has no list_tools, only get_tools() returning a {name: Tool} mapping.
+    if hasattr(mcp, "list_tools"):
+        try:
+            tools = asyncio.run(mcp.list_tools(run_middleware=False))
+        except TypeError:
+            tools = asyncio.run(mcp.list_tools())
+        return {t.name: t for t in tools}
+    return dict(asyncio.run(mcp.get_tools()))
 
 
 def test_core_tools_are_marked_always_load():

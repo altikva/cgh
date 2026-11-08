@@ -80,6 +80,44 @@ async def _list(server: FastMCP, client_name: str | None = None) -> set:
         return {t.name for t in await client.list_tools()}
 
 
+def _client_name_observable() -> bool:
+    """Whether the in-process client's reported name reaches the server on
+    this fastmcp. The oldest floor does not carry clientInfo in-process, so
+    "auto" cannot tell a Claude client apart there; real Claude Code over
+    stdio does send it. The per-client tests that need it skip when it can't
+    be observed, rather than assert behaviour the harness cannot set up."""
+    from fastmcp.server.middleware import Middleware
+
+    from codegraph.server.tool_exposure import _client_name
+
+    probe = FastMCP(name="probe")
+
+    @probe.tool
+    def _ping() -> str:
+        return "pong"
+
+    seen: dict[str, str | None] = {}
+
+    class _Probe(Middleware):
+        async def on_list_tools(self, context, call_next):
+            seen["name"] = _client_name(context)
+            return await call_next(context)
+
+    probe.add_middleware(_Probe())
+    try:
+        asyncio.run(_list(probe, client_name="claude-code"))
+    except Exception:
+        return False
+    return seen.get("name") == "claude-code"
+
+
+_CLIENT_NAME_OBSERVABLE = _client_name_observable()
+_needs_client_name = pytest.mark.skipif(
+    not _CLIENT_NAME_OBSERVABLE,
+    reason="this fastmcp does not carry clientInfo to an in-process server",
+)
+
+
 async def _list_and_call(
     server: FastMCP, name: str, args: dict, client_name: str | None = None
 ) -> tuple[set, str]:
@@ -90,6 +128,7 @@ async def _list_and_call(
     return listed, text
 
 
+@_needs_client_name
 def test_default_auto_lists_every_tool_for_claude(tmp_path):
     # No [tools] table: the default "auto" lists everything to a tool-search
     # client (Claude Code), which then defers the non-core tail itself.
@@ -117,6 +156,7 @@ def test_default_auto_lists_core_for_other_clients(tmp_path):
     assert "incremental_reindex" not in listed
 
 
+@_needs_client_name
 def test_default_auto_lists_every_real_tool_for_claude(tmp_path, monkeypatch):
     """The real server, with the owner's snapshot taken and no [tools]
     table: a Claude client sees exactly what is registered."""

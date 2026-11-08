@@ -49,6 +49,20 @@ def _owner_root() -> Path | None:
     return _srv._root
 
 
+def _client_name(context: Any) -> str | None:
+    """The MCP client's reported name (``clientInfo.name`` from initialize),
+    or None when it can't be read. Defensive across fastmcp versions: the
+    exposure must never fail because the client info is shaped unexpectedly."""
+    try:
+        session = context.fastmcp_context.session
+        params = getattr(session, "client_params", None)
+        info = getattr(params, "client_info", None)
+        name = getattr(info, "name", None)
+        return name if isinstance(name, str) else None
+    except Exception:
+        return None
+
+
 class ToolExposureMiddleware(Middleware):
     """Narrows the tools/list response per [tools]; leaves calls alone.
 
@@ -69,9 +83,13 @@ class ToolExposureMiddleware(Middleware):
         self.builtin_names = builtin
         self.registered_names = registered
 
-    def exposure(self, all_names: Iterable[str] | None = None) -> ToolExposure:
-        """The exposure for the current config. Raises on a config error;
-        callers that must not fail use it inside a try."""
+    def exposure(
+        self,
+        all_names: Iterable[str] | None = None,
+        client_name: str | None = None,
+    ) -> ToolExposure:
+        """The exposure for the current config and client. Raises on a config
+        error; callers that must not fail use it inside a try."""
         from codegraph.core.config import load_config
 
         names = list(
@@ -82,7 +100,11 @@ class ToolExposureMiddleware(Middleware):
             return compute_exposure(names, None, "all")
         cfg = load_config(root)
         result = compute_exposure(
-            names, self.builtin_names, cfg.tools_expose, cfg.tools_extra
+            names,
+            self.builtin_names,
+            cfg.tools_expose,
+            cfg.tools_extra,
+            client_name=client_name,
         )
         fresh = [n for n in result.unknown_extra if n not in self._warned_unknown]
         if fresh:
@@ -96,7 +118,9 @@ class ToolExposureMiddleware(Middleware):
     async def on_list_tools(self, context, call_next):
         tools = await call_next(context)
         try:
-            exposure = self.exposure([t.name for t in tools])
+            exposure = self.exposure(
+                [t.name for t in tools], client_name=_client_name(context)
+            )
         except Exception as exc:
             _log.warning("[tools] exposure failed, listing every tool: %s", exc)
             return tools

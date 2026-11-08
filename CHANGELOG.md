@@ -9,6 +9,18 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Tools are now scoped per client by default (`[tools] expose = "auto"`).**
+  A client with tool search (Claude Code) sees every tool but keeps only the
+  core set in each request's definitions and defers the rest, which stay
+  callable on demand; a client without it (Cursor, Codex, Gemini, Bob) sees
+  only the core set, so it is no longer flooded with every schema. The core
+  set is recentred on what agents actually call: of cgh's 63 tools the proxy
+  study saw 24 ever used, and core is that agent-facing set plus
+  `semantic_search`, minus the index-mutating tools that only hooks and status
+  drive. Core carries the `anthropic/alwaysLoad` marker (Claude-Code-specific,
+  ignored elsewhere). Set `expose = "all"` to list everything to every client,
+  or `"core"` to scope it for every client.
+
 - **Semantic search over symbols (`cgh semantic`).** A vector search that
   ranks symbols by how close their name and docstring are in meaning to the
   query, for when you know what the code does but not what it is called. The

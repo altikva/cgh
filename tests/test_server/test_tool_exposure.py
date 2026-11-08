@@ -64,23 +64,80 @@ def _server(root: Path) -> tuple[FastMCP, ToolExposureMiddleware]:
     return server, mw
 
 
-async def _list(server: FastMCP) -> set:
+def _client(server: FastMCP, client_name: str | None) -> Client:
+    # client_name lets a test present itself as Claude Code or another client,
+    # which is what expose = "auto" keys off. None is the fastmcp default ("mcp").
+    if client_name is None:
+        return Client(server)
+    from mcp.types import Implementation
+
+    return Client(server, client_info=Implementation(name=client_name, version="0"))
+
+
+async def _list(server: FastMCP, client_name: str | None = None) -> set:
     # Through a client, as an agent sees it: works on every supported fastmcp.
-    async with Client(server) as client:
+    async with _client(server, client_name) as client:
         return {t.name for t in await client.list_tools()}
 
 
-async def _list_and_call(server: FastMCP, name: str, args: dict) -> tuple[set, str]:
-    async with Client(server) as client:
+def _client_name_observable() -> bool:
+    """Whether the in-process client's reported name reaches the server on
+    this fastmcp. The oldest floor does not carry clientInfo in-process, so
+    "auto" cannot tell a Claude client apart there; real Claude Code over
+    stdio does send it. The per-client tests that need it skip when it can't
+    be observed, rather than assert behaviour the harness cannot set up."""
+    from fastmcp.server.middleware import Middleware
+
+    from codegraph.server.tool_exposure import _client_name
+
+    probe = FastMCP(name="probe")
+
+    @probe.tool
+    def _ping() -> str:
+        return "pong"
+
+    seen: dict[str, str | None] = {}
+
+    class _Probe(Middleware):
+        async def on_list_tools(self, context, call_next):
+            seen["name"] = _client_name(context)
+            return await call_next(context)
+
+    probe.add_middleware(_Probe())
+    try:
+        asyncio.run(_list(probe, client_name="claude-code"))
+    except Exception:
+        return False
+    return seen.get("name") == "claude-code"
+
+
+_CLIENT_NAME_OBSERVABLE = _client_name_observable()
+_needs_client_name = pytest.mark.skipif(
+    not _CLIENT_NAME_OBSERVABLE,
+    reason="this fastmcp does not carry clientInfo to an in-process server",
+)
+
+
+async def _list_and_call(
+    server: FastMCP, name: str, args: dict, client_name: str | None = None
+) -> tuple[set, str]:
+    async with _client(server, client_name) as client:
         listed = {t.name for t in await client.list_tools()}
         result = await client.call_tool(name, args)
         text = result.content[0].text
     return listed, text
 
 
-def test_default_config_lists_every_tool(tmp_path):
+@_needs_client_name
+def test_default_auto_lists_every_tool_for_claude(tmp_path):
+    # No [tools] table: the default "auto" lists everything to a tool-search
+    # client (Claude Code), which then defers the non-core tail itself.
     server, _ = _server(tmp_path)
-    listed, _ = asyncio.run(_list_and_call(server, "pattern_search", {"pattern": "x"}))
+    listed, _ = asyncio.run(
+        _list_and_call(
+            server, "pattern_search", {"pattern": "x"}, client_name="claude-code"
+        )
+    )
     assert listed == {
         "pattern_search",
         "symbol_lookup",
@@ -90,28 +147,49 @@ def test_default_config_lists_every_tool(tmp_path):
     }
 
 
-def test_default_config_lists_every_real_tool(tmp_path, monkeypatch):
+def test_default_auto_lists_core_for_other_clients(tmp_path):
+    # The same default "auto", but a client without tool search (here the
+    # fastmcp default "mcp") gets the core view so it is not flooded.
+    server, _ = _server(tmp_path)
+    listed, _ = asyncio.run(_list_and_call(server, "pattern_search", {"pattern": "x"}))
+    assert listed == {"pattern_search", "symbol_lookup", "find_callees", "codegen_pick"}
+    assert "incremental_reindex" not in listed
+
+
+@_needs_client_name
+def test_default_auto_lists_every_real_tool_for_claude(tmp_path, monkeypatch):
     """The real server, with the owner's snapshot taken and no [tools]
-    table: tools/list is exactly what is registered."""
+    table: a Claude client sees exactly what is registered."""
     import codegraph.server as srv
 
     monkeypatch.setattr(srv, "_root", tmp_path)
     names = registered_tool_names(srv.mcp)
     monkeypatch.setattr(srv.tool_exposure, "builtin_names", names)
     monkeypatch.setattr(srv.tool_exposure, "registered_names", names)
-    listed = asyncio.run(_list(srv.mcp))
+    listed = asyncio.run(_list(srv.mcp, client_name="claude-code"))
     assert listed == names
     assert names >= CORE_TOOLS  # every core name is a real tool
 
 
 def test_core_lists_core_extra_and_plugin(tmp_path):
-    _write_config(tmp_path, '[tools]\nexpose = "core"\nextra = ["find_callees"]\n')
+    # pattern_search, symbol_lookup and find_callees are core; incremental_reindex
+    # is not, so it only shows up because it is named in extra; codegen_pick is a
+    # plugin tool and always shows.
+    _write_config(
+        tmp_path, '[tools]\nexpose = "core"\nextra = ["incremental_reindex"]\n'
+    )
     server, mw = _server(tmp_path)
     listed, _ = asyncio.run(_list_and_call(server, "pattern_search", {"pattern": "x"}))
-    assert listed == {"pattern_search", "symbol_lookup", "find_callees", "codegen_pick"}
+    assert listed == {
+        "pattern_search",
+        "symbol_lookup",
+        "find_callees",
+        "incremental_reindex",
+        "codegen_pick",
+    }
     exposure = mw.exposure()
-    assert exposure.label() == "core (2 + 1 extra + 1 plugin)"
-    assert exposure.hidden == 1
+    assert exposure.label() == "core (3 + 1 extra + 1 plugin)"
+    assert exposure.hidden == 0
 
 
 def test_hidden_tool_still_answers_call(tmp_path):

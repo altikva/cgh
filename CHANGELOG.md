@@ -12,6 +12,9 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 - **`cgh path --state` prints the resolved state directory.** External scripts
   can read `$(cgh path --state)` instead of hardcoding `.cgh/` (or a legacy
   `.codegraph/`), so they keep working across the rename and any future move.
+  It reports the state dir of the literal `--root` (what `cgh init` there would
+  create), never a parent's or the global `~/.cgh`, so a caller writing into it
+  never touches an unrelated directory.
 
 ### Changed
 - **The package, import name and state directory are all `cgh` now (breaking).**

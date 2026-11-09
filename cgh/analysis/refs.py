@@ -28,6 +28,7 @@ from cgh.analysis.pattern import (
     git_regex_args,
 )
 from cgh.analysis.terraform import git_env, git_toplevel, resolve_ref
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 _log = logging.getLogger(__name__)
@@ -74,9 +75,9 @@ def declared_siblings() -> list[str]:
 
 
 def _project_declares_siblings(root: Path) -> bool:
-    from cgh.core.config import CGH_DIR, CONFIG_FILE
+    from cgh.core.config import CONFIG_FILE
 
-    return bool(_siblings_from(root / CGH_DIR / CONFIG_FILE))
+    return bool(_siblings_from(state_dir_for(root) / CONFIG_FILE))
 
 
 def sibling_repos() -> dict[str, Path]:

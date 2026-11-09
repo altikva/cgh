@@ -17,9 +17,9 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 
 from cgh.cli.output import add_out_option
+from cgh.core.config import state_dir_for
 
 ACTIONS = ("overlap",)
 # Fetching many PR diffs takes a while: give the owner call room.
@@ -71,7 +71,7 @@ def cmd_prs(args: argparse.Namespace) -> None:
     want_json = bool(getattr(args, "json", False)) or args.format == "json"
     Console(stderr=True).print(LOGO)
 
-    if not (Path(root) / ".cgh").is_dir():
+    if not (state_dir_for(root)).is_dir():
         _fail(
             want_json,
             "repo is not indexed by cgh (.cgh/ missing). "

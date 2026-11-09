@@ -8,6 +8,11 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`cgh path --state` prints the resolved state directory.** External scripts
+  can read `$(cgh path --state)` instead of hardcoding `.cgh/` (or a legacy
+  `.codegraph/`), so they keep working across the rename and any future move.
+
 ### Changed
 - **The package, import name and state directory are all `cgh` now (breaking).**
   The Python package and import path moved from `codegraph` to `cgh`, so
@@ -43,6 +48,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   subrepos; weighted hybrid fusion with the BM25 index comes next.
 
 ### Fixed
+- **Every state-dir path follows the resolver, never a hardcoded `.cgh/`.** All
+  reads and writes of the per-repo state (the graph DB, FTS, call log, auth
+  key, config, logs, locks) now resolve through `state_dir_for`, which reads a
+  legacy `.codegraph/` until an init/index/serve renames it. Before this, a new
+  build running a non-migrating command (`status`, `knowledge`, `path`) on a
+  repo still on `.codegraph/` created an empty `.cgh/` that shadowed the real
+  index. `find_cgh_root` also discovers a legacy repo from a subdirectory.
 - **Owner/worker/port markers follow the state dir during the rename.** The
   runtime markers (`owner.pid`, `server.port`, `workers/`, logs) are now
   placed in the resolved state dir instead of a hardcoded `.cgh/`, so a repo

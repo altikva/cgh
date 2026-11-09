@@ -21,6 +21,8 @@ import threading
 from collections.abc import Generator
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _LOCK_FILE = "index.lock"
 
 # Per resolved repo root: a reentrant lock that keeps a second thread of this
@@ -46,7 +48,7 @@ class IndexBusy(RuntimeError):
 
 
 def _lock_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _LOCK_FILE
+    return state_dir_for(repo_root) / _LOCK_FILE
 
 
 def _alive(pid: int) -> bool:

@@ -17,6 +17,8 @@ import os
 import sys
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 FORMATS = ("graphml",)
 
 
@@ -62,7 +64,7 @@ def cmd_export(args: argparse.Namespace) -> None:
     err = Console(stderr=True)
     err.print(LOGO)
     root = os.path.abspath(args.root)
-    if not (Path(root) / ".cgh").is_dir():
+    if not (state_dir_for(root)).is_dir():
         _fail(
             "repo is not indexed by cgh (.cgh/ missing). "
             "Run `cgh init` then `cgh index`."

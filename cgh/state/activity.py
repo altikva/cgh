@@ -13,12 +13,14 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _ACTIVITY_FILE = "activity.log"
 _MAX_LINES = 2000  # truncate when file grows past this
 
 
 def _log_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _ACTIVITY_FILE
+    return state_dir_for(repo_root) / _ACTIVITY_FILE
 
 
 def log(repo_root: str | Path | None, event: str, detail: str = "") -> None:

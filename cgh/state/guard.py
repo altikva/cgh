@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.core.utils import write_json_file
 
 _SIDECAR = "guard_denies.json"
@@ -59,7 +60,7 @@ class CleanupReport:
 
 
 def _sidecar_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _SIDECAR
+    return state_dir_for(repo_root) / _SIDECAR
 
 
 def _load_json(path: Path) -> dict | None:

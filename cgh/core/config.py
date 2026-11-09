@@ -188,7 +188,7 @@ def find_cgh_root(start: str | Path) -> Path | None:
     """
     p = Path(start).resolve()
     for d in [p, *p.parents]:
-        if (d / CGH_DIR).is_dir():
+        if (d / CGH_DIR).is_dir() or (d / LEGACY_CGH_DIR).is_dir():
             return d
     return None
 

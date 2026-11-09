@@ -23,6 +23,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.core.db import _DUCKDB_FILE, _SQLITE_FILE, _backend, reset_connection
 from cgh.state.scan_meta import _meta_path, read_meta
 
@@ -403,8 +404,8 @@ def relocate_store(from_root: str | Path, to_root: str | Path) -> dict:
     """
     from_root = Path(from_root).resolve()
     to_root = Path(to_root).resolve()
-    from_cg = from_root / ".cgh"
-    to_cg = to_root / ".cgh"
+    from_cg = state_dir_for(from_root)
+    to_cg = state_dir_for(to_root)
     to_cg.mkdir(parents=True, exist_ok=True)
 
     backend = _backend(from_root)

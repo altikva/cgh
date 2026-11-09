@@ -27,6 +27,7 @@ from cgh.cli import (
 from cgh.cli import (
     status as phase_status,
 )
+from cgh.core.config import state_dir_for
 from cgh.core.utils import (
     ensure_dir,
     quiet_subprocess_kwargs,
@@ -305,10 +306,10 @@ def _detect_existing_subrepos(root: Path, max_depth: int = 4) -> list[Path]:
                 continue
             if entry.name in skip_dirs or entry.name.startswith("."):
                 continue
-            if entry == root / ".cgh":
+            if entry == state_dir_for(root):
                 continue
             # Found a nested .cgh/ → it's a candidate subrepo
-            if (entry / ".cgh").is_dir() and entry != root:
+            if (state_dir_for(entry)).is_dir() and entry != root:
                 found.append(entry.resolve())
                 # Don't descend further, subrepos federate as a whole
                 continue
@@ -323,7 +324,7 @@ def _detect_existing_state(root: Path) -> dict:
     Probe the project for existing cgh state so `cgh init` can
     choose the right index strategy and warn about stale artifacts.
     """
-    cg_dir = root / ".cgh"
+    cg_dir = state_dir_for(root)
     from cgh.core.db import detect_backend_file
 
     detected = detect_backend_file(root)
@@ -1154,7 +1155,7 @@ def _seed_from_checkout(root: Path, from_root: Path) -> bool:
     )
     from cgh.state.relocate import RelocateError, relocate_store
 
-    if not (from_root / ".cgh").is_dir():
+    if not (state_dir_for(from_root)).is_dir():
         console.print(f"  [red]--from:[/red] no .cgh store under {from_root}")
         raise SystemExit(1)
     if from_root == root:

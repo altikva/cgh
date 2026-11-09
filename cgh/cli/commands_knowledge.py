@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 
 from cgh.cli import console
+from cgh.core.config import state_dir_for
 
 
 def register_knowledge_parser(sub) -> None:
@@ -360,7 +361,7 @@ def _cmd_import(args: argparse.Namespace) -> None:
     )
 
     root = Path(os.path.abspath(args.root)).resolve()
-    if not (root / ".cgh").is_dir():
+    if not (state_dir_for(root)).is_dir():
         _err(f"cgh knowledge import: no .cgh store under {root} (run cgh init)")
     if is_owner_alive(root):
         _err(
@@ -428,9 +429,9 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
     as_json = bool(getattr(args, "json", False))
     from_root = Path(os.path.abspath(args.from_)).resolve()
     to_root = Path(os.path.abspath(args.to)).resolve()
-    if not (from_root / ".cgh" / "call_log.db").exists():
+    if not (state_dir_for(from_root) / "call_log.db").exists():
         _fail(f"No knowledge store under {from_root}", as_json)
-    if not (to_root / ".cgh").exists():
+    if not (state_dir_for(to_root)).exists():
         _fail(f"No .cgh store under {to_root}", as_json)
     if from_root == to_root:
         _fail("--from and --to are the same checkout", as_json)

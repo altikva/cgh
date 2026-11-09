@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+from cgh.core.config import state_dir_for
 from cgh.server._budget import dumps_answer
 
 
@@ -225,7 +226,7 @@ def register(mcp) -> None:
             items = _kr.concepts(query)
             for child in resolve_children(_srv._root):
                 for row in knowledge_search_ro(
-                    child / ".cgh" / "call_log.db",
+                    state_dir_for(child) / "call_log.db",
                     query,
                     kind=kind or None,
                     limit=limit,

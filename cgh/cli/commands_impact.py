@@ -22,11 +22,11 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 from rich.console import Console
 
 from cgh.cli import LOGO
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 # Banner + notes go to stderr so stdout stays a clean JSON / markdown stream
@@ -262,7 +262,7 @@ def cmd_impact(args: argparse.Namespace) -> None:
         "Keep the index fresh with [/dim][cyan]cgh index[/cyan][dim] in CI.[/dim]\n"
     )
 
-    if not (Path(root) / ".cgh").is_dir():
+    if not (state_dir_for(root)).is_dir():
         _fail(
             want_json,
             "repo is not indexed by cgh (.cgh/ missing). "

@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from cgh.analysis.call_rules import is_test_path
+from cgh.core.config import state_dir_for
 
 # Framework-agnostic defaults. Each rule is (path fragment, role, layer).
 # Matched as a substring against the POSIX-normalised relative path.
@@ -161,7 +162,7 @@ def _load_custom_rules(repo_root: str | Path) -> list[tuple[str, str, str]]:
         return _CUSTOM_RULES_CACHE[key]
 
     rules: list[tuple[str, str, str]] = []
-    cfg = Path(repo_root) / ".cgh" / "config.toml"
+    cfg = state_dir_for(repo_root) / "config.toml"
     if cfg.exists():
         try:
             import tomllib

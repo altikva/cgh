@@ -76,3 +76,27 @@ def test_init_project_migrates_a_legacy_repo(tmp_path):
     assert not legacy.exists()
     assert (tmp_path / ".cgh" / "graph.duckdb").read_text() == "x"
     assert (tmp_path / ".cgh" / "config.toml").exists()
+
+
+def test_find_cgh_root_discovers_a_legacy_repo(tmp_path):
+    from cgh.core import config
+
+    (tmp_path / ".codegraph").mkdir()
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    # From a subdir, the legacy .codegraph/ repo root is found like a .cgh/ one.
+    assert config.find_cgh_root(sub) == tmp_path
+    # And reading from a legacy repo never conjures an empty .cgh/ beside it.
+    assert config.state_dir_for(tmp_path) == tmp_path / ".codegraph"
+    assert not (tmp_path / ".cgh").exists()
+
+
+def test_cmd_path_prints_the_resolved_state_dir(tmp_path, capsys):
+    import argparse
+
+    from cgh.cli.commands_index import cmd_path
+
+    (tmp_path / ".codegraph").mkdir()
+    cmd_path(argparse.Namespace(root=str(tmp_path), state=True))
+    out = capsys.readouterr().out.strip()
+    assert out == str((tmp_path / ".codegraph").resolve())

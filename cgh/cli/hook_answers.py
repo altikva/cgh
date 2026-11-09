@@ -30,6 +30,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 # Words in a search pattern that are syntax, not a name worth looking up.
 _NOT_NAMES = frozenset(
     {
@@ -82,7 +84,7 @@ def hooks_setting(key: str, env: str, default: bool, start: Path | None) -> bool
     from cgh.core.config import GLOBAL_DIR
 
     root = repo_root(start or Path.cwd())
-    paths = [root / ".cgh" / "config.toml"] if root else []
+    paths = [state_dir_for(root) / "config.toml"] if root else []
     for path in (*paths, GLOBAL_DIR / "config.toml"):
         configured = _configured(path, key)
         if configured is not None:
@@ -107,7 +109,7 @@ def _configured(path: Path, key: str = "answers") -> bool | None:
 def repo_root(start: Path) -> Path | None:
     """The nearest directory at or above ``start`` that holds a cgh FTS index."""
     for p in (start, *start.parents):
-        if (p / ".cgh" / "fts.db").is_file():
+        if (state_dir_for(p) / "fts.db").is_file():
             return p
     return None
 
@@ -182,7 +184,7 @@ def _fts(root: Path) -> sqlite3.Connection | None:
         from cgh.core.utils import ro_sqlite_uri
 
         return sqlite3.connect(
-            ro_sqlite_uri(root / ".cgh" / "fts.db"), uri=True, timeout=0.5
+            ro_sqlite_uri(state_dir_for(root) / "fts.db"), uri=True, timeout=0.5
         )
     except sqlite3.Error:
         return None
@@ -525,7 +527,7 @@ def text_outline(target: Path, size: int) -> str:
 def _denied_path(root: Path, session_id: str) -> Path:
     from cgh.core.utils import ensure_dir
 
-    path = root / ".cgh" / "sessions"
+    path = state_dir_for(root) / "sessions"
     ensure_dir(path)
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
     return path / f"read-denied-{safe}.json"

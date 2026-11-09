@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 from cgh.server._budget import dumps_answer
 
@@ -29,9 +30,9 @@ def _load_config_toml(root: Path) -> tuple[Path, dict]:
     """Load .cgh/config.toml. Returns (config_path, data)."""
     import tomllib
 
-    from cgh.core.config import CGH_DIR, CONFIG_FILE
+    from cgh.core.config import CONFIG_FILE
 
-    config_path = root / CGH_DIR / CONFIG_FILE
+    config_path = state_dir_for(root) / CONFIG_FILE
     if not config_path.exists():
         return config_path, {}
     with open(config_path, "rb") as f:

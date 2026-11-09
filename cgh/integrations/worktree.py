@@ -22,6 +22,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 # The paths cgh init writes or edits. Files are classified per path; skill and
 # rule dirs are matched by glob because their exact names depend on which
 # skills shipped. .mcp.json and the settings files carry the MCP wiring.
@@ -114,7 +116,7 @@ def worktree_sibling(current_root: str | Path, subrepo: str | Path) -> Path | No
         for wt in _list_worktrees(subrepo)
         if wt not in (subrepo, current_root)
         and wt.parent == parent
-        and (wt / ".cgh").is_dir()
+        and (state_dir_for(wt)).is_dir()
     ]
     # Exactly one sibling, or none: in a flat layout where every ticket
     # worktree of every repo shares one directory, several candidates sit

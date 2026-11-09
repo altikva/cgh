@@ -15,6 +15,7 @@ from pathlib import Path
 from rich.panel import Panel
 
 from cgh.cli import _query_conn, console
+from cgh.core.config import state_dir_for
 
 # "explore" is the interactive whole-graph view; the others render a
 # Mermaid diagram, which stays readable only at a few dozen nodes.
@@ -252,10 +253,10 @@ _ADD_DIR_ACTIONS = ("add", "remove", "list")
 
 def cmd_add_dir(args: argparse.Namespace) -> None:
     """Add or manage extra directories in the graph."""
-    from cgh.core.config import CGH_DIR, CONFIG_FILE
+    from cgh.core.config import CONFIG_FILE
 
     root = Path(os.path.abspath(args.root))
-    config_path = root / CGH_DIR / CONFIG_FILE
+    config_path = state_dir_for(root) / CONFIG_FILE
 
     if not config_path.exists():
         console.print("[yellow]Not initialized. Run 'cgh init' first.[/yellow]")

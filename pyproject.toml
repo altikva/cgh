@@ -162,14 +162,6 @@ dev = [
     "pytest>=8",
 ]
 
-# The 0.20.0 plugin versions are not on PyPI yet (this release publishes
-# them), so the raised >=0.2 floors are unresolvable from the index until
-# then. Point uv at the local plugin dirs so the lock resolves during the
-# release; REMOVE these entries and re-lock once the plugins have published.
-[tool.uv.sources]
-cgh-bugreport = { path = "plugins/cgh-bugreport" }
-cgh-codegen = { path = "plugins/cgh-codegen" }
-
 [tool.ruff]
 target-version = "py311"
 

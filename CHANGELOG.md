@@ -43,6 +43,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   subrepos; weighted hybrid fusion with the BM25 index comes next.
 
 ### Fixed
+- **Owner/worker/port markers follow the state dir during the rename.** The
+  runtime markers (`owner.pid`, `server.port`, `workers/`, logs) are now
+  placed in the resolved state dir instead of a hardcoded `.cgh/`, so a repo
+  still on a legacy `.codegraph/` keeps its markers beside its data. Without
+  this, a new build starting against a repo whose old owner still holds
+  `.codegraph/` would look for the owner under `.cgh/`, miss it, and spawn a
+  second owner against the held DuckDB lock.
 - **`cgh setup codex` registers the server where Codex CLI reads it.** The
   Codex MCP entry was written to the repo-root `.mcp.json`, which Codex CLI
   does not read. It now goes in `.codex/config.toml` as a `[mcp_servers.cgh]`

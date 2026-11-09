@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 def test_version_stamp_round_trip(tmp_path):
@@ -81,8 +81,8 @@ def test_fingerprint_is_version_prefixed(monkeypatch):
 # RECORD is hashed but lists only the .pth shim, so its hash is blind to source
 # edits and must be refused.
 _WHEEL_RECORD = (
-    "codegraph/__init__.py,sha256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,120\n"
-    "codegraph/state/ipc.py,sha256=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB,4200\n"
+    "cgh/__init__.py,sha256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,120\n"
+    "cgh/state/ipc.py,sha256=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB,4200\n"
     "cgh-0.13.0.dist-info/RECORD,,\n"
 )
 _EDITABLE_RECORD = (
@@ -93,7 +93,7 @@ _EDITABLE_RECORD = (
 
 
 def test_record_fingerprint_hashes_a_wheel_record():
-    fp = ipc._record_fingerprint(_WHEEL_RECORD, "codegraph/__init__.py", "0.13.0")
+    fp = ipc._record_fingerprint(_WHEEL_RECORD, "cgh/__init__.py", "0.13.0")
     assert fp is not None and fp.startswith("0.13.0+")
     assert len(fp.split("+", 1)[1]) == 16
 
@@ -102,8 +102,8 @@ def test_record_fingerprint_moves_when_source_changes():
     # A different source hash in RECORD yields a different fingerprint, which is
     # the whole point: a develop-to-develop swap is caught.
     changed = _WHEEL_RECORD.replace("AAAAAAA", "ZZZZZZZ")
-    a = ipc._record_fingerprint(_WHEEL_RECORD, "codegraph/__init__.py", "0.13.0")
-    b = ipc._record_fingerprint(changed, "codegraph/__init__.py", "0.13.0")
+    a = ipc._record_fingerprint(_WHEEL_RECORD, "cgh/__init__.py", "0.13.0")
+    b = ipc._record_fingerprint(changed, "cgh/__init__.py", "0.13.0")
     assert a is not None and b is not None and a != b
 
 
@@ -114,30 +114,27 @@ def test_record_fingerprint_refuses_editable_record():
     # happens, proving the path membership check is what does the work.
     assert "sha256=" in _EDITABLE_RECORD
     assert (
-        ipc._record_fingerprint(_EDITABLE_RECORD, "codegraph/__init__.py", "0.13.0")
-        is None
+        ipc._record_fingerprint(_EDITABLE_RECORD, "cgh/__init__.py", "0.13.0") is None
     )
 
 
 def test_record_fingerprint_refuses_unhashed_record():
     assert (
-        ipc._record_fingerprint(
-            "codegraph/__init__.py,,\n", "codegraph/__init__.py", "0.13.0"
-        )
+        ipc._record_fingerprint("cgh/__init__.py,,\n", "cgh/__init__.py", "0.13.0")
         is None
     )
 
 
 def test_stop_owner_terminates_and_clears_files(monkeypatch, tmp_path):
     root = tmp_path
-    (root / ".codegraph").mkdir()
+    (root / ".cgh").mkdir()
     ipc.owner_pidfile(root).write_text("4242\n", encoding="utf-8")
     ipc.port_file(root).write_text("5555\n", encoding="utf-8")
     ipc.write_owner_version(root, "0.11.6")
 
     killed: list[int] = []
     monkeypatch.setattr(
-        "codegraph.state.pidfile.terminate",
+        "cgh.state.pidfile.terminate",
         lambda pid, graceful_timeout=5.0: killed.append(pid),
     )
 
@@ -149,7 +146,7 @@ def test_stop_owner_terminates_and_clears_files(monkeypatch, tmp_path):
 
 
 def test_stop_owner_noop_without_pid(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     assert ipc.stop_owner(tmp_path) is False
 
 

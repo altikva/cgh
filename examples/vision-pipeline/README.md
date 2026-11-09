@@ -1,6 +1,6 @@
 # Vision pipeline: image to structure, fully local
 
-Turn an image into structured knowledge with the `codegraph.sdk`
+Turn an image into structured knowledge with the `cgh.sdk`
 image functions: a content inventory first (never assume a diagram),
 then only the extractors the content warrants. Architecture schemas
 come back as markdown + Mermaid with identities (IPs, hostnames,
@@ -14,7 +14,7 @@ pip install cgh cgh-vision
 uv pip install cgh cgh-vision
 ```
 
-`cgh-vision` is a plugin: installing it is enough for `codegraph.sdk`
+`cgh-vision` is a plugin: installing it is enough for `cgh.sdk`
 to discover it. No configuration file is needed for the defaults.
 
 ## Step 2: install Ollama and pull the models

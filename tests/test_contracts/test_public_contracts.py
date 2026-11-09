@@ -144,7 +144,7 @@ def describe(obj) -> dict:
 
 
 def test_sdk_contract():
-    import codegraph.sdk as sdk
+    import cgh.sdk as sdk
 
     check_snapshot(
         "sdk",
@@ -164,14 +164,14 @@ def _consumed_extension_namespaces() -> list[str]:
     """Extension namespaces core reads (get_extensions / extension_entries)."""
     pattern = re.compile(r"""(?:get_extensions|extension_entries)\(\s*["']([^"']+)""")
     found: set[str] = set()
-    for src in (REPO / "codegraph").rglob("*.py"):
+    for src in (REPO / "cgh").rglob("*.py"):
         found.update(pattern.findall(src.read_text(encoding="utf-8")))
     return sorted(found)
 
 
 def test_plugin_api_contract():
-    import codegraph.plugin_api as api
-    import codegraph.plugins as plugins
+    import cgh.plugin_api as api
+    import cgh.plugins as plugins
 
     public = sorted(n for n in dir(api) if not n.startswith("_"))
     # Typing helpers imported into the module are not part of the surface.
@@ -213,7 +213,7 @@ def test_plugin_api_contract():
 def test_plugin_module_hook_names_match_the_loader():
     """The hook names recorded in the snapshot are the ones the loader
     actually looks up; renaming either side breaks every plugin."""
-    src = (REPO / "codegraph" / "plugins.py").read_text(encoding="utf-8")
+    src = (REPO / "cgh" / "plugins.py").read_text(encoding="utf-8")
     assert 'getattr(module, "CGH_PLUGIN_API"' in src
     assert re.search(r"""getattr\(\s*module,\s*["']register["']""", src)
 
@@ -252,7 +252,7 @@ def _normalize_schema(schema: dict) -> dict:
 
 
 def _mcp_tools() -> dict[str, dict]:
-    import codegraph.server as srv
+    import cgh.server as srv
 
     if hasattr(srv.mcp, "list_tools"):
         tools = {t.name: t for t in asyncio.run(srv.mcp.list_tools())}
@@ -291,9 +291,9 @@ def _describe_parser(parser: argparse.ArgumentParser) -> dict:
 
 
 def _cli_tree() -> dict:
-    import codegraph.__main__ as cli
+    import cgh.__main__ as cli
 
-    ap = cli._LogoArgumentParser(prog="codegraph", add_help=False)
+    ap = cli._LogoArgumentParser(prog="cgh", add_help=False)
     cli._add_root(ap)
     ap.add_argument("--version", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
@@ -315,7 +315,7 @@ def test_cli_contract():
 def test_cli_registration_mirrors_main():
     """The test rebuilds the parser the way main() does; if main() grows a
     new _register_* call, this fails so the snapshot keeps covering it."""
-    import codegraph.__main__ as cli
+    import cgh.__main__ as cli
 
     body = inspect.getsource(cli.main)
     called = sorted(set(re.findall(r"\b(_register_\w+)\(sub\)", body)))

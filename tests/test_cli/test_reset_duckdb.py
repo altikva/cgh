@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 
-from codegraph.cli.commands_monitor import cmd_reset
+from cgh.cli.commands_monitor import cmd_reset
 
 
 def test_reset_removes_duckdb_graph_keeps_knowledge(tmp_path):
-    cg = tmp_path / ".codegraph"
+    cg = tmp_path / ".cgh"
     cg.mkdir()
     for name in ("graph.duckdb", "graph.duckdb.wal", "fts.db", "fts.db-wal"):
         (cg / name).write_bytes(b"x")

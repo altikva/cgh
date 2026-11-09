@@ -16,12 +16,12 @@ import json
 
 import pytest
 
-import codegraph.analysis.federation as fed
-import codegraph.server as _srv
-from codegraph.analysis.federation import ScopedResult, add_subrepo
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_query import register as register_query
+import cgh.analysis.federation as fed
+import cgh.server as _srv
+from cgh.analysis.federation import ScopedResult, add_subrepo
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_query import register as register_query
 
 
 class _FakeMcp:
@@ -109,7 +109,7 @@ def test_locked_child_resolves_a_lookup_from_fts(federated_parent):
 
 def test_lookup_fallback_ignores_scanner_findings(federated_parent):
     """The FTS symbols table also holds findings; they are not definitions."""
-    from codegraph.core.fts import fts_lookup_symbol, get_fts_conn, upsert_symbol
+    from cgh.core.fts import fts_lookup_symbol, get_fts_conn, upsert_symbol
 
     child_fts = get_fts_conn(federated_parent.parent / "childrepo")
     upsert_symbol(

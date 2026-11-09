@@ -1,7 +1,7 @@
 """Tests for the Terraform parser."""
 
-from codegraph.parsers import get_parser
-from codegraph.parsers.base import FileIndex
+from cgh.parsers import get_parser
+from cgh.parsers.base import FileIndex
 
 
 class TestTerraformParser:
@@ -318,7 +318,7 @@ def test_contract_yaml_alias_bomb_stays_bounded(tmp_path):
     contracts walk must stay capped in sections and in time."""
     import time
 
-    from codegraph.parsers.config_data import _CONTRACT_MAX_SECTIONS, YamlParser
+    from cgh.parsers.config_data import _CONTRACT_MAX_SECTIONS, YamlParser
 
     lines = ["a: &a {" + ", ".join(f"k{i}: v" for i in range(200)) + "}"]
     prev = "a"

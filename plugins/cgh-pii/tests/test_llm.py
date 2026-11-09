@@ -49,7 +49,7 @@ def test_cloud_probe_denied_without_allow_remote_and_audited(monkeypatch, tmp_pa
     pii_llm_allow_remote is set, and the refusal is written to the log."""
     logged: list[tuple] = []
     monkeypatch.setattr(
-        "codegraph.plugin_api.activity_log",
+        "cgh.plugin_api.activity_log",
         lambda root, event, detail: logged.append((event, detail)),
         raising=False,
     )
@@ -62,7 +62,7 @@ def test_cloud_probe_denied_without_allow_remote_and_audited(monkeypatch, tmp_pa
 def test_cloud_probe_allowed_with_flag_is_audited(monkeypatch, tmp_path):
     logged: list[tuple] = []
     monkeypatch.setattr(
-        "codegraph.plugin_api.activity_log",
+        "cgh.plugin_api.activity_log",
         lambda root, event, detail: logged.append((event, detail)),
         raising=False,
     )
@@ -80,7 +80,7 @@ def test_cloud_probe_allowed_with_flag_is_audited(monkeypatch, tmp_path):
 
 
 def test_local_probe_needs_no_flag(monkeypatch, tmp_path):
-    monkeypatch.setattr("codegraph.state.activity.log", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.state.activity.log", lambda *a, **k: None)
     monkeypatch.setattr(
         llm, "_call", lambda text, cfg: '[{"category":"person","quote":"Ada"}]'
     )

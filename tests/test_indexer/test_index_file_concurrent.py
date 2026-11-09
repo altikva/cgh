@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 
-from codegraph.indexer import index_file
+from cgh.indexer import index_file
 
 
 def _spec(i: int) -> str:
@@ -36,7 +36,7 @@ def test_concurrent_index_file_on_one_path_takes_turns(tmp_path):
     # Built by another process, like the owner opening a store an earlier
     # `cgh index` wrote: indexing in this process first hides the collision.
     subprocess.run(
-        [sys.executable, "-m", "codegraph", "index", "--root", str(tmp_path)],
+        [sys.executable, "-m", "cgh", "index", "--root", str(tmp_path)],
         check=True,
         capture_output=True,
     )

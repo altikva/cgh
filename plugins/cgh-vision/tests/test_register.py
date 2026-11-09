@@ -16,13 +16,13 @@ pytest.importorskip("cgh_vision")
 
 import cgh_vision
 
-import codegraph.plugins as plugins
-from codegraph.plugin_api import PluginAPI
+import cgh.plugins as plugins
+from cgh.plugin_api import PluginAPI
 
 
 @pytest.fixture(autouse=True)
 def clean_registries():
-    import codegraph.parsers as parsers
+    import cgh.parsers as parsers
 
     saved = dict(parsers._REGISTRY), dict(parsers._INSTANCES)
     plugins._reset_for_tests()

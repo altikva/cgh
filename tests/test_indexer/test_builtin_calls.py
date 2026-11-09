@@ -1,5 +1,5 @@
 """
-Tests for the language-builtin CALLS filter (codegraph.parsers.builtins).
+Tests for the language-builtin CALLS filter (cgh.parsers.builtins).
 
 The indexer skips CALLS edges whose callee name matches a language built-in
 so callees like ``isinstance``, ``len``, ``String``, ``parseInt`` don't
@@ -14,9 +14,9 @@ import textwrap
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
-from codegraph.parsers.builtins import is_builtin
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
+from cgh.parsers.builtins import is_builtin
 
 
 @pytest.fixture(autouse=True)

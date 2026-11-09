@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core import db as core_db
-from codegraph.core.utils import checked_identifier
-from codegraph.errors import BackendError
+from cgh.core import db as core_db
+from cgh.core.utils import checked_identifier
+from cgh.errors import BackendError
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +27,7 @@ def clean_conns():
 
 
 def _repo(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
@@ -37,19 +37,19 @@ class TestDetectBackendFile:
 
     def test_duckdb_detected(self, tmp_path):
         root = _repo(tmp_path)
-        (root / ".codegraph" / "graph.duckdb").write_bytes(b"")
+        (root / ".cgh" / "graph.duckdb").write_bytes(b"")
         backend, path = core_db.detect_backend_file(root)
         assert backend == "duckdb" and path.name == "graph.duckdb"
 
     def test_duckdb_wins_the_tie(self, tmp_path):
         root = _repo(tmp_path)
-        (root / ".codegraph" / "graph.duckdb").write_bytes(b"")
-        (root / ".codegraph" / "graph.sqlite").write_bytes(b"")
+        (root / ".cgh" / "graph.duckdb").write_bytes(b"")
+        (root / ".cgh" / "graph.sqlite").write_bytes(b"")
         assert core_db.detect_backend_file(root)[0] == "duckdb"
 
     def test_sqlite_alone_detected(self, tmp_path):
         root = _repo(tmp_path)
-        (root / ".codegraph" / "graph.sqlite").write_bytes(b"")
+        (root / ".cgh" / "graph.sqlite").write_bytes(b"")
         assert core_db.detect_backend_file(root)[0] == "sqlite"
 
 
@@ -67,7 +67,7 @@ class TestOpenGraphdbFileRo:
 
     def test_degrades_to_none_on_garbage(self, tmp_path):
         root = _repo(tmp_path)
-        bad = root / ".codegraph" / "graph.duckdb"
+        bad = root / ".cgh" / "graph.duckdb"
         bad.write_bytes(b"not a duckdb file")
         assert core_db.open_graphdb_file_ro("duckdb", bad) is None
 

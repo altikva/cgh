@@ -1,11 +1,11 @@
-"""Tests for codegraph.core.db — GraphDB connection management.
+"""Tests for cgh.core.db — GraphDB connection management.
 
 Fresh repos default to DuckDB (graph.duckdb) since v0.5.
 """
 
 from pathlib import Path
 
-from codegraph.core.db import get_connection, get_db_path, reset_connection
+from cgh.core.db import get_connection, get_db_path, reset_connection
 
 
 class TestGetDbPath:
@@ -13,7 +13,7 @@ class TestGetDbPath:
         """No graph.* files present + no env var -> default backend
         (duckdb) chosen."""
         result = get_db_path(tmp_path)
-        assert result == tmp_path / ".codegraph" / "graph.duckdb"
+        assert result == tmp_path / ".cgh" / "graph.duckdb"
 
     def test_string_input(self, tmp_path):
         result = get_db_path(str(tmp_path))

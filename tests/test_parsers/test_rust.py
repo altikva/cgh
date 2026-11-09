@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from codegraph.parsers.rust import RustParser
+from cgh.parsers.rust import RustParser
 
 
 @pytest.fixture

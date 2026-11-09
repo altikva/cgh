@@ -6,8 +6,8 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: PyInstaller entry point for the standalone cgh binary. It just
 #              hands off to the normal CLI, so a frozen binary routes its argv
-#              exactly like `python -m codegraph` (including the hidden
+#              exactly like `python -m cgh` (including the hidden
 #              _serve_owner subcommand the owner spawn now targets).
-import codegraph.__main__ as _m
+import cgh.__main__ as _m
 
 _m.main()

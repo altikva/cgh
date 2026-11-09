@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-from codegraph import sdk
+from cgh import sdk
 
 SECRET = secrets.token_bytes(32)  # persist this once in your app's vault
 

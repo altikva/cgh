@@ -6,9 +6,9 @@ cgh uses a plugin system for language support. Each parser is a Python class tha
 
 ## How It Works
 
-1. Parser modules live in `codegraph/parsers/`
+1. Parser modules live in `cgh/parsers/`
 2. Each module decorates a class with `@register_parser(".ext")`
-3. On import, `codegraph/parsers/__init__.py` auto-discovers all modules in the package
+3. On import, `cgh/parsers/__init__.py` auto-discovers all modules in the package
 4. The indexer calls `get_parser(extension)` to resolve the right parser for each file
 5. The parser returns a `FileIndex` containing functions, classes, imports, and other symbols
 
@@ -18,7 +18,7 @@ No configuration needed. Drop a file in the parsers directory and it works.
 
 ## Data Classes
 
-Every parser produces a `FileIndex`. The data classes are defined in `codegraph/parsers/base.py`.
+Every parser produces a `FileIndex`. The data classes are defined in `cgh/parsers/base.py`.
 
 ### `FileIndex`
 
@@ -201,15 +201,15 @@ Here is a complete example of adding a new language parser for Rust.
 
 ### Step 1: Create the File
 
-Create `codegraph/parsers/rust.py`:
+Create `cgh/parsers/rust.py`:
 
 ```python
 from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.parsers import register_parser
-from codegraph.parsers.base import (
+from cgh.parsers import register_parser
+from cgh.parsers.base import (
     BaseParser,
     ClassDef,
     FileIndex,
@@ -452,7 +452,7 @@ imported when a file is parsed, not at startup: a build that lacks one (a
 trimmed binary) skips that format with a single log line per process.
 
 **Import resolution.** Parsing an import is not the same as resolving it. A
-parser records what a file imports; a resolver in `codegraph/imports/` maps
+parser records what a file imports; a resolver in `cgh/imports/` maps
 that onto a file in the repo so the graph gains a `File -> File` edge.
 Python, TypeScript and JavaScript, Vue, Java, Go and Rust have one. A
 language without a resolver still reports what it parsed, and `cgh status`
@@ -464,13 +464,13 @@ module, variable, output and provider block and per `locals` entry, with the
 in-module address and the addresses its expressions use (nested blocks,
 string interpolations and heredocs included; comments, literals, `each`,
 `count`, `self`, `path` and for or dynamic iterators left out). The indexer
-(`codegraph/analysis/terraform.py`) scopes each reference to the file's
+(`cgh/analysis/terraform.py`) scopes each reference to the file's
 directory, as Terraform does, and stores it as a name reference so the edge
 is found whatever order files are indexed in. `module.m.out` lands on output
 `out` of the directory a local `source` (`./`, `../`) points to, and each
 module argument on that directory's `var.<argument>`. A registry or git
 source links nothing unless `[terraform] module_sources` in
-`.codegraph/config.toml` maps it to a local checkout (see
+`.cgh/config.toml` maps it to a local checkout (see
 [CONFIGURATION.md](CONFIGURATION.md#terraform)): the source is then read as
 that directory. A mapped directory the graph already indexes (the repo, an
 `extra_dirs` entry) links like a local one; any other (outside every index,

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.parsers import (
+from cgh.parsers import (
     get_parser_for_path,
     get_supported_extensions,
     is_supported,

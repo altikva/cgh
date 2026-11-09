@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import sys
 
-from codegraph import sdk
+from cgh import sdk
 
 # Point at your server. A loopback llama-server started with
 # `cgh vision setup --llamacpp` listens here; change it for LM Studio,

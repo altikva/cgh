@@ -15,16 +15,16 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.server.tools_session import (
+import cgh.server as _srv
+from cgh.server.tools_session import (
     SUMMARY_BUDGET,
     digest_brief,
     register,
     resume_section,
     resume_summary,
 )
-from codegraph.state import call_log
-from codegraph.state.call_log import knowledge_record
+from cgh.state import call_log
+from cgh.state.call_log import knowledge_record
 
 LONG_RULE = (
     "To find where to edit, use cgh before any shell search: symbol_lookup "
@@ -34,7 +34,7 @@ LONG_RULE = (
 
 @pytest.fixture
 def store(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     call_log.reset_for_tests()
     knowledge_record(
         "Use the commit skill", "Never raw git commit.",
@@ -119,7 +119,7 @@ def test_many_long_instructions_are_clipped_and_flagged(store):
 
 
 def test_short_instruction_bodies_fit_in_full(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     call_log.reset_for_tests()
     knowledge_record("Rule", LONG_RULE, kind="standing_instruction", repo_root=tmp_path)
     out = resume_summary(tmp_path)

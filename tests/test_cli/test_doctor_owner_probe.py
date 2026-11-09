@@ -15,9 +15,9 @@ import os
 
 import pytest
 
-import codegraph.cli.commands_monitor as mon
-import codegraph.state.index_lock as index_lock
-import codegraph.state.ipc as ipc
+import cgh.cli.commands_monitor as mon
+import cgh.state.index_lock as index_lock
+import cgh.state.ipc as ipc
 
 
 @pytest.fixture

@@ -21,9 +21,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from codegraph.analysis import pr_overlap as po
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+from cgh.analysis import pr_overlap as po
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 HELPERS = """import os
 
@@ -291,7 +291,7 @@ def test_overlap_levels(repo):
 
 
 def test_cli_without_gh_fails_cleanly(repo, monkeypatch, capsys):
-    from codegraph.cli import commands_prs
+    from cgh.cli import commands_prs
 
     monkeypatch.setattr(po.shutil, "which", lambda name: None)
     args = argparse.Namespace(
@@ -305,7 +305,7 @@ def test_cli_without_gh_fails_cleanly(repo, monkeypatch, capsys):
 
 
 def test_cli_reports_overlap_from_mocked_gh(repo, monkeypatch, capsys, gh_on_path):
-    from codegraph.cli import commands_prs
+    from cgh.cli import commands_prs
 
     beta = _line(HELPERS, "return 2")
     diff = (

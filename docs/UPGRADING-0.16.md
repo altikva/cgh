@@ -84,7 +84,7 @@ when their own index runs.
 - **Seeds for `cgh init --from`.** A seed indexed by 0.15 makes every
   seeded worktree pay the re-parse. Run `cgh index` once in the seed with
   0.16 before seeding from it.
-- **A `.codegraph` copied from another directory** is detected: status
+- **A `.cgh` copied from another directory** is detected: status
   says `copied`, path-based commands (`impact`, `outline`, `files --check`,
   `endpoints`) refuse, and `cgh index` rebuilds it. A seed made with
   `cgh init --from` is not a copy and stays incremental.
@@ -106,7 +106,7 @@ reinstall without them:
 ## Call origins stay on your machine
 
 The call log now records who triggered each tool call (agent, cli, hook,
-internal) and the repo root. It lives in `.codegraph/call_log.db`. cgh
+internal) and the repo root. It lives in `.cgh/call_log.db`. cgh
 sends it nowhere: no telemetry, and cgh-bugreport crash reports carry only
 the fields listed in their payload, which do not include the call log.
 `cgh stats`, `cgh logs` and the `call_stats` tool show it locally. An agent
@@ -134,14 +134,14 @@ again individually. The one case it cannot see is 0.15 running
 if you did that, rebuild the graph as below.
 
 If you would rather start clean, stop the owner, delete only the graph
-file (`.codegraph/graph.duckdb` and its `.wal`, or `.codegraph/graph.sqlite`
+file (`.cgh/graph.duckdb` and its `.wal`, or `.cgh/graph.sqlite`
 for the standalone binary) and index again:
 
 ```bash
 cgh stop
-rm -f .codegraph/graph.duckdb .codegraph/graph.duckdb.wal .codegraph/graph.sqlite
+rm -f .cgh/graph.duckdb .cgh/graph.duckdb.wal .cgh/graph.sqlite
 cgh index
 ```
 
-Do not delete the whole `.codegraph` directory: it also holds your
+Do not delete the whole `.cgh` directory: it also holds your
 knowledge, memory index and call log.

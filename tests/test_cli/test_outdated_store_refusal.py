@@ -19,11 +19,11 @@ import subprocess
 
 import pytest
 
-import codegraph.cli.commands_query as cq
-from codegraph.cli.commands_impact import cmd_impact
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.state.scan_meta import GRAPH_FORMAT
+import cgh.cli.commands_query as cq
+from cgh.cli.commands_impact import cmd_impact
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.state.scan_meta import GRAPH_FORMAT
 
 
 def _git(root, *args):
@@ -68,7 +68,7 @@ def repo(tmp_path):
 
 
 def _age(root, graph_format) -> None:
-    path = root / ".codegraph" / "scan_meta.json"
+    path = root / ".cgh" / "scan_meta.json"
     meta = json.loads(path.read_text(encoding="utf-8"))
     meta["graph_format"] = graph_format
     path.write_text(json.dumps(meta), encoding="utf-8")

@@ -1,0 +1,1658 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-04-12
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: CLI commands: search, lookup, callers, callees, outline, why.
+#              Queries go through the backend-neutral GraphDB protocol
+#              (find_nodes / find_neighbors), so they work on DuckDB and
+#              SQLite alike, and federate across subrepos with a scope tag.
+#              Every query asks a live owner first (it holds the graph DB
+#              lock); search / lookup fall back to the FTS when an older
+#              owner cannot serve them.
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+from rich import box
+from rich.markup import escape
+from rich.table import Table
+from rich.tree import Tree
+
+from cgh.analysis.federation import (
+    child_fts_symbol_lookup,
+    child_fts_symbol_search,
+    for_each_child_graphdb,
+    has_subrepos,
+)
+from cgh.analysis.terraform import TF_RESOURCE_KINDS
+from cgh.cli import _query_conn, _short_path, console
+from cgh.cli.owner_client import note_route
+
+# ---------------------------------------------------------------------------
+# cmd_grep
+# ---------------------------------------------------------------------------
+
+
+def cmd_grep(args: argparse.Namespace) -> None:
+    """Regex/substring pattern search across the indexed repo."""
+    import json as _json
+
+    from cgh.analysis.pattern import pattern_search
+
+    root = os.path.abspath(args.root)
+    hits, backend = pattern_search(
+        root,
+        pattern=args.pattern,
+        glob=getattr(args, "glob", "") or "",
+        max_results=getattr(args, "limit", 50),
+        regex=not getattr(args, "fixed", False),
+        case_sensitive=getattr(args, "case", False),
+    )
+
+    if args.json:
+        print(
+            _json.dumps(
+                {
+                    "pattern": args.pattern,
+                    "glob": args.glob or None,
+                    "backend": backend,
+                    "total": len(hits),
+                    "hits": [
+                        {"file": h.file, "line": h.line, "text": h.text} for h in hits
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not hits:
+        console.print(f"[dim]No matches for '[/dim]{args.pattern}[dim]'[/dim]")
+        return
+
+    console.print(f"[dim]backend: {backend} · {len(hits)} hit(s)[/dim]\n")
+    for h in hits:
+        short = _short_path(h.file, root)
+        console.print(f"  [cyan]{short}[/cyan]:[yellow]{h.line}[/yellow]  {h.text}")
+
+
+# ---------------------------------------------------------------------------
+# Federation helper: run a per-connection query on each subrepo, tag results
+# with the child's scope name. Children whose DB is missing or locked are
+# reported as warnings, never as a crash.
+# ---------------------------------------------------------------------------
+
+
+def _query_children_scoped(
+    root: str, fn
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Run ``fn(conn)`` on each subrepo's RO graph DB, one bucket per scope.
+
+    Returns ``([(scope, rows), …], failures)`` where failures are
+    ``(scope, error)`` pairs. Keeping the rows grouped lets callers merge
+    scopes fairly instead of concatenating them, which matters as soon as
+    the output is paginated; keeping the failures scoped lets them retry a
+    single child through another backend.
+    """
+    buckets: list[tuple[str, list]] = []
+    failures: list[tuple[str, str]] = []
+    if not has_subrepos(root):
+        return buckets, failures
+    for scoped in for_each_child_graphdb(root, lambda conn, _r: fn(conn)):
+        if scoped.error:
+            failures.append((scoped.scope, scoped.error))
+            continue
+        buckets.append((scoped.scope, list(scoped.payload or [])))
+    return buckets, failures
+
+
+def _fmt_scope_errors(failures: list[tuple[str, str]]) -> list[str]:
+    return [f"{scope}: {error}" for scope, error in failures]
+
+
+def _query_children(root: str, fn) -> tuple[list[tuple], list[str]]:
+    """Flat variant of :func:`_query_children_scoped`.
+
+    Returns ``(rows, warnings)`` where each row is ``(scope, *fn_row)``
+    and warnings are per-scope error strings.
+    """
+    buckets, failures = _query_children_scoped(root, fn)
+    rows = [(scope, *item) for scope, items in buckets for item in items]
+    return rows, _fmt_scope_errors(failures)
+
+
+def _interleave(buckets: list[tuple[str, list]]) -> list[tuple]:
+    """Round-robin merge of per-scope rows, tagged with their scope.
+
+    A plain parent-then-children concatenation makes the page slice swallow
+    every child result whenever the parent alone fills the page. Taking one
+    row per scope per round gives every scope a share of the first page.
+    """
+    merged: list[tuple] = []
+    idx = 0
+    while True:
+        added = False
+        for scope, rows in buckets:
+            if idx < len(rows):
+                merged.append((scope, *rows[idx]))
+                added = True
+        if not added:
+            return merged
+        idx += 1
+
+
+def _print_scope_warnings(warnings: list[str]) -> None:
+    for w in warnings:
+        console.print(f"[yellow]⚠ subrepo {w}[/yellow]")
+
+
+def _say_stuck(msg: str) -> None:
+    console.print(f"[yellow]{msg}[/yellow]")
+
+
+def _route(root: str, command: str, tool: str, arguments: dict):
+    """``route_owner_read`` with the remedy printed on this module's console."""
+    from cgh.cli.owner_client import route_owner_read
+
+    _warn_if_copied(root)
+    return route_owner_read(root, command, tool, arguments, _say_stuck)
+
+
+def _warn_if_copied(root: str) -> None:
+    """One stderr line when the store was copied from another checkout: the
+    answers still come, but their paths point at that tree."""
+    import sys
+
+    from cgh.state.scan_meta import foreign_root, read_meta
+
+    try:
+        old = foreign_root(read_meta(root), root)
+    except Exception:
+        return
+    if old:
+        print(
+            f"cgh: this .cgh was built at {old}; results point at that "
+            "tree until `cgh index` rebuilds it here",
+            file=sys.stderr,
+        )
+
+
+def _refuse_if_copied(root: str) -> None:
+    """Exit 1 with the remedy on stderr when the store was copied from another
+    checkout, for commands that look a file up by its path: every such lookup
+    misses there, and an empty answer would read as a real one."""
+    import sys
+
+    from cgh.state.scan_meta import copied_store_message
+
+    message = copied_store_message(root)
+    if message:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _ask_owner(root: str, command: str, tool: str, arguments: dict) -> dict | None:
+    """Run ``tool`` on this repo's live owner, which holds the graph DB for
+    writing and so blocks our own read-only open while it runs.
+
+    Returns the tool's JSON dict when the owner served it, None when no owner
+    answered (the caller then opens the DB itself). A timed-out owner still
+    holds the lock, so a local open would only wait and fail: print the
+    remedy and exit 1 instead. Same for an owner from an older cgh that
+    lacks ``tool``: it holds the lock all the same.
+    """
+    from cgh.cli.owner_client import older_owner_hint
+
+    route, data = _route(root, command, tool, arguments)
+    if route == "older":
+        console.print(f"[yellow]{older_owner_hint(root, tool)}[/yellow]")
+        raise SystemExit(1)
+    return data
+
+
+def _group_by_scope(rows: list[dict], to_row) -> list[tuple[str, list]]:
+    """Owner rows (each tagged with ``scope``) as ``[(scope, [row, ...])]``
+    buckets in first-seen scope order, the shape the local path builds."""
+    buckets: dict[str, list] = {}
+    for r in rows:
+        buckets.setdefault(r.get("scope", "parent"), []).append(to_row(r))
+    return list(buckets.items())
+
+
+def _owner_warnings(data: dict) -> list[str]:
+    """The owner's per-scope federation warnings, as CLI warning strings."""
+    return _fmt_scope_errors(
+        [
+            (w.get("scope", "?"), w.get("error", ""))
+            for w in data.get("warnings") or []
+            if isinstance(w, dict)
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# cmd_search
+# ---------------------------------------------------------------------------
+
+
+# The kinds `cgh search` matches by name, so the owner's search_symbols tool
+# returns exactly the rows _search_symbols_conn gives on a local open.
+_SEARCH_KINDS = ",".join(
+    ["function", "class", *TF_RESOURCE_KINDS, "tf_var", "md_section"]
+)
+
+
+def _search_symbols_conn(conn, query: str, fetch: int) -> list[tuple]:
+    """(kind, name, file_path, start_line) rows for one graph DB."""
+    out: list[tuple] = []
+    for label, kind in [("Function", "function"), ("Class", "class")]:
+        for row in conn.find_nodes(
+            label,
+            contains={"name": query},
+            return_fields=["name", "file_path", "start_line"],
+            limit=fetch,
+        ):
+            out.append((kind, row["name"], row["file_path"], row["start_line"]))
+    # Terraform blocks by address or name, module inputs included
+    # (module.kms.<argument>), in the order search_symbols gives them.
+    from cgh.analysis.terraform import search as tf_search
+
+    for hit in tf_search(conn, query, fetch, True, set()):
+        out.append((hit["kind"], hit["name"], hit["file"], hit["start_line"]))
+    for row in conn.find_nodes(
+        "MdSection",
+        contains={"title": query},
+        return_fields=["title", "file_path", "start_line"],
+        limit=fetch,
+    ):
+        out.append(("md_section", row["title"], row["file_path"], row["start_line"]))
+    return out
+
+
+def _fts_rows(hits) -> list[tuple]:
+    """(kind, name, file_path, start_line) rows from FTS hits."""
+    return [(h.kind, h.name, h.file_path, h.start_line) for h in hits]
+
+
+def _child_fts_fallback(
+    root: str, query: str, fetch: int, scopes: set[str]
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Search the named children through their FTS db instead of the graph."""
+    buckets, failures = child_fts_symbol_search(root, query, fetch, scopes)
+    return [(scope, _fts_rows(hits)) for scope, hits in buckets], failures
+
+
+def _text_search(root: str, text: str, limit: int) -> tuple[list[tuple], list[str]]:
+    """Free-text search over the FTS store of the repo and each subrepo.
+
+    Every scope is opened read-only through SQLite, which takes concurrent
+    readers alongside a running owner (only the graph DB is write-locked).
+    Returns ``(rows, warnings)``; rows are ``(scope, FTSResult)`` sorted by
+    score, best first. Scores are bm25 per scope, not renormalized across
+    scopes.
+    """
+    from cgh.analysis.federation import for_each_fts
+    from cgh.core.fts import fts_search
+
+    rows: list[tuple] = []
+    warnings: list[str] = []
+    for scoped in for_each_fts(
+        root, lambda conn, _r: fts_search(conn, text, limit=limit, prose=True)
+    ):
+        if scoped.error:
+            warnings.append(f"{scoped.scope}: {scoped.error}")
+            continue
+        rows.extend((scoped.scope, hit) for hit in scoped.payload or [])
+    rows.sort(key=lambda r: -r[1].score)
+    return rows[:limit], warnings
+
+
+def _cmd_search_text(args: argparse.Namespace, root: str) -> None:
+    from cgh.core.fts import prose_terms
+
+    text = args.text
+    limit = args.limit if args.limit is not None else 20
+    terms = prose_terms(text)
+    rows, warnings = _text_search(root, text, limit) if terms else ([], [])
+
+    if args.json:
+        out: dict = {
+            "text": text,
+            "terms": terms,
+            "returned": len(rows),
+            "results": [
+                {
+                    "scope": scope,
+                    "file": hit.file_path,
+                    "line": hit.start_line,
+                    "symbol": hit.name,
+                    "kind": hit.kind,
+                    "snippet": hit.docstring,
+                    "score": round(hit.score, 4),
+                }
+                for scope, hit in rows
+            ],
+        }
+        if warnings:
+            out["warnings"] = warnings
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+
+    _print_scope_warnings(warnings)
+    if not terms:
+        console.print("[dim]Nothing left to search once stopwords are removed.[/dim]")
+        return
+    console.print(f"[dim]terms: {' '.join(terms)}[/dim]")
+    if not rows:
+        console.print("[dim]No indexed text matches.[/dim]")
+        return
+
+    federated = has_subrepos(root)
+    for scope, hit in rows:
+        where = f"{_short_path(hit.file_path, root)}:{hit.start_line}"
+        tag = f"  [dim]({scope})[/dim]" if federated else ""
+        console.print(
+            f"  [dim]{hit.score:6.2f}[/dim]  [cyan]{where}[/cyan]  "
+            f"[bold]{escape(hit.name)}[/bold] [dim]{hit.kind}[/dim]{tag}"
+        )
+        snippet = " ".join(hit.docstring.split())
+        if snippet:
+            console.print(f"          [dim]{escape(snippet[:160])}[/dim]")
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    root = os.path.abspath(args.root)
+    text = getattr(args, "text", None)
+    if text is not None:
+        if args.query:
+            console.print("[red]Pass either a query or --text, not both.[/red]")
+            raise SystemExit(2)
+        _cmd_search_text(args, root)
+        return
+    query = args.query
+    if not query:
+        console.print("[red]A query (or --text) is required.[/red]")
+        raise SystemExit(2)
+    limit = args.limit if args.limit is not None else 100
+    offset = getattr(args, "offset", 0) or 0
+    # Fetch offset+limit+1 so we can detect whether more results exist.
+    fetch = offset + limit + 1
+    # Buckets are (scope, [(kind, name, file_path, start_line), …]).
+    buckets: list[tuple[str, list]] = []
+
+    route, served = _route(
+        root,
+        "search",
+        "search_symbols",
+        {"query": query, "limit": fetch, "kinds": _SEARCH_KINDS, "name_only": True},
+    )
+    if route == "owner" and not served.get("name_only"):
+        # An owner from an older cgh ignored the name-only match: its rows
+        # would differ from ours, so answer from the FTS like before.
+        route = "older"
+    if route == "owner":
+        # The owner already federates, every row carries its scope.
+        buckets = _group_by_scope(
+            served.get("results") or [],
+            lambda r: (r["kind"], r["name"], r["file"], r["line"]),
+        )
+        warnings = _owner_warnings(served)
+    else:
+        # No owner: open the graph read-only. An older owner holds the graph
+        # lock, so go straight to the FTS instead of waiting on it.
+        conn = _query_conn(root) if route == "local" else None
+        if conn is None:
+            # Graph DB locked (MCP server is running). Fall back to FTS,
+            # SQLite supports concurrent readers, so this always works.
+            if route == "older":
+                note_route("search", "FTS (older owner)")
+            try:
+                from cgh.core.fts import fts_search, get_fts_conn
+
+                fts_conn = get_fts_conn(root)
+                buckets.append(
+                    ("parent", _fts_rows(fts_search(fts_conn, query, limit=fetch)))
+                )
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+                )
+                return
+        else:
+            buckets.append(("parent", _search_symbols_conn(conn, query, fetch)))
+
+        child_buckets, child_failures = _query_children_scoped(
+            root, lambda c: _search_symbols_conn(c, query, fetch)
+        )
+        buckets.extend(child_buckets)
+        if child_failures:
+            fts_buckets, child_failures = _child_fts_fallback(
+                root, query, fetch, {scope for scope, _ in child_failures}
+            )
+            buckets.extend(fts_buckets)
+        warnings = _fmt_scope_errors(child_failures)
+    federated = has_subrepos(root)
+
+    # Round-robin across scopes: parent-first concatenation would push every
+    # child result past the page slice on repos where the parent alone fills it.
+    results = _interleave(buckets)
+    total_fetched = len(results)
+    has_more = total_fetched > offset + limit
+    page = results[offset : offset + limit]
+
+    if args.json:
+        out = {
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+            "returned": len(page),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+            "results": [
+                {"scope": s, "kind": k, "name": n, "file": fp, "line": ln}
+                for s, k, n, fp, ln in page
+            ],
+        }
+        if warnings:
+            out["warnings"] = warnings
+        print(json.dumps(out, indent=2))
+        return
+
+    _print_scope_warnings(warnings)
+    if not page:
+        if offset > 0:
+            console.print(
+                f"[dim]No more results for '[/dim][bold]{query}[/bold][dim]' at offset {offset}[/dim]"
+            )
+        else:
+            console.print(
+                f"[dim]No symbols matching '[/dim][bold]{query}[/bold][dim]'[/dim]"
+            )
+        return
+
+    table = Table(box=box.SIMPLE_HEAD, title=f"Search: {query}", title_style="bold")
+    table.add_column("Type", width=5)
+    table.add_column("Symbol", style="bold")
+    table.add_column("Location", style="dim")
+    if federated:
+        table.add_column("Scope", style="dim")
+
+    icons = {
+        "function": "[green]fn[/green]",
+        "class": "[yellow]cls[/yellow]",
+        "md_section": "[cyan]doc[/cyan]",
+    }
+    for scope, kind, name, fp, line in page:
+        short = _short_path(fp, root)
+        cells = [icons.get(kind, kind), name, f"{short}:{line}"]
+        if federated:
+            cells.append(scope)
+        table.add_row(*cells)
+
+    console.print(table)
+    start = offset + 1
+    end = offset + len(page)
+    if has_more:
+        console.print(
+            f"[dim]Showing {start}-{end}. More results, next page:[/dim] "
+            f"[cyan]cgh search {query} --offset {offset + limit} -n {limit}[/cyan]"
+        )
+    else:
+        console.print(f"[dim]Showing {start}-{end} (end of results).[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_lookup
+# ---------------------------------------------------------------------------
+
+
+def _lookup_conn(conn, name: str) -> list[tuple]:
+    """(kind, name, file_path, start_line, end_line) rows for one graph DB."""
+    out: list[tuple] = []
+    from cgh.analysis.terraform import lookup as tf_lookup
+
+    for label, kind in [("Function", "function"), ("Class", "class")]:
+        for row in conn.find_nodes(
+            label,
+            where={"name": name},
+            return_fields=["name", "file_path", "start_line", "end_line"],
+        ):
+            out.append(
+                (
+                    kind,
+                    row["name"],
+                    row["file_path"],
+                    row["start_line"],
+                    row["end_line"],
+                )
+            )
+    # Terraform blocks, by address (var.region, google_x.y) or bare name.
+    for hit in tf_lookup(conn, name):
+        out.append(
+            (
+                hit["kind"],
+                hit["name"],
+                hit["file"],
+                hit["start_line"],
+                hit["end_line"],
+            )
+        )
+    for row in conn.find_nodes(
+        "MdSection",
+        contains={"title": name},
+        return_fields=["title", "file_path", "start_line", "end_line"],
+    ):
+        out.append(
+            (
+                "md_section",
+                row["title"],
+                row["file_path"],
+                row["start_line"],
+                row["end_line"],
+            )
+        )
+    return out
+
+
+def _owner_lookup_rows(data: dict) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) rows from symbol_lookup.
+
+    ``lines`` is "start-end", or "start" for a terraform variable, which the
+    local path prints as start-start. None when a definition carries no
+    ``name`` (an owner from an older cgh)."""
+    rows: list[tuple] = []
+    for d in data.get("definitions") or []:
+        if "name" not in d:
+            return None
+        start, _, end = str(d.get("lines", "")).partition("-")
+        rows.append(
+            (
+                d.get("scope", "parent"),
+                d["kind"],
+                d["name"],
+                d["file"],
+                start,
+                end or start,
+            )
+        )
+    return rows
+
+
+# Exit codes of the lookup verbs (lookup, callers, callees), on top of 0
+# (answered) and 1 (could not answer: locked store, older owner...).
+EXIT_NOT_FOUND = 3  # no definition of the name in any scope
+EXIT_AMBIGUOUS = 4  # several definitions, and the command needs one
+
+
+def _definitions(root: str, name: str) -> list[tuple] | None:
+    """(scope, kind, name, file_path, start, end) of the code definitions
+    of ``name`` (functions, classes, Terraform blocks; not doc sections),
+    every scope. None when the graph cannot be read to tell."""
+    served = _ask_owner(root, "lookup", "symbol_lookup", {"name": name})
+    if served is not None:
+        rows = _owner_lookup_rows(served)
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            return None
+        rows = [("parent", *r) for r in _lookup_conn(conn, name)]
+        child_rows, _warnings = _query_children(root, lambda c: _lookup_conn(c, name))
+        rows += child_rows
+    if rows is None:
+        return None
+    return [r for r in rows if r[1] != "md_section"]
+
+
+def _exit_if_unknown(root: str, name: str) -> None:
+    """Exit EXIT_NOT_FOUND, saying so on stderr, when nothing defines
+    ``name``. A ``Class.method`` / ``module.function`` name counts as known
+    when a function carries its last part. Returns when it is defined or
+    the graph cannot tell."""
+    import sys
+
+    defs = _definitions(root, name)
+    if defs is None or defs:
+        return
+    if "." in name:
+        tail = _definitions(root, name.rsplit(".", 1)[-1])
+        if tail is None or any(d[1] == "function" for d in tail):
+            return
+    print(f"cgh: no definition of '{name}' in the index", file=sys.stderr)
+    raise SystemExit(EXIT_NOT_FOUND)
+
+
+def _exit_if_ambiguous(root: str, name: str) -> None:
+    """Exit EXIT_AMBIGUOUS, listing the candidates on stderr, when the bare
+    function name ``name`` has several definitions."""
+    import sys
+
+    if "." in name:
+        return
+    defs = _definitions(root, name)
+    functions = [d for d in defs or () if d[1] == "function"]
+    if len(functions) < 2:
+        return
+    print(
+        f"cgh: '{name}' names {len(functions)} functions; qualify it as "
+        "Class.method or module.function:",
+        file=sys.stderr,
+    )
+    for scope, _kind, _n, fp, start, _end in functions:
+        where = f"  ({scope})" if scope != "parent" else ""
+        print(f"  {_short_path(fp, root)}:{start}{where}", file=sys.stderr)
+    raise SystemExit(EXIT_AMBIGUOUS)
+
+
+def cmd_lookup(args: argparse.Namespace) -> None:
+    root = os.path.abspath(args.root)
+    name = args.name
+    found = False
+
+    icons = {
+        "function": "[green]fn[/green]",
+        "class": "[yellow]cls[/yellow]",
+        "tf_resource": "[magenta]tf[/magenta]",
+        "tf_data": "[magenta]data[/magenta]",
+        "tf_module": "[magenta]mod[/magenta]",
+        "tf_module_arg": "[magenta]arg[/magenta]",
+        "tf_moved": "[magenta]moved[/magenta]",
+        "tf_import": "[magenta]import[/magenta]",
+        "tf_removed": "[magenta]removed[/magenta]",
+        "tf_local": "[magenta]local[/magenta]",
+        "tf_provider": "[magenta]prov[/magenta]",
+        "tf_var": "[magenta]var[/magenta]",
+        "md_section": "[cyan]doc[/cyan]",
+    }
+    federated = has_subrepos(root)
+
+    def _print_hit(scope: str, kind: str, n: str, fp: str, sl, el) -> None:
+        icon = icons.get(kind, kind)
+        short = _short_path(fp, root)
+        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+        console.print(
+            f"  {icon}  [bold]{n}[/bold]  [dim]{short}:{sl}-{el}[/dim]{scope_tag}"
+        )
+
+    route, served = _route(root, "lookup", "symbol_lookup", {"name": name})
+    if route == "owner":
+        rows = _owner_lookup_rows(served)
+        if rows is None:
+            # An owner from an older cgh does not name its definitions
+            # (markdown section titles would be missing): use the FTS.
+            route = "older"
+        else:
+            for scope, kind, n, fp, sl, el in rows:
+                found = True
+                _print_hit(scope, kind, n, fp, sl, el)
+            _print_scope_warnings(_owner_warnings(served))
+            if not found:
+                console.print(
+                    f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
+                )
+                raise SystemExit(EXIT_NOT_FOUND)
+            return
+
+    # No owner: open the graph read-only. An older owner holds the graph
+    # lock, so go straight to the FTS instead of waiting on it.
+    conn = _query_conn(root) if route == "local" else None
+    if conn is None:
+        # Fallback to FTS when the graph DB is locked by the MCP server
+        if route == "older":
+            note_route("lookup", "FTS (older owner)")
+        try:
+            from cgh.core.fts import fts_search, get_fts_conn
+
+            fts_conn = get_fts_conn(root)
+            for hit in fts_search(fts_conn, name, limit=20):
+                if hit.name == name or (hit.kind == "md_section" and name in hit.name):
+                    found = True
+                    _print_hit(
+                        "parent",
+                        hit.kind,
+                        hit.name,
+                        hit.file_path,
+                        hit.start_line,
+                        hit.end_line,
+                    )
+        except Exception as exc:
+            console.print(
+                f"[yellow]Graph DB locked and FTS unavailable: {exc}[/yellow]"
+            )
+            return
+    else:
+        for kind, n, fp, sl, el in _lookup_conn(conn, name):
+            found = True
+            _print_hit("parent", kind, n, fp, sl, el)
+
+    child_buckets, child_failures = _query_children_scoped(
+        root, lambda c: _lookup_conn(c, name)
+    )
+    if child_failures:
+        # A child whose own owner holds the graph write lock still resolves
+        # the name through its FTS index.
+        fts_buckets, child_failures = child_fts_symbol_lookup(
+            root, name, {scope for scope, _ in child_failures}
+        )
+        child_buckets.extend(
+            (
+                scope,
+                [(h.kind, h.name, h.file_path, h.start_line, h.end_line) for h in hits],
+            )
+            for scope, hits in fts_buckets
+        )
+    for scope, rows in child_buckets:
+        for kind, n, fp, sl, el in rows:
+            found = True
+            _print_hit(scope, kind, n, fp, sl, el)
+    _print_scope_warnings(_fmt_scope_errors(child_failures))
+
+    if not found:
+        console.print(
+            f"[dim]No symbol found matching '[/dim][bold]{name}[/bold][dim]'[/dim]"
+        )
+        if not child_failures:
+            # A subrepo that could not be read may hold it: no verdict then.
+            raise SystemExit(EXIT_NOT_FOUND)
+
+
+# ---------------------------------------------------------------------------
+# cmd_endpoints
+# ---------------------------------------------------------------------------
+
+
+def _endpoints_payload(root: str, arguments: dict) -> dict:
+    """The endpoints tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from cgh.analysis.endpoint_query import list_endpoints, select_endpoints
+
+    route, served = _route(root, "endpoints", "endpoints", arguments)
+    if route == "owner" and "tests_excluded" not in served:
+        # An owner from an older cgh ignores the new filters and fields; it
+        # still holds the graph lock, so no local open either.
+        route = "older"
+    if route == "older":
+        from cgh.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'endpoints')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", list_endpoints(conn)))
+    buckets, failures = _query_children_scoped(root, list_endpoints)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = select_endpoints(
+        per_scope,
+        path_pattern=arguments["path_pattern"],
+        method=arguments["method"],
+        include_tests=arguments["include_tests"],
+        short_path=lambda p: _short_path(p, root),
+    )
+    if warnings:
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_endpoints(args: argparse.Namespace) -> None:
+    """HTTP routes with their full paths, handler and location."""
+    root = os.path.abspath(args.root)
+    # A store copied from another checkout would answer with that tree's
+    # files and lines: refuse, as impact and outline do.
+    import sys
+
+    from cgh.state.scan_meta import copied_store_message
+
+    copied = copied_store_message(root)
+    if copied:
+        if args.json:
+            print(json.dumps({"error": copied}, indent=2))
+        else:
+            print(copied, file=sys.stderr)
+        raise SystemExit(1)
+    arguments = {
+        "path_pattern": args.pattern or "",
+        "method": args.method or "",
+        "include_tests": bool(args.include_tests),
+    }
+    payload = _endpoints_payload(root, arguments)
+    rows = [
+        {**row, "framework": framework}
+        for framework, items in (payload.get("by_framework") or {}).items()
+        for row in items
+    ]
+    limit = args.limit if args.limit and args.limit > 0 else None
+    shown = rows[:limit] if limit else rows
+    truncated = len(shown) < len(rows)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "pattern": arguments["path_pattern"] or None,
+                    "total": len(rows),
+                    "tests_excluded": payload.get("tests_excluded", 0),
+                    "truncated": truncated,
+                    "endpoints": shown,
+                    "warnings": payload.get("warnings") or [],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    if not rows:
+        what = (
+            f" matching '{arguments['path_pattern']}'"
+            if arguments["path_pattern"]
+            else ""
+        )
+        console.print(f"[dim]No endpoints{escape(what)}[/dim]")
+    for row in shown:
+        full = row.get("full_paths") or []
+        main = full[0] if full else row["path"]
+        tags = []
+        if main != row["path"]:
+            tags.append("local " + (row["path"] or '""'))
+        if row.get("full_path_partial"):
+            tags.append("prefix not literal")
+        if row.get("match") == "suffix":
+            tags.append("suffix match")
+        if row.get("test"):
+            tags.append("test")
+        if federated and row.get("scope", "parent") != "parent":
+            tags.append(row["scope"])
+        tag = f"  [dim]({escape(', '.join(tags))})[/dim]" if tags else ""
+        console.print(
+            f"  [bold]{row['method']:<6}[/bold] [cyan]{escape(main or '/')}[/cyan]"
+            f"  [green]{escape(row.get('handler') or '?')}[/green]"
+            f"  [dim]{escape(row['file'])}:{row.get('line')}[/dim]{tag}"
+        )
+        for other in full[1:]:
+            console.print(f"         [cyan]{escape(other)}[/cyan]  [dim](also)[/dim]")
+    more = f", showing {len(shown)}" if truncated else ""
+    excluded = payload.get("tests_excluded", 0)
+    note = f", {excluded} test route(s) left out (--include-tests)" if excluded else ""
+    if rows or excluded:
+        console.print(f"[dim]{len(rows)} endpoint(s){more}{note}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_shared_types
+# ---------------------------------------------------------------------------
+
+
+def cmd_shared_types(args: argparse.Namespace) -> None:
+    """Same-named types with agreeing fields in two federated scopes,
+    deduced at query time (the shared_types MCP tool)."""
+    from cgh.analysis.shared_types import shared_types_report
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "min_confidence": float(args.min_confidence),
+        "limit": int(args.limit),
+    }
+    route, served = _route(root, "shared-types", "shared_types", arguments)
+    if route == "older":
+        from cgh.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'shared_types')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner":
+        payload = served or {}
+    else:
+        payload = shared_types_report(
+            lambda: _query_conn(root),
+            root,
+            name=arguments["name"],
+            min_confidence=arguments["min_confidence"],
+            limit=arguments["limit"],
+        )
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    pairs = payload.get("shared_types") or []
+    if not pairs:
+        console.print(f"[dim]No shared types. {escape(payload.get('note', ''))}[/dim]")
+        return
+    for p in pairs:
+        a, b = p["definitions"]
+        console.print(
+            f"  [bold]{escape(p['name'])}[/bold]  [dim]{p['confidence']:.2f}[/dim]"
+            f"  [cyan]{escape(a['scope'])}[/cyan] {escape(_short_path(a['file'], root))}"
+            f":{a['line']}  [cyan]{escape(b['scope'])}[/cyan]"
+            f" {escape(_short_path(b['file'], root))}:{b['line']}"
+        )
+        console.print(f"      [green]{escape(', '.join(p['matched_fields']))}[/green]")
+        for scope, missing in (p.get("only_in") or {}).items():
+            if missing:
+                console.print(
+                    f"      [dim]only in {escape(scope)}: {escape(', '.join(missing))}[/dim]"
+                )
+    more = " (truncated)" if payload.get("truncated") else ""
+    console.print(f"[dim]{len(pairs)} shared type(s), deduced{more}[/dim]")
+
+
+# cmd_why
+# ---------------------------------------------------------------------------
+
+
+def _why_payload(root: str, arguments: dict) -> dict:
+    """The rationale tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from cgh.analysis.rationale import clamp_limit, payload, query
+
+    data = _ask_owner(root, "why", "rationale", arguments)
+    if data is not None:
+        return data
+    cap = clamp_limit(arguments["limit"])
+    target, tag = arguments["target"], arguments["tag"]
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        try:
+            per_scope.append(("parent", query(conn, target, tag, cap + 1)))
+        except Exception as exc:  # an index from an older cgh has no table
+            warnings.append({"scope": "parent", "error": str(exc)})
+    buckets, failures = _query_children_scoped(
+        root, lambda c: query(c, target, tag, cap + 1)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    out = payload(per_scope, target, tag, cap, lambda p: _short_path(p, root))
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def cmd_why(args: argparse.Namespace) -> None:
+    """Rationale comments (WHY:, NOTE:, HACK:, ... or an ADR reference) of a
+    symbol, a file, or the whole index."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "target": args.target or "",
+        "tag": args.tag or "",
+        "limit": args.limit,
+    }
+    data = _why_payload(root, arguments)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return
+    _print_scope_warnings(_owner_warnings(data))
+    rows = data.get("rationale") or []
+    if not rows:
+        what = f" for '{arguments['target']}'" if arguments["target"] else ""
+        console.print(f"[dim]No rationale comments{escape(what)}[/dim]")
+        return
+    federated = has_subrepos(root)
+    for r in rows:
+        where = f"{r['file']}:{r['line']}"
+        if federated and r.get("scope", "parent") != "parent":
+            where = f"{r['scope']}:{where}"
+        symbol = r.get("symbol") or "(module)"
+        console.print(
+            f"  [bold yellow]{escape(r['tag'])}[/bold yellow]  "
+            f"[green]{escape(symbol)}[/green]  [dim]{escape(where)}[/dim]"
+        )
+        console.print(f"      {escape(r['text'])}", soft_wrap=True)
+        if r.get("adr_file"):
+            console.print(f"      [cyan]-> {escape(r['adr_file'])}[/cyan]")
+        elif r.get("adr"):
+            console.print(f"      [dim]{escape(r['adr'])} (no indexed file)[/dim]")
+    more = ", more not shown (--limit)" if data.get("truncated") else ""
+    console.print(f"[dim]{len(rows)} rationale comment(s){more}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# cmd_packages
+# ---------------------------------------------------------------------------
+
+
+def _packages_payload(root: str, arguments: dict) -> dict:
+    """The packages tool payload, from the live owner or a local read-only
+    open (parent plus each subrepo), built by the same query either way."""
+    from cgh.analysis.packages import collect, packages_payload
+
+    route, served = _route(root, "packages", "packages", arguments)
+    if route == "older":
+        from cgh.cli.owner_client import older_owner_hint
+
+        console.print(f"[yellow]{older_owner_hint(root, 'packages')}[/yellow]")
+        raise SystemExit(1)
+    if route == "owner" and served is not None:
+        return served
+
+    per_scope: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", collect(conn)))
+    buckets, failures = _query_children_scoped(root, collect)
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = packages_payload(
+        per_scope, short_path=lambda p: _short_path(p, root), **arguments
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def _dep_text(dep: dict) -> str:
+    group = "" if dep.get("group") == "runtime" else f" [{dep['group']}]"
+    spec = f" {dep['spec']}" if dep.get("spec") else ""
+    return f"{dep['name']}{spec}{group}"
+
+
+def cmd_packages(args: argparse.Namespace) -> None:
+    """Packages declared by manifests, their internal dependencies, who
+    depends on them, internal cycles, and declared MCP servers."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "name": args.name or "",
+        "include_external": bool(args.external),
+        "limit": args.limit if args.limit and args.limit > 0 else 200,
+    }
+    payload = _packages_payload(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    federated = has_subrepos(root)
+    rows = payload.get("packages") or []
+    if not rows:
+        what = f" matching '{arguments['name']}'" if arguments["name"] else ""
+        console.print(f"[dim]No packages{escape(what)}[/dim]")
+    for row in rows:
+        scope = (
+            f"  [dim]({escape(row['scope'])})[/dim]"
+            if federated and row.get("scope", "parent") != "parent"
+            else ""
+        )
+        version = f" {row['version']}" if row.get("version") else ""
+        console.print(
+            f"[bold]{escape(row['name'])}[/bold][dim]{escape(version)}"
+            f"  {row['ecosystem']}  {escape(row['file'])}:{row['line']}[/dim]{scope}"
+        )
+        if row.get("workspaces"):
+            members = ", ".join(row["workspaces"])
+            console.print(f"  [dim]workspace members:[/dim] {escape(members)}")
+        for dep in row.get("internal") or []:
+            console.print(f"  [green]->[/green] {escape(_dep_text(dep))}")
+        for dep in row.get("dependents") or []:
+            console.print(f"  [cyan]<-[/cyan] {escape(_dep_text(dep))}")
+        if "external" in row:
+            for dep in row["external"]:
+                console.print(f"  [dim]ext[/dim] {escape(_dep_text(dep))}")
+        elif row.get("external_count"):
+            console.print(
+                f"  [dim]{row['external_count']} external dependency(ies), "
+                "--external to list[/dim]"
+            )
+    if rows:
+        more = ", truncated (--limit)" if payload.get("truncated") else ""
+        console.print(
+            f"[dim]{payload.get('total', len(rows))} package(s), "
+            f"{payload.get('internal_edges', 0)} internal dependency edge(s)"
+            f"{more}[/dim]"
+        )
+    for cycle in payload.get("cycles") or []:
+        console.print(
+            f"[yellow]cycle[/yellow] {escape(' -> '.join(cycle['packages']))}"
+        )
+    servers = payload.get("mcp_servers") or []
+    if servers:
+        console.print("[bold]MCP servers[/bold]")
+    for srv in servers:
+        target = srv.get("command") or srv.get("url") or "?"
+        if srv.get("args"):
+            target = f"{target} {' '.join(srv['args'])}"
+        keys = srv.get("env_keys", []) + srv.get("header_keys", [])
+        extra = f"  [dim]keys: {escape(', '.join(keys))}[/dim]" if keys else ""
+        console.print(
+            f"  [bold]{escape(srv['name'])}[/bold] [dim]{escape(srv['transport'])}[/dim]"
+            f"  {escape(target)}  [dim]{escape(srv['file'])}:{srv['line']}[/dim]{extra}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# cmd_communities
+# ---------------------------------------------------------------------------
+
+
+def communities_payload_for(root: str, arguments: dict) -> dict:
+    """The communities tool payload, from the live owner or a local
+    read-only open (parent plus each subrepo), built by the same code either
+    way."""
+    from cgh.analysis.communities import communities_for, communities_payload
+
+    served = _ask_owner(root, "communities", "communities", arguments)
+    if served is not None:
+        return served
+    resolution = arguments["resolution"]
+    per_scope: list[tuple[str, object]] = []
+    warnings: list[dict] = []
+    conn = _query_conn(root)
+    if conn is None:
+        warnings.append({"scope": "parent", "error": "graph DB is locked (indexing?)"})
+    else:
+        per_scope.append(("parent", communities_for(conn, resolution)))
+    buckets, failures = _query_children_scoped(
+        root, lambda c: communities_for(c, resolution)
+    )
+    per_scope.extend(buckets)
+    warnings.extend({"scope": s, "error": e} for s, e in failures)
+    payload = communities_payload(
+        per_scope,  # type: ignore[arg-type]
+        lambda p: _short_path(p, root),
+        resolution=resolution,
+        min_size=arguments["min_size"],
+        max_communities=arguments["max_communities"],
+    )
+    if warnings:
+        payload["partial"] = True
+        payload["warnings"] = warnings
+    return payload
+
+
+def cmd_communities(args: argparse.Namespace) -> None:
+    """Subsystems detected from the import and call graph, as a table."""
+    root = os.path.abspath(args.root)
+    arguments = {
+        "resolution": float(args.resolution),
+        "min_size": int(args.min_size),
+        "max_communities": int(args.limit),
+    }
+    payload = communities_payload_for(root, arguments)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    _print_scope_warnings(_owner_warnings(payload))
+    rows = payload.get("communities") or []
+    if not rows:
+        console.print("[dim]No communities: the graph has too few linked files.[/dim]")
+        return
+    federated = len(payload.get("scopes") or []) > 1
+    table = Table(box=box.SIMPLE_HEAD, pad_edge=False, padding=(0, 1))
+    table.add_column("#", justify="right", style="dim", no_wrap=True, min_width=2)
+    if federated:
+        table.add_column("scope", style="magenta")
+    table.add_column("name", style="bold", ratio=1)
+    table.add_column("files", justify="right", no_wrap=True)
+    table.add_column("cohesion", justify="right", no_wrap=True)
+    table.add_column("central", style="cyan", no_wrap=True)
+    table.add_column("links", style="dim", no_wrap=True)
+    for r in rows:
+        links = ", ".join(str(lk["id"]) for lk in r.get("links") or []) or "-"
+        cells = [str(r["id"])]
+        if federated:
+            cells.append(escape(r.get("scope", "parent")))
+        cells += [
+            escape(r["name"]),
+            str(r["size"]),
+            f"{r['cohesion']:.2f}",
+            escape(os.path.basename(r.get("central", ""))),
+            links,
+        ]
+        table.add_row(*cells)
+    console.print(table)
+    hubs = payload.get("shared_utilities") or []
+    if hubs:
+        shown = ", ".join(f"{escape(h['file'])} ({h['degree']})" for h in hubs[:6])
+        more = f" and {len(hubs) - 6} more" if len(hubs) > 6 else ""
+        console.print(f"[dim]Shared utilities, left out:[/dim] {shown}{more}")
+    for s in payload.get("scopes") or []:
+        label = f"{s['scope']}: " if federated else ""
+        console.print(
+            f"[dim]{label}{s['shown']} of {s['communities']} communities shown, "
+            f"{s['files_clustered']} files clustered, modularity {s['modularity']}"
+            + (", more with --limit" if payload.get("truncated") else "")
+            + "[/dim]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# cmd_report
+# ---------------------------------------------------------------------------
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    """The architecture report: Markdown on stdout, --out also saves it."""
+    import sys
+
+    from cgh.cli.output import emit_result
+
+    root = os.path.abspath(args.root)
+    arguments = {
+        "max_items": int(args.limit),
+        "resolution": float(args.resolution),
+    }
+    payload = _ask_owner(root, "report", "architecture_report", arguments)
+    if payload is None:
+        from cgh.analysis.arch_report import build_report
+
+        payload = build_report(
+            _query_conn(root),
+            root,
+            lambda p: _short_path(p, root),
+            resolution=arguments["resolution"],
+            max_items=max(1, arguments["max_items"]),
+        )
+    for w in payload.get("warnings") or []:
+        print(f"cgh: {w.get('scope')}: {w.get('error')}", file=sys.stderr)
+    if args.json:
+        emit_result(json.dumps(payload, indent=2), args.out, "architecture.json")
+        return
+    emit_result(payload.get("markdown", ""), args.out, "ARCHITECTURE.md")
+
+
+# ---------------------------------------------------------------------------
+# cmd_callers
+# ---------------------------------------------------------------------------
+
+
+def _callers_conn(conn, fn_name: str) -> list[tuple]:
+    from cgh.analysis.callers import callers_of
+
+    return [
+        (
+            c["caller"],
+            c["file"],
+            c["line"],
+            c.get("targets", []),
+            c.get("via", ""),
+            c.get("resolution", ""),
+        )
+        for c in callers_of(conn, fn_name)
+    ]
+
+
+def _guess_tag(resolution: str) -> str:
+    """A compact marker for a row matched by name only: "?" for one
+    definition, "??" for several. Empty for a resolved or interface row
+    (and for an owner from an older cgh, which sends no resolution)."""
+    from cgh.analysis.provenance import AMBIGUOUS, NAME
+
+    if resolution == NAME:
+        return "  [yellow]?[/yellow]"
+    if resolution == AMBIGUOUS:
+        return "  [yellow]??[/yellow]"
+    return ""
+
+
+_GUESS_LEGEND = (
+    "[dim]? matched by name only, ?? several definitions share the name[/dim]"
+)
+
+
+def cmd_callers(args: argparse.Namespace) -> None:
+    root = os.path.abspath(args.root)
+    federated = has_subrepos(root)
+    rows: list[tuple] = []
+
+    served = _ask_owner(root, "callers", "find_callers", {"fn_name": args.fn_name})
+    if served is not None:
+        # The owner already federates, every row carries its scope.
+        rows = [
+            (
+                c.get("scope", "parent"),
+                c["caller"],
+                c["file"],
+                c["line"],
+                c.get("targets", []),
+                c.get("via", ""),
+                c.get("resolution", ""),
+            )
+            for c in served.get("callers") or []
+        ]
+        warnings = _owner_warnings(served)
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+                if federated
+                else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            )
+        else:
+            rows = [("parent", *r) for r in _callers_conn(conn, args.fn_name)]
+
+        child_rows, warnings = _query_children(
+            root, lambda c: _callers_conn(c, args.fn_name)
+        )
+        rows.extend(child_rows)
+    _print_scope_warnings(warnings)
+
+    if not rows:
+        _exit_if_unknown(root, args.fn_name)
+        console.print(
+            f"[dim]No callers of '[/dim][bold]{args.fn_name}[/bold][dim]' found[/dim]"
+        )
+        return
+
+    tree = Tree(f"[bold yellow]{args.fn_name}[/bold yellow] [dim]is called by:[/dim]")
+    # When the name matches several definitions, each caller lists the files
+    # it may reach. Repeating that list on every row made a common name
+    # unreadable (thousands of lines), so callers are grouped under each
+    # distinct list instead, printed once.
+    groups: dict[tuple, list[tuple]] = {}
+    for scope, name, fp, line, targets, via, resolution in rows:
+        groups.setdefault(tuple(targets or ()), []).append(
+            (scope, name, fp, line, via, resolution)
+        )
+    for targets, members in groups.items():
+        branch = tree
+        if targets:
+            branch = tree.add(
+                "[dim]-> "
+                + ", ".join(_short_path(t, root) for t in targets)
+                + f"  ({len(members)} caller{'s' if len(members) != 1 else ''})[/dim]"
+            )
+        for scope, name, fp, line, via, resolution in members:
+            short = _short_path(fp, root)
+            scope_tag = (
+                f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+            )
+            # Reached through an interface method the queried one implements.
+            via_tag = f"  [dim]via {via}[/dim]" if via else ""
+            branch.add(
+                f"[green]{name}[/green]  [dim]{short}:{line}[/dim]"
+                f"{via_tag}{_guess_tag(resolution)}{scope_tag}"
+            )
+    console.print(tree)
+    if any(_guess_tag(r[6]) for r in rows):
+        console.print(_GUESS_LEGEND)
+
+
+# ---------------------------------------------------------------------------
+# cmd_callees
+# ---------------------------------------------------------------------------
+
+
+def _callees_conn(conn, fn_name: str) -> list[tuple]:
+    from cgh.analysis.interfaces import qualified_methods
+    from cgh.analysis.provenance import RESOLVED, EdgeProvenance
+
+    # `Class.method` / `module.function` selects those definitions only.
+    start_ids = qualified_methods(conn, fn_name) if "." in fn_name else []
+    anchors = [{"src_key": i} for i in start_ids] or [{"src_where": {"name": fn_name}}]
+    found = [
+        row
+        for anchor in anchors
+        for row in conn.find_neighbors(
+            "CALLS",
+            return_src=["id"],
+            return_dst=["id", "name", "file_path", "start_line"],
+            **anchor,
+        )
+    ]
+    from cgh.analysis.interfaces import InterfaceResolver
+    from cgh.analysis.provenance import INTERFACE
+
+    resolver = InterfaceResolver(conn)
+    rows: list[tuple] = []
+    for row, resolution in zip(found, EdgeProvenance(conn).of_rows(found), strict=True):
+        rows.append(
+            (row["dst_name"], row["dst_file_path"], row["dst_start_line"], resolution)
+        )
+        # A call to an interface method with a single implementation lands
+        # there, as find_callees reports it.
+        impl = resolver.sole_implementation(str(row.get("dst_id") or ""))
+        for r in (
+            conn.find_nodes(
+                "Function",
+                where={"id": impl},
+                return_fields=["name", "file_path", "start_line"],
+                limit=1,
+            )
+            if impl
+            else ()
+        ):
+            rows.append((r["name"], r["file_path"], r["start_line"], INTERFACE))
+    if "." in fn_name:
+        # A Terraform address: the blocks it references.
+        from cgh.analysis.terraform import used_by
+
+        rows += [
+            (r["dst_address"], r["dst_file_path"], r["dst_start_line"], RESOLVED)
+            for r in used_by(conn, fn_name)
+        ]
+    return rows
+
+
+def cmd_callees(args: argparse.Namespace) -> None:
+    root = os.path.abspath(args.root)
+    federated = has_subrepos(root)
+    rows: list[tuple] = []
+    # The callees of several same-named functions would read as one list.
+    _exit_if_ambiguous(root, args.fn_name)
+
+    served = _ask_owner(
+        root, "callees", "find_callees", {"fn_name": args.fn_name, "max_depth": 1}
+    )
+    if served is not None:
+        # The owner already federates, every row carries its scope.
+        rows = [
+            (
+                c.get("scope", "parent"),
+                c["callee"],
+                c["file"],
+                c["line"],
+                c.get("resolution", ""),
+            )
+            for c in served.get("callees") or []
+        ]
+        warnings = _owner_warnings(served)
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+                if federated
+                else "[yellow]Graph DB is locked (indexing?). Try again later.[/yellow]"
+            )
+        else:
+            rows = [("parent", *r) for r in _callees_conn(conn, args.fn_name)]
+
+        child_rows, warnings = _query_children(
+            root, lambda c: _callees_conn(c, args.fn_name)
+        )
+        rows.extend(child_rows)
+    _print_scope_warnings(warnings)
+
+    if not rows:
+        _exit_if_unknown(root, args.fn_name)
+        console.print(f"[dim]'{args.fn_name}' calls no indexed functions[/dim]")
+        return
+
+    tree = Tree(f"[bold green]{args.fn_name}[/bold green] [dim]calls:[/dim]")
+    for scope, name, fp, line, resolution in rows:
+        short = _short_path(fp, root)
+        scope_tag = f"  [dim]({scope})[/dim]" if federated and scope != "parent" else ""
+        tree.add(
+            f"[yellow]{name}[/yellow]  [dim]{short}:{line}[/dim]"
+            f"{_guess_tag(resolution)}{scope_tag}"
+        )
+    console.print(tree)
+    if any(_guess_tag(r[4]) for r in rows):
+        console.print(_GUESS_LEGEND)
+
+
+# ---------------------------------------------------------------------------
+# cmd_outline
+# ---------------------------------------------------------------------------
+
+
+def _outline_conn(conn, abs_path: str, rel_arg: str) -> list[dict]:
+    """MdSection rows for one file, exact path first, then suffix match."""
+    rows = conn.find_nodes(
+        "MdSection",
+        where={"file_path": abs_path},
+        return_fields=["title", "level", "start_line", "end_line"],
+        order_by=["start_line"],
+    )
+    if rows:
+        return rows
+    # Suffix fallback: the indexed path may differ in prefix (extra_dirs,
+    # symlinks). Substring-match on the argument, then keep true suffixes.
+    candidates = conn.find_nodes(
+        "MdSection",
+        contains={"file_path": rel_arg},
+        return_fields=["file_path", "title", "level", "start_line", "end_line"],
+        order_by=["start_line"],
+    )
+    norm = rel_arg.lower().replace("\\", "/")
+    return [
+        r
+        for r in candidates
+        if (r.get("file_path") or "").lower().replace("\\", "/").endswith(norm)
+    ]
+
+
+def cmd_outline(args: argparse.Namespace) -> None:
+    root = os.path.abspath(args.root)
+    _refuse_if_copied(root)
+
+    file_path = args.file
+    if not os.path.isabs(file_path):
+        file_path = str(Path(root) / file_path)
+
+    rows: list[dict] = []
+    scope = "parent"
+    served = _ask_owner(root, "outline", "doc_outline", {"file_path": file_path})
+    if served is not None:
+        # Parent rows only: subrepo files resolve against their own root in
+        # the child loop below, as on the local path. The owner matches the
+        # exact path, so the suffix fallback only runs on a local open.
+        rows = [
+            {
+                "title": r["title"],
+                "level": r["level"],
+                "start_line": r["line"],
+                "end_line": r.get("end_line"),
+            }
+            for r in served.get("outline") or []
+            if r.get("scope", "parent") == "parent"
+        ]
+    else:
+        conn = _query_conn(root)
+        if conn is None:
+            console.print(
+                "[yellow]Graph DB is locked (indexing?). Parent scope skipped.[/yellow]"
+            )
+        else:
+            rows = _outline_conn(conn, file_path, args.file)
+
+    if not rows and has_subrepos(root):
+        # The file may belong to a federated subrepo, first scope wins.
+        def _child_outline(c, child_root):
+            child_abs = args.file
+            if not os.path.isabs(child_abs):
+                child_abs = str(Path(child_root) / child_abs)
+            return _outline_conn(c, child_abs, args.file)
+
+        for scoped in for_each_child_graphdb(root, _child_outline):
+            if scoped.error or not scoped.payload:
+                continue
+            rows = scoped.payload
+            scope = scoped.scope
+            break
+
+    if not rows:
+        console.print(f"[dim]No sections found in '{args.file}' (is it indexed?)[/dim]")
+        return
+
+    # Build tree
+    title = f"[bold cyan]{args.file}[/bold cyan]"
+    if scope != "parent":
+        title += f"  [dim]({scope})[/dim]"
+    tree = Tree(title)
+    seen = set()
+    node_stack: list[tuple[int, Tree]] = [(0, tree)]  # (level, tree_node)
+
+    for row in rows:
+        key = (row["start_line"], row["title"])
+        if key in seen:
+            continue
+        seen.add(key)
+
+        level = row["level"]
+        section_title = row["title"]
+        line = row["start_line"]
+
+        # Pop stack to find parent
+        while len(node_stack) > 1 and node_stack[-1][0] >= level:
+            node_stack.pop()
+
+        parent = node_stack[-1][1]
+        level_colors = {
+            1: "bold cyan",
+            2: "green",
+            3: "yellow",
+            4: "dim",
+            5: "dim",
+            6: "dim",
+        }
+        style = level_colors.get(level, "dim")
+
+        child = parent.add(f"[{style}]{section_title}[/{style}] [dim]L{line}[/dim]")
+        node_stack.append((level, child))
+
+    console.print(tree)
+
+
+def cmd_semantic(args: argparse.Namespace) -> None:
+    """Semantic (vector) search over symbol names and docstrings: embed the
+    query and rank symbols by cosine. Reads the FTS directly, so it works
+    while an owner holds the graph lock."""
+    root = os.path.abspath(args.root)
+    query = args.query
+    if not query:
+        console.print("[red]A query is required.[/red]")
+        raise SystemExit(2)
+    limit = args.limit if args.limit is not None else 15
+    mode = getattr(args, "mode", None) or "lexical"
+    from cgh.core.embedder import EmbedderUnavailable
+    from cgh.core.fts import get_fts_conn
+    from cgh.core.semantic import semantic_search
+
+    try:
+        conn = get_fts_conn(root)
+        hits = semantic_search(conn, query, limit=limit, mode=mode)
+    except EmbedderUnavailable as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise SystemExit(1) from None
+    if not hits:
+        console.print(
+            "[dim]No results. Is the repo indexed? Run `cgh index` first.[/dim]"
+        )
+        return
+    for h in hits:
+        where = f"{_short_path(h.file_path, root)}:{h.line}"
+        console.print(f"[green]{h.score:.3f}[/green]  {h.name}  [dim]{where}[/dim]")

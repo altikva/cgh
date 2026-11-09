@@ -4,9 +4,8 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Tests for the `python -m cgh` entry shim: it runs the real CLI
-#              and its version mirrors codegraph, while codegraph stays the
-#              canonical import name.
+# Description: `python -m cgh` runs the real CLI through cgh/__main__.py. The
+#              package, import name and CLI are all cgh.
 
 from __future__ import annotations
 
@@ -25,15 +24,9 @@ def test_python_m_cgh_runs_and_shows_version():
     assert "context graph hub" in out.stdout
 
 
-def test_cgh_shim_version_matches_codegraph():
+def test_cgh_package_is_importable():
     import cgh
-    import codegraph
 
-    assert cgh.__version__ == codegraph.__version__
-
-
-def test_codegraph_is_still_the_real_package():
-    # The shim must not shadow the real package: actual modules live under
-    # codegraph, not cgh.
-    import codegraph.indexer  # noqa: F401
-    from codegraph.__main__ import main  # noqa: F401
+    assert cgh.__version__
+    import cgh.indexer
+    from cgh.__main__ import main  # noqa: F401

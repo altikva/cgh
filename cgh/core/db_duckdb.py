@@ -1,0 +1,965 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-06-01
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: DuckDB backend implementing the GraphDB protocol.
+#
+# Status: schema works end-to-end (CREATE TABLE / SELECT / INSERT all run).
+# The indexer and MCP tools still emit Cypher and therefore can't yet talk to
+# this backend: that's the next PR in the chain. Selecting this backend
+# today via `CGH_DB=duckdb` is intended for the DuckDB-port work, not
+# end-user use.
+
+from __future__ import annotations
+
+import functools
+import importlib.util
+import os
+import sys
+import threading
+import time
+from typing import Any
+
+# DuckDB (1.5) tries `import pandas` twice while converting each bound
+# parameter value and does not remember the failure: with pandas absent, each
+# try searches every sys.path entry again, over a third of a full index. A None entry in sys.modules makes that import fail at once with
+# the same ModuleNotFoundError. Set only when pandas is not installed, so an
+# installed pandas is never hidden; optional users (duckdb's .df() and its
+# spark shim) already handle the ImportError, and find_spec still returns None.
+if "pandas" not in sys.modules and importlib.util.find_spec("pandas") is None:
+    sys.modules["pandas"] = None  # type: ignore[assignment]
+
+import duckdb
+
+from cgh.core.protocol import QueryResult
+from cgh.core.schema_duckdb import init_schema
+from cgh.core.utils import checked_identifier as _ident
+from cgh.core.utils import chunks as _chunks
+
+# A concurrent writer (a git post-checkout `cgh _reindex_hook`, another
+# `cgh index`, or a running owner) holds DuckDB's exclusive file lock, and a
+# fresh open then fails with "Could not set lock on file". That contention is
+# almost always transient, so wait it out with backoff instead of aborting the
+# whole index. CGH_LOCK_WAIT (seconds) bounds the wait; 0 disables the retry.
+_LOCK_WAIT_SECONDS = float(os.environ.get("CGH_LOCK_WAIT", "12") or 0)
+
+
+def _is_lock_error(exc: Exception) -> bool:
+    """True for DuckDB's transient file-lock contention, not other I/O errors."""
+    return isinstance(exc, duckdb.IOException) and "lock" in str(exc).lower()
+
+
+def _connect_with_retry(
+    db_path: str,
+    read_only: bool,
+    *,
+    wait_seconds: float = _LOCK_WAIT_SECONDS,
+    _sleep=time.sleep,
+) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection, waiting out a transient file-lock held by a
+    concurrent writer. Only the "could not set lock" IOException is retried, up
+    to ``wait_seconds`` with exponential backoff; any other error, or the budget
+    running out, re-raises so a genuinely stuck lock is still reported clearly."""
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    delay = 0.1
+    while True:
+        try:
+            return duckdb.connect(db_path, read_only=read_only)
+        except duckdb.IOException as exc:
+            if not _is_lock_error(exc) or time.monotonic() >= deadline:
+                raise
+            _sleep(delay)
+            delay = min(delay * 2, 1.0)
+
+
+class DuckDBQueryResult:
+    """Adapter wrapping a duckdb cursor result to match the QueryResult protocol.
+
+    DuckDB returns column names + rows on the cursor itself rather than on
+    a separate result object; we materialise both up front so the
+    iterator interface matches the QueryResult protocol exactly.
+    """
+
+    def __init__(
+        self, cursor: duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
+    ) -> None:
+        # description: list of (name, type, ...) per stdlib DB-API
+        desc = cursor.description or []
+        self._columns: list[str] = [d[0] for d in desc]
+        self._rows: list[tuple[Any, ...]] = cursor.fetchall()
+        self._cursor_pos = 0
+
+    def has_next(self) -> bool:
+        return self._cursor_pos < len(self._rows)
+
+    def get_next(self) -> list[Any]:
+        row = self._rows[self._cursor_pos]
+        self._cursor_pos += 1
+        return list(row)
+
+    def get_column_names(self) -> list[str]:
+        return list(self._columns)
+
+
+class DuckDBGraphDB:
+    """Adapter wrapping duckdb.DuckDBPyConnection to match the GraphDB protocol.
+
+    The schema is created on construction so callers can rely on every
+    table existing on first execute() call.
+    """
+
+    def __init__(self, db_path: str, read_only: bool = False) -> None:
+        # See _locked below: one owner shares this object across threads.
+        self._lock = threading.RLock()
+        # Set by _locked once DuckDB reports a fatal error on this
+        # connection: from then on every statement fails, and the connection
+        # cache must drop this object instead of handing it out again.
+        self._invalidated = False
+        self._conn = _connect_with_retry(db_path, read_only)
+        if not read_only:
+            init_schema(self._conn)
+
+    @property
+    def invalidated(self) -> bool:
+        """True once a fatal DuckDB error poisoned this connection."""
+        return self._invalidated
+
+    def healthy(self) -> bool:
+        """Run a trivial query; False when the database is invalidated."""
+        try:
+            self._conn.execute("SELECT 1").fetchall()
+        except duckdb.Error as exc:
+            if is_fatal_error(exc):
+                self._invalidated = True
+            return False
+        return True
+
+    def execute(self, query: str, params: dict | None = None) -> QueryResult:
+        # DuckDB's positional-only "?" placeholder doesn't accept a dict.
+        # MCP tools using named parameters ($name) need to use named-style
+        # statements via prepare(); for the first port pass we accept both
+        # styles: dict params go through execute(query, list_of_values)
+        # rendered from the dict.
+        if params is None:
+            cursor = self._conn.execute(query)
+        elif isinstance(params, dict):
+            cursor = self._conn.execute(query, params)
+        else:
+            cursor = self._conn.execute(query, params)
+        return DuckDBQueryResult(cursor)
+
+    def close(self) -> None:
+        self._conn.close()
+
+    # --- Write helpers --------------------------------------------------
+
+    def upsert_node(
+        self,
+        label: str,
+        key_field: str,
+        key_value: Any,
+        props: dict[str, Any],
+    ) -> None:
+        """``INSERT ... ON CONFLICT DO UPDATE`` upsert of one node."""
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        table = NODES[label].table
+
+        cols = [key_field, *props.keys()]
+        values = [key_value, *props.values()]
+        placeholders = ", ".join("?" for _ in cols)
+        col_list = ", ".join(cols)
+        if props:
+            update_clause = ", ".join(f"{c} = excluded.{c}" for c in props)
+            sql = (
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                f"ON CONFLICT ({key_field}) DO UPDATE SET {update_clause}"
+            )
+        else:
+            sql = (
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                f"ON CONFLICT ({key_field}) DO NOTHING"
+            )
+        self._conn.execute(sql, values)
+
+    def upsert_nodes(
+        self, label: str, key_field: str, rows: list[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Batched upsert_node: one multi-row statement per chunk. A key
+        given twice keeps its last props (one statement may not update the
+        same row twice)."""
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if not rows:
+            return
+        table = NODES[label].table
+        last = {key: props for key, props in rows}
+        keys = list(next(iter(last.values())).keys())
+        if any(list(props.keys()) != keys for props in last.values()):
+            raise ValueError(f"{label} rows need the same props")
+        cols = [key_field, *keys]
+        conflict = (
+            "DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in keys)
+            if keys
+            else "DO NOTHING"
+        )
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        items = list(last.items())
+        for chunk in _chunks(items, max(1, 400 // len(cols))):
+            self._conn.execute(
+                f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                + ", ".join(row_ph for _ in chunk)
+                + f" ON CONFLICT ({key_field}) {conflict}",
+                [v for key, props in chunk for v in (key, *props.values())],
+            )
+
+    def ensure_edge(
+        self,
+        edge_type: str,
+        src_key_value: Any,
+        dst_key_value: Any,
+        edge_props: dict[str, Any] | None = None,
+    ) -> None:
+        """``INSERT ... ON CONFLICT DO NOTHING`` against the edge table."""
+        from cgh.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = EDGES[edge_type]
+
+        cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
+        values: list[Any] = [src_key_value, dst_key_value]
+        if spec.prop_columns:
+            if edge_props is None:
+                raise ValueError(
+                    f"Edge {edge_type!r} requires props {spec.prop_columns}, got None"
+                )
+            for col in spec.prop_columns:
+                values.append(edge_props.get(col, ""))
+        placeholders = ", ".join("?" for _ in cols)
+        col_list = ", ".join(cols)
+        sql = (
+            f"INSERT INTO {spec.table} ({col_list}) VALUES ({placeholders}) "
+            f"ON CONFLICT DO NOTHING"
+        )
+        self._conn.execute(sql, values)
+
+    def ensure_edges(self, edge_type: str, pairs: list[tuple[Any, ...]]) -> None:
+        """Batched ensure_edge: (src, dst, *props) rows, props in the edge's
+        prop_columns order."""
+        from cgh.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = EDGES[edge_type]
+        cols = [spec.src_column, spec.dst_column, *spec.prop_columns]
+        width = len(cols)
+        rows = [(*row[:2], *("" if v is None else v for v in row[2:])) for row in pairs]
+        if any(len(row) != width for row in rows):
+            raise ValueError(f"Edge {edge_type!r} rows need {width} values")
+        unique = list(dict.fromkeys(rows))
+        row_ph = "(" + ", ".join("?" for _ in cols) + ")"
+        for chunk in _chunks(unique, 400 // width * 2):
+            values = ", ".join(row_ph for _ in chunk)
+            self._conn.execute(
+                f"INSERT INTO {spec.table} ({', '.join(cols)}) "
+                f"VALUES {values} ON CONFLICT DO NOTHING",
+                [v for row in chunk for v in row],
+            )
+
+    def purge_file_data(self, file_path: str) -> None:
+        """Delete all data tied to file_path. Edges first, then nodes."""
+        from cgh.core.graph_model import NODES, edges_touching
+
+        # Step 1: for each node label that's keyed by file_path, look up
+        # the affected node ids, then drop every edge touching that label.
+        for spec in NODES.values():
+            if not spec.has_file_path:
+                continue
+            # Collect ids of nodes belonging to this file so we can
+            # delete edges that reference them by id (vs file_path).
+            ids_rows = self._conn.execute(
+                f"SELECT id FROM {spec.table} WHERE file_path = ?",
+                [file_path],
+            ).fetchall()
+            # Bind ids as strings. Every id/to_id/from_id column is TEXT, so a
+            # string IN-list compares correctly. A legacy or anomalous DB whose
+            # node id column is integer-typed (an old table that CREATE TABLE IF
+            # NOT EXISTS never migrated) would otherwise hand back Python ints,
+            # and a single int makes DuckDB retype the whole IN-list to INT32
+            # and cast the TEXT to_id column to match, which raises on any
+            # non-numeric id and aborts the reindex, silently dropping the file.
+            ids = [str(r[0]) for r in ids_rows]
+
+            for edge in edges_touching(spec.label):
+                # Determine which side of the edge points at this label.
+                # If both sides do (e.g. CALLS Function->Function), purge both.
+                if edge.src_label == spec.label:
+                    column = edge.src_column
+                    if column.endswith("_path"):
+                        self._conn.execute(
+                            f"DELETE FROM {edge.table} WHERE {column} = ?",
+                            [file_path],
+                        )
+                    elif ids:
+                        placeholders = ", ".join("?" for _ in ids)
+                        self._conn.execute(
+                            f"DELETE FROM {edge.table} WHERE {column} IN ({placeholders})",
+                            ids,
+                        )
+                # Also purge the inbound side. For self-referential edges
+                # (CALLS/INHERITS Function->Function) src and dst share a label
+                # but use different columns (from_id/to_id), so this removes
+                # stale callers pointing INTO this file's symbols. Without
+                # it, find_callers keeps ghosts.
+                if edge.dst_label == spec.label:
+                    column = edge.dst_column
+                    if column.endswith("_path"):
+                        self._conn.execute(
+                            f"DELETE FROM {edge.table} WHERE {column} = ?",
+                            [file_path],
+                        )
+                    elif ids:
+                        placeholders = ", ".join("?" for _ in ids)
+                        self._conn.execute(
+                            f"DELETE FROM {edge.table} WHERE {column} IN ({placeholders})",
+                            ids,
+                        )
+
+        # Step 2: delete the node rows themselves (file_path-keyed ones).
+        for spec in NODES.values():
+            if not spec.has_file_path:
+                continue
+            self._conn.execute(
+                f"DELETE FROM {spec.table} WHERE file_path = ?",
+                [file_path],
+            )
+
+        # Step 3: drop File-level outbound IMPORTS edges. The File node
+        # itself stays, the indexer reuses its primary key when re-upserting.
+        self._conn.execute("DELETE FROM edge_imports WHERE from_path = ?", [file_path])
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
+
+    # --- Writer stamps --------------------------------------------------
+
+    def stamp_file(self, file_path: str, mtime: float) -> None:
+        self._conn.execute("DELETE FROM file_stamp WHERE path = ?", [file_path])
+        self._conn.execute(
+            "INSERT INTO file_stamp (path, mtime) VALUES (?, ?)", [file_path, mtime]
+        )
+
+    def unstamped_files(self) -> tuple[list[str], list[str]]:
+        from cgh.core.graph_model import ORPHAN_REFS_SQL, STALE_FILES_SQL
+
+        stale = self._conn.execute(STALE_FILES_SQL).fetchall()
+        orphans = self._conn.execute(ORPHAN_REFS_SQL).fetchall()
+        return sorted(r[0] for r in stale), sorted(r[0] for r in orphans)
+
+    # --- Rationale comments ---------------------------------------------
+
+    def replace_rationale(self, file_path: str, rows: list[tuple[Any, ...]]) -> None:
+        self._conn.execute("DELETE FROM rationale WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 100):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for row in chunk for v in (file_path, *row)]
+            self._conn.execute(
+                "INSERT INTO rationale (file_path, line, tag, text, symbol_id, "
+                f"symbol, symbol_kind, symbol_line, adr) VALUES {values}",
+                params,
+            )
+
+    def rationale_rows(
+        self,
+        symbol: str = "",
+        file_suffix: str = "",
+        tag: str = "",
+        symbol_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        from cgh.core.graph_model import RATIONALE_COLUMNS, rationale_rows_sql
+
+        if symbol_ids is not None or file_paths is not None:
+            # Chunk the longer IN list so a statement stays under the
+            # parameter limit; the other one is passed whole.
+            out: list[dict[str, Any]] = []
+            ids = None if symbol_ids is None else sorted(set(symbol_ids))
+            paths = None if file_paths is None else sorted(set(file_paths))
+            for chunk in _chunks(ids if ids is not None else paths or []):
+                chunk_ids, chunk_paths = (
+                    (chunk, paths) if ids is not None else (None, chunk)
+                )
+                sql, params = rationale_rows_sql(
+                    symbol, file_suffix, tag, chunk_ids, chunk_paths, 0
+                )
+                rows = self._conn.execute(sql, params).fetchall()
+                out.extend(dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows)
+            out.sort(key=lambda r: (r["file_path"], r["line"]))
+            return out[:limit] if limit and limit > 0 else out
+        sql, params = rationale_rows_sql(symbol, file_suffix, tag, None, None, limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(zip(RATIONALE_COLUMNS, r, strict=True)) for r in rows]
+
+    # --- Name references ------------------------------------------------
+
+    def replace_name_refs(
+        self, file_path: str, rows: list[tuple[str, str, str, str]]
+    ) -> None:
+        self._conn.execute("DELETE FROM name_ref WHERE file_path = ?", [file_path])
+        for chunk in _chunks(rows, 150):
+            values = ", ".join("(?, ?, ?, ?, ?)" for _ in chunk)
+            params = [v for k, f, n, e in chunk for v in (k, f, file_path, n, e)]
+            self._conn.execute(
+                "INSERT INTO name_ref (kind, from_id, file_path, name, extra) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def name_refs_into(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        out: list[tuple[str, str, str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT kind, from_id, file_path, name, extra FROM name_ref "
+                f"WHERE name IN ({ph}) AND file_path <> ?",
+                [*chunk, exclude_file],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def name_refs_of_kind(self, kind: str) -> list[tuple[str, str, str]]:
+        rows = self._conn.execute(
+            "SELECT from_id, name, extra FROM name_ref WHERE kind = ? "
+            "ORDER BY from_id, name, extra",
+            [kind],
+        ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def node_keys_matching(
+        self, label: str, field: str, values: list[Any]
+    ) -> list[tuple[Any, Any]]:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        col = _ident(field)
+        out: list[tuple[Any, Any]] = []
+        for chunk in _chunks(sorted(set(values))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT {spec.key_field}, {col} FROM {spec.table} "
+                f"WHERE {col} IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    # --- Call sites -----------------------------------------------------
+
+    def replace_call_sites(self, file_path: str, rows: list[tuple[str, ...]]) -> None:
+        self._conn.execute("DELETE FROM call_site WHERE file_path = ?", [file_path])
+        full = [(*row, "", "", "")[:6] for row in rows]
+        for chunk in _chunks(full, 120):
+            values = ", ".join("(?, ?, ?, ?, ?, ?, ?)" for _ in chunk)
+            params = [
+                v for f, n, t, k, h, c in chunk for v in (f, file_path, n, t, k, h, c)
+            ]
+            self._conn.execute(
+                "INSERT INTO call_site (from_id, file_path, name, to_id, kind, hint, ctx) "
+                f"VALUES {values}",
+                params,
+            )
+
+    def call_sites_into(
+        self, names: list[str], ids: list[str], exclude_file: str
+    ) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for column, guard, keys in (
+            ("name", "to_id = '' AND ", names),
+            ("to_id", "", ids),
+        ):
+            for chunk in _chunks(sorted(set(keys))):
+                ph = ", ".join("?" for _ in chunk)
+                rows = self._conn.execute(
+                    "SELECT from_id, file_path, name, to_id, kind, hint, ctx "
+                    f"FROM call_site WHERE {guard}{column} IN ({ph}) AND file_path <> ?",
+                    [*chunk, exclude_file],
+                ).fetchall()
+                out.extend(tuple("" if v is None else v for v in r) for r in rows)
+        return out
+
+    def call_sites_from(self, from_ids: list[str]) -> list[tuple[str, ...]]:
+        out: list[tuple[str, ...]] = []
+        for chunk in _chunks(sorted(set(from_ids))):
+            # A Function id starts with its file path: filter on the indexed
+            # file column first, then on the exact ids.
+            files = sorted({i.rsplit("::", 1)[0] for i in chunk})
+            rows = self._conn.execute(
+                "SELECT from_id, file_path, name, to_id, kind, hint, ctx FROM call_site "
+                f"WHERE file_path IN ({', '.join('?' for _ in files)}) "
+                f"AND from_id IN ({', '.join('?' for _ in chunk)})",
+                [*files, *chunk],
+            ).fetchall()
+            out.extend(tuple("" if v is None else v for v in r) for r in rows)
+        return out
+
+    def function_defs_named(self, names: list[str]) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT id, name, file_path FROM function WHERE name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def call_targets_named(
+        self, names: list[str]
+    ) -> list[tuple[str, str, str, str, tuple[str, ...]]]:
+        found: dict[str, tuple[str, str, str, str]] = {}
+        bases: dict[str, set[str]] = {}
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT f.id, f.name, f.file_path, h.from_id, r.name FROM function f "
+                "LEFT JOIN edge_has_method h ON h.to_id = f.id "
+                "LEFT JOIN name_ref r ON r.from_id = h.from_id AND r.kind = 'inherits' "
+                f"WHERE f.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            for fn_id, name, file_path, class_id, base in rows:
+                found.setdefault(fn_id, (fn_id, name, file_path, class_id or ""))
+                if base:
+                    bases.setdefault(fn_id, set()).add(base)
+        return [(*row, tuple(sorted(bases.get(row[0], ())))) for row in found.values()]
+
+    def class_bases_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM "class" c '
+                "JOIN name_ref r ON r.from_id = c.id AND r.kind = 'inherits' "
+                f"WHERE c.name IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def class_children_named(self, names: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 100):
+            ph = ", ".join("?" for _ in chunk)
+            like = " OR ".join("r.name LIKE ?" for _ in chunk)
+            rows = self._conn.execute(
+                'SELECT DISTINCT c.name, r.name FROM name_ref r JOIN "class" c '
+                "ON c.id = r.from_id WHERE r.kind = 'inherits' "
+                f"AND (r.name IN ({ph}) OR {like})",
+                [*chunk, *(f"%.{n}" for n in chunk)],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return sorted(out)
+
+    def call_site_names_on(self, classes: list[str]) -> list[str]:
+        out: set[str] = set()
+        for chunk in _chunks(sorted(set(classes))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT name FROM call_site "
+                f"WHERE to_id = '' AND kind = 'cls' AND ctx IN ({ph})",
+                chunk,
+            ).fetchall()
+            out.update(r[0] for r in rows)
+        return sorted(out)
+
+    def function_names_in(self, file_path: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT name FROM function WHERE file_path = ?", [file_path]
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def calls_by_name(
+        self, names: list[str], exclude_file: str
+    ) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(names)), 250):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT e.from_id, e.to_id FROM edge_calls e "
+                "WHERE e.from_id IN (SELECT from_id FROM call_site "
+                f"  WHERE to_id = '' AND file_path <> ? AND name IN ({ph})) "
+                f"AND e.to_id IN (SELECT id FROM function WHERE name IN ({ph}))",
+                [exclude_file, *chunk, *chunk],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def delete_calls(self, pairs: list[tuple[str, str]]) -> None:
+        for chunk in _chunks(sorted(set(pairs)), 200):
+            cond = " OR ".join("(from_id = ? AND to_id = ?)" for _ in chunk)
+            self._conn.execute(
+                f"DELETE FROM edge_calls WHERE {cond}", [v for p in chunk for v in p]
+            )
+
+    def name_refs_from(self, kind: str, paths: list[str]) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for chunk in _chunks(sorted(set(paths))):
+            ph = ", ".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT DISTINCT file_path, name FROM name_ref "
+                f"WHERE kind = ? AND file_path IN ({ph})",
+                [kind, *chunk],
+            ).fetchall()
+            out.extend(tuple(r) for r in rows)
+        return out
+
+    def find_node_keys(
+        self,
+        label: str,
+        where_field: str,
+        where_value: Any,
+    ) -> list[Any]:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        rows = self._conn.execute(
+            f"SELECT {spec.key_field} FROM {spec.table} WHERE {where_field} = ?",
+            [where_value],
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def query_node_field(
+        self,
+        label: str,
+        key_field: str,
+        key_value: Any,
+        return_field: str,
+    ) -> Any | None:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        row = self._conn.execute(
+            f"SELECT {return_field} FROM {spec.table} WHERE {key_field} = ?",
+            [key_value],
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def list_node_fields(
+        self,
+        label: str,
+        return_fields: list[str],
+    ) -> list[list[Any]]:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        cols = ", ".join(_ident(f) for f in return_fields)
+        rows = self._conn.execute(f"SELECT {cols} FROM {spec.table}").fetchall()
+        return [list(r) for r in rows]
+
+    def delete_file_completely(self, file_path: str) -> None:
+        self.purge_file_data(file_path)
+        # Also drop inbound IMPORTS edges (purge only handles outbound).
+        self._conn.execute("DELETE FROM edge_imports WHERE to_path = ?", [file_path])
+        # Markdown links that pointed at this file: purge only drops a doc's own
+        # outbound links. The stored link references relink them if it returns.
+        self._conn.execute(
+            "DELETE FROM edge_md_links_to WHERE to_path = ?", [file_path]
+        )
+        self._conn.execute("DELETE FROM file WHERE path = ?", [file_path])
+
+    def find_nodes(
+        self,
+        label: str,
+        where: dict[str, Any] | None = None,
+        contains: dict[str, Any] | None = None,
+        return_fields: list[str] | None = None,
+        order_by: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        if where:
+            for field, value in where.items():
+                clauses.append(f"{_ident(field)} = ?")
+                params.append(value)
+        if contains:
+            sub_clauses = []
+            for field, value in contains.items():
+                # Wrap value with % for DuckDB's LIKE, case-sensitive.
+                # Cypher CONTAINS is case-sensitive too, so this matches.
+                sub_clauses.append(f"{_ident(field)} LIKE ?")
+                params.append(f"%{value}%")
+            if sub_clauses:
+                clauses.append("(" + " OR ".join(sub_clauses) + ")")
+
+        select_clause = (
+            ", ".join(_ident(f) for f in return_fields)
+            if return_fields and return_fields != ["*"]
+            else "*"
+        )
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        order_clause = (
+            "ORDER BY " + ", ".join(_ident(f) for f in order_by) if order_by else ""
+        )
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        sql = (
+            f"SELECT {select_clause} FROM {spec.table} "
+            f"{where_clause} {order_clause} {limit_clause}"
+        )
+
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+
+    def count_nodes(self, label: str, where: dict[str, Any] | None = None) -> int:
+        from cgh.core.graph_model import NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        spec = NODES[label]
+        params: list[Any] = []
+        clauses: list[str] = []
+        if where:
+            for field, value in where.items():
+                clauses.append(f"{_ident(field)} = ?")
+                params.append(value)
+        where_clause = "WHERE " + " AND ".join(clauses) if clauses else ""
+        sql = f"SELECT count(*) FROM {spec.table} {where_clause}"
+        row = self._conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_edges(self, edge_type: str) -> int:
+        from cgh.core.graph_model import EDGES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = EDGES[edge_type]
+        row = self._conn.execute(f"SELECT count(*) FROM {spec.table}").fetchone()
+        return int(row[0]) if row else 0
+
+    def find_nodes_without_incoming(
+        self,
+        label: str,
+        edge_type: str,
+        contains: dict[str, Any] | None = None,
+        exclude_name_prefix: str | None = None,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from cgh.core.graph_model import EDGES, NODES
+
+        if label not in NODES:
+            raise ValueError(f"Unknown node label: {label!r}")
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        spec = NODES[label]
+        edge = EDGES[edge_type]
+
+        if not return_fields:
+            return_fields = [
+                spec.key_field,
+                "name",
+                "file_path",
+                "start_line",
+                "end_line",
+            ]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        # LEFT ANTI-JOIN via NOT EXISTS, works on every DuckDB version.
+        clauses.append(
+            f"NOT EXISTS (SELECT 1 FROM {edge.table} e WHERE e.{edge.dst_column} = n.{spec.key_field})"
+        )
+        if exclude_name_prefix:
+            # Plain SUBSTR avoids LIKE wildcard collision (`_` and `%` are
+            # LIKE metachars in DuckDB; user code that calls this with
+            # exclude_name_prefix='_' wants the literal underscore).
+            clauses.append("substr(n.name, 1, ?) <> ?")
+            params.append(len(exclude_name_prefix))
+            params.append(exclude_name_prefix)
+        if contains:
+            for field, value in contains.items():
+                clauses.append(f"n.{_ident(field)} LIKE ?")
+                params.append(f"%{value}%")
+
+        select_clause = ", ".join(f"n.{_ident(f)}" for f in return_fields)
+        sql = (
+            f"SELECT {select_clause} FROM {spec.table} n WHERE {' AND '.join(clauses)}"
+        )
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+
+    def find_neighbors(
+        self,
+        edge_type: str,
+        src_key: Any | None = None,
+        dst_key: Any | None = None,
+        src_where: dict[str, Any] | None = None,
+        dst_where: dict[str, Any] | None = None,
+        return_src: list[str] | None = None,
+        return_dst: list[str] | None = None,
+        return_edge: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from cgh.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        src = NODES[edge.src_label]
+        dst = NODES[edge.dst_label]
+
+        select_parts: list[str] = []
+        for f in return_src or []:
+            select_parts.append(f"a.{_ident(f)} AS src_{f}")
+        for f in return_dst or []:
+            select_parts.append(f"b.{_ident(f)} AS dst_{f}")
+        for f in return_edge or []:
+            select_parts.append(f"e.{_ident(f)} AS edge_{f}")
+        if not select_parts:
+            select_parts = [f"b.{dst.key_field} AS dst_{dst.key_field}"]
+
+        params: list[Any] = []
+        clauses: list[str] = []
+        clauses.append(f"e.{edge.src_column} = a.{src.key_field}")
+        clauses.append(f"e.{edge.dst_column} = b.{dst.key_field}")
+        if src_key is not None:
+            clauses.append(f"a.{src.key_field} = ?")
+            params.append(src_key)
+        if dst_key is not None:
+            clauses.append(f"b.{dst.key_field} = ?")
+            params.append(dst_key)
+        if src_where:
+            for field, value in src_where.items():
+                clauses.append(f"a.{_ident(field)} = ?")
+                params.append(value)
+        if dst_where:
+            for field, value in dst_where.items():
+                clauses.append(f"b.{_ident(field)} = ?")
+                params.append(value)
+
+        select_clause = ", ".join(select_parts)
+        where_clause = "WHERE " + " AND ".join(clauses)
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+        sql = (
+            f"SELECT {select_clause} FROM {edge.table} e, "
+            f"{src.table} a, {dst.table} b {where_clause} {limit_clause}"
+        )
+
+        cursor = self._conn.execute(sql, params)
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+
+    def reach_via_edge(
+        self,
+        edge_type: str,
+        start_key: Any,
+        max_depth: int = 1,
+        return_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from cgh.core.graph_model import EDGES, NODES
+
+        if edge_type not in EDGES:
+            raise ValueError(f"Unknown edge type: {edge_type!r}")
+        edge = EDGES[edge_type]
+        dst = NODES[edge.dst_label]
+        return_fields = return_fields or [dst.key_field]
+        return_clause = ", ".join(f"dst_node.{f}" for f in return_fields)
+
+        # Recursive CTE that walks edge.table to depth max_depth.
+        sql = f"""
+        WITH RECURSIVE reach(key, depth) AS (
+            SELECT {edge.dst_column}, 1 FROM {edge.table}
+            WHERE {edge.src_column} = ?
+            UNION ALL
+            SELECT e.{edge.dst_column}, r.depth + 1
+            FROM {edge.table} e
+            JOIN reach r ON e.{edge.src_column} = r.key
+            WHERE r.depth < ?
+        )
+        SELECT DISTINCT {return_clause}
+        FROM reach
+        JOIN {dst.table} dst_node ON dst_node.{dst.key_field} = reach.key
+        """
+        cursor = self._conn.execute(sql, [start_key, int(max_depth)])
+        cols = [d[0] for d in (cursor.description or [])]
+        return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+
+    # Escape hatch for tooling that needs the raw DuckDB connection
+    # (e.g. ATTACH for federation, EXPLAIN ANALYZE).
+    @property
+    def raw(self) -> duckdb.DuckDBPyConnection:
+        return self._conn
+
+
+def is_fatal_error(exc: BaseException) -> bool:
+    """True for a DuckDB error that invalidates the whole database instance:
+    a FatalException (a failed checkpoint, "database has been invalidated"),
+    or an error DuckDB prefixes with "FATAL Error" (a corrupt ART index).
+    Every later statement on that instance fails until it is closed."""
+    if isinstance(exc, duckdb.FatalException):
+        return True
+    return isinstance(exc, duckdb.Error) and (
+        str(exc).lstrip().upper().startswith("FATAL ERROR")
+    )
+
+
+def _locked(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            try:
+                return method(self, *args, **kwargs)
+            except duckdb.Error as exc:
+                if is_fatal_error(exc):
+                    self._invalidated = True
+                raise
+
+    return wrapper
+
+
+# An owner shares one DuckDBGraphDB across MCP tool threads and the watcher.
+# duckdb's execute() returns the connection itself, so column names and rows
+# live on the connection: a query another thread runs between this thread's
+# execute() and its fetch hands this thread the other query's result. That
+# surfaced as KeyError 'dst_name' in context_for_task, whose callees lookup
+# read the src_name rows of a concurrent callers lookup. Every public method
+# runs its execute-and-fetch under one reentrant lock per instance. DuckDB
+# already runs one statement at a time per connection, so this costs no real
+# concurrency. Methods call each other, hence reentrant. `raw` is a property
+# and stays unlocked; a caller holding the bare connection is on its own.
+def _lock_public_methods(cls: type) -> None:
+    for name, attr in list(vars(cls).items()):
+        if callable(attr) and not name.startswith("_"):
+            setattr(cls, name, _locked(attr))
+
+
+_lock_public_methods(DuckDBGraphDB)
+
+
+__all__ = ["DuckDBGraphDB", "DuckDBQueryResult", "is_fatal_error"]

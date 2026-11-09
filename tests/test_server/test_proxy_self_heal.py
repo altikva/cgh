@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 def test_recover_owner_attaches_to_live_owner(monkeypatch, tmp_path):
@@ -106,7 +106,7 @@ def test_proxy_retries_against_recovered_owner(monkeypatch, tmp_path):
     monkeypatch.setattr(http.client, "HTTPConnection", _fake_conn)
     monkeypatch.setattr(ipc, "_recover_owner", lambda root, watch: 2222)
     monkeypatch.setattr(
-        "codegraph.state.auth.ensure_auth_key", lambda root: "k", raising=False
+        "cgh.state.auth.ensure_auth_key", lambda root: "k", raising=False
     )
 
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_proxy_gives_up_cleanly_when_recovery_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(http.client, "HTTPConnection", lambda *a, **k: _DeadConn())
     monkeypatch.setattr(ipc, "_recover_owner", lambda root, watch: None)
     monkeypatch.setattr(
-        "codegraph.state.auth.ensure_auth_key", lambda root: "k", raising=False
+        "cgh.state.auth.ensure_auth_key", lambda root: "k", raising=False
     )
     monkeypatch.setattr(
         "sys.stdin", io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 7}) + "\n")

@@ -6,7 +6,7 @@
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: no-ai-tells guard. Fails when an em dash, en dash, or horizontal
-#              bar appears in shipped prose: the codegraph package plus the
+#              bar appears in shipped prose: the cgh package plus the
 #              top-level README, CHANGELOG, and docs. Tests and dotfiles are
 #              exempt. Called from CI and from the pre-commit hook, so the
 #              logic stays in one place and runs the same on Linux and macOS.
@@ -21,7 +21,7 @@ import sys
 # so this guard file carries no literal dash of its own.
 BANNED = re.compile("[\\u2014\\u2013\\u2015]")
 
-ROOT_DIRS = ["codegraph", "docs"]
+ROOT_DIRS = ["cgh", "docs"]
 ROOT_FILES = ["README.md", "CHANGELOG.md"]
 TEXT_SUFFIXES = {".py", ".md", ".txt", ".toml"}
 

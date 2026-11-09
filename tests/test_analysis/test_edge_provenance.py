@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.callers import callers_of
-from codegraph.analysis.provenance import EdgeProvenance, best
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+import cgh.server as _srv
+from cgh.analysis.callers import callers_of
+from cgh.analysis.provenance import EdgeProvenance, best
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 REPO = {
     "app/__init__.py": "",
@@ -139,8 +139,8 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_insight import register as register_insight
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_insight import register as register_insight
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)
@@ -180,7 +180,7 @@ def test_tools_carry_resolution(repo):
 def test_cli_marks_guessed_rows(repo, capsys, monkeypatch):
     import argparse
 
-    from codegraph.cli import commands_query
+    from cgh.cli import commands_query
 
     monkeypatch.setattr(commands_query, "_ask_owner", lambda *a, **k: None)
     commands_query.cmd_callers(argparse.Namespace(root=str(repo), fn_name="fetch"))

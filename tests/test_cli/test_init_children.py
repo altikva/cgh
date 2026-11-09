@@ -16,14 +16,14 @@ import subprocess
 
 import pytest
 
-from codegraph.analysis.federation import add_subrepo, verify_child
-from codegraph.cli.commands_init import _init_children
+from cgh.analysis.federation import add_subrepo, verify_child
+from cgh.cli.commands_init import _init_children
 
 
 @pytest.fixture
 def parent_with_children(tmp_path):
     parent = tmp_path / "parent"
-    (parent / ".codegraph").mkdir(parents=True)
+    (parent / ".cgh").mkdir(parents=True)
     bare = tmp_path / "bare-child"
     bare.mkdir()
     (bare / "lib.py").write_text("def child_fn():\n    return 1\n", encoding="utf-8")
@@ -50,7 +50,7 @@ class TestInitChildren:
         terminates."""
         a = tmp_path / "a"
         b = tmp_path / "b"
-        (a / ".codegraph").mkdir(parents=True)
+        (a / ".cgh").mkdir(parents=True)
         b.mkdir()
         (b / "x.py").write_text("y = 1\n", encoding="utf-8")
         add_subrepo(a, b)
@@ -64,7 +64,7 @@ class TestInitChildren:
 
     def test_one_failing_child_does_not_abort_the_rest(self, tmp_path, monkeypatch):
         parent = tmp_path / "parent"
-        (parent / ".codegraph").mkdir(parents=True)
+        (parent / ".cgh").mkdir(parents=True)
         first = tmp_path / "first"
         second = tmp_path / "second"
         for child in (first, second):
@@ -77,7 +77,7 @@ class TestInitChildren:
         calls = {"n": 0}
 
         def flaky_run(cmd, *args, **kwargs):
-            if "-m" in cmd and "codegraph" in cmd:
+            if "-m" in cmd and "cgh" in cmd:
                 calls["n"] += 1
                 if calls["n"] == 1:
                     raise OSError("spawn failed")

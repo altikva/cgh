@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("cgh_vision")
 
-from codegraph import sdk
+from cgh import sdk
 
 
 class ScriptedTransport:

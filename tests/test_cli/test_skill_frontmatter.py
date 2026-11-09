@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-import codegraph
+import cgh
 
-SKILLS = sorted((Path(codegraph.__file__).parent / "skills").glob("*/SKILL.md"))
+SKILLS = sorted((Path(cgh.__file__).parent / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)

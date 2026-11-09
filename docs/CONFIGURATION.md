@@ -7,8 +7,8 @@ cgh uses a layered configuration system. Settings are resolved in order, with la
 ## Resolution Order
 
 1. **Hardcoded defaults** (built into cgh)
-2. **Global config**: `~/.codegraph/config.toml`
-3. **Project config**: `.codegraph/config.toml`
+2. **Global config**: `~/.cgh/config.toml`
+3. **Project config**: `.cgh/config.toml`
 4. **Environment variables**
 5. **CLI flags**
 
@@ -21,13 +21,13 @@ TOML format. Created automatically by `cgh init`. Both the global and project co
 ### Full Reference
 
 ```toml
-# .codegraph/config.toml
+# .cgh/config.toml
 
-[codegraph]
+[cgh]
 # Directories to skip during indexing (in addition to .gitignore).
 # These are matched by exact directory name.
 ignore_dirs = [
-    ".git", ".codegraph", "node_modules", "__pycache__",
+    ".git", ".cgh", "node_modules", "__pycache__",
     ".venv", "venv", ".terraform", "dist", "build", ".next",
     ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     "coverage", ".coverage", "htmlcov", ".eggs", "*.egg-info",
@@ -47,7 +47,7 @@ max_file_size_kb = 500
 # Useful for multi-repo setups. Add with: cgh add-dir add ../frontend
 # extra_dirs = ["../ondonne-frontend", "../ondonne-infra"]
 
-# Owner log rotation (.codegraph/owner.log). Checked at owner spawn time:
+# Owner log rotation (.cgh/owner.log). Checked at owner spawn time:
 # owners restart often (stop/start, --reindex, new sessions) so spawn-time
 # rotation bounds disk use without an interceptor process.
 # log_max_mb = 0       disables rotation entirely
@@ -55,7 +55,7 @@ max_file_size_kb = 500
 log_max_mb = 5
 log_backup_count = 3
 
-# Federated subrepos: sub-projects with their own .codegraph/ index. The
+# Federated subrepos: sub-projects with their own .cgh/ index. The
 # parent indexes only files OUTSIDE these paths and federates queries
 # (read-only) to the children at runtime. Each subrepo can be a separate
 # git repo with its own .gitignore; the parent doesn't try to walk into
@@ -132,7 +132,7 @@ checkpoint_gate = 0
 | Key | Plugin | Default | Description |
 |-----|--------|---------|-------------|
 | `scan_on_index` | pii, vision | `false` | Register the plugin's scanner so it runs on every indexed file (vision also indexes images). Off, the plugin only answers its own commands (`cgh pii scan`, `cgh vision`). |
-| `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `codegraph.sdk.scan_text` keeps them on unless this is set to `false`. |
+| `pii` | pii | `false` | Add the PII patterns (emails, phones, IBANs, cards) to the secret ones, for `cgh pii scan` and the index-time scanner. `cgh.sdk.scan_text` keeps them on unless this is set to `false`. |
 
 #### Ignored keys
 
@@ -142,10 +142,10 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 
 | Key | Since | Why |
 |-----|-------|-----|
-| `[codegraph] mode = "secure"` | 0.15.0 | Secure mode was removed. `mode = "assist"` stays silent. |
+| `[cgh] mode = "secure"` | 0.15.0 | Secure mode was removed. `mode = "assist"` stays silent. |
 | `[plugin.summarize] allow_pii`, `egress`, `claude_model`, `gemini_model` | 0.15.0 | cgh-summarize 0.3.0 dropped its cloud backends and egress gate, and cgh refuses older releases. |
 
-#### `[codegraph]`
+#### `[cgh]`
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -153,10 +153,10 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 | `ignore_patterns` | `list[str]` | See defaults below | Glob patterns for files to skip |
 | `max_file_size_kb` | `int` | `500` | Max file size in KB |
 | `extra_dirs` | `list[str]` | `[]` | Extra directories to index (relative paths) |
-| `siblings` | `list[str]` | `[]` | Sibling git repos that `pattern_search(repo=, ref=)` and `file_at_ref` may read at any branch, straight from git (absolute or `~` paths; named by directory). Read-only, never fetched, nothing else reachable. **Global config only** (`~/.codegraph/config.toml`): a project's `config.toml` can come with a cloned repo, so its `siblings` is ignored |
+| `siblings` | `list[str]` | `[]` | Sibling git repos that `pattern_search(repo=, ref=)` and `file_at_ref` may read at any branch, straight from git (absolute or `~` paths; named by directory). Read-only, never fetched, nothing else reachable. **Global config only** (`~/.cgh/config.toml`): a project's `config.toml` can come with a cloned repo, so its `siblings` is ignored |
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
-| `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.codegraph/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
+| `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.cgh/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |
 | `allow_fetch` | `bool` | `false` | Let the `fetch_and_index` MCP tool and `cgh fetch` reach the network. Private and loopback hosts stay refused, every fetch is logged. |
 | `mode` | `str` | `"assist"` | Deprecated. `"secure"` was removed in 0.15.0: it is ignored, with a notice on stderr and in `cgh status` / `cgh doctor`. Delete the line. |
 | `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is idle. Those children live exactly as long as the parent owner. |
@@ -164,7 +164,7 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 **Default `ignore_dirs`:**
 
 ```
-.git, .codegraph, node_modules, __pycache__, .venv, venv,
+.git, .cgh, node_modules, __pycache__, .venv, venv,
 .terraform, dist, build, .next, .tox, .mypy_cache,
 .pytest_cache, .ruff_cache, coverage, .coverage, htmlcov,
 .eggs, *.egg-info
@@ -279,7 +279,7 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 - The owner reads the setting on every `tools/list`, so an edit applies
   the next time the client lists tools (for most clients, a restart of the
   MCP connection). Like other keys, a `[tools]` table in the global
-  `~/.codegraph/config.toml` applies to every repo unless the project
+  `~/.cgh/config.toml` applies to every repo unless the project
   config sets its own.
 - `cgh status` shows the result on its `Tools` line, for example
   `all (64 listed)` or `core (15 + 2 extra + 2 plugin)`, counted by the
@@ -301,7 +301,7 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 | `read_advice` | `bool` | `true` | Before a full Read (no `offset`/`limit`) of a file of 12 KB or more, the Read precheck adds a one-line hint under 300 bytes. For a file cgh does not index (JSON, a lock file, a log, generated code) it gives the size and line count: read a range, Grep for a pattern, or `head` it. For an indexed file it lists the main symbols with their line ranges (`parse 12-80, Index 82-240, +3 more`), unless answer mode already printed the outline. Silent for ranged reads and smaller files. `CGH_HOOK_READ_ADVICE=1` or `0` overrides it |
 | `grep_advice` | `bool` | `true` | Before a Grep in `output_mode: "content"` with no `head_limit` (or `head_limit: 0`), the Grep precheck adds a one-line hint under 300 bytes: set `head_limit`, narrow `glob`/`type`, use `files_with_matches` or `count`, or size it first with `pattern_search(count_only=True)`. Silent when a `glob`, `type` or subdirectory `path` narrows a specific pattern, when `path` is one file, and in the other output modes. A pattern that matches broadly (no literal of 4 characters, 3 or more alternatives, a word like `import` or `return`) gets the hint even with a glob. In answer mode the hint goes after the answer, in the same message. Only inside a cgh repo. `CGH_HOOK_GREP_ADVICE=1` or `0` overrides it |
 | `compact_hint` | `bool` | `true` | A UserPromptSubmit hook says once, at 0.5, 1.5 and 3 MB of session transcript since the last compaction, that the session is large and suggests `/compact`, or a cgh checkpoint then `/clear`. `CGH_HOOK_COMPACT_HINT=1` or `0` overrides it |
-| `agent_rule` | `bool` | `true` | The Agent precheck appends one line to every sub-agent brief: locate code with the cgh MCP tools (`symbol_lookup`, `pattern_search`, `find_callers`) before Read or Grep, then Read only the returned ranges. It names the `mcp__cgh__` or `mcp__codegraph__` prefix when `.mcp.json` declares the server. The code locations for the brief stay behind `CGH_AGENT_LOCATIONS=1`. `CGH_HOOK_AGENT_RULE=1` or `0` overrides it |
+| `agent_rule` | `bool` | `true` | The Agent precheck appends one line to every sub-agent brief: locate code with the cgh MCP tools (`symbol_lookup`, `pattern_search`, `find_callers`) before Read or Grep, then Read only the returned ranges. It names the `mcp__cgh__` or `mcp__cgh__` prefix when `.mcp.json` declares the server. The code locations for the brief stay behind `CGH_AGENT_LOCATIONS=1`. `CGH_HOOK_AGENT_RULE=1` or `0` overrides it |
 
 **On-demand indexing.** Before the Read precheck answers (in answer mode, or for a file of 12 KB or more), a repo file the index lacks or holds in an older version is indexed by the live owner, then answered from the graph; with no owner it is parsed in memory and nothing is written. A file outside the repo, or under a cgh root that is the home directory or not a git checkout, is only parsed in memory, a gitignored one is left alone, and plain text, logs and binary documents are skipped. A Grep in one such file has the owner index it. The MCP tools that take a file (`file_summary`, `imports_of`, `subgraph`, `doc_outline`) index it the same way, and `symbol_lookup`, `find_callers` and `find_callees` index the changed working-tree files once on a miss, then retry; their answer carries `indexed_now`. The step gives up after 300 ms; `CGH_ON_DEMAND_BUDGET_MS` sets the budget, and `0` turns it off.
 
@@ -309,14 +309,14 @@ The core set is `pattern_search`, `symbol_lookup`, `search_symbols`,
 
 ## Global Config
 
-Located at `~/.codegraph/config.toml`. Applied to all projects before the project-level config.
+Located at `~/.cgh/config.toml`. Applied to all projects before the project-level config.
 
 Useful for setting personal preferences that apply everywhere:
 
 ```toml
-# ~/.codegraph/config.toml
+# ~/.cgh/config.toml
 
-[codegraph]
+[cgh]
 max_file_size_kb = 1000
 
 [parsers]
@@ -329,14 +329,14 @@ disabled = ["terraform"]
 
 When you have a parent project that contains (or sits next to) several
 sub-projects each with their own `git` repository and their own
-`.codegraph/` index, the parent should NOT try to re-index everything.
+`.cgh/` index, the parent should NOT try to re-index everything.
 Each sub-repo's `.gitignore` and parsers are self-contained, and re-indexing
 from the parent would either miss files (its `git ls-files` doesn't see the
 children's tracked files) or duplicate work.
 
 The federation model: the parent acts as a **passe-plat**. It indexes only
 files that don't fall under any declared subrepo, and at runtime each MCP
-read tool fans out to the children's `.codegraph/` databases (read-only)
+read tool fans out to the children's `.cgh/` databases (read-only)
 and aggregates results, tagging each with a `scope` field (`parent`,
 `<child-name>`).
 
@@ -348,7 +348,7 @@ cd apps/api && cgh init && cgh index
 
 # In the parent
 cd ../..
-cgh init                           # creates parent's own .codegraph/, auto-detects nested subrepos
+cgh init                           # creates parent's own .cgh/, auto-detects nested subrepos
 cgh federate add ./apps/api ./apps/web ../shared-lib    # if you want to add manually
 cgh federate list                  # status table per child (status, owner, git, path)
 cgh index                          # parent indexes only its own files
@@ -364,7 +364,7 @@ cgh federate up                    # spawns `cgh _serve_owner --watch` per child
 cgh federate down                  # stops them all
 ```
 
-**Owner lifecycle**: the parent reads each child's `.codegraph/` files
+**Owner lifecycle**: the parent reads each child's `.cgh/` files
 directly (read-only), children's owners exist only to keep their own index
 fresh. When the parent owner starts it also starts the owner (with watcher)
 of every initialized child whose owner is idle, unless `federate_auto_up =
@@ -435,34 +435,34 @@ cgh already respects `.gitignore` via `git ls-files`. The `.cghignore` is for fi
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `CODEGRAPH_ROOT` | Override the project root directory | `/home/user/myproject` |
-| `CODEGRAPH_DIR` | Override the `.codegraph/` directory location | `/tmp/codegraph-index` |
-| `CODEGRAPH_AUTH_KEY` | MCP server auth key (auto-generated by `cgh init`) | `<token_urlsafe(32)>` |
+| `CGH_ROOT` | Override the project root directory | `/home/user/myproject` |
+| `CGH_DIR` | Override the `.cgh/` directory location | `/tmp/cgh-index` |
+| `CGH_AUTH_KEY` | MCP server auth key (auto-generated by `cgh init`) | `<token_urlsafe(32)>` |
 | `CGH_ANSWER_FORMAT` | Default agent answer format of the four search tools, overrides `[mcp] answer_format` | `text` |
 
-### `CODEGRAPH_AUTH_KEY`
+### `CGH_AUTH_KEY`
 
-The MCP server auth key. Auto-generated by `cgh init` and stored in `.codegraph/auth.key`. Injected into `.mcp.json` env block by `cgh init` and `cgh setup`. Defense-in-depth for future HTTP transport.
+The MCP server auth key. Auto-generated by `cgh init` and stored in `.cgh/auth.key`. Injected into `.mcp.json` env block by `cgh init` and `cgh setup`. Defense-in-depth for future HTTP transport.
 
 ```bash
 # Key is managed automatically: no manual steps needed
-# To regenerate: delete .codegraph/auth.key and run cgh init
+# To regenerate: delete .cgh/auth.key and run cgh init
 ```
 
-### `CODEGRAPH_ROOT`
+### `CGH_ROOT`
 
 Overrides the project root. Useful when running cgh from a different directory than the project:
 
 ```bash
-CODEGRAPH_ROOT=/home/user/my-project cgh stats
+CGH_ROOT=/home/user/my-project cgh stats
 ```
 
-### `CODEGRAPH_DIR`
+### `CGH_DIR`
 
-Overrides where the `.codegraph/` directory is located. By default it is `<project_root>/.codegraph/`. This lets you store the index in a different location (e.g., a tmpfs for speed, or a shared location):
+Overrides where the `.cgh/` directory is located. By default it is `<project_root>/.cgh/`. This lets you store the index in a different location (e.g., a tmpfs for speed, or a shared location):
 
 ```bash
-CODEGRAPH_DIR=/tmp/my-project-codegraph cgh index
+CGH_DIR=/tmp/my-project-cgh cgh index
 ```
 
 ## File Discovery
@@ -483,10 +483,10 @@ Files are then filtered by:
 
 ## Storage Layout
 
-After initialization and indexing, the `.codegraph/` directory contains:
+After initialization and indexing, the `.cgh/` directory contains:
 
 ```
-.codegraph/
+.cgh/
     config.toml      # project configuration
     graph.duckdb     # DuckDB graph database (nodes + edges): default backend
     graph.sqlite     # SQLite graph database (nodes + edges): standalone binary / CGH_DB=sqlite
@@ -505,8 +505,8 @@ Use `cgh compact` to vacuum the SQLite databases and reclaim space.
 The default graph backend is **DuckDB**. The standalone binary ships a SQLite backend instead (no bundled DuckDB library). Resolution order when opening a repo's graph:
 
 1. `CGH_DB` env var, if set to `duckdb` or `sqlite`.
-2. Auto-detect from `.codegraph/`: `graph.duckdb` → DuckDB, `graph.sqlite` → SQLite.
-3. Fresh repos with no `.codegraph/` → DuckDB when the DuckDB library is importable, otherwise SQLite.
+2. Auto-detect from `.cgh/`: `graph.duckdb` → DuckDB, `graph.sqlite` → SQLite.
+3. Fresh repos with no `.cgh/` → DuckDB when the DuckDB library is importable, otherwise SQLite.
 
 Pin a specific backend per shell:
 
@@ -522,13 +522,13 @@ CGH_DB=sqlite cgh index    # force the SQLite backend
 **Disable Terraform globally, re-enable it for one project:**
 
 ```toml
-# ~/.codegraph/config.toml
+# ~/.cgh/config.toml
 [parsers]
 disabled = ["terraform"]
 ```
 
 ```toml
-# my-infra-project/.codegraph/config.toml
+# my-infra-project/.cgh/config.toml
 [parsers]
 disabled = []
 ```
@@ -537,16 +537,16 @@ disabled = []
 
 ```bash
 # config.toml says 500, but override to 2000 for this run
-CODEGRAPH_ROOT=. cgh index  # uses config.toml value
+CGH_ROOT=. cgh index  # uses config.toml value
 # env vars don't override max_file_size_kb directly --
-# edit .codegraph/config.toml instead
+# edit .cgh/config.toml instead
 ```
 
 **Multi-repo indexing:**
 
 ```toml
-# ondonne-api/.codegraph/config.toml
-[codegraph]
+# ondonne-api/.cgh/config.toml
+[cgh]
 extra_dirs = ["../ondonne-frontend", "../ondonne-infra"]
 ```
 

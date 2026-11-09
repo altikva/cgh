@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import federation
-from codegraph.analysis.context_builder import (
+import cgh.server as _srv
+from cgh.analysis import federation
+from cgh.analysis.context_builder import (
     RELATED_MAX,
     START_HERE_MAX,
     WHY_MAX_CHARS,
@@ -37,10 +37,10 @@ from codegraph.analysis.context_builder import (
     next_step,
     render_context_markdown,
 )
-from codegraph.core.db import reset_connection
-from codegraph.core.fts import MemoryHit
-from codegraph.indexer import index_repo
-from codegraph.server._budget import CONTEXT_MAX_BYTES
+from cgh.core.db import reset_connection
+from cgh.core.fts import MemoryHit
+from cgh.indexer import index_repo
+from cgh.server._budget import CONTEXT_MAX_BYTES
 
 
 class _FakeMcp:
@@ -56,7 +56,7 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server import _register_meta
+    from cgh.server import _register_meta
 
     m = _FakeMcp()
     _register_meta(m)
@@ -89,7 +89,7 @@ def ledger_api_handler(request):
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     federation.reset_for_tests()
     reset_connection()
@@ -116,7 +116,7 @@ def repo(tmp_path, monkeypatch):
 
 @pytest.fixture
 def fed(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     federation.reset_for_tests()
     reset_connection()
@@ -128,9 +128,9 @@ def fed(tmp_path, monkeypatch):
     reset_connection()
     (parent / "books").mkdir()
     (parent / "books" / "ledger.py").write_text(_LEDGER)
-    (parent / ".codegraph").mkdir(exist_ok=True)
-    (parent / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
+    (parent / ".cgh").mkdir(exist_ok=True)
+    (parent / ".cgh" / "config.toml").write_text(
+        '[cgh]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
     )
     index_repo(parent, method="os_walk")
     _srv._root = parent
@@ -334,7 +334,7 @@ def test_the_memory_index_file_is_not_a_hit(monkeypatch):
         MemoryHit("/m/MEMORY.md", "other", "Memory", "index", 2.0),
         MemoryHit("/m/feedback_a.md", "feedback", "a", "", 1.0),
     ]
-    monkeypatch.setattr("codegraph.core.fts.memory_search", lambda *a, **k: hits)
+    monkeypatch.setattr("cgh.core.fts.memory_search", lambda *a, **k: hits)
     found = _local_memory_hits(None, "anything", limit=3)
     assert [m.path for m in found] == ["/m/feedback_a.md"]
 
@@ -348,7 +348,7 @@ _N = 300
 
 @pytest.fixture
 def big(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     reset_connection()
     root = tmp_path.resolve()

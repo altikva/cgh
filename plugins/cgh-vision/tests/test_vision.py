@@ -10,7 +10,7 @@
 #              with post-processing (dedup, arrow-annotation drop,
 #              identity separation), the bare-array edge reply, the
 #              scanner's finding keys including pii.image_identity, and
-#              the SDK wiring through codegraph.sdk.image_*.
+#              the SDK wiring through cgh.sdk.image_*.
 
 from __future__ import annotations
 
@@ -450,7 +450,7 @@ class TestAutoExtract:
         img.write_bytes(b"\x89PNG" + b"0" * 6000)
         return img
 
-    def test_sidecar_default_mirrors_path_under_codegraph(self, tmp_path, monkeypatch):
+    def test_sidecar_default_mirrors_path_under_cgh(self, tmp_path, monkeypatch):
         from cgh_vision.scanner import VisionScanner
 
         img = self._img(tmp_path)
@@ -461,7 +461,7 @@ class TestAutoExtract:
         ).scan(img, "", None)
         # Findings are still produced alongside the sidecar.
         assert {"image.content", "diagram.mermaid"} <= {f.key for f in found}
-        side = tmp_path / ".codegraph" / "vision" / "docs" / "d.png.json"
+        side = tmp_path / ".cgh" / "vision" / "docs" / "d.png.json"
         assert side.is_file()
         doc = json.loads(side.read_text())
         assert doc["image"] == "d.png"
@@ -478,7 +478,7 @@ class TestAutoExtract:
             tmp_path,
         ).scan(img, "", None)
         assert (img.parent / "d.png.json").is_file()
-        assert not (tmp_path / ".codegraph" / "vision").exists()
+        assert not (tmp_path / ".cgh" / "vision").exists()
 
     def test_auto_off_writes_no_sidecar(self, tmp_path, monkeypatch):
         from cgh_vision.scanner import VisionScanner
@@ -487,7 +487,7 @@ class TestAutoExtract:
         monkeypatch.setattr("cgh_vision.scanner.available", lambda cfg: True)
         _script(monkeypatch, list(self._REPLIES))
         VisionScanner({}, tmp_path).scan(img, "", None)
-        assert not (tmp_path / ".codegraph").exists()
+        assert not (tmp_path / ".cgh").exists()
         assert not (img.parent / "d.png.json").exists()
 
     def test_pdf_writes_per_page_sidecar(self, tmp_path, monkeypatch):
@@ -511,7 +511,7 @@ class TestAutoExtract:
             {"auto_extract": True, "cache_ttl_hours": 0}, tmp_path
         ).scan(pdf, "", None)
         assert out == []  # PDFs carry no findings from the vision scanner
-        side = tmp_path / ".codegraph" / "vision" / "spec.pdf.json"
+        side = tmp_path / ".cgh" / "vision" / "spec.pdf.json"
         assert side.is_file()
         doc = json.loads(side.read_text())
         assert doc["pdf"] == "spec.pdf"
@@ -547,7 +547,7 @@ class TestEgressPosture:
 
 class TestSdkWiring:
     def test_sdk_image_functions_reach_the_plugin(self, monkeypatch):
-        from codegraph import sdk
+        from cgh import sdk
 
         _script(
             monkeypatch,
@@ -749,20 +749,20 @@ class TestSetupLlamacpp:
         from cgh_vision.setup_llamacpp import _write_config
         from rich.console import Console
 
-        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg = tmp_path / ".cgh" / "config.toml"
         cfg.parent.mkdir(parents=True)
-        cfg.write_text("[codegraph]\nmode = 'assist'\n", encoding="utf-8")
+        cfg.write_text("[cgh]\nmode = 'assist'\n", encoding="utf-8")
         _write_config(Console(quiet=True), tmp_path, 8080)
         text = cfg.read_text()
         assert "[plugin.vision]" in text
         assert "http://127.0.0.1:8080/v1" in text
-        assert "[codegraph]" in text  # existing content preserved
+        assert "[cgh]" in text  # existing content preserved
 
     def test_never_clobbers_existing_plugin_vision(self, tmp_path):
         from cgh_vision.setup_llamacpp import _write_config
         from rich.console import Console
 
-        cfg = tmp_path / ".codegraph" / "config.toml"
+        cfg = tmp_path / ".cgh" / "config.toml"
         cfg.parent.mkdir(parents=True)
         original = "[plugin.vision]\nollama_url = 'http://127.0.0.1:11434'\n"
         cfg.write_text(original, encoding="utf-8")

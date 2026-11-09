@@ -25,9 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.graph_model import EDGES
-from codegraph.indexer import index_file, index_repo
+from cgh.core.db import get_connection, reset_connection
+from cgh.core.graph_model import EDGES
+from cgh.indexer import index_file, index_repo
 
 BACKENDS = ["duckdb", "sqlite"]
 SEED = 1337
@@ -217,7 +217,7 @@ FIXTURE: dict[str, str] = {
     # A remote module mapped to a checkout outside the repo (EXTERNAL), and
     # one mapped to a git checkout pinned at two refs plus one it lacks
     # (PINNED, read from git at each ref).
-    ".codegraph/config.toml": (
+    ".cgh/config.toml": (
         "[terraform]\n"
         'module_sources = { "git::https://example.com/acme/tf-modules" '
         '= "../ext-modules", "git::https://example.com/acme/pinned" '
@@ -327,7 +327,7 @@ def snapshot_edges(root: Path) -> dict[str, frozenset[tuple]]:
 
 def _ordered(how: str):
     """A _filter_parseable replacement that fixes the ingestion order."""
-    import codegraph.indexer as indexer
+    import cgh.indexer as indexer
 
     original = indexer._filter_parseable
 
@@ -357,7 +357,7 @@ def build_graphs(
     ``src_files`` writes a fixture; ``src_tree`` copies an existing tree.
     ``resave_sample`` limits graph C to the first that many re-saved files.
     """
-    import codegraph.indexer as indexer
+    import cgh.indexer as indexer
 
     out: dict[str, dict[str, frozenset[tuple]]] = {}
     reset_connection()
@@ -381,7 +381,7 @@ def build_graphs(
     # its subclass, code after the doc that mentions it).
     root = base / "A"
     files = sorted(p for p in root.rglob("*") if p.is_file())
-    files = [p for p in files if ".codegraph" not in p.relative_to(root).parts]
+    files = [p for p in files if ".cgh" not in p.relative_to(root).parts]
     files.reverse()
     if resave_sample is not None:
         files = files[:resave_sample]
@@ -497,10 +497,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(scope="module")
 def self_graphs(tmp_path_factory):
-    """cgh's own codegraph/ and docs/ on the SQLite backend (the fixture
+    """cgh's own cgh/ and docs/ on the SQLite backend (the fixture
     already covers both backends)."""
     src = tmp_path_factory.mktemp("self-src")
-    for sub in ("codegraph", "docs"):
+    for sub in ("cgh", "docs"):
         shutil.copytree(
             REPO_ROOT / sub,
             src / sub,
@@ -509,7 +509,7 @@ def self_graphs(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("CGH_DB", "sqlite")
         # Plugin scanners add time and nothing to the graph.
-        mp.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+        mp.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
         base = tmp_path_factory.mktemp("self-inv")
         yield build_graphs(None, src, base, mp)
     reset_connection()

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.plugin_api import BaseParser, FileIndex, SectionDef
+from cgh.plugin_api import BaseParser, FileIndex, SectionDef
 
 IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 

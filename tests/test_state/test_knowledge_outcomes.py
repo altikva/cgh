@@ -20,11 +20,11 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.config import load_config
-from codegraph.server.tools_session import build_resume_bundle
-from codegraph.state import call_log
-from codegraph.state.call_log import (
+import cgh.server as _srv
+from cgh.core.config import load_config
+from cgh.server.tools_session import build_resume_bundle
+from cgh.state import call_log
+from cgh.state.call_log import (
     _get_conn,
     knowledge_dead_ends,
     knowledge_forget,
@@ -35,7 +35,7 @@ from codegraph.state.call_log import (
     knowledge_search,
     reset_for_tests,
 )
-from codegraph.state.knowledge_outcomes import (
+from cgh.state.knowledge_outcomes import (
     decay_weight,
     list_bucket,
     rank_factor,
@@ -49,7 +49,7 @@ NOW = 1_800_000_000.0
 @pytest.fixture
 def store(tmp_path):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     yield tmp_path
     reset_for_tests()
 
@@ -296,8 +296,8 @@ def test_resume_bundle_empty_dead_ends_without_outcomes(store):
 
 
 def test_half_life_from_config(store):
-    (store / ".codegraph" / "config.toml").write_text(
-        "[codegraph]\nknowledge_half_life_days = 5\n", encoding="utf-8"
+    (store / ".cgh" / "config.toml").write_text(
+        "[cgh]\nknowledge_half_life_days = 5\n", encoding="utf-8"
     )
     assert load_config(store).knowledge_half_life_days == 5.0
     eid = knowledge_record("a", "b", repo_root=store)
@@ -309,8 +309,8 @@ def test_half_life_from_config(store):
 
 
 def test_bad_half_life_keeps_default(store):
-    (store / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nknowledge_half_life_days = "soon"\n', encoding="utf-8"
+    (store / ".cgh" / "config.toml").write_text(
+        '[cgh]\nknowledge_half_life_days = "soon"\n', encoding="utf-8"
     )
     assert load_config(store).knowledge_half_life_days == 30.0
 
@@ -320,8 +320,8 @@ def test_bad_half_life_keeps_default(store):
 
 def test_store_without_outcome_table_migrates(tmp_path):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
-    db = tmp_path / ".codegraph" / "call_log.db"
+    (tmp_path / ".cgh").mkdir()
+    db = tmp_path / ".cgh" / "call_log.db"
     # The knowledge table as an older release created it: no outcome table,
     # none of the later columns.
     raw = sqlite3.connect(db)
@@ -372,7 +372,7 @@ class _FakeMcp:
 
 @pytest.fixture
 def tools(store, monkeypatch):
-    from codegraph.server.tools_knowledge import register
+    from cgh.server.tools_knowledge import register
 
     monkeypatch.setattr(_srv, "_root", store)
     mcp = _FakeMcp()
@@ -386,12 +386,12 @@ def test_tool_records_by_id_and_query(store, tools):
     assert out["entry_id"] == eid and out["outcome"]["status"] == "useful"
     out = json.loads(
         tools["knowledge_outcome"](
-            verdict="useful", query="DuckDB lock", file_refs="codegraph/core/db.py"
+            verdict="useful", query="DuckDB lock", file_refs="cgh/core/db.py"
         )
     )
     assert out["entry_id"] == eid and out["title"] == "DuckDB lock gotcha"
     assert out["outcome"]["status"] == "preferred"
-    assert out["files"]["codegraph/core/db.py"]["useful"] == 1
+    assert out["files"]["cgh/core/db.py"]["useful"] == 1
 
 
 def test_tool_reports_errors(store, tools):
@@ -416,7 +416,7 @@ def test_tool_search_and_list_show_outcome(store, tools):
 
 
 def test_cli_outcome_and_outcomes(store, monkeypatch, capsys):
-    from codegraph.cli.commands_knowledge import cmd_knowledge
+    from cgh.cli.commands_knowledge import cmd_knowledge
 
     monkeypatch.chdir(store)
     eid = knowledge_record("Use the bulk endpoint", "x", repo_root=store)
@@ -441,7 +441,7 @@ def test_cli_outcome_and_outcomes(store, monkeypatch, capsys):
 
 
 def test_cli_outcome_rejects_bad_target(store, monkeypatch, capsys):
-    from codegraph.cli.commands_knowledge import cmd_knowledge
+    from cgh.cli.commands_knowledge import cmd_knowledge
 
     monkeypatch.chdir(store)
     with pytest.raises(SystemExit):

@@ -12,9 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from codegraph.core.embedder import get_embedder
-from codegraph.core.fts import commit, get_fts_conn, upsert_symbol
-from codegraph.core.semantic import clear_cache, semantic_search
+from cgh.core.embedder import get_embedder
+from cgh.core.fts import commit, get_fts_conn, upsert_symbol
+from cgh.core.semantic import clear_cache, semantic_search
 
 
 def test_lexical_embedder_is_deterministic_and_unit_norm():
@@ -69,7 +69,7 @@ def test_semantic_search_empty_index_returns_nothing(tmp_path):
 def test_cmd_semantic_prints_the_relevant_symbol(tmp_path, capsys):
     from types import SimpleNamespace
 
-    from codegraph.cli.commands_query import cmd_semantic
+    from cgh.cli.commands_query import cmd_semantic
 
     conn = get_fts_conn(tmp_path)
     upsert_symbol(

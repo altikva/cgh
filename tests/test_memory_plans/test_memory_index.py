@@ -14,7 +14,7 @@ def tmp_memory_env(tmp_path: Path, monkeypatch) -> Path:
     mem_dir.mkdir()
     monkeypatch.setenv("CG_MEMORY_DIR", str(mem_dir))
     # Fresh FTS for each test
-    (tmp_path / ".codegraph").mkdir(exist_ok=True)
+    (tmp_path / ".cgh").mkdir(exist_ok=True)
     return mem_dir
 
 
@@ -49,7 +49,7 @@ class TestScanMemoryDir:
             "see openapi.json",
         )
 
-        from codegraph.claude_state.memory import scan_memory_dir
+        from cgh.claude_state.memory import scan_memory_dir
 
         stats = scan_memory_dir(tmp_path)
         assert stats["indexed"] == 4
@@ -61,7 +61,7 @@ class TestScanMemoryDir:
         (tmp_memory_env / "feedback_no_fm.md").write_text(
             "# Title\n\nbody", encoding="utf-8"
         )
-        from codegraph.claude_state.memory import classify
+        from cgh.claude_state.memory import classify
 
         kind, title = classify(tmp_memory_env / "feedback_no_fm.md")
         assert kind == "feedback"
@@ -69,7 +69,7 @@ class TestScanMemoryDir:
 
     def test_mtime_skip(self, tmp_memory_env, tmp_path):
         _write(tmp_memory_env / "x.md", "user", "X", "body")
-        from codegraph.claude_state.memory import scan_memory_dir
+        from cgh.claude_state.memory import scan_memory_dir
 
         scan_memory_dir(tmp_path)
         stats = scan_memory_dir(tmp_path)
@@ -79,7 +79,7 @@ class TestScanMemoryDir:
     def test_removal_detection(self, tmp_memory_env, tmp_path):
         f = tmp_memory_env / "gone.md"
         _write(f, "user", "Gone", "will vanish")
-        from codegraph.claude_state.memory import scan_memory_dir
+        from cgh.claude_state.memory import scan_memory_dir
 
         scan_memory_dir(tmp_path)
         f.unlink()
@@ -97,8 +97,8 @@ class TestScanMemoryDir:
             tmp_memory_env / "project_stack.md", "project", "Stack", "FastAPI + Nuxt 4"
         )
 
-        from codegraph.claude_state.memory import scan_memory_dir
-        from codegraph.core.fts import get_fts_conn, memory_search
+        from cgh.claude_state.memory import scan_memory_dir
+        from cgh.core.fts import get_fts_conn, memory_search
 
         scan_memory_dir(tmp_path)
         conn = get_fts_conn(tmp_path)

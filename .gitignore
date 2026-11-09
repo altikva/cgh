@@ -27,11 +27,11 @@ env/
 .DS_Store
 Thumbs.db
 
-# codegraph runtime state (don't ship a user's index in this repo)
-.codegraph/
+# cgh runtime state (don't ship a user's index in this repo)
+.cgh/
 
-# codegraph auth key (never commit)
-.codegraph/auth.key
+# cgh auth key (never commit)
+.cgh/auth.key
 
 # Internal material: design proposals, benchmarks and the release
 # runbook are maintainer-only, not published.

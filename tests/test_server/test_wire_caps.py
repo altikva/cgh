@@ -20,8 +20,8 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.server._budget import (
+import cgh.server as _srv
+from cgh.server._budget import (
     ANSWER_MAX_BYTES,
     TOOL_CAPS,
     ToolCap,
@@ -31,8 +31,8 @@ from codegraph.server._budget import (
     dumps_answer,
     wire_bytes,
 )
-from codegraph.server.tools_insight import _fit_summary
-from codegraph.server.tools_knowledge import (
+from cgh.server.tools_insight import _fit_summary
+from cgh.server.tools_knowledge import (
     LIST_TARGET_BYTES,
     SEARCH_TARGET_BYTES,
     _fit_list_answer,
@@ -87,7 +87,7 @@ def test_wire_size_counts_the_escapes():
 def test_wrapper_holds_each_tools_cap_on_the_wire(monkeypatch, tool):
     """Through the shared wrapper, the last step of every tool call."""
     monkeypatch.setattr(_srv, "_call_origin", lambda: "agent")
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
     monkeypatch.setattr(_srv, "_root", None)
     raw = json.dumps(_escapy_payload(tool), indent=2)
 
@@ -159,12 +159,12 @@ def test_cap_answer_measures_the_wire():
 
 def test_hard_cap_cuts_when_the_structured_cap_fails(monkeypatch):
     monkeypatch.setattr(_srv, "_call_origin", lambda: "agent")
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
     def boom(*a, **k):
         raise RuntimeError("cap failed")
 
-    monkeypatch.setattr("codegraph.server._budget.cap_tool_answer", boom)
+    monkeypatch.setattr("cgh.server._budget.cap_tool_answer", boom)
 
     def find_callers() -> str:
         return "\n".join(f'"{_ESCAPY}"' for _ in range(1000))

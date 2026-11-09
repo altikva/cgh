@@ -15,10 +15,10 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_query import register as register_query
 
 _CHAIN = (
     "def delta():\n    return 0\n\n\n"

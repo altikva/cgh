@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.analysis.query_intent import (
+from cgh.analysis.query_intent import (
     SYNONYMS,
     coverage,
     extract_identifiers,
@@ -64,11 +64,11 @@ def test_identifiers_regexes_and_code_are_not_sentences(query):
 
 
 def test_identifiers_are_extracted_in_order():
-    q = "is `max_results` passed to PatternHit or to codegraph.analysis.pattern and _root?"
+    q = "is `max_results` passed to PatternHit or to cgh.analysis.pattern and _root?"
     assert extract_identifiers(q) == [
         "max_results",
         "PatternHit",
-        "codegraph.analysis.pattern",
+        "cgh.analysis.pattern",
         "_root",
     ]
 
@@ -136,7 +136,7 @@ def test_definition_lines():
 def test_test_paths():
     assert is_test_path("/r/tests/test_x.py")
     assert is_test_path("src/thing.spec.ts")
-    assert not is_test_path("/r/codegraph/server/_budget.py")
+    assert not is_test_path("/r/cgh/server/_budget.py")
 
 
 def test_definitions_rank_before_uses():

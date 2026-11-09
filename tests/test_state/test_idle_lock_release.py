@@ -20,21 +20,21 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.state.watcher as watcher_mod
-from codegraph.state.ipc import (
+import cgh.state.watcher as watcher_mod
+from cgh.state.ipc import (
     live_workers,
     mcp_workers,
     register_parent_marker,
     register_worker,
     unregister_parent_marker,
 )
-from codegraph.state.watcher import _CodeGraphHandler
+from cgh.state.watcher import _CghHandler
 
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setattr(watcher_mod, "_GIT_IGNORE_CACHE", {})
     monkeypatch.setattr(watcher_mod, "_GIT_IGNORE_CACHE_TS", time.time())
@@ -53,10 +53,10 @@ class TestWorkerAccounting:
         register_worker(tmp_path)
         assert os.getpid() in live_workers(tmp_path)
         assert os.getpid() in mcp_workers(tmp_path)
-        (tmp_path / ".codegraph" / "workers" / str(os.getpid())).unlink()
+        (tmp_path / ".cgh" / "workers" / str(os.getpid())).unlink()
 
     def test_dead_parent_marker_is_pruned(self, tmp_path):
-        wd = tmp_path / ".codegraph" / "workers"
+        wd = tmp_path / ".cgh" / "workers"
         wd.mkdir(parents=True)
         (wd / "parent-999999999").write_text("999999999\n", encoding="utf-8")
         assert live_workers(tmp_path) == []
@@ -68,10 +68,10 @@ class TestIdleRelease:
         """Run one watcher burst over a.py, recording reset calls."""
         released: list[str] = []
         monkeypatch.setattr(
-            "codegraph.core.db.reset_connection", lambda: released.append("reset")
+            "cgh.core.db.reset_connection", lambda: released.append("reset")
         )
         monkeypatch.setattr(watcher_mod, "index_file", lambda p, root: True)
-        handler = _CodeGraphHandler(repo)
+        handler = _CghHandler(repo)
         handler._schedule(str(repo / "a.py"))
         time.sleep(watcher_mod._DEBOUNCE + 0.4)
         return released
@@ -88,7 +88,7 @@ class TestIdleRelease:
         try:
             assert self._flush_one(repo, monkeypatch) == []
         finally:
-            (repo / ".codegraph" / "workers" / str(os.getpid())).unlink()
+            (repo / ".cgh" / "workers" / str(os.getpid())).unlink()
 
 
 class TestFanOutRecovers:
@@ -96,8 +96,8 @@ class TestFanOutRecovers:
         """In-process rehearsal of the real sequence: the child's write
         conn blocks a read-only open of the same DuckDB file; releasing
         it (what the idle watcher now does) unblocks the fan-out."""
-        from codegraph.analysis.federation import open_graphdb_ro
-        from codegraph.core.db import get_connection, reset_connection
+        from cgh.analysis.federation import open_graphdb_ro
+        from cgh.core.db import get_connection, reset_connection
 
         reset_connection()
         conn = get_connection(repo)  # child owner's write conn, lock held

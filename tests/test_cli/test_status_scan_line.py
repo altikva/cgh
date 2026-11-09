@@ -1,7 +1,7 @@
 # Copyright (c) 2026 ALTIKVA. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Project:     cgh (codegraph)
+# Project:     cgh (cgh)
 # Description: A repo with no git HEAD still gets scanned. Reporting "no
 #              scan recorded" there sends the reader to re-run an index
 #              that changes nothing.
@@ -9,7 +9,7 @@
 
 from datetime import UTC, datetime
 
-from codegraph.cli.commands_monitor import _scan_line
+from cgh.cli.commands_monitor import _scan_line
 
 NOW = datetime.now(UTC).isoformat(timespec="seconds")
 

@@ -17,14 +17,14 @@ import json
 
 import pytest
 
-from codegraph.cli import commands_bob as bob
+from cgh.cli import commands_bob as bob
 
 SID = "ses_01abc"
 
 
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
@@ -55,7 +55,7 @@ def test_session_start_gives_the_model_its_session_id(monkeypatch, root, capsys)
 
 
 def test_stop_writes_a_digest_of_what_changed(monkeypatch, root):
-    from codegraph.state.call_log import knowledge_list
+    from cgh.state.call_log import knowledge_list
 
     _tool(monkeypatch, root, "write_to_file", {"path": "app/a.py"})
     _tool(monkeypatch, root, "apply_diff", {"path": "app/b.py"}, runtime_shape=False)
@@ -80,7 +80,7 @@ def test_stop_writes_a_digest_of_what_changed(monkeypatch, root):
 
 
 def test_prompt_nudges_after_too_many_calls_without_a_save(monkeypatch, root, capsys):
-    (root / ".codegraph" / "config.toml").write_text("[bob]\ncheckpoint_every = 3\n")
+    (root / ".cgh" / "config.toml").write_text("[bob]\ncheckpoint_every = 3\n")
     for _ in range(2):
         _tool(monkeypatch, root, "read_file", {"path": "x"})
     _run(monkeypatch, bob.cmd_bob_prompt, {"session_id": SID, "cwd": str(root)})
@@ -94,7 +94,7 @@ def test_prompt_nudges_after_too_many_calls_without_a_save(monkeypatch, root, ca
         monkeypatch,
         root,
         "use_mcp_tool",
-        {"server_name": "codegraph", "tool_name": "checkpoint"},
+        {"server_name": "cgh", "tool_name": "checkpoint"},
     )
     _run(monkeypatch, bob.cmd_bob_prompt, {"session_id": SID, "cwd": str(root)})
     assert capsys.readouterr().out == ""
@@ -111,7 +111,7 @@ def test_gate_is_off_unless_configured(monkeypatch, root):
 
 
 def test_gate_blocks_once_then_lets_the_save_through(monkeypatch, root):
-    (root / ".codegraph" / "config.toml").write_text("[bob]\ncheckpoint_gate = 2\n")
+    (root / ".cgh" / "config.toml").write_text("[bob]\ncheckpoint_gate = 2\n")
     for _ in range(2):
         _tool(monkeypatch, root, "read_file", {"path": "x"})
     pre = {
@@ -134,7 +134,7 @@ def test_gate_blocks_once_then_lets_the_save_through(monkeypatch, root):
 
 
 def test_init_writes_hooks_and_keeps_the_users(root):
-    from codegraph.cli.commands_init import _install_bob_hooks
+    from cgh.cli.commands_init import _install_bob_hooks
 
     settings = root / ".bob" / "settings.json"
     settings.parent.mkdir()
@@ -162,7 +162,7 @@ def test_init_writes_hooks_and_keeps_the_users(root):
         commands = [h["command"] for g in data["hooks"][event] for h in g["hooks"]]
         assert len(commands) == 1 and commands[0].startswith("cgh _bob_")
 
-    (root / ".codegraph" / "config.toml").write_text("[bob]\ncheckpoint_gate = 60\n")
+    (root / ".cgh" / "config.toml").write_text("[bob]\ncheckpoint_gate = 60\n")
     _install_bob_hooks(root, "cgh")
     pre = json.loads(settings.read_text())["hooks"]["PreToolUse"]
     assert user_hook in pre and any(

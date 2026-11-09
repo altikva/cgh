@@ -18,7 +18,7 @@ import os as _os
 
 import pytest
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 class _WindowsOS:

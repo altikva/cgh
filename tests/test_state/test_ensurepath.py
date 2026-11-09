@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.state import ensurepath as ep
+from cgh.state import ensurepath as ep
 
 
 class TestIsOnPath:

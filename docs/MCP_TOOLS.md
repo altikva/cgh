@@ -10,10 +10,10 @@ Every answer an agent gets stays under a size ceiling: about 10 KB, 4 KB for `co
 
 ```
 pattern=wire_bytes backend=git-grep total=3 confidence=high root=/work/cgh
-codegraph/server/_budget.py
+cgh/server/_budget.py
   113: def wire_bytes(text: str) -> int:
 tests/test_server/test_wire_caps.py
-  12: from codegraph.server._budget import wire_bytes
+  12: from cgh.server._budget import wire_bytes
   40: assert wire_bytes(out) <= cap
 ```
 
@@ -40,7 +40,7 @@ tests/test_server/test_wire_caps.py
 | `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
-| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[codegraph] siblings` in `~/.codegraph/config.toml` |
+| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[cgh] siblings` in `~/.cgh/config.toml` |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
 | `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |
@@ -92,7 +92,7 @@ queried name keeps the most certain one.
 | `semantic_search(query, limit?, mode?)` | Vector search over names + docstrings by meaning (cosine); `mode` lexical (default) or neural (opt-in `cgh[neural]`) |
 | `context_for_task(task, max_nodes?)` | Build ranked context from graph + FTS for any task; the rationale comments of the served functions and classes come along (a few, short) in `rationale` and under each symbol |
 | `find_dead_code(file_path?, include_private?)` | Find symbols with no incoming edges (potentially unused) |
-| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[codegraph] allow_fetch = true`) |
+| `fetch_and_index(url, ttl_hours?, force?)` | Fetch a URL, reduce to text, chunk and index it (gated network egress: http/https only, SSRF-guarded, refused unless `[cgh] allow_fetch = true`) |
 | `search_fetched(query, limit?)` | Search the text of previously fetched pages, no further network |
 | `purge_fetched(url?)` | Drop one URL's chunks, or all fetched content |
 
@@ -132,13 +132,13 @@ queried name keeps the most certain one.
 | `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions |
 | `knowledge_search(query, kind?, limit?, scope?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes |
 | `knowledge_list(kind?, tag?, session_id?, limit?, offset?, entry_id?)` | Browse saved notes as briefs, 10 per page near 2.5 KB: useful entries first, corrected ones last, newest first inside each tier. `entry_id` reads one entry whole |
-| `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[codegraph] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
+| `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[cgh] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
 | `knowledge_terms(min_count?)` | Every tag with its count: the glossary of captured topics |
 | `knowledge_forget(entry_id)` | Delete one entry and its outcomes |
 
 ### Usage log
 
-Every tool call is logged to `.codegraph/call_log.db` with its `origin`: `agent` (an MCP client through `cgh serve`), `cli` (a `cgh` command asking the running owner), `hook` (the same from an agent or git hook) or `internal` (an in-process call). Rows logged before this column existed have no origin and show as `unknown`. `cgh stats`, `cgh logs` and `call_stats()` show the split, so hook traffic is not read as agent choices.
+Every tool call is logged to `.cgh/call_log.db` with its `origin`: `agent` (an MCP client through `cgh serve`), `cli` (a `cgh` command asking the running owner), `hook` (the same from an agent or git hook) or `internal` (an in-process call). Rows logged before this column existed have no origin and show as `unknown`. `cgh stats`, `cgh logs` and `call_stats()` show the split, so hook traffic is not read as agent choices.
 
 ---
 

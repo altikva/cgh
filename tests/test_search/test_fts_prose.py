@@ -19,8 +19,8 @@ import sqlite3
 
 import pytest
 
-from codegraph.cli.commands_query import cmd_search
-from codegraph.core.fts import (
+from cgh.cli.commands_query import cmd_search
+from cgh.core.fts import (
     commit,
     fts_search,
     get_fts_conn,
@@ -198,8 +198,8 @@ class TestSearchTextCli:
         # graph DB's exclusive lock. The text search reads fts.db read-only
         # and never opens the graph, so neither blocks it.
         duckdb = pytest.importorskip("duckdb")
-        graph = duckdb.connect(str(repo / ".codegraph" / "graph.duckdb"))
-        writer = sqlite3.connect(str(repo / ".codegraph" / "fts.db"))
+        graph = duckdb.connect(str(repo / ".cgh" / "graph.duckdb"))
+        writer = sqlite3.connect(str(repo / ".cgh" / "fts.db"))
         writer.execute("BEGIN IMMEDIATE")
         writer.execute(
             "INSERT INTO symbols(sym_id, kind, name, file_path, start_line) "

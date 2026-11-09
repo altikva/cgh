@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.state import knowledge_recall as kr
-from codegraph.state.call_log import (
+from cgh.state import knowledge_recall as kr
+from cgh.state.call_log import (
     _get_conn,
     get_stats,
     knowledge_record,
@@ -31,10 +31,10 @@ from codegraph.state.call_log import (
 @pytest.fixture
 def store(tmp_path):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     knowledge_record(
         "Stale lock after an owner crash",
-        "The owner left .codegraph/owner.lock behind; delete it and restart.",
+        "The owner left .cgh/owner.lock behind; delete it and restart.",
         kind="gotcha",
         tags="papercut,owner,lock",
         repo_root=tmp_path,
@@ -182,8 +182,8 @@ class _FakeMcp:
 
 @pytest.fixture
 def tool(store, monkeypatch):
-    import codegraph.server as _srv
-    from codegraph.server.tools_knowledge import register
+    import cgh.server as _srv
+    from cgh.server.tools_knowledge import register
 
     monkeypatch.setattr(_srv, "_root", store)
     m = _FakeMcp()
@@ -242,7 +242,7 @@ def test_counters_store_no_text(store):
     assert len(day) == 10  # YYYY-MM-DD, nothing else
     cols = [r[1] for r in conn.execute("PRAGMA table_info(knowledge_recall_stats)")]
     assert cols == ["day", "outcome", "count"]
-    raw = (store / ".codegraph" / "call_log.db").read_bytes()
+    raw = (store / ".cgh" / "call_log.db").read_bytes()
     assert secret.encode() not in raw
 
 
@@ -257,7 +257,7 @@ def test_tool_never_writes_the_query_to_the_counters(tool, store):
 
 def test_stats_without_any_search(tmp_path):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     recall = get_stats(tmp_path)["knowledge_recall"]
     assert recall["searches"] == 0
     assert recall["zero_hit_rate"] == "0%"
@@ -265,7 +265,7 @@ def test_stats_without_any_search(tmp_path):
 
 
 def test_stats_table_renders(store):
-    from codegraph.cli.commands_monitor import _recall_table
+    from cgh.cli.commands_monitor import _recall_table
 
     assert _recall_table({}) is None
     record_recall_outcome("high", repo_root=store)
@@ -275,7 +275,7 @@ def test_stats_table_renders(store):
 
 def test_old_store_gets_the_counter_table(tmp_path):
     reset_for_tests()
-    db = Path(tmp_path) / ".codegraph" / "call_log.db"
+    db = Path(tmp_path) / ".cgh" / "call_log.db"
     db.parent.mkdir()
     sqlite3.connect(db).close()
     record_recall_outcome("low", repo_root=tmp_path)
@@ -318,8 +318,8 @@ def test_first_hit_keeps_its_body_others_are_briefs(tool, store):
 
 
 def test_default_answer_stays_under_the_target(tool, store):
-    from codegraph.server._budget import answer_bytes
-    from codegraph.server.tools_knowledge import SEARCH_TARGET_BYTES
+    from cgh.server._budget import answer_bytes
+    from cgh.server.tools_knowledge import SEARCH_TARGET_BYTES
 
     _bulky(store)
     raw = tool(query="stale lock owner")
@@ -333,7 +333,7 @@ def test_default_answer_stays_under_the_target(tool, store):
 def test_default_limit_is_five(store):
     import inspect
 
-    from codegraph.server.tools_knowledge import register
+    from cgh.server.tools_knowledge import register
 
     m = _FakeMcp()
     register(m)
@@ -352,8 +352,8 @@ def test_clip_cuts_at_a_line_end():
 
 
 def test_a_brief_hit_is_read_whole_by_id(store, monkeypatch):
-    import codegraph.server as _srv
-    from codegraph.server.tools_knowledge import register
+    import cgh.server as _srv
+    from cgh.server.tools_knowledge import register
 
     _bulky(store, 3)
     monkeypatch.setattr(_srv, "_root", store)

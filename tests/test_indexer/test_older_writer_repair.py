@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from codegraph import indexer
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import incremental_reindex, index_file, index_repo
-from codegraph.state.scan_meta import GRAPH_FORMAT, read_meta
+from cgh import indexer
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import incremental_reindex, index_file, index_repo
+from cgh.state.scan_meta import GRAPH_FORMAT, read_meta
 
 _SIDE = {"call_site": "file_path", "name_ref": "file_path", "file_stamp": "path"}
 
@@ -181,7 +181,7 @@ def test_incremental_parses_files_an_older_writer_saved(tmp_path, backend):
     expected = _clean_graph(tmp_path, final)
     root = tmp_path / "repo"
     root.mkdir()
-    _write(root, {"lib.py": LIB, "app.py": APP, ".gitignore": ".codegraph/\n"})
+    _write(root, {"lib.py": LIB, "app.py": APP, ".gitignore": ".cgh/\n"})
     git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
@@ -208,7 +208,7 @@ def test_incremental_parses_files_an_older_writer_saved(tmp_path, backend):
 
 
 def test_owner_start_reindexes_when_an_older_writer_touched_files(tmp_path, backend):
-    from codegraph.server import _startup_index_needed
+    from cgh.server import _startup_index_needed
 
     _write(tmp_path, {"lib.py": LIB, "app.py": APP})
     index_repo(tmp_path, method="os_walk")
@@ -227,7 +227,7 @@ def test_full_upgrade_killed_halfway_restarts_and_completes(
     root.mkdir()
     _write(root, files)
     index_repo(root, method="os_walk")
-    meta_path = root / ".codegraph" / "scan_meta.json"
+    meta_path = root / ".cgh" / "scan_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta["graph_format"] = GRAPH_FORMAT - 1
     meta_path.write_text(json.dumps(meta), encoding="utf-8")

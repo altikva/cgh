@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +24,7 @@ def clean_db():
 
 
 def _write_config(root, body: str) -> None:
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(exist_ok=True)
     (cg / "config.toml").write_text(body, encoding="utf-8")
 
@@ -38,14 +38,14 @@ def test_ignore_pattern_skips_file(tmp_path):
 
 
 def test_max_file_size_kb_skips_large_file(tmp_path):
-    _write_config(tmp_path, "[codegraph]\nmax_file_size_kb = 1\n")
+    _write_config(tmp_path, "[cgh]\nmax_file_size_kb = 1\n")
     big = tmp_path / "big.py"
     big.write_text("x = 1\n" * 2000, encoding="utf-8")  # ~12 KB > 1 KB cap
     assert index_file(big, tmp_path) is False
 
 
 def test_size_cap_bypassed_by_force(tmp_path):
-    _write_config(tmp_path, "[codegraph]\nmax_file_size_kb = 1\n")
+    _write_config(tmp_path, "[cgh]\nmax_file_size_kb = 1\n")
     big = tmp_path / "big.py"
     big.write_text("def f():\n    return 1\n" + "x = 1\n" * 2000, encoding="utf-8")
     assert index_file(big, tmp_path, force=True) is True

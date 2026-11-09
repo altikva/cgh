@@ -22,7 +22,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from codegraph import sdk
+from cgh import sdk
 
 DIAGRAM_KINDS = {"architecture_diagram", "flowchart", "network_diagram", "uml"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}

@@ -16,9 +16,9 @@ import pytest
 # Optional grammar: skip the whole module when the extra is absent.
 pytest.importorskip("tree_sitter_ruby")
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
-from codegraph.parsers.ruby import RubyParser
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
+from cgh.parsers.ruby import RubyParser
 
 
 @pytest.fixture

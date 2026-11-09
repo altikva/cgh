@@ -4,9 +4,9 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: The local report spool: .codegraph/bugreports/<id>.json.
+# Description: The local report spool: .cgh/bugreports/<id>.json.
 #              Capped at 20 reports (oldest dropped), purged past 30
-#              days, and living under .codegraph/ which is gitignored
+#              days, and living under .cgh/ which is gitignored
 #              and never indexed. Send metadata is written back into the
 #              report file so `cgh bug status` is the complete ledger.
 
@@ -22,7 +22,7 @@ _MAX_AGE_DAYS = 30
 
 
 def spool_dir(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".codegraph" / _DIR
+    return Path(repo_root) / ".cgh" / _DIR
 
 
 def write_report(repo_root: str | Path, payload: dict) -> Path:

@@ -470,7 +470,7 @@
         }
       ]
     },
-    "find_codegraph_root": {
+    "find_cgh_root": {
       "kind": "function",
       "signature": [
         {
@@ -719,7 +719,7 @@
           "name": "project_root"
         },
         {
-          "returns": "CodegraphConfig"
+          "returns": "CghConfig"
         }
       ]
     },

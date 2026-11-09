@@ -22,12 +22,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis import terraform as tf
-from codegraph.analysis.callers import callers_of
-from codegraph.core.config import load_config
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import incremental_reindex, index_repo, module_sources_changed
-from codegraph.state.scan_meta import read_meta
+from cgh.analysis import terraform as tf
+from cgh.analysis.callers import callers_of
+from cgh.core.config import load_config
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import incremental_reindex, index_repo, module_sources_changed
+from cgh.state.scan_meta import read_meta
 
 MAPPING = (
     "[terraform]\n"
@@ -97,7 +97,7 @@ def repo(request, tmp_path, monkeypatch):
         _commit(mods, tag)
         _git(mods, "tag", tag)
     root = base / "infra"
-    _write(root, {"env/main.tf": MAIN, ".codegraph/config.toml": MAPPING})
+    _write(root, {"env/main.tf": MAIN, ".cgh/config.toml": MAPPING})
     _git(root, "init", "-q")
     _commit(root, "init")
     index_repo(root, method="os_walk")
@@ -126,7 +126,7 @@ def test_each_ref_links_to_that_version(repo):
 def test_module_repo_is_never_written(repo):
     mods = repo.parent / "mods"
     assert _git(mods, "status", "--porcelain") == ""
-    assert not (mods / ".codegraph").exists()
+    assert not (mods / ".cgh").exists()
     assert "v2" in _git(mods, "log", "-1", "--format=%s")
 
 
@@ -156,7 +156,7 @@ def test_report_and_notice_name_the_missing_ref(repo):
 
 
 def test_status_and_doctor_show_module_sources(repo, capsys):
-    from codegraph.cli.commands_monitor import cmd_doctor, cmd_status
+    from cgh.cli.commands_monitor import cmd_doctor, cmd_status
 
     cmd_status(argparse.Namespace(root=str(repo), json=True, workers=False))
     payload = json.loads(capsys.readouterr().out)
@@ -174,11 +174,11 @@ def test_status_and_doctor_show_module_sources(repo, capsys):
 def test_status_shows_an_edited_mapping_as_pending(repo, capsys, monkeypatch):
     # Before, the row kept the indexed path until the next index, beside a
     # notice saying the mapping changed.
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     other = repo.parent / "mods2"
     other.mkdir()
-    (repo / ".codegraph/config.toml").write_text(
+    (repo / ".cgh/config.toml").write_text(
         MAPPING.replace('"../mods"', '"../mods2"'), encoding="utf-8"
     )
     commands_monitor.cmd_status(
@@ -242,7 +242,7 @@ def test_a_moved_branch_and_an_edited_mapping_are_seen(repo):
         "TFVar", where={"address": "var.x"}, return_fields=["file_path"]
     )
 
-    (repo / ".codegraph/config.toml").write_text("", encoding="utf-8")
+    (repo / ".cgh/config.toml").write_text("", encoding="utf-8")
     assert module_sources_changed(repo, load_config(repo))
     index_repo(repo, method="os_walk")
     assert not conn.find_nodes("TFVar", contains={"file_path": "/mods/"})
@@ -250,10 +250,10 @@ def test_a_moved_branch_and_an_edited_mapping_are_seen(repo):
 
 
 def test_owner_start_reindexes_on_a_changed_mapping(repo):
-    from codegraph.server import _startup_index_needed
+    from cgh.server import _startup_index_needed
 
     assert not _startup_index_needed(repo, reindex=False)
-    (repo / ".codegraph/config.toml").write_text("", encoding="utf-8")
+    (repo / ".cgh/config.toml").write_text("", encoding="utf-8")
     assert _startup_index_needed(repo, reindex=False)
 
 

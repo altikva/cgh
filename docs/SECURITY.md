@@ -2,7 +2,7 @@
 
 ## What cgh is, and what it is not
 
-cgh is a local tool. It parses your repository into `.codegraph/` on
+cgh is a local tool. It parses your repository into `.cgh/` on
 your machine and serves that index to your agent over MCP (stdio, plus
 a loopback HTTP bridge between cgh processes). The index holds the
 same information as your source tree, organized for lookup.
@@ -20,11 +20,11 @@ cgh itself sends nothing over the network unless you turn it on.
 Installed plugins can, as described for each one below.
 
 - **Network fetch** (`fetch_and_index` MCP tool, `cgh fetch`): refused
-  unless `.codegraph/config.toml` sets `allow_fetch = true` under
-  `[codegraph]`. Even then only `http`/`https` URLs on public hosts are
+  unless `.cgh/config.toml` sets `allow_fetch = true` under
+  `[cgh]`. Even then only `http`/`https` URLs on public hosts are
   fetched (private, loopback and link-local addresses are refused,
   redirects included) and every fetch or refusal is written to
-  `.codegraph/activity.log`.
+  `.cgh/activity.log`.
 - **Code generation** (`cgh-codegen`): the backend is your choice in
   `[plugin.codegen]`. Every file it would send (the reference, a file
   being extended) and the spec first go through a built-in secret check.
@@ -80,14 +80,14 @@ they are left as they are.
 
 ## MCP auth key
 
-`cgh init` generates a cryptographic auth key at `.codegraph/auth.key` (auto-added to `.gitignore`). The owner process and every worker / CLI caller read that file and send it as a `Bearer` token to the owner's loopback HTTP bridge, which compares it in constant time. The file contents are the shared secret: there is no environment-variable hand-off.
+`cgh init` generates a cryptographic auth key at `.cgh/auth.key` (auto-added to `.gitignore`). The owner process and every worker / CLI caller read that file and send it as a `Bearer` token to the owner's loopback HTTP bridge, which compares it in constant time. The file contents are the shared secret: there is no environment-variable hand-off.
 
 ```bash
 # Key is auto-managed -- no manual steps needed
-cgh init          # generates the key and the .codegraph/ index dir
+cgh init          # generates the key and the .cgh/ index dir
 ```
 
-The key file has `600` permissions and the `.codegraph/` directory is `700` (owner-only). Never commit either to git.
+The key file has `600` permissions and the `.cgh/` directory is `700` (owner-only). Never commit either to git.
 
 ## Upgrading from secure mode
 
@@ -100,7 +100,7 @@ nothing any more). They keep the deny rules cgh had written to
 `.claude/settings.local.json` and its managed block in `.bobignore`,
 since those still keep files from your agent, and print how many remain.
 `cgh guard --remove-rules` removes exactly those (the deny rules recorded
-in `.codegraph/guard_denies.json` and the managed block) and the sidecar.
+in `.cgh/guard_denies.json` and the managed block) and the sidecar.
 Entries you wrote yourself are left alone either way. See
 [UPGRADING-0.15.md](UPGRADING-0.15.md).
 

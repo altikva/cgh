@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis import call_rules as cr
-from codegraph.analysis.call_rules import Site, Target, is_test_path, targets_for
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, index_repo
-from codegraph.parsers import get_parser
-from codegraph.parsers.base import CallRef
+from cgh.analysis import call_rules as cr
+from cgh.analysis.call_rules import Site, Target, is_test_path, targets_for
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, index_repo
+from cgh.parsers import get_parser
+from cgh.parsers.base import CallRef
 
 BACKENDS = ["duckdb", "sqlite"]
 
@@ -659,7 +659,7 @@ def test_a_base_class_change_relinks_the_typed_calls(tmp_path, backend):
     assert _callees(_edges(tmp_path), "h.py::H.go") == {"other.py::Other.load"}
 
     (tmp_path / "mid.py").unlink()
-    from codegraph.indexer import _delete_file_relinking
+    from cgh.indexer import _delete_file_relinking
 
     _delete_file_relinking(get_connection(tmp_path), str(tmp_path / "mid.py"), tmp_path)
     # Deep's base is gone: the class is known but defines no load, and the
@@ -720,7 +720,7 @@ def test_a_definition_appearing_or_leaving_updates_other_callers(tmp_path, backe
 def test_old_call_site_table_gains_the_shape_columns(tmp_path, backend):
     """An index written before call shapes existed opens and takes the new
     rows (its full reparse comes from the GRAPH_FORMAT bump)."""
-    db_dir = tmp_path / ".codegraph"
+    db_dir = tmp_path / ".cgh"
     db_dir.mkdir()
     if backend == "sqlite":
         import sqlite3

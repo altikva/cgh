@@ -18,9 +18,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _fresh(tmp_path, monkeypatch):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.chdir(tmp_path)
-    import codegraph.state.call_log as cl
+    import cgh.state.call_log as cl
 
     cl.reset_for_tests()
     yield tmp_path
@@ -34,8 +34,8 @@ def _ns(words, fix="", project="", limit=15, root="."):
 
 
 def test_add_records_a_papercut_tagged_gotcha(_fresh):
-    from codegraph.cli.commands_papercut import cmd_papercut
-    from codegraph.state.call_log import knowledge_search
+    from cgh.cli.commands_papercut import cmd_papercut
+    from cgh.state.call_log import knowledge_search
 
     cmd_papercut(
         _ns(["add", "gcloud", "token", "stale"], fix="gcloud auth login --update-adc")
@@ -51,15 +51,15 @@ def test_add_records_a_papercut_tagged_gotcha(_fresh):
 
 
 def test_add_without_a_symptom_exits(_fresh):
-    from codegraph.cli.commands_papercut import cmd_papercut
+    from cgh.cli.commands_papercut import cmd_papercut
 
     with pytest.raises(SystemExit):
         cmd_papercut(_ns(["add"]))
 
 
 def test_search_surfaces_only_papercuts(_fresh):
-    from codegraph.cli.commands_papercut import cmd_papercut
-    from codegraph.state.call_log import knowledge_record, knowledge_search
+    from cgh.cli.commands_papercut import cmd_papercut
+    from cgh.state.call_log import knowledge_record, knowledge_search
 
     cmd_papercut(_ns(["add", "duckdb lock wedged"], fix="cgh serve --stop"))
     # a plain gotcha that is NOT a papercut must not be counted as one
@@ -84,7 +84,7 @@ def test_papercut_is_wired_into_the_installed_rule_and_skill():
     # The always-loaded rule cgh init writes must carry the papercut reflex,
     # and the bundled skill must be present for auto-install. Guard both so a
     # future edit does not silently drop the native convention.
-    from codegraph.integrations.skill_installer import _USAGE_BODY, list_bundled_skills
+    from cgh.integrations.skill_installer import _USAGE_BODY, list_bundled_skills
 
     assert "papercut" in _USAGE_BODY.lower()
     assert "knowledge_search" in _USAGE_BODY  # read-first path

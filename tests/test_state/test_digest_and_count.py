@@ -10,7 +10,7 @@ from __future__ import annotations
 
 
 def test_digest_tags_always_carries_the_marker():
-    from codegraph.server.tools_knowledge import _digest_tags
+    from cgh.server.tools_knowledge import _digest_tags
 
     assert _digest_tags("") == "compaction,session-digest"
     assert _digest_tags("cards,ondonne") == "cards,ondonne,session-digest"
@@ -18,7 +18,7 @@ def test_digest_tags_always_carries_the_marker():
 
 
 def test_count_matches_list_excluding_superseded(tmp_path):
-    from codegraph.state.call_log import (
+    from cgh.state.call_log import (
         knowledge_count,
         knowledge_list,
         knowledge_record,
@@ -26,7 +26,7 @@ def test_count_matches_list_excluding_superseded(tmp_path):
     )
 
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     old = knowledge_record("old", "o", kind="note", tags="x", repo_root=tmp_path)
     knowledge_record(
         "new", "n", kind="note", tags="x", repo_root=tmp_path, supersedes=old

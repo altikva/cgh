@@ -18,10 +18,10 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from codegraph.cli.commands_export import cmd_export
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
-from codegraph.viz.graphml import GRAPHML_NS, write_graphml
+from cgh.cli.commands_export import cmd_export
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
+from cgh.viz.graphml import GRAPHML_NS, write_graphml
 
 NS = {"g": GRAPHML_NS}
 

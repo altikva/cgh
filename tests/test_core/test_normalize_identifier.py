@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import textwrap
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.core.utils import normalize_identifier
-from codegraph.indexer import index_file
+from cgh.core.db import get_connection, reset_connection
+from cgh.core.utils import normalize_identifier
+from cgh.indexer import index_file
 
 
 class TestNormalizeIdentifier:

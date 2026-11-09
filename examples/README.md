@@ -1,6 +1,6 @@
 # SDK examples
 
-Runnable demonstrations of the embedding surface (`codegraph.sdk`),
+Runnable demonstrations of the embedding surface (`cgh.sdk`),
 the supported way to use cgh's bricks inside your own agent,
 pipeline or API. One directory per case; each holds a comprehensive
 README (install steps included), the code, a sample config when there

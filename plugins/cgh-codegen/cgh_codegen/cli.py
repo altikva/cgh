@@ -25,7 +25,7 @@ def plugin_config_for_root(root: str | Path, fallback: dict) -> dict:
     the backend and the egress posture too, not just where the file lands.
     Falls back to the captured config when the root declares no table.
     """
-    from codegraph.plugin_api import load_config
+    from cgh.plugin_api import load_config
 
     return load_config(root).plugin_tables.get("codegen", fallback)
 
@@ -137,7 +137,7 @@ def _cmd_log(args, config: dict) -> None:
     console.print(f"[bold]codegen activity[/bold]  [dim]({len(rows)})[/dim]")
     console.print(table)
     console.print(
-        "[dim]Read straight from .codegraph/activity.log; "
+        "[dim]Read straight from .cgh/activity.log; "
         "nothing here entered a model's context.[/dim]"
     )
 
@@ -224,7 +224,7 @@ def _cmd_gen(args, config: dict) -> None:
     if backend is None:
         console.print(
             "[red]no backend configured.[/red] Set a backend command under "
-            "plugin.codegen in .codegraph/config.toml "
+            "plugin.codegen in .cgh/config.toml "
             '(command = "claude -p").'
         )
         raise SystemExit(1)

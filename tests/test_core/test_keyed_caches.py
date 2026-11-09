@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core import db as core_db
-from codegraph.state import call_log
+from cgh.core import db as core_db
+from cgh.state import call_log
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def clean_conns():
 
 def _repo(tmp_path, name):
     root = tmp_path / name
-    (root / ".codegraph").mkdir(parents=True)
+    (root / ".cgh").mkdir(parents=True)
     return root
 
 
@@ -69,5 +69,5 @@ class TestCallLogCache:
         assert "only in a" not in titles_b
         titles_a = [e["title"] for e in call_log.knowledge_list(repo_root=a, limit=10)]
         assert "only in a" in titles_a
-        assert (a / ".codegraph" / "call_log.db").exists()
-        assert (b / ".codegraph" / "call_log.db").exists()
+        assert (a / ".cgh" / "call_log.db").exists()
+        assert (b / ".cgh" / "call_log.db").exists()

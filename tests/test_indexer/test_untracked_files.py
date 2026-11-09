@@ -17,15 +17,15 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis import pattern as P
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import incremental_reindex, index_file, index_repo
+from cgh.analysis import pattern as P
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import incremental_reindex, index_file, index_repo
 
 
 @pytest.fixture(params=["duckdb", "sqlite"])
 def backend(request, monkeypatch):
     monkeypatch.setenv("CGH_DB", request.param)
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     yield request.param
     reset_connection()
@@ -47,7 +47,7 @@ def repo(tmp_path: Path) -> Path:
     root = tmp_path.resolve()
     (root / "pkg").mkdir()
     (root / "pkg" / "base.py").write_text("def committed_fn():\n    return 1\n")
-    (root / ".gitignore").write_text("ignored/\n.codegraph/\n")
+    (root / ".gitignore").write_text("ignored/\n.cgh/\n")
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(

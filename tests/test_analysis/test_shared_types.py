@@ -22,12 +22,12 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_query as cq
-import codegraph.server as _srv
-from codegraph.analysis.federation import add_subrepo
-from codegraph.analysis.shared_types import match_shared_types, shared_types_report
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+import cgh.cli.commands_query as cq
+import cgh.server as _srv
+from cgh.analysis.federation import add_subrepo
+from cgh.analysis.shared_types import match_shared_types, shared_types_report
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 BACKEND = {
     "app/__init__.py": "",
@@ -75,7 +75,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 
 def _graph_file(root: Path) -> Path:
-    return next(p for p in (root / ".codegraph").glob("graph.*") if p.is_file())
+    return next(p for p in (root / ".cgh").glob("graph.*") if p.is_file())
 
 
 @pytest.fixture(params=["duckdb", "sqlite"])
@@ -154,7 +154,7 @@ def test_mcp_tool_matches_the_report(fed):
 
             return deco
 
-    from codegraph.server.tools_insight import register
+    from cgh.server.tools_insight import register
 
     m = _FakeMcp()
     register(m)

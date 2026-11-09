@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import communities as cm
-from codegraph.analysis import federation
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, index_repo
+import cgh.server as _srv
+from cgh.analysis import communities as cm
+from cgh.analysis import federation
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, index_repo
 
 # ---------------------------------------------------------------------------
 # Louvain on hand-built graphs
@@ -230,7 +230,7 @@ def repo(request, tmp_path, monkeypatch):
     if request.param == "duckdb":
         pytest.importorskip("duckdb")
     monkeypatch.setenv("CGH_DB", request.param)
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     cm.reset_for_tests()
     root = tmp_path.resolve() / "repo"
@@ -246,7 +246,7 @@ def repo(request, tmp_path, monkeypatch):
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_arch import register
+    from cgh.server.tools_arch import register
 
     m = _FakeMcp()
     register(m)
@@ -306,7 +306,7 @@ def test_architecture_overview_lists_subsystems(repo):
 
 
 def test_cli_prints_the_table_and_json(repo, capsys):
-    from codegraph.cli.commands_query import cmd_communities
+    from cgh.cli.commands_query import cmd_communities
 
     args = argparse.Namespace(
         root=str(repo), resolution=1.0, min_size=2, limit=30, json=True
@@ -327,7 +327,7 @@ def test_cli_prints_the_table_and_json(repo, capsys):
 
 @pytest.fixture
 def fed(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     federation.reset_for_tests()
     reset_connection()
@@ -344,9 +344,9 @@ def fed(tmp_path, monkeypatch):
     (parent / "front" / "__init__.py").write_text("")
     index_repo(child, method="os_walk")
     reset_connection()
-    (parent / ".codegraph").mkdir(exist_ok=True)
-    (parent / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
+    (parent / ".cgh").mkdir(exist_ok=True)
+    (parent / ".cgh" / "config.toml").write_text(
+        '[cgh]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
     )
     index_repo(parent, method="os_walk")
     _srv._root = parent
@@ -370,7 +370,7 @@ def test_federated_scopes_are_clustered_apart(fed):
 
 
 def test_context_for_task_names_the_subsystem_of_its_matches(repo):
-    from codegraph.server.tools_meta import register
+    from cgh.server.tools_meta import register
 
     m = _FakeMcp()
     register(m)

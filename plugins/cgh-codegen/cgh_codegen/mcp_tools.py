@@ -17,7 +17,7 @@ import json
 
 def make_mcp_registrar(config: dict):
     def register_tools(mcp) -> None:
-        from codegraph.plugin_api import server_root
+        from cgh.plugin_api import server_root
 
         @mcp.tool()
         def codegen_pick(target: str, reference: str = "") -> str:

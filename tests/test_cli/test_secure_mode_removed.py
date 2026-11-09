@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.core.config as config_mod
-from codegraph.core.config import LEGACY_SECURE_MODE_NOTICE, load_config
+import cgh.core.config as config_mod
+from cgh.core.config import LEGACY_SECURE_MODE_NOTICE, load_config
 
 
 @pytest.fixture
@@ -31,8 +31,8 @@ def fresh_notice(monkeypatch):
 
 
 def _repo(tmp_path: Path, body: str) -> Path:
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "config.toml").write_text(body, encoding="utf-8")
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "config.toml").write_text(body, encoding="utf-8")
     return tmp_path
 
 
@@ -40,7 +40,7 @@ class TestConfig:
     def test_secure_loads_as_assist_with_one_warning(
         self, tmp_path, capsys, fresh_notice
     ):
-        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n')
+        root = _repo(tmp_path, '[cgh]\nmode = "secure"\n')
         first = load_config(root)
         second = load_config(root)
         assert first.mode == second.mode == "assist"
@@ -50,7 +50,7 @@ class TestConfig:
         assert captured.err.count(LEGACY_SECURE_MODE_NOTICE) == 1
         assert captured.err.startswith("cgh: ")
 
-    @pytest.mark.parametrize("body", ['[codegraph]\nmode = "assist"\n', ""])
+    @pytest.mark.parametrize("body", ['[cgh]\nmode = "assist"\n', ""])
     def test_assist_or_absent_is_silent(self, tmp_path, capsys, fresh_notice, body):
         cfg = load_config(_repo(tmp_path, body))
         assert cfg.mode == "assist" and cfg.legacy_secure_mode is False
@@ -58,11 +58,11 @@ class TestConfig:
 
     def test_suppressed_notice_stays_quiet(self, tmp_path, capsys, fresh_notice):
         config_mod.suppress_legacy_mode_warning()
-        load_config(_repo(tmp_path, '[codegraph]\nmode = "secure"\n'))
+        load_config(_repo(tmp_path, '[cgh]\nmode = "secure"\n'))
         assert capsys.readouterr().err == ""
 
     def test_odd_values_never_raise(self, tmp_path, fresh_notice):
-        cfg = load_config(_repo(tmp_path, '[codegraph]\nmode = "  SECURE "\n'))
+        cfg = load_config(_repo(tmp_path, '[cgh]\nmode = "  SECURE "\n'))
         assert cfg.mode == "assist" and cfg.legacy_secure_mode is True
 
 
@@ -84,7 +84,7 @@ class TestDeadKeys:
         assert "[plugin.summarize] allow_pii, [plugin.summarize] egress" in err
 
     def test_secure_and_dead_keys_share_one_line(self, tmp_path, capsys, fresh_notice):
-        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n\n' + self.BODY)
+        root = _repo(tmp_path, '[cgh]\nmode = "secure"\n\n' + self.BODY)
         load_config(root)
         err = capsys.readouterr().err
         assert err.count("\n") == 1
@@ -101,7 +101,7 @@ class TestDeadKeys:
         assert capsys.readouterr().err == ""
 
     def test_status_json_lists_them(self, tmp_path, capsys, fresh_notice):
-        from codegraph.cli.commands_monitor import cmd_status
+        from cgh.cli.commands_monitor import cmd_status
 
         root = _repo(tmp_path, self.BODY)
         cmd_status(Namespace(root=str(root), json=True, refresh=False, workers=False))
@@ -113,9 +113,9 @@ class TestDeadKeys:
 
 class TestStatusAndDoctor:
     def test_status_json_carries_the_notice(self, tmp_path, capsys, fresh_notice):
-        from codegraph.cli.commands_monitor import cmd_status
+        from cgh.cli.commands_monitor import cmd_status
 
-        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n')
+        root = _repo(tmp_path, '[cgh]\nmode = "secure"\n')
         cmd_status(Namespace(root=str(root), json=True, refresh=False, workers=False))
         captured = capsys.readouterr()
         payload = json.loads(captured.out)
@@ -123,24 +123,24 @@ class TestStatusAndDoctor:
         assert LEGACY_SECURE_MODE_NOTICE not in captured.err  # shown once, inline
 
     def test_status_json_has_no_notice_when_clean(self, tmp_path, capsys):
-        from codegraph.cli.commands_monitor import cmd_status
+        from cgh.cli.commands_monitor import cmd_status
 
-        root = _repo(tmp_path, "[codegraph]\n")
+        root = _repo(tmp_path, "[cgh]\n")
         cmd_status(Namespace(root=str(root), json=True, refresh=False, workers=False))
         assert json.loads(capsys.readouterr().out)["notices"] == []
 
     def test_status_human_output_shows_it(self, tmp_path, capsys, fresh_notice):
-        from codegraph.cli.commands_monitor import cmd_status
+        from cgh.cli.commands_monitor import cmd_status
 
-        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n')
+        root = _repo(tmp_path, '[cgh]\nmode = "secure"\n')
         cmd_status(Namespace(root=str(root), json=False, refresh=False, workers=False))
         out = " ".join(capsys.readouterr().out.split())
         assert "no longer supported" in out
 
     def test_doctor_shows_it_without_failing(self, tmp_path, capsys, fresh_notice):
-        from codegraph.cli.commands_monitor import cmd_doctor
+        from cgh.cli.commands_monitor import cmd_doctor
 
-        root = _repo(tmp_path, '[codegraph]\nmode = "secure"\n')
+        root = _repo(tmp_path, '[cgh]\nmode = "secure"\n')
         cmd_doctor(Namespace(root=str(root), strict=False))
         out = " ".join(capsys.readouterr().out.split())
         assert "!!" in out and "no longer supported" in out
@@ -148,24 +148,24 @@ class TestStatusAndDoctor:
 
 class TestInitSecureFlag:
     def test_flag_prints_note_and_writes_nothing(self, tmp_path, capsys):
-        from codegraph.cli.commands_init import _note_deprecated_secure_flag
+        from cgh.cli.commands_init import _note_deprecated_secure_flag
 
-        root = _repo(tmp_path, "[codegraph]\n")
+        root = _repo(tmp_path, "[cgh]\n")
         _note_deprecated_secure_flag(Namespace(secure=True))
         out = " ".join(capsys.readouterr().out.split())
         assert "--secure is deprecated" in out
-        cfg = (root / ".codegraph" / "config.toml").read_text(encoding="utf-8")
-        assert cfg == "[codegraph]\n"
+        cfg = (root / ".cgh" / "config.toml").read_text(encoding="utf-8")
+        assert cfg == "[cgh]\n"
 
     def test_no_flag_no_note(self, capsys):
-        from codegraph.cli.commands_init import _note_deprecated_secure_flag
+        from cgh.cli.commands_init import _note_deprecated_secure_flag
 
         _note_deprecated_secure_flag(Namespace(secure=False))
         assert capsys.readouterr().out == ""
 
     def test_parser_still_accepts_secure(self, monkeypatch):
         """Old scripts pass --secure: argparse must not reject it."""
-        import codegraph.__main__ as cli
+        import cgh.__main__ as cli
 
         seen = {}
         monkeypatch.setattr(cli, "cmd_init", lambda args: seen.update(vars(args)))

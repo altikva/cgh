@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis import pattern as P
+from cgh.analysis import pattern as P
 
 _FILES = {
     "pkg/answers.py": (

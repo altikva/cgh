@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.analysis.impact import build_impact_report
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+from cgh.analysis.impact import build_impact_report
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 MANAGER = (
     "class DonationManager:\n"

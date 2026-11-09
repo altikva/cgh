@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.fts import get_fts_conn, upsert_symbol
-from codegraph.indexer import incremental_reindex, index_repo
+from cgh.core.fts import get_fts_conn, upsert_symbol
+from cgh.indexer import incremental_reindex, index_repo
 
 
 def _git_repo(root: Path) -> None:
@@ -65,13 +65,13 @@ def test_index_purges_fts_rows_of_files_not_in_the_graph(tmp_path, method):
 
 
 def test_owner_indexes_a_store_with_no_completed_scan(tmp_path):
-    from codegraph.server import _startup_index_needed
+    from cgh.server import _startup_index_needed
 
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     assert _startup_index_needed(tmp_path, reindex=False)
-    from codegraph.state.scan_meta import GRAPH_FORMAT
+    from cgh.state.scan_meta import GRAPH_FORMAT
 
-    meta = tmp_path / ".codegraph" / "scan_meta.json"
+    meta = tmp_path / ".cgh" / "scan_meta.json"
     meta.write_text(f'{{"git_head": "abc", "graph_format": {GRAPH_FORMAT}}}')
     assert not _startup_index_needed(tmp_path, reindex=False)
     assert _startup_index_needed(tmp_path, reindex=True)
@@ -81,14 +81,14 @@ def test_owner_indexes_a_store_with_no_completed_scan(tmp_path):
 
 
 def test_seed_refuses_while_an_index_runs_on_the_target(tmp_path):
-    from codegraph.cli.commands_init import _seed_from_checkout
+    from cgh.cli.commands_init import _seed_from_checkout
 
     src, dst = tmp_path / "src", tmp_path / "dst"
-    (src / ".codegraph").mkdir(parents=True)
-    (dst / ".codegraph").mkdir(parents=True)
+    (src / ".cgh").mkdir(parents=True)
+    (dst / ".cgh").mkdir(parents=True)
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
-        (dst / ".codegraph" / "index.lock").write_text(f"{other.pid}\n")
+        (dst / ".cgh" / "index.lock").write_text(f"{other.pid}\n")
         with pytest.raises(SystemExit):
             _seed_from_checkout(dst, src)
     finally:
@@ -97,13 +97,13 @@ def test_seed_refuses_while_an_index_runs_on_the_target(tmp_path):
 
 
 def test_reset_sweeps_only_its_own_repo_owner(monkeypatch, tmp_path):
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     mine, sibling = tmp_path / "api", tmp_path / "api-1250"
     listing = (
-        f"101 python -m codegraph _serve_owner --root {mine} --watch\n"
-        f"102 python -m codegraph _serve_owner --root {sibling} --watch\n"
-        f"103 python -m codegraph serve --root {mine}\n"
+        f"101 python -m cgh _serve_owner --root {mine} --watch\n"
+        f"102 python -m cgh _serve_owner --root {sibling} --watch\n"
+        f"103 python -m cgh serve --root {mine}\n"
     )
 
     class _Done:

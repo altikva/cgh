@@ -15,18 +15,18 @@ import os
 import subprocess
 import sys
 
-from codegraph.state.pidfile import process_alive
+from cgh.state.pidfile import process_alive
 
 
 class TestResolveSignals:
     def test_returns_existing_signals(self):
-        from codegraph.server import _resolve_signals
+        from cgh.server import _resolve_signals
 
         sigs = _resolve_signals("SIGTERM", "SIGINT")
         assert len(sigs) == 2
 
     def test_skips_missing_without_raising(self):
-        from codegraph.server import _resolve_signals
+        from cgh.server import _resolve_signals
 
         # A name that exists nowhere must be skipped, never raise (this is
         # exactly how SIGHUP behaves on Windows).
@@ -34,7 +34,7 @@ class TestResolveSignals:
         assert len(sigs) == 1
 
     def test_all_missing_returns_empty(self):
-        from codegraph.server import _resolve_signals
+        from cgh.server import _resolve_signals
 
         assert _resolve_signals("NOPE_A", "NOPE_B") == []
 
@@ -57,7 +57,7 @@ class TestCrlfCommand:
     def test_trailing_cr_on_command_is_tolerated(self):
         # A token like "--version\r" (CRLF wrapper on Windows) must still work.
         out = subprocess.run(
-            [sys.executable, "-m", "codegraph", "--version\r"],
+            [sys.executable, "-m", "cgh", "--version\r"],
             capture_output=True,
             text=True,
         )

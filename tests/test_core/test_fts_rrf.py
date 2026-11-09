@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.core.fts import _rrf, fts_search, get_fts_conn, upsert_symbol
+from cgh.core.fts import _rrf, fts_search, get_fts_conn, upsert_symbol
 
 
 def test_rrf_rewards_agreement_and_top_rank():
@@ -57,7 +57,7 @@ def test_snake_case_still_found_by_word(tmp_path):
 
 
 def test_deleted_symbol_leaves_the_trigram_index(tmp_path):
-    from codegraph.core.fts import delete_file_symbols
+    from cgh.core.fts import delete_file_symbols
 
     conn = _seed(tmp_path)
     delete_file_symbols(conn, "a.py")
@@ -67,7 +67,7 @@ def test_deleted_symbol_leaves_the_trigram_index(tmp_path):
 
 
 def _seed_mp(tmp_path):
-    from codegraph.core.fts import get_fts_conn, upsert_memory_entry, upsert_plan_entry
+    from cgh.core.fts import get_fts_conn, upsert_memory_entry, upsert_plan_entry
 
     conn = get_fts_conn(tmp_path)
     upsert_memory_entry(
@@ -81,7 +81,7 @@ def _seed_mp(tmp_path):
 
 
 def test_memory_search_word_and_fragment(tmp_path):
-    from codegraph.core.fts import memory_search
+    from cgh.core.fts import memory_search
 
     conn = _seed_mp(tmp_path)
     assert [h.title for h in memory_search(conn, "commit")] == [
@@ -94,7 +94,7 @@ def test_memory_search_word_and_fragment(tmp_path):
 
 
 def test_plan_search_fragment(tmp_path):
-    from codegraph.core.fts import plan_search
+    from cgh.core.fts import plan_search
 
     conn = _seed_mp(tmp_path)
     assert [h.title for h in plan_search(conn, "ationpars")] == [
@@ -103,7 +103,7 @@ def test_plan_search_fragment(tmp_path):
 
 
 def test_memory_delete_leaves_trigram_consistent(tmp_path):
-    from codegraph.core.fts import delete_memory_entry, memory_search
+    from cgh.core.fts import delete_memory_entry, memory_search
 
     conn = _seed_mp(tmp_path)
     delete_memory_entry(conn, "m1")

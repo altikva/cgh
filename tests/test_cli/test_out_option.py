@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from codegraph.cli.output import add_format_option, add_out_option, emit_result
+from cgh.cli.output import add_format_option, add_out_option, emit_result
 
 
 def test_option_registers_with_default_empty():

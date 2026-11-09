@@ -18,18 +18,18 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.state.ipc as ipc
-from codegraph.analysis.federation import (
+import cgh.state.ipc as ipc
+from cgh.analysis.federation import (
     add_subrepo,
     autostart_children,
     release_children,
 )
-from codegraph.core.config import load_config
+from cgh.core.config import load_config
 
 
 def _mk_repo(root: Path, with_duckdb: bool = True) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     if with_duckdb:
         (cg / "graph.duckdb").write_bytes(b"fake")
@@ -69,7 +69,7 @@ class TestAutostartChildren:
             }
         ]
         assert spawned == [(child, True, False)]
-        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
+        marker = child / ".cgh" / "workers" / f"parent-{os.getpid()}"
         assert marker.exists()
 
     def test_release_children_drops_pid_marker(self, parent_and_child, monkeypatch):
@@ -77,7 +77,7 @@ class TestAutostartChildren:
         monkeypatch.setattr(ipc, "spawn_owner", lambda root, watch, reindex: 4321)
         monkeypatch.setattr(ipc, "is_owner_alive", lambda root: False)
         autostart_children(parent)
-        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
+        marker = child / ".cgh" / "workers" / f"parent-{os.getpid()}"
         assert marker.exists()
 
         release_children(parent)
@@ -100,7 +100,7 @@ class TestAutostartChildren:
         ]
         # No pid marker: an already-up child must not be kept alive by this
         # parent, otherwise two repos federating each other never shut down.
-        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
+        marker = child / ".cgh" / "workers" / f"parent-{os.getpid()}"
         assert not marker.exists()
 
     def test_uninitialized_child_is_skipped(self, tmp_path, monkeypatch):
@@ -131,7 +131,7 @@ class TestAutostartChildren:
         results = autostart_children(parent)
 
         assert results == [{"child": str(child), "name": "child", "status": "failed"}]
-        marker = child / ".codegraph" / "workers" / f"parent-{os.getpid()}"
+        marker = child / ".cgh" / "workers" / f"parent-{os.getpid()}"
         assert not marker.exists()
 
     def test_no_children_is_a_noop(self, tmp_path):
@@ -147,7 +147,7 @@ class TestFederateAutoUpConfig:
 
     def test_can_be_disabled_in_config(self, tmp_path):
         repo = _mk_repo(tmp_path / "repo")
-        (repo / ".codegraph" / "config.toml").write_text(
-            "[codegraph]\nfederate_auto_up = false\n", encoding="utf-8"
+        (repo / ".cgh" / "config.toml").write_text(
+            "[cgh]\nfederate_auto_up = false\n", encoding="utf-8"
         )
         assert load_config(repo).federate_auto_up is False

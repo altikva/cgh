@@ -3,7 +3,7 @@
     "cgh": {
       "command": "python",
       "args": [
-        "-m", "codegraph",
+        "-m", "cgh",
         "serve",
         "--root", ".",
         "--watch",

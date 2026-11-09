@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-import codegraph.indexer as idx
-from codegraph.core.db import get_db_path, reset_connection
+import cgh.indexer as idx
+from cgh.core.db import get_db_path, reset_connection
 
 _CORRUPT = (
     "FATAL Error: Invalid Input Error: Failed to delete all rows from index. "
@@ -86,7 +86,7 @@ def _healthy_repo(tmp_path):
 
 
 def _has_foo(root) -> bool:
-    from codegraph.core.db import get_connection
+    from cgh.core.db import get_connection
 
     return bool(get_connection(root).find_node_keys("Function", "name", "foo"))
 
@@ -130,7 +130,7 @@ def test_rebuild_ignores_other_errors(tmp_path):
 
 
 def test_rebuild_wipes_and_reindexes(tmp_path, monkeypatch):
-    from codegraph.state import scan_meta
+    from cgh.state import scan_meta
 
     root = _healthy_repo(tmp_path)
     seen = {}
@@ -161,7 +161,7 @@ def test_rebuild_does_not_loop(tmp_path):
 
 
 def test_watcher_rebuilds_after_a_fatal_reindex(tmp_path, monkeypatch):
-    import codegraph.state.watcher as watcher
+    import cgh.state.watcher as watcher
 
     root = _healthy_repo(tmp_path)
 
@@ -169,16 +169,16 @@ def test_watcher_rebuilds_after_a_fatal_reindex(tmp_path, monkeypatch):
         raise _fatal()
 
     monkeypatch.setattr(watcher, "index_file", poisoned)
-    handler = watcher._CodeGraphHandler(root)
+    handler = watcher._CghHandler(root)
     handler._reindex(str(root / "a.py"))  # must not raise
     assert _has_foo(root)
-    log = (root / ".codegraph" / "activity.log").read_text(encoding="utf-8")
+    log = (root / ".cgh" / "activity.log").read_text(encoding="utf-8")
     assert "graph_corrupt_recover" in log
     reset_connection(root)
 
 
 def test_tool_call_on_corrupt_graph_starts_a_rebuild(tmp_path, monkeypatch):
-    import codegraph.server as srv
+    import cgh.server as srv
 
     root = _healthy_repo(tmp_path)
     monkeypatch.setattr(srv, "_root", root)
@@ -192,7 +192,7 @@ def test_tool_call_on_corrupt_graph_starts_a_rebuild(tmp_path, monkeypatch):
     srv._rebuild_thread.join(timeout=30)
     assert not srv._rebuild_thread.is_alive()
     assert _has_foo(root)
-    log = (root / ".codegraph" / "activity.log").read_text(encoding="utf-8")
+    log = (root / ".cgh" / "activity.log").read_text(encoding="utf-8")
     assert "graph_corrupt_recover" in log
 
     # An error that only repeats the words is passed through untouched.

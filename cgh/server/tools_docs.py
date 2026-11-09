@@ -1,0 +1,232 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-04-12
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: MCP docs tools: search_docs, doc_outline, doc_refs.
+
+from __future__ import annotations
+
+import os
+
+from cgh.server._budget import dumps_answer
+
+
+def register(mcp) -> None:
+    """Register documentation tools on the given FastMCP instance."""
+    import cgh.server as _srv
+    from cgh.analysis.federation import federate_scoped
+    from cgh.server import _get_conn, _logged_tool
+
+    def _query_each(query_fn):
+        """Parent + children fan-out, [(scope, payload), …]. See federate_scoped."""
+        scoped, _warnings = federate_scoped(_get_conn, _srv._root, query_fn)
+        return scoped
+
+    @mcp.tool()
+    @_logged_tool
+    def search_docs(query: str, limit: int = 10) -> str:
+        """
+        Search documentation (Markdown files) by heading title or body content.
+        Returns matching sections with file path, line range, and body preview.
+        Use this to find relevant documentation before diving into code.
+        Federated across subrepos.
+        """
+
+        q_str = query  # capture before shadowing
+
+        section_fields = [
+            "title",
+            "level",
+            "file_path",
+            "start_line",
+            "end_line",
+            "body_preview",
+            "anchor",
+        ]
+
+        def _format(row):
+            return {
+                "title": row["title"],
+                "level": row["level"],
+                "file": row["file_path"],
+                "lines": f"{row['start_line']}-{row['end_line']}",
+                "preview": (row.get("body_preview") or "")[:200],
+                "anchor": row["anchor"],
+            }
+
+        def run(conn):
+            out: list[dict] = []
+            seen_ids: set[str] = set()
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"title": q_str},
+                return_fields=section_fields,
+                limit=limit,
+            ):
+                key = f"{row['file_path']}:{row['start_line']}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+                out.append(_format(row))
+            if len(out) < limit:
+                for row in conn.find_nodes(
+                    "MdSection",
+                    contains={"body_preview": q_str},
+                    return_fields=section_fields,
+                    limit=limit - len(out),
+                ):
+                    key = f"{row['file_path']}:{row['start_line']}"
+                    if key in seen_ids:
+                        continue
+                    seen_ids.add(key)
+                    out.append(_format(row))
+            return out
+
+        results: list[dict] = []
+        for scope, rows in _query_each(run):
+            for row in rows:
+                row["scope"] = scope
+                results.append(row)
+        return dumps_answer({"query": q_str, "results": results, "count": len(results)})
+
+    @mcp.tool()
+    @_logged_tool
+    def doc_outline(file_path: str) -> str:
+        """
+        Return the heading outline (table of contents) of a Markdown file.
+        Shows the hierarchical structure of sections with line numbers.
+        A repo file the graph does not hold yet is indexed first
+        (`indexed_now: true`).
+        """
+        from pathlib import Path
+
+        from cgh.analysis import on_demand
+
+        if not os.path.isabs(file_path) and _srv._root:
+            file_path = str(_srv._root / file_path)
+        fresh = on_demand.answer_fields(
+            on_demand.ensure_indexed(_srv._root, Path(file_path))
+            if _srv._root
+            else "fresh"
+        )
+
+        def query(conn):
+            return conn.find_nodes(
+                "MdSection",
+                where={"file_path": file_path},
+                return_fields=["title", "level", "start_line", "end_line", "anchor"],
+                order_by=["start_line"],
+            )
+
+        outline: list[dict] = []
+        for scope, rows in _query_each(query):
+            for row in rows:
+                indent = "  " * (row["level"] - 1)
+                outline.append(
+                    {
+                        "scope": scope,
+                        "title": row["title"],
+                        "level": row["level"],
+                        "line": row["start_line"],
+                        "end_line": row["end_line"],
+                        "anchor": row["anchor"],
+                        "display": f"{indent}{'#' * row['level']} {row['title']} (L{row['start_line']})",
+                    }
+                )
+        if not outline:
+            return dumps_answer(
+                {"file": file_path, "outline": [], "note": "No sections found"}
+            )
+        return dumps_answer({"file": file_path, "outline": outline, **fresh})
+
+    @mcp.tool()
+    @_logged_tool
+    def doc_refs(symbol_name: str) -> str:
+        """
+        Find all Markdown documentation that references a code symbol.
+        Use this to find docs about a function or class before reading its code.
+
+        Each reference carries `match`: "exact" when an inline code span
+        names the symbol and nothing else (`verify_token`, `Repo`), so the
+        link exists only because a symbol of that very name is indexed;
+        "heuristic" for a name picked out of a longer span or a code block
+        by its shape (PascalCase, snake_case), and for a plain text mention.
+        """
+        from cgh.parsers.markdown import EXACT_CONTEXT
+
+        def _mention(context: str) -> dict:
+            if context == EXACT_CONTEXT:
+                return {"context": "inline", "match": "exact"}
+            return {"context": context, "match": "heuristic"}
+
+        def query(conn):
+            out: list[dict] = []
+            # find_neighbors anchored on dst (the Function/Class side),
+            # returning src (MdSection) fields + edge context.
+            for row in conn.find_neighbors(
+                "MD_REFS_SYMBOL",
+                dst_where={"name": symbol_name},
+                return_src=["title", "file_path", "start_line", "end_line"],
+                return_edge=["context"],
+            ):
+                out.append(
+                    {
+                        "section": row["src_title"],
+                        "file": row["src_file_path"],
+                        "lines": f"{row['src_start_line']}-{row['src_end_line']}",
+                        "ref_type": "function",
+                        **_mention(row.get("edge_context") or ""),
+                    }
+                )
+            for row in conn.find_neighbors(
+                "MD_REFS_CLASS",
+                dst_where={"name": symbol_name},
+                return_src=["title", "file_path", "start_line", "end_line"],
+                return_edge=["context"],
+            ):
+                out.append(
+                    {
+                        "section": row["src_title"],
+                        "file": row["src_file_path"],
+                        "lines": f"{row['src_start_line']}-{row['src_end_line']}",
+                        "ref_type": "class",
+                        **_mention(row.get("edge_context") or ""),
+                    }
+                )
+            seen = {(it["file"], it["lines"]) for it in out}
+            for row in conn.find_nodes(
+                "MdSection",
+                contains={"body_preview": symbol_name},
+                return_fields=["title", "file_path", "start_line", "end_line"],
+                limit=10,
+            ):
+                key = (row["file_path"], f"{row['start_line']}-{row['end_line']}")
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    {
+                        "section": row["title"],
+                        "file": row["file_path"],
+                        "lines": f"{row['start_line']}-{row['end_line']}",
+                        "ref_type": "text_mention",
+                        "context": "body",
+                        "match": "heuristic",
+                    }
+                )
+            return out
+
+        results: list[dict] = []
+        for scope, rows in _query_each(query):
+            for r in rows:
+                r["scope"] = scope
+                results.append(r)
+        return dumps_answer(
+            {
+                "symbol": symbol_name,
+                "doc_references": results,
+                "count": len(results),
+            }
+        )

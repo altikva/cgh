@@ -28,11 +28,11 @@ import json
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_query as cq
-from codegraph.analysis.endpoint_query import list_endpoints, select_endpoints
-from codegraph.analysis.impact import endpoints_in_files, endpoints_of_functions
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+import cgh.cli.commands_query as cq
+from cgh.analysis.endpoint_query import list_endpoints, select_endpoints
+from cgh.analysis.impact import endpoints_in_files, endpoints_of_functions
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 FILES = {
     "app/__init__.py": "",
@@ -421,7 +421,7 @@ def test_impact_rows_carry_full_paths(repo):
 
 
 def test_impact_markdown_shows_the_full_path():
-    from codegraph.cli.commands_impact import _render_markdown
+    from cgh.cli.commands_impact import _render_markdown
 
     def row(path, full):
         return {
@@ -495,8 +495,8 @@ def test_cli_endpoints_text_method_and_limit(repo, captured_console):
 
 
 def test_cli_endpoints_asks_the_live_owner_first(tmp_path, monkeypatch, capsys):
-    import codegraph.cli.owner_client as oc
-    from codegraph.cli.owner_client import OwnerReply
+    import cgh.cli.owner_client as oc
+    from cgh.cli.owner_client import OwnerReply
 
     served = {
         "total": 1,
@@ -525,7 +525,7 @@ def test_cli_endpoints_asks_the_live_owner_first(tmp_path, monkeypatch, capsys):
         raise AssertionError("local read-only open must not run")
 
     monkeypatch.setattr(oc, "call_owner_tool", _call)
-    monkeypatch.setattr("codegraph.core.db.get_readonly_connection", _boom)
+    monkeypatch.setattr("cgh.core.db.get_readonly_connection", _boom)
     cq.cmd_endpoints(_args(tmp_path, "/v1/x", include_tests=True, json=True))
     out = json.loads(capsys.readouterr().out)
     assert [e["handler"] for e in out["endpoints"]] == ["list_x"]
@@ -541,7 +541,7 @@ def test_matching_cost_stays_bounded_on_adversarial_input():
     # must answer at once instead of backtracking.
     import time
 
-    from codegraph.analysis import endpoint_query as q
+    from cgh.analysis import endpoint_query as q
 
     start = time.monotonic()
     many_rest = "/v1/" + "/".join(["{p:path}"] * 12)

@@ -1,7 +1,7 @@
 """Tests for the Python parser."""
 
-from codegraph.parsers import get_parser
-from codegraph.parsers.base import FileIndex
+from cgh.parsers import get_parser
+from cgh.parsers.base import FileIndex
 
 
 class TestPythonParser:

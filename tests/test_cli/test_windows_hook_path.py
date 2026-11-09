@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from codegraph.cli import commands_init as ci
+from cgh.cli import commands_init as ci
 
 
 def test_windows_launcher_path_uses_forward_slashes():

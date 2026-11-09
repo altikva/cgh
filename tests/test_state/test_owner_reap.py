@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from codegraph.state.ipc import _reap_child
+from cgh.state.ipc import _reap_child
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "fork"), reason="needs POSIX fork")
 

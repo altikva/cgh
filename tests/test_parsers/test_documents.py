@@ -21,12 +21,12 @@ import sys
 
 import pytest
 
-import codegraph.parsers as parsers
-import codegraph.parsers.csv_table as csv_table
-import codegraph.parsers.documents as documents
-from codegraph.parsers import get_parser_for_path
-from codegraph.parsers.csv_table import CsvParser
-from codegraph.parsers.documents import DocxParser, PdfParser, PptxParser, XlsxParser
+import cgh.parsers as parsers
+import cgh.parsers.csv_table as csv_table
+import cgh.parsers.documents as documents
+from cgh.parsers import get_parser_for_path
+from cgh.parsers.csv_table import CsvParser
+from cgh.parsers.documents import DocxParser, PdfParser, PptxParser, XlsxParser
 
 # ---------------------------------------------------------------------------
 # fixtures, built on the fly
@@ -534,7 +534,7 @@ def _write_zip(path, members):
 def doc_log():
     """Warnings the document parsers log, collected by a handler attached
     to their own logger. caplog listens on the root logger, so it misses
-    these whenever something has set propagate=False on "codegraph" (the
+    these whenever something has set propagate=False on "cgh" (the
     background logging setup does, by design); this does not depend on
     propagation, nor on the level a parent logger was left at."""
     records: list[logging.LogRecord] = []
@@ -543,7 +543,7 @@ def doc_log():
         def emit(self, record):
             records.append(record)
 
-    logger = logging.getLogger("codegraph.parsers.documents")
+    logger = logging.getLogger("cgh.parsers.documents")
     handler = _Collect(logging.WARNING)
     saved = (logger.level, logger.disabled)
     logger.addHandler(handler)
@@ -670,7 +670,7 @@ def _write_all(root):
 
 
 def _search(root, term):
-    from codegraph.core.fts import fts_search, get_fts_conn
+    from cgh.core.fts import fts_search, get_fts_conn
 
     return [
         h.file_path
@@ -681,7 +681,7 @@ def _search(root, term):
 
 @pytest.fixture
 def fresh_db():
-    from codegraph.core.db import reset_connection
+    from cgh.core.db import reset_connection
 
     reset_connection()
     yield
@@ -689,7 +689,7 @@ def fresh_db():
 
 
 def test_indexed_documents_are_searchable(tmp_path, fresh_db):
-    from codegraph.indexer import index_repo
+    from cgh.indexer import index_repo
 
     _git(tmp_path, "init", "-q")
     _write_all(tmp_path)
@@ -714,7 +714,7 @@ def test_incremental_index_picks_up_previously_skipped_documents(
     document files. The incremental pass re-indexes every supported file in
     HEAD that the graph does not hold, so they come in without a graph
     format bump (which would force a full re-parse of every repo)."""
-    from codegraph.indexer import incremental_reindex, index_repo
+    from cgh.indexer import incremental_reindex, index_repo
 
     _git(tmp_path, "init", "-q")
     _write_all(tmp_path)

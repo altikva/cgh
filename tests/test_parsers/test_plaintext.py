@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.parsers import get_parser_for_path
+from cgh.parsers import get_parser_for_path
 
 
 @pytest.mark.parametrize("ext", [".txt", ".text", ".log", ".rst"])

@@ -85,7 +85,7 @@ def _graph_candidates_query(
     """Files the graph says define a symbol matching any token. The bool is
     graph availability: True if a query succeeded, False if the graph could
     not be read at all, None if there was nothing to ask."""
-    from codegraph.plugin_api import find_symbol_files
+    from cgh.plugin_api import find_symbol_files
 
     files: set[Path] = set()
     available: bool | None = None

@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.state.relocate import RelocateError, relocate_store
+from cgh.state.relocate import RelocateError, relocate_store
 
 
 def _sqlite_source(src: Path) -> None:
     """A minimal sqlite-backend store holding source-root-absolute values."""
-    cg = src / ".codegraph"
+    cg = src / ".cgh"
     cg.mkdir(parents=True)
     con = sqlite3.connect(str(cg / "graph.sqlite"))
     con.execute("CREATE TABLE file (path TEXT PRIMARY KEY, git_blob_sha TEXT)")
@@ -50,7 +50,7 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
     # on macOS /var is a symlink to /private/var and the prefixes would not match.
     base = tmp_path.resolve()
     src, dst = base / "main", base / "wt"
-    (dst / ".codegraph").mkdir(parents=True)
+    (dst / ".cgh").mkdir(parents=True)
     return src, dst
 
 
@@ -61,7 +61,7 @@ def test_relocate_rewrites_paths_and_embedded_ids(tmp_path):
     result = relocate_store(src, dst)
 
     assert result["backend"] == "sqlite"
-    con = sqlite3.connect(str(dst / ".codegraph" / "graph.sqlite"))
+    con = sqlite3.connect(str(dst / ".cgh" / "graph.sqlite"))
     paths = [r[0] for r in con.execute("SELECT path FROM file")]
     calls = con.execute("SELECT from_path, to_id FROM calls").fetchall()
     con.close()
@@ -80,7 +80,7 @@ def test_relocate_preserves_blob_shas(tmp_path):
 
     relocate_store(src, dst)
 
-    con = sqlite3.connect(str(dst / ".codegraph" / "graph.sqlite"))
+    con = sqlite3.connect(str(dst / ".cgh" / "graph.sqlite"))
     shas = [r[0] for r in con.execute("SELECT git_blob_sha FROM file")]
     con.close()
     assert shas == ["ab" * 20]
@@ -92,7 +92,7 @@ def test_relocate_leaves_unresolved_targets_alone(tmp_path):
 
     relocate_store(src, dst)
 
-    con = sqlite3.connect(str(dst / ".codegraph" / "graph.sqlite"))
+    con = sqlite3.connect(str(dst / ".cgh" / "graph.sqlite"))
     calls = con.execute("SELECT from_path, to_id FROM calls").fetchall()
     con.close()
     assert (f"{dst}/pkg/mod.py", "os.path::join") in calls
@@ -107,7 +107,7 @@ def test_relocate_stamps_scan_meta_root(tmp_path):
 
     relocate_store(src, dst)
 
-    meta = json.loads((dst / ".codegraph" / "scan_meta.json").read_text())
+    meta = json.loads((dst / ".cgh" / "scan_meta.json").read_text())
     assert meta["root"] == str(dst.resolve())
     assert meta["git_head"] == "abc123"
 
@@ -119,12 +119,12 @@ def test_relocate_does_not_copy_the_auth_key(tmp_path):
 
     relocate_store(src, dst)
 
-    assert not (dst / ".codegraph" / "auth.key").exists()
+    assert not (dst / ".cgh" / "auth.key").exists()
 
 
 def test_relocate_without_a_graph_raises(tmp_path):
     src, dst = _roots(tmp_path)
-    (src / ".codegraph").mkdir(parents=True)
+    (src / ".cgh").mkdir(parents=True)
 
     with pytest.raises(RelocateError):
         relocate_store(src, dst)
@@ -134,10 +134,10 @@ def _duckdb_source(src):
     """A source store in the real DuckDB schema, holding source-root paths in
     key columns (node ids, edge keys) as an index does."""
     duckdb = pytest.importorskip("duckdb")
-    from codegraph.core.schema_duckdb import init_schema
+    from cgh.core.schema_duckdb import init_schema
 
-    (src / ".codegraph").mkdir(parents=True)
-    con = duckdb.connect(str(src / ".codegraph" / "graph.duckdb"))
+    (src / ".cgh").mkdir(parents=True)
+    con = duckdb.connect(str(src / ".cgh" / "graph.duckdb"))
     init_schema(con)
     con.execute(
         "INSERT INTO file (path, git_blob_sha) VALUES (?, ?)",
@@ -165,7 +165,7 @@ def test_relocate_rewrites_the_duckdb_backend(tmp_path):
     result = relocate_store(src, dst)
     assert result["backend"] == "duckdb" and result["left_out"] == []
 
-    con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
+    con = duckdb.connect(str(dst / ".cgh" / "graph.duckdb"))
     fns = con.execute("SELECT id, file_path, start_line FROM function").fetchall()
     calls = con.execute("SELECT from_id, to_id FROM edge_calls").fetchall()
     shas = [r[0] for r in con.execute("SELECT git_blob_sha FROM file").fetchall()]
@@ -187,7 +187,7 @@ def test_relocated_keys_stay_unique_and_indexed(tmp_path):
 
     relocate_store(src, dst)
 
-    con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
+    con = duckdb.connect(str(dst / ".cgh" / "graph.duckdb"))
     new_id = f"{dst}/pkg/mod.py::fn"
     assert (
         con.execute("SELECT count(*) FROM function WHERE id = ?", [new_id]).fetchone()[
@@ -268,14 +268,14 @@ def test_relocate_carries_fts_rows_still_in_the_wal(tmp_path):
     # a torn file ("database disk image is malformed" at the next init step).
     src, dst = _roots(tmp_path)
     _sqlite_source(src)
-    live = _wal_fts(src / ".codegraph" / "fts.db", 500)
+    live = _wal_fts(src / ".cgh" / "fts.db", 500)
     try:
-        assert (src / ".codegraph" / "fts.db-wal").stat().st_size > 0
+        assert (src / ".cgh" / "fts.db-wal").stat().st_size > 0
         relocate_store(src, dst)
     finally:
         live.close()
 
-    con = sqlite3.connect(str(dst / ".codegraph" / "fts.db"))
+    con = sqlite3.connect(str(dst / ".cgh" / "fts.db"))
     assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     paths = [r[0] for r in con.execute("SELECT DISTINCT file_path FROM symbols")]
     con.close()
@@ -287,17 +287,17 @@ def test_relocate_drops_a_stale_target_wal(tmp_path):
     # A WAL left by the target's previous store would be replayed over the copy.
     src, dst = _roots(tmp_path)
     _sqlite_source(src)
-    _wal_fts(src / ".codegraph" / "fts.db", 10).close()
-    stale = _wal_fts(dst / ".codegraph" / "fts.db", 300)
+    _wal_fts(src / ".cgh" / "fts.db", 10).close()
+    stale = _wal_fts(dst / ".cgh" / "fts.db", 300)
     try:
-        leftover = (dst / ".codegraph" / "fts.db-wal").read_bytes()
+        leftover = (dst / ".cgh" / "fts.db-wal").read_bytes()
     finally:
         stale.close()
-    (dst / ".codegraph" / "fts.db-wal").write_bytes(leftover)
+    (dst / ".cgh" / "fts.db-wal").write_bytes(leftover)
 
     relocate_store(src, dst)
 
-    con = sqlite3.connect(str(dst / ".codegraph" / "fts.db"))
+    con = sqlite3.connect(str(dst / ".cgh" / "fts.db"))
     assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert con.execute("SELECT count(*) FROM symbols").fetchone()[0] == 10
     con.close()
@@ -308,12 +308,12 @@ def test_relocate_over_a_target_graph_this_process_holds_open(tmp_path):
     # seeding. Re-running --from on an initialised checkout then tripped DuckDB's
     # "same database file with a different configuration" on the rewrite.
     duckdb = pytest.importorskip("duckdb")
-    from codegraph.core.db import get_readonly_connection, reset_connection
+    from cgh.core.db import get_readonly_connection, reset_connection
 
     src, dst = _roots(tmp_path)
-    (src / ".codegraph").mkdir(parents=True)
+    (src / ".cgh").mkdir(parents=True)
     for root in (src, dst):
-        con = duckdb.connect(str(root / ".codegraph" / "graph.duckdb"))
+        con = duckdb.connect(str(root / ".cgh" / "graph.duckdb"))
         con.execute("CREATE TABLE file (path VARCHAR, git_blob_sha VARCHAR)")
         con.execute("INSERT INTO file VALUES (?, ?)", [f"{root}/a.py", "ef" * 20])
         con.commit()
@@ -325,7 +325,7 @@ def test_relocate_over_a_target_graph_this_process_holds_open(tmp_path):
     finally:
         reset_connection(dst)
 
-    con = duckdb.connect(str(dst / ".codegraph" / "graph.duckdb"))
+    con = duckdb.connect(str(dst / ".cgh" / "graph.duckdb"))
     assert con.execute("SELECT path FROM file").fetchall() == [(f"{dst}/a.py",)]
     con.close()
 
@@ -333,7 +333,7 @@ def test_relocate_over_a_target_graph_this_process_holds_open(tmp_path):
 # --- federation links do not travel with the seed ----------------------------
 
 _SEEDED_CONFIG = """\
-[codegraph]
+[cgh]
 # how far the watcher looks
 include_dirs = ["docs"]
 subrepos = [
@@ -354,7 +354,7 @@ allow_pii = true
 def _seed_with_config(tmp_path, config_text):
     src, dst = _roots(tmp_path)
     _sqlite_source(src)
-    (src / ".codegraph" / "config.toml").write_text(config_text)
+    (src / ".cgh" / "config.toml").write_text(config_text)
     return src, dst, relocate_store(src, dst)
 
 
@@ -364,8 +364,8 @@ def test_relocate_drops_subrepos_and_reports_them(tmp_path):
     _, dst, result = _seed_with_config(tmp_path, _SEEDED_CONFIG)
 
     assert result["dropped_subrepos"] == ["/abs/ondonne-frontend", "./nested-child"]
-    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
-    assert "subrepos" not in cfg["codegraph"]
+    cfg = tomllib.loads((dst / ".cgh" / "config.toml").read_text())
+    assert "subrepos" not in cfg["cgh"]
 
 
 def test_relocate_keeps_the_rest_of_the_config_verbatim(tmp_path):
@@ -373,7 +373,7 @@ def test_relocate_keeps_the_rest_of_the_config_verbatim(tmp_path):
     # nested plugin table that the sprint tooling writes; the cut must not.
     _, dst, _ = _seed_with_config(tmp_path, _SEEDED_CONFIG)
 
-    text = (dst / ".codegraph" / "config.toml").read_text()
+    text = (dst / ".cgh" / "config.toml").read_text()
     assert "# how far the watcher looks" in text
     assert (
         '[plugin.codegen]\ncommand = "claude -p --model haiku"\nallow_pii = true'
@@ -383,33 +383,33 @@ def test_relocate_keeps_the_rest_of_the_config_verbatim(tmp_path):
     assert 'extra_dirs = ["../gcp-modules"]' in text
 
 
-def test_relocate_only_touches_subrepos_under_codegraph(tmp_path):
+def test_relocate_only_touches_subrepos_under_cgh(tmp_path):
     # A key named subrepos in another table is not federation.
-    config = '[codegraph]\nsubrepos = ["/x"]\n\n[plugin.other]\nsubrepos = ["kept"]\n'
+    config = '[cgh]\nsubrepos = ["/x"]\n\n[plugin.other]\nsubrepos = ["kept"]\n'
     _, dst, result = _seed_with_config(tmp_path, config)
 
     assert result["dropped_subrepos"] == ["/x"]
     assert (
         '[plugin.other]\nsubrepos = ["kept"]'
-        in (dst / ".codegraph" / "config.toml").read_text()
+        in (dst / ".cgh" / "config.toml").read_text()
     )
 
 
 def test_relocate_without_subrepos_reports_nothing(tmp_path):
-    config = '[codegraph]\ninclude_dirs = ["docs"]\n'
+    config = '[cgh]\ninclude_dirs = ["docs"]\n'
     _, dst, result = _seed_with_config(tmp_path, config)
 
     assert result["dropped_subrepos"] == []
-    assert (dst / ".codegraph" / "config.toml").read_text() == config
+    assert (dst / ".cgh" / "config.toml").read_text() == config
 
 
 def test_seeded_checkout_resolves_no_children(tmp_path):
-    from codegraph.analysis.federation import resolve_children
+    from cgh.analysis.federation import resolve_children
 
     child = tmp_path.resolve() / "front"
-    (child / ".codegraph").mkdir(parents=True)
+    (child / ".cgh").mkdir(parents=True)
     _, dst, _ = _seed_with_config(
-        tmp_path, f'[codegraph]\nsubrepos = ["{child.as_posix()}"]\n'
+        tmp_path, f'[cgh]\nsubrepos = ["{child.as_posix()}"]\n'
     )
 
     assert resolve_children(dst) == []
@@ -422,25 +422,23 @@ def test_relocate_keeps_the_target_plugins_table(tmp_path):
 
     src, dst = _roots(tmp_path)
     _sqlite_source(src)
-    (src / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\ninclude_dirs = ["docs"]\n\n[plugins]\nenabled = ["summarize"]\n'
+    (src / ".cgh" / "config.toml").write_text(
+        '[cgh]\ninclude_dirs = ["docs"]\n\n[plugins]\nenabled = ["summarize"]\n'
         '\n[plugin.codegen]\ncommand = "claude -p"\n'
     )
-    (dst / ".codegraph" / "config.toml").write_text(
-        '[plugins]\ndisabled = ["summarize"]\n'
-    )
+    (dst / ".cgh" / "config.toml").write_text('[plugins]\ndisabled = ["summarize"]\n')
     relocate_store(src, dst)
 
-    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
+    cfg = tomllib.loads((dst / ".cgh" / "config.toml").read_text())
     assert cfg["plugins"] == {"disabled": ["summarize"]}
-    assert cfg["codegraph"]["include_dirs"] == ["docs"]
+    assert cfg["cgh"]["include_dirs"] == ["docs"]
     assert cfg["plugin"]["codegen"]["command"] == "claude -p"
 
 
 def test_relocate_takes_the_source_plugins_when_the_target_has_none(tmp_path):
     import tomllib
 
-    config = '[codegraph]\ninclude_dirs = ["docs"]\n\n[plugins]\ndisabled = ["pii"]\n'
+    config = '[cgh]\ninclude_dirs = ["docs"]\n\n[plugins]\ndisabled = ["pii"]\n'
     _, dst, _ = _seed_with_config(tmp_path, config)
-    cfg = tomllib.loads((dst / ".codegraph" / "config.toml").read_text())
+    cfg = tomllib.loads((dst / ".cgh" / "config.toml").read_text())
     assert cfg["plugins"] == {"disabled": ["pii"]}

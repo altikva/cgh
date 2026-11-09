@@ -24,12 +24,12 @@ import threading
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_query as cq
-import codegraph.cli.owner_client as oc
-from codegraph.cli.commands_impact import cmd_impact
-from codegraph.cli.owner_client import OwnerReply
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+import cgh.cli.commands_query as cq
+import cgh.cli.owner_client as oc
+from cgh.cli.commands_impact import cmd_impact
+from cgh.cli.owner_client import OwnerReply
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 
 def _git(root, *args):
@@ -87,7 +87,7 @@ def _forbid_local_open(monkeypatch):
     def _boom(*_a, **_k):
         raise AssertionError("local read-only open must not run")
 
-    monkeypatch.setattr("codegraph.core.db.get_readonly_connection", _boom)
+    monkeypatch.setattr("cgh.core.db.get_readonly_connection", _boom)
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +276,8 @@ class TestImpactRouting:
 
     def test_owner_and_local_paths_agree(self, impact_repo, monkeypatch, capsys):
         # The impact_report tool and the local path share one builder.
-        from codegraph.analysis.impact import build_impact_report
-        from codegraph.core.db import get_readonly_connection
+        from cgh.analysis.impact import build_impact_report
+        from cgh.core.db import get_readonly_connection
 
         conn = get_readonly_connection(str(impact_repo))
         via_tool = build_impact_report(conn, str(impact_repo), ["lib.py"])
@@ -393,7 +393,7 @@ class TestQueryRouting:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX owner lifecycle")
 def test_impact_cli_with_live_owner(impact_repo):
-    from codegraph.state.ipc import (
+    from cgh.state.ipc import (
         register_keepalive,
         spawn_owner,
         stop_owner,
@@ -423,7 +423,7 @@ def test_impact_cli_with_live_owner(impact_repo):
             [
                 sys.executable,
                 "-m",
-                "codegraph",
+                "cgh",
                 "impact",
                 "--since",
                 "HEAD~1",
@@ -499,9 +499,9 @@ def read_repo(tmp_path):
 def in_process_owner(read_repo, monkeypatch):
     """call_owner_tool answered by the real MCP tool bodies, run in-process
     against ``read_repo``: what a live owner would return. Records calls."""
-    import codegraph.server as _srv
-    from codegraph.server.tools_query import register as register_query
-    from codegraph.server.tools_viz import register as register_viz
+    import cgh.server as _srv
+    from cgh.server.tools_query import register as register_query
+    from cgh.server.tools_viz import register as register_viz
 
     mcp = _FakeMcp()
     register_query(mcp)
@@ -514,7 +514,7 @@ def in_process_owner(read_repo, monkeypatch):
 
     # A live owner logs every call; the CLI reads the call log first, so
     # keeping the log out of the comparison only removes test noise.
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **_k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **_k: None)
     monkeypatch.setattr(_srv, "_root", read_repo.resolve())
     monkeypatch.setattr(oc, "call_owner_tool", _fake)
     yield calls
@@ -613,7 +613,7 @@ class TestReadCommandsParity:
         [{}, {"pattern": "s.py"}, {"limit": 2}, {"check": "consts.py"}],
     )
     def test_files(self, read_repo, in_process_owner, monkeypatch, capsys, kw):
-        import codegraph.cli.commands_files as cf
+        import cgh.cli.commands_files as cf
 
         args = _files_args(read_repo, **kw)
         _forbid_local_open(monkeypatch)
@@ -632,7 +632,7 @@ class TestReadCommandsParity:
             assert local.startswith("indexed  consts.py")
 
     def test_stats_json(self, read_repo, in_process_owner, monkeypatch, capsys):
-        import codegraph.cli.commands_monitor as cm
+        import cgh.cli.commands_monitor as cm
 
         args = argparse.Namespace(root=str(read_repo), json=True, live=False)
         _forbid_local_open(monkeypatch)
@@ -650,7 +650,7 @@ class TestReadCommandsParity:
         assert local["graph"]["edges"]["DEFINES_FN"] == 2
 
     def test_stats_table(self, read_repo, in_process_owner, monkeypatch, capsys):
-        import codegraph.cli.commands_monitor as cm
+        import cgh.cli.commands_monitor as cm
 
         args = argparse.Namespace(root=str(read_repo), json=False, live=False)
         _forbid_local_open(monkeypatch)
@@ -706,7 +706,7 @@ class TestReadCommandsRouting:
     def test_files_older_owner_uses_fts_without_graph_open(
         self, read_repo, monkeypatch
     ):
-        import codegraph.cli.commands_files as cf
+        import cgh.cli.commands_files as cf
 
         _older(monkeypatch)
         _forbid_local_open(monkeypatch)
@@ -716,7 +716,7 @@ class TestReadCommandsRouting:
     def test_stats_older_owner_reports_lock_without_graph_open(
         self, read_repo, monkeypatch, capsys
     ):
-        import codegraph.cli.commands_monitor as cm
+        import cgh.cli.commands_monitor as cm
 
         _older(monkeypatch)
         _forbid_local_open(monkeypatch)
@@ -728,7 +728,7 @@ class TestReadCommandsRouting:
     def test_stats_owner_without_edges_keeps_node_counts(
         self, read_repo, monkeypatch, capsys
     ):
-        import codegraph.cli.commands_monitor as cm
+        import cgh.cli.commands_monitor as cm
 
         data = {"nodes": {"File": 5, "Function": 2}, "nodes_total": 7}
         monkeypatch.setattr(
@@ -741,7 +741,7 @@ class TestReadCommandsRouting:
 
     @pytest.mark.parametrize("command", ["lookup", "search", "files", "check"])
     def test_stuck_owner_exits_with_hint(self, read_repo, monkeypatch, command):
-        import codegraph.cli.commands_files as cf
+        import cgh.cli.commands_files as cf
 
         _stuck(monkeypatch)
         _forbid_local_open(monkeypatch)
@@ -760,7 +760,7 @@ class TestReadCommandsRouting:
     def test_stats_stuck_owner_exits_with_json_error(
         self, read_repo, monkeypatch, capsys
     ):
-        import codegraph.cli.commands_monitor as cm
+        import cgh.cli.commands_monitor as cm
 
         _stuck(monkeypatch)
         _forbid_local_open(monkeypatch)
@@ -770,7 +770,7 @@ class TestReadCommandsRouting:
         assert "cgh doctor --owner" in json.loads(capsys.readouterr().out)["error"]
 
     def test_owner_absent_reads_locally(self, read_repo, monkeypatch):
-        import codegraph.cli.commands_files as cf
+        import cgh.cli.commands_files as cf
 
         _absent(monkeypatch)
         out = _run(monkeypatch, cf.cmd_files, _files_args(read_repo), cf)
@@ -784,7 +784,7 @@ def test_read_commands_with_live_owner(read_repo):
     open prints once the owner is gone."""
     import time
 
-    from codegraph.state.ipc import (
+    from cgh.state.ipc import (
         register_keepalive,
         spawn_owner,
         stop_owner,
@@ -805,7 +805,7 @@ def test_read_commands_with_live_owner(read_repo):
     def _cgh(argv):
         t0 = time.monotonic()
         result = subprocess.run(
-            [sys.executable, "-m", "codegraph", *argv, "--root", root],
+            [sys.executable, "-m", "cgh", *argv, "--root", root],
             capture_output=True,
             text=True,
             env=env,
@@ -866,7 +866,7 @@ def test_read_commands_with_half_dead_owner(read_repo):
     import signal
     import time
 
-    from codegraph.state.ipc import (
+    from cgh.state.ipc import (
         read_owner_pid,
         read_owner_port,
         register_keepalive,
@@ -891,7 +891,7 @@ def test_read_commands_with_half_dead_owner(read_repo):
     def _cgh(argv):
         t0 = time.monotonic()
         result = subprocess.run(
-            [sys.executable, "-m", "codegraph", *argv, "--root", root],
+            [sys.executable, "-m", "cgh", *argv, "--root", root],
             capture_output=True,
             text=True,
             env=env,

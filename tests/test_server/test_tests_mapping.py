@@ -16,10 +16,10 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_tests import register as register_tests
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_tests import register as register_tests
 
 
 class _FakeMcp:

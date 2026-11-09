@@ -86,7 +86,7 @@ def offer_to_install(console) -> bool:
         return False
     if answer.startswith("n"):
         return False
-    from codegraph.plugin_api import quiet_subprocess_kwargs
+    from cgh.plugin_api import quiet_subprocess_kwargs
 
     try:
         proc = subprocess.run(argv, timeout=900, **quiet_subprocess_kwargs())

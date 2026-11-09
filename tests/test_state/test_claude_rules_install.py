@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
-import codegraph.integrations.skill_installer as installer
-from codegraph.integrations.skill_installer import (
+import cgh.integrations.skill_installer as installer
+from cgh.integrations.skill_installer import (
     _USAGE_BLOCK_START,
     install_usage_guidelines,
 )
@@ -25,7 +25,7 @@ class TestRulesSupported:
         written = install_usage_guidelines(tmp_path, "claude")
         assert written and written.endswith(".claude/rules/cgh-usage.md")
         text = (tmp_path / ".claude" / "rules" / "cgh-usage.md").read_text()
-        assert "codegraph" in text
+        assert "cgh" in text
         assert _USAGE_BLOCK_START not in text  # no markers needed, cgh owns it
 
     def test_migrates_the_legacy_block(self, tmp_path, monkeypatch):
@@ -93,12 +93,12 @@ def test_claude_rule_is_short_and_points_to_skills():
     import re
     from pathlib import Path
 
-    from codegraph.integrations.skill_installer import (
+    from cgh.integrations.skill_installer import (
         _USAGE_BODY,
         _USAGE_BODY_CLAUDE,
         list_bundled_skills,
     )
-    from codegraph.integrations.tool_guide import SEARCH_GUIDE
+    from cgh.integrations.tool_guide import SEARCH_GUIDE
 
     assert len(_USAGE_BODY_CLAUDE.encode()) < 3000 < len(_USAGE_BODY.encode())
     assert SEARCH_GUIDE in _USAGE_BODY_CLAUDE
@@ -106,8 +106,8 @@ def test_claude_rule_is_short_and_points_to_skills():
         assert must in _USAGE_BODY_CLAUDE
     named = re.findall(r"`(cgh-[a-z-]+)`", _USAGE_BODY_CLAUDE)
     assert named and set(named) <= set(list_bundled_skills())
-    skill = Path(__file__).resolve().parents[2] / "codegraph" / "skills"
-    assert "scope" in (skill / "cgh-use-codegraph" / "SKILL.md").read_text()
+    skill = Path(__file__).resolve().parents[2] / "cgh" / "skills"
+    assert "scope" in (skill / "cgh-use-cgh" / "SKILL.md").read_text()
 
 
 class TestShortGuidanceEverywhere:
@@ -119,7 +119,7 @@ class TestShortGuidanceEverywhere:
         install_usage_guidelines(tmp_path, "claude")
         text = (tmp_path / "CLAUDE.md").read_text()
         assert len(text.encode()) < 3000
-        assert "cgh-use-codegraph" in text
+        assert "cgh-use-cgh" in text
 
     def test_codex_keeps_the_full_body(self, tmp_path):
         install_usage_guidelines(tmp_path, "codex")

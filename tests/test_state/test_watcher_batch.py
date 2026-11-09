@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.state.watcher as watcher_mod
-from codegraph.core.utils import quiet_subprocess_kwargs
-from codegraph.state.watcher import _CodeGraphHandler
+import cgh.state.watcher as watcher_mod
+from cgh.core.utils import quiet_subprocess_kwargs
+from cgh.state.watcher import _CghHandler
 
 
 class TestQuietSubprocessKwargs:
@@ -62,7 +62,7 @@ class TestBatchedIgnoreResolution:
             watcher_mod, "index_file", lambda p, root: indexed.append(str(p)) or True
         )
 
-        handler = _CodeGraphHandler(git_repo)
+        handler = _CghHandler(git_repo)
         handler._schedule(str(git_repo / "tracked.py"))
         handler._schedule(str(git_repo / "generated.py"))
         time.sleep(watcher_mod._DEBOUNCE + 0.5)
@@ -83,7 +83,7 @@ class TestBatchedIgnoreResolution:
         monkeypatch.setattr(watcher_mod.subprocess, "run", counting_run)
         monkeypatch.setattr(watcher_mod, "index_file", lambda p, root: True)
 
-        handler = _CodeGraphHandler(git_repo)
+        handler = _CghHandler(git_repo)
         for _ in range(3):
             handler._schedule(str(git_repo / "tracked.py"))
             time.sleep(watcher_mod._DEBOUNCE + 0.4)
@@ -95,7 +95,7 @@ class TestBatchedIgnoreResolution:
             raise AssertionError("git must not be called for cheap ignores")
 
         monkeypatch.setattr(watcher_mod.subprocess, "run", forbidden_run)
-        handler = _CodeGraphHandler(git_repo)
+        handler = _CghHandler(git_repo)
 
         handler._schedule(str(git_repo / "image.png"))  # unsupported ext
         handler._schedule(str(git_repo / "node_modules" / "x.py"))  # ignore dir
@@ -113,7 +113,7 @@ class TestBatchedIgnoreResolution:
             watcher_mod, "index_file", lambda p, root: indexed.append(str(p)) or True
         )
 
-        handler = _CodeGraphHandler(git_repo)
+        handler = _CghHandler(git_repo)
         handler._schedule(str(git_repo / "tracked.py"))
         time.sleep(watcher_mod._DEBOUNCE + 0.4)
 

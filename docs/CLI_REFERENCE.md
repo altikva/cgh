@@ -249,6 +249,18 @@ cgh stop [--root DIR]
 
 ---
 
+### `path`
+
+Print the resolved per-repo state directory, so a script reads it instead of hardcoding `.cgh/` (or a legacy `.codegraph/`). It prints the absolute path of the state dir for the literal `--root` (the `.cgh/` that `cgh init` there would create), one line and nothing else, so it is safe in a command substitution. It never climbs to a parent or the global `~/.cgh`.
+
+```
+cgh path --state [--root DIR]
+```
+
+Example: `sqlite3 "$(cgh path --state)/call_log.db" ...`.
+
+---
+
 ## Query
 
 **Graph queries work while the owner runs.** A live owner keeps the graph DB

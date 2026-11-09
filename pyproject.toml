@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.19.1"
+version = "0.20.0"
 description = "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 62 MCP tools to Claude Code, Codex, Cursor, Gemini and IBM Bob. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -86,8 +86,8 @@ neural = ["fastembed>=0.4"]
 # cgh-summarize and cgh-classify are frozen: their final releases stay on
 # PyPI, they left this repo and are in no extra.
 plugins = [
-    "cgh-bugreport>=0.1.3",
-    "cgh-codegen>=0.1.2",
+    "cgh-bugreport>=0.2",
+    "cgh-codegen>=0.2",
 ]
 # Everything: the plugins above plus the langs and lsp extras. The
 # tree-sitter grammars ship abi3 wheels
@@ -95,8 +95,8 @@ plugins = [
 # which is what makes this superset safe to offer.
 #   pip install "cgh[full]"
 full = [
-    "cgh-bugreport>=0.1.3",
-    "cgh-codegen>=0.1.2",
+    "cgh-bugreport>=0.2",
+    "cgh-codegen>=0.2",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
     "jedi>=0.19",
@@ -161,6 +161,14 @@ cgh = [
 dev = [
     "pytest>=8",
 ]
+
+# The 0.20.0 plugin versions are not on PyPI yet (this release publishes
+# them), so the raised >=0.2 floors are unresolvable from the index until
+# then. Point uv at the local plugin dirs so the lock resolves during the
+# release; REMOVE these entries and re-lock once the plugins have published.
+[tool.uv.sources]
+cgh-bugreport = { path = "plugins/cgh-bugreport" }
+cgh-codegen = { path = "plugins/cgh-codegen" }
 
 [tool.ruff]
 target-version = "py311"

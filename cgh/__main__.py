@@ -129,6 +129,7 @@ def _print_help():
                 ("serve", "Start MCP server (for Claude, Cursor, Codex, Gemini)"),
                 ("stop", "Stop this repo's owner + worker (alias of serve --stop)"),
                 ("setup", "Configure integration for a specific AI tool"),
+                ("path", "Print the resolved state dir (for scripts)"),
             ],
         ),
         (

@@ -64,3 +64,31 @@ def test_guard_cleanup_tolerates_non_utf8_bobignore(tmp_path):
     assert report.bobignore_lines == [".cgh/"]
     txt = (tmp_path / ".bobignore").read_text(encoding="utf-8", errors="replace")
     assert "build/" in txt and "cgh guard" not in txt
+
+
+def test_a_negation_line_is_rewritten_away(tmp_path):
+    # A planted `!auth.key` must not survive: the file is forced back to `*`.
+    cg = tmp_path / ".cgh"
+    cg.mkdir()
+    (cg / ".gitignore").write_text("*\n!auth.key\n", encoding="utf-8")
+    assert ensure_state_dir_ignored(tmp_path) is True
+    assert (cg / ".gitignore").read_text(encoding="utf-8") == "*\n"
+
+
+def test_a_symlinked_ignore_file_is_refused(tmp_path):
+    # A planted symlink must not be followed into an arbitrary file.
+    cg = tmp_path / ".cgh"
+    cg.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n", encoding="utf-8")
+    (cg / ".gitignore").symlink_to(victim)
+    assert ensure_state_dir_ignored(tmp_path) is False
+    assert victim.read_text(encoding="utf-8") == "precious\n"  # untouched
+
+
+def test_a_symlinked_state_dir_is_refused(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / ".cgh").symlink_to(elsewhere, target_is_directory=True)
+    assert ensure_state_dir_ignored(tmp_path) is False
+    assert not (elsewhere / ".gitignore").exists()  # nothing written through it

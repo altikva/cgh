@@ -18,31 +18,48 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from pathlib import Path
 
 AUTH_KEY_FILE = "auth.key"
 _CGH_DIR = ".cgh"
+_IGNORE_ALL = "*\n"
 
 
 def ensure_state_dir_ignored(repo_root: str | Path) -> bool:
     """Keep the whole ``.cgh/`` state dir (the auth key included) out of
-    version control with a self-contained ``.cgh/.gitignore`` of ``*``.
+    version control with a self-contained ``.cgh/.gitignore`` of exactly
+    ``*``.
 
     The file lives inside cgh's own directory, so it protects the credential
     whether or not a git repo exists yet, from any subdirectory, however git
     is configured, and it never writes a diff into the repo's tracked
     ``.gitignore`` (which would block tearing down an agent worktree). This is
     the only protection the secret needs, so it does not depend on a git
-    command succeeding. Returns True when it wrote the file."""
-    ignore = Path(repo_root) / _CGH_DIR / ".gitignore"
+    command succeeding. Returns True when it (re)wrote the file.
+
+    Hardening: the content is rewritten to exactly ``*`` whenever it differs,
+    so a planted negation line (``!auth.key``) cannot leave the key tracked;
+    and the write refuses to follow a symlinked ``.cgh/`` or
+    ``.cgh/.gitignore`` (``O_NOFOLLOW``), so a planted symlink cannot redirect
+    it into an arbitrary file."""
+    state = Path(repo_root) / _CGH_DIR
+    ignore = state / ".gitignore"
     try:
-        if ignore.exists():
-            lines = ignore.read_text(encoding="utf-8", errors="replace").splitlines()
-            if any(ln.strip() == "*" for ln in lines):
-                return False
-        ignore.parent.mkdir(parents=True, exist_ok=True)
-        ignore.write_text("*\n", encoding="utf-8")
+        # A symlinked state dir or ignore file would redirect the write; refuse.
+        if state.is_symlink() or ignore.is_symlink():
+            return False
+        if (
+            ignore.is_file()
+            and ignore.read_text(encoding="utf-8", errors="replace") == _IGNORE_ALL
+        ):
+            return False  # already exactly `*`: no negation can coexist
+        state.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(ignore, flags, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(_IGNORE_ALL)
         return True
     except OSError:
         return False

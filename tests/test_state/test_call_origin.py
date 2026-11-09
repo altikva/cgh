@@ -20,10 +20,10 @@ import threading
 
 import pytest
 
-import codegraph.__main__ as cli_main
-import codegraph.server as srv
-from codegraph.cli import owner_client
-from codegraph.state import call_log, ipc
+import cgh.__main__ as cli_main
+import cgh.server as srv
+from cgh.cli import owner_client
+from cgh.state import call_log, ipc
 
 _TOOL_CALL = {
     "jsonrpc": "2.0",
@@ -45,7 +45,7 @@ def _fresh_log(monkeypatch):
 
 
 def _rows(root) -> list[tuple]:
-    db = sqlite3.connect(root / ".codegraph" / "call_log.db")
+    db = sqlite3.connect(root / ".cgh" / "call_log.db")
     try:
         return db.execute(
             "SELECT tool, origin, repo_root FROM call_log ORDER BY id"
@@ -205,7 +205,7 @@ def test_in_process_call_is_internal(tmp_path, monkeypatch):
 
 
 def test_existing_call_log_is_migrated_silently(tmp_path):
-    db_dir = tmp_path / ".codegraph"
+    db_dir = tmp_path / ".cgh"
     db_dir.mkdir()
     old = sqlite3.connect(db_dir / "call_log.db")
     old.execute(
@@ -246,7 +246,7 @@ def test_unknown_origin_value_is_stored_as_null(tmp_path):
 def test_stats_cli_shows_the_origin_split(tmp_path):
     from rich.console import Console
 
-    from codegraph.cli.commands_monitor import _origin_table
+    from cgh.cli.commands_monitor import _origin_table
 
     call_log.log_call("a", {}, 1.0, 0, repo_root=tmp_path, origin="agent")
     call_log.log_call("a", {}, 1.0, 0, repo_root=tmp_path, origin="hook")

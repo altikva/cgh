@@ -1,7 +1,7 @@
 {
   "__all__": [
     "CapabilityMissing",
-    "CodegraphError",
+    "CghError",
     "InMemoryFindingStore",
     "SDK_API",
     "ScanFinding",
@@ -18,7 +18,7 @@
   "exports": {
     "CapabilityMissing": {
       "bases": [
-        "CodegraphError",
+        "CghError",
         "RuntimeError"
       ],
       "init": [
@@ -42,7 +42,7 @@
       ],
       "kind": "class"
     },
-    "CodegraphError": {
+    "CghError": {
       "bases": [
         "Exception"
       ],

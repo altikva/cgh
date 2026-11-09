@@ -32,8 +32,8 @@ def _landing_screen() -> list[str]:
     Both namespaces are swapped: modules bind `console` at import time, so
     reassigning only one of them would record nothing.
     """
-    import codegraph.__main__ as main_module
-    import codegraph.cli as cli
+    import cgh.__main__ as main_module
+    import cgh.cli as cli
 
     recorder = Console(record=True, width=110, no_color=True)
     previous = (cli.console, main_module.console)

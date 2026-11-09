@@ -14,13 +14,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codegraph.analysis.federation import _outdated_child, _run_one_graphdb
-from codegraph.state.scan_meta import GRAPH_FORMAT
+from cgh.analysis.federation import _outdated_child, _run_one_graphdb
+from cgh.state.scan_meta import GRAPH_FORMAT
 
 
 def _child(tmp_path: Path, name: str, graph_format: int | None) -> Path:
     root = tmp_path / name
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(parents=True)
     meta: dict = {"root": str(root.resolve())}
     if graph_format is not None:

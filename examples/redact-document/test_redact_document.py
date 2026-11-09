@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("cgh_pii")
 
-from codegraph import sdk
+from cgh import sdk
 
 
 def test_regex_categories_redacted_stably():

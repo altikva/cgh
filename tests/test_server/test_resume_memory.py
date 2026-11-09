@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.server.tools_session import build_resume_bundle
-from codegraph.state.call_log import knowledge_record, reset_for_tests
+from cgh.server.tools_session import build_resume_bundle
+from cgh.state.call_log import knowledge_record, reset_for_tests
 
 
 @pytest.fixture
 def store(tmp_path):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
 
     for i in range(5):
         knowledge_record(
@@ -79,7 +79,7 @@ def test_real_knowledge_surfaces_past_a_flood_of_auto_checkpoints(tmp_path):
     import time
 
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     knowledge_record(
         "Owner cwd gotcha",
         "pin the owner to --root or it locks another repo's call log",

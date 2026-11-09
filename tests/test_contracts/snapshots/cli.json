@@ -51,12 +51,14 @@
     "packages",
     "papercut",
     "parsers",
+    "path",
     "plan-index",
     "plugins",
     "prs",
     "report",
     "reset",
     "search",
+    "semantic",
     "serve",
     "setup",
     "shared-types",
@@ -672,6 +674,14 @@
           "-h"
         ]
       },
+      "path": {
+        "options": [
+          "--help",
+          "--root",
+          "--state",
+          "-h"
+        ]
+      },
       "plan-index": {
         "options": [
           "--help",
@@ -739,6 +749,19 @@
           "-n",
           "-o",
           "-t"
+        ],
+        "positionals": [
+          "query"
+        ]
+      },
+      "semantic": {
+        "options": [
+          "--help",
+          "--limit",
+          "--mode",
+          "--root",
+          "-h",
+          "-n"
         ],
         "positionals": [
           "query"

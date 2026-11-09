@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.state.ipc import (
+from cgh.state.ipc import (
     _CLIENT_HANDSHAKE_BUDGET,
     _OWNER_STARTUP_TIMEOUT,
     _await_owner_port,

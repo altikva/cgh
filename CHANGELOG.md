@@ -4,9 +4,90 @@ All notable changes to **cgh** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
+The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
+
+## [0.20.0] - 2026-11-09
+
+### Added
+- **`cgh path --state` prints the resolved state directory.** External scripts
+  can read `$(cgh path --state)` instead of hardcoding `.cgh/` (or a legacy
+  `.codegraph/`), so they keep working across the rename and any future move.
+  It reports the state dir of the literal `--root` (what `cgh init` there would
+  create), never a parent's or the global `~/.cgh`, so a caller writing into it
+  never touches an unrelated directory.
+- **Tools are now scoped per client by default (`[tools] expose = "auto"`).**
+  A client with tool search (Claude Code) sees every tool but keeps only the
+  core set in each request's definitions and defers the rest, which stay
+  callable on demand; a client without it (Cursor, Codex, Gemini, Bob) sees
+  only the core set, so it is no longer flooded with every schema. The core
+  set is recentred on what agents actually call: of cgh's 63 tools the proxy
+  study saw 24 ever used, and core is that agent-facing set plus
+  `semantic_search`, minus the index-mutating tools that only hooks and status
+  drive. Core carries the `anthropic/alwaysLoad` marker (Claude-Code-specific,
+  ignored elsewhere). Set `expose = "all"` to list everything to every client,
+  or `"core"` to scope it for every client.
+
+- **Semantic search over symbols (`cgh semantic`).** A vector search that
+  ranks symbols by how close their name and docstring are in meaning to the
+  query, for when you know what the code does but not what it is called. The
+  default embedder is lexical, offline and in the standalone binary;
+  `--mode neural` uses an opt-in model (the `cgh[neural]` extra), which a
+  measured benchmark found is the one that lifts recall on paraphrased
+  queries. Also exposed as the MCP tool `semantic_search`, federated across
+  subrepos; weighted hybrid fusion with the BM25 index comes next.
+
+### Changed
+- **The package, import name and state directory are all `cgh` now (breaking).**
+  The Python package and import path moved from `codegraph` to `cgh`, so
+  `import codegraph.X` becomes `import cgh.X`; the PyPI package and CLI were
+  already `cgh`. The per-repo state directory is `.cgh/` instead of
+  `.codegraph/`. A repo indexed before this keeps its index: the first
+  `cgh init`, `cgh index` or `cgh serve` renames `.codegraph/` to `.cgh/` in
+  place (skipped while an owner holds it), and until then cgh reads the old
+  directory. The MCP server name stays `cgh`; `cgh setup migrate` still
+  converts a config written under the older `codegraph` server name. Any code
+  that did `import codegraph` must switch to `import cgh`.
+- **First-party plugins require the renamed host (`cgh.plugin_api`).**
+  `cgh-bugreport` 0.2.0, `cgh-codegen` 0.2.0, `cgh-pii` 0.5.0 and `cgh-vision`
+  0.7.0 import `cgh.plugin_api` instead of `codegraph.plugin_api`, so they need
+  cgh 0.20.0 or newer; the `plugins` and `full` extras raise their floors to
+  match.
+
+### Fixed
+- **`cgh init` ignores its state dir with a self-contained `.cgh/.gitignore`,
+  not the tracked one.** It no longer appends `.cgh/` (and `.cgh/auth.key`) to
+  the repo's committed `.gitignore`, which left an unrequested diff that
+  blocked tearing down an agent worktree after a merge. Instead it writes a
+  `.gitignore` of `*` inside `.cgh/` itself: git then ignores the whole dir,
+  the auth key included, with no diff to any tracked file and no dependence on
+  a git command, from any subdirectory and whether or not a repo exists yet.
+- **Every state-dir path follows the resolver, never a hardcoded `.cgh/`.** All
+  reads and writes of the per-repo state (the graph DB, FTS, call log, auth
+  key, config, logs, locks) now resolve through `state_dir_for`, which reads a
+  legacy `.codegraph/` until an init/index/serve renames it. Before this, a new
+  build running a non-migrating command (`status`, `knowledge`, `path`) on a
+  repo still on `.codegraph/` created an empty `.cgh/` that shadowed the real
+  index. `find_cgh_root` also discovers a legacy repo from a subdirectory.
+- **Owner/worker/port markers follow the state dir during the rename.** The
+  runtime markers (`owner.pid`, `server.port`, `workers/`, logs) are now
+  placed in the resolved state dir instead of a hardcoded `.cgh/`, so a repo
+  still on a legacy `.codegraph/` keeps its markers beside its data. Without
+  this, a new build starting against a repo whose old owner still holds
+  `.codegraph/` would look for the owner under `.cgh/`, miss it, and spawn a
+  second owner against the held DuckDB lock.
+- **`cgh setup codex` registers the server where Codex CLI reads it.** The
+  Codex MCP entry was written to the repo-root `.mcp.json`, which Codex CLI
+  does not read. It now goes in `.codex/config.toml` as a `[mcp_servers.cgh]`
+  table (project scope, trusted projects), the TOML file Codex actually
+  loads; existing config, comments and other servers are preserved. For a
+  global install, put the same table in `~/.codex/config.toml`.
+- **`cgh setup gemini` registers the server where Gemini CLI reads it.** The
+  Gemini MCP entry was written to the repo-root `.mcp.json`, which Gemini CLI
+  does not read, so the server never attached. It now goes in
+  `.gemini/settings.json` under `mcpServers` (project scope), the file the
+  Gemini CLI actually loads; the rename migration and doctor look there too.
 
 ## [0.19.1] - 2026-11-04
 
@@ -195,7 +276,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   list, keeping the search routing table and the must-not-miss lines
   (prefer the tools over Read/Grep, knowledge_search is not a code search,
   record and checkpoint before compaction). The detail lives in the cgh
-  rule file and the cgh-use-codegraph skill.
+  rule file and the cgh-use-cgh skill.
 - **Indexing a file writes its functions and classes in batches.** One
   statement per symbol made a 40 KB Python file take about 330 ms on
   DuckDB; it now takes about 120 ms, which also shortens full scans.
@@ -265,8 +346,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   `own: true`. The `/clear` recap the SessionStart hook injects shrinks the
   same way, to the checkpoint's goal and next step.
 - **Hook answers can be turned on from a config file.** `answers = true`
-  under `[hooks]`, in a repo's `.codegraph/config.toml` or in
-  `~/.codegraph/config.toml`, turns on the answer mode that only
+  under `[hooks]`, in a repo's `.cgh/config.toml` or in
+  `~/.cgh/config.toml`, turns on the answer mode that only
   `CGH_HOOK_ANSWERS=1` enabled before. Hooks read the file on every call, so
   sessions already running pick it up at their next search, where the
   variable only reached sessions started after it was set. The variable
@@ -325,14 +406,14 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   notice: uninstall it. These formats no longer count as opaque artifacts.
 
 - **The MCP server is named `cgh`.** `cgh init` and `cgh setup` register
-  it as `cgh` instead of `codegraph`, so agents see `mcp__cgh__<tool>` and
+  it as `cgh` instead of `cgh`, so agents see `mcp__cgh__<tool>` and
   the Claude allow rules are `mcp__cgh` / `mcp__cgh__*`. The product has
   one name everywhere. Migration: run `cgh setup migrate` once per repo
   (`cgh init` and `cgh setup <tool>` do it too). It moves the old entry in
   `.mcp.json`, `.cursor/mcp.json` and `.bob/mcp.json` with its settings
-  and renames the `mcp__codegraph` allow rules in `.claude/settings*.json`;
+  and renames the `mcp__cgh` allow rules in `.claude/settings*.json`;
   deny and ask rules keep the original and gain a `mcp__cgh` twin. The
-  rename is refused, and the repo stays on `codegraph`, while a deny / ask
+  rename is refused, and the repo stays on `cgh`, while a deny / ask
   rule in user or managed settings, a hook matcher, or an unreadable
   settings file would stop applying to the new names (`--force`
   overrides). `cgh doctor` flags a repo still on the old name, and fails
@@ -342,7 +423,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   README and package descriptions now present cgh as the project memory of
   your coding agents, plus a code and document graph. Nothing to migrate
   beyond the MCP server rename above: the command, the PyPI and npm
-  packages, the `codegraph` import and the `.codegraph/` directory keep
+  packages, the `cgh` import and the `.cgh/` directory keep
   their names.
 
 - **License: Apache-2.0.** cgh, its first-party plugins, the SDK and the
@@ -357,7 +438,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   the parent has none (an MCP client, or a federation parent starting one
   owner per child), so a window flashed open for every repo. It now uses
   `CREATE_NO_WINDOW`, keeping the owner detached and windowless; its
-  output already goes to `.codegraph/owner.log`.
+  output already goes to `.cgh/owner.log`.
 - **`cgh setup claude` keeps your settings readable and your own
   reindex hook.** Rewriting `.claude/settings.json`, `settings.local.json`
   or `.mcp.json` turned every non-ASCII character in your own entries
@@ -435,7 +516,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 
 ### Added
 - **Shorter tool list on request.** `[tools] expose = "core"` in
-  `.codegraph/config.toml` makes `tools/list` show 15 core tools, the
+  `.cgh/config.toml` makes `tools/list` show 15 core tools, the
   names in `[tools] extra`, and every plugin tool. Some MCP clients load
   every listed tool's schema into the context; this keeps that cost down.
   Hidden tools still answer when called by name, so hooks and scripts are
@@ -506,7 +587,7 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 - **Knowledge outcomes.** The new `knowledge_outcome` MCP tool (and `cgh
   knowledge outcome` / `outcomes`) records whether relying on a knowledge
   entry, or on some files, worked: `useful`, `dead_end` or `corrected`.
-  Verdicts fade with age (`[codegraph] knowledge_half_life_days`, 30 by
+  Verdicts fade with age (`[cgh] knowledge_half_life_days`, 30 by
   default). Search and list rank useful entries up and corrected ones down,
   each rated hit shows its standing, and `resume` lists known dead ends so a
   new session does not retry a path that already failed. Existing stores
@@ -572,8 +653,8 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
   file's lines at a ref. Both read straight from git. A frontend worktree
   can now search the API's develop branch without falling back to
   `git grep` / `git show` in a shell. Only this repo and the repos listed
-  under the new `[codegraph] siblings` key of your global
-  `~/.codegraph/config.toml` are reachable; nothing is fetched. A
+  under the new `[cgh] siblings` key of your global
+  `~/.cgh/config.toml` are reachable; nothing is fetched. A
   project's own `config.toml` can't declare siblings, so a cloned repo
   can't open your other repos.
 
@@ -598,11 +679,11 @@ The Python import name is `codegraph`; the PyPI package and CLI are `cgh`.
 ### Security
 - **A repo could run its own code as the cgh owner.** The owner, and the
   MCP server and hooks `cgh init` writes when no `cgh` binary is on PATH,
-  run `python -m codegraph` from inside the indexed repo, so a repo with a
-  top-level `codegraph/` package was imported in place of the installed
+  run `python -m cgh` from inside the indexed repo, so a repo with a
+  top-level `cgh/` package was imported in place of the installed
   cgh. They now run Python with `-P`, which keeps the current directory
   off the import path. Re-run `cgh init` in a repo whose `.mcp.json` or
-  hooks use the `python -m codegraph` form to pick it up.
+  hooks use the `python -m cgh` form to pick it up.
 
 ### Changed
 - cgh-bugreport resolves from PyPI again (0.1.3 is published).
@@ -648,7 +729,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   `contracts/` directory is indexed one entry per key, three levels deep.
   Existing indexes re-parse once on the next index.
 - **Remote Terraform modules can be linked to a local checkout.** The
-  opt-in `[terraform] module_sources` table in `.codegraph/config.toml`
+  opt-in `[terraform] module_sources` table in `.cgh/config.toml`
   maps a git or registry source to a directory (the `//subdir` is
   followed), so module arguments and `module.m.out` link to that module's
   variables and outputs. A directory outside the index is read on demand,
@@ -675,7 +756,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   split (new `by_origin` fields; existing fields unchanged), so hook traffic
   no longer reads as agent choices. Existing logs are migrated in place;
   their older rows show as `unknown`. The log stays in
-  `.codegraph/call_log.db`: cgh sends it nowhere, and crash reports do not
+  `.cgh/call_log.db`: cgh sends it nowhere, and crash reports do not
   include it.
 - **`cgh endpoints` lists HTTP routes from the shell**, with method, full
   path, handler and `file:line` (`--method`, `--include-tests`, `--limit`,
@@ -732,14 +813,14 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   listed; `get_event_bus().publish()` is typed by the factory's `-> EventBus`
   annotation, imported or not. The first index after upgrading re-parses
   the repo once.
-- **`cgh status` called a copied `.codegraph` fresh.** Until the next
+- **`cgh status` called a copied `.cgh` fresh.** Until the next
   index, a store copied from another checkout answered with the old tree's
   paths while status said `fresh`. `cgh status` (state `copied`,
   `scan.copied_from` in `--json`), `cgh stats` and `cgh doctor` now say
   where it was built and to run `cgh index`; query commands print a
   one-line warning on stderr. A store seeded by `cgh init --from` is not
   flagged.
-- **`cgh impact` on a copied `.codegraph` answered empty with exit 0.** Its
+- **`cgh impact` on a copied `.cgh` answered empty with exit 0.** Its
   diff maps to this checkout's paths while the store holds the old tree's,
   so nothing matched. `cgh impact`, `cgh outline` and `cgh files --check`
   now refuse such a store with exit 1 and say to run `cgh index` (`{"error":
@@ -763,7 +844,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
 - **`cgh add-dir <path>` failed.** A path in place of the action now adds
   it, as `cgh add-dir add <path>` does; `add`, `remove` and `list` work as
   before.
-- **Editing `[terraform] module_sources` needed a deleted `.codegraph`.** A
+- **Editing `[terraform] module_sources` needed a deleted `.cgh`.** A
   changed mapping, or a pinned ref now resolving to another commit, makes
   the next `cgh index`, incremental reindex or owner start parse the
   Terraform files again; scan metadata keeps a fingerprint of both. The
@@ -784,14 +865,14 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   lists contracts entries that mention a changed address under `related`.
   `impact_of` on a `.tf` path is block-precise too.
 - **`cgh add-dir` printed success and wrote nothing** when config.toml had
-  no `[codegraph]` table, or only the commented `extra_dirs` line of the
+  no `[cgh]` table, or only the commented `extra_dirs` line of the
   default template. `add-dir`, `add_directory`, `federate add/remove` and
   `clean --drop-extra-dirs` now edit the key in place: the table is created
   when missing, comments and other tables are kept, and a write that does
   not read back fails with an error instead of a success line. `federate`
   no longer rewrites the whole file, which used to drop comments and break
   nested tables such as `[plugin.codegen]`.
-- **A copied `.codegraph` kept the old root's nodes.** `cgh index` on a
+- **A copied `.cgh` kept the old root's nodes.** `cgh index` on a
   store built in another directory upserted the new paths beside the old
   ones, so every caller showed up twice. Every index entry point now
   rebuilds from scratch when the recorded root differs, or when a store
@@ -962,7 +1043,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
 
 ### Changed
 - **Breaking: `fetch_and_index` and `cgh fetch` need `allow_fetch = true`**
-  under `[codegraph]` for everyone. Assist mode used to allow them by
+  under `[cgh]` for everyone. Assist mode used to allow them by
   default.
 - **Breaking (SDK): `egress_decision` defaults to the assist behavior.**
   Passing `mode` is deprecated and emits a `DeprecationWarning`;
@@ -1037,7 +1118,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   installed: fastmcp before 2.12 imports a pydantic helper that 2.14 removed,
   and with fastmcp before 2.13 the owner could not start at all. The fastmcp
   floor is now 2.13.
-- **Links to `github.com/altikva/codegraph` were dead.** The footer of the
+- **Links to `github.com/altikva/cgh` were dead.** The footer of the
   HTML that `cgh graph` writes and the header of a generated `config.toml`
   pointed there; they now point at `github.com/altikva/cgh`.
 - **`cgh impact`, `callers`, `callees` and `outline` failed while an owner
@@ -1421,7 +1502,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   ran with the repository as its working directory, so ruflo created its own
   stores there: `ruvector.db` at 1.5 MB, `agentdb.rvf` and a lock file, none of
   them ignored by git, in every repo where a task context was built. The bridge
-  is gone, along with the `[ruflo]` config table, the `CODEGRAPH_RUFLO_ENABLED`
+  is gone, along with the `[ruflo]` config table, the `CGH_RUFLO_ENABLED`
   variable and the `ruflo_memory_hits` field of the `context_for_task`
   response. Claude Code memory, plans and knowledge are untouched: they come
   from the local FTS index and never went through this path.
@@ -1635,7 +1716,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   also writes a structured `<file>.json` for every indexed image and PDF, so
   a whole repo of diagrams gets extracted with no manual `cgh vision` call.
   PDFs are rasterized and extracted per page. Sidecars land under
-  `.codegraph/vision/` by default (outside the working tree, cleaned with
+  `.cgh/vision/` by default (outside the working tree, cleaned with
   the index); `auto_extract_out = "beside"` writes `<file>.json` next to the
   source, or point it at any directory. The extraction is cached by file
   fingerprint and shared with the interactive `cgh vision` command, so
@@ -1724,8 +1805,8 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   line per distinct error when the burst goes quiet: identical errors read
   as `... x100 (e.g. <file>)`, different errors each keep their own line.
 - **`cgh init` actually installs the bundled skills now**: the skill
-  source directory resolved to `codegraph/integrations/skills` (next to
-  the installer module) instead of `codegraph/skills`, so it always found
+  source directory resolved to `cgh/integrations/skills` (next to
+  the installer module) instead of `cgh/skills`, so it always found
   zero skills and every tool setup (Claude, Cursor, Bob, ...) installed
   none. Fixed to look one level up; a regression test now asserts the
   skills are found and land as `SKILL.md` files under the tool's dir.
@@ -1738,9 +1819,9 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   claude,cursor,bob` forces the choice for a scripted or empty-repo
   "init cgh before the LLM" bootstrap.
 - **`cgh init` now writes the usage guidelines for IBM Bob**: Bob's rules
-  target (`.bob/rules/00-codegraph-usage.md`) was missing from the
+  target (`.bob/rules/00-cgh-usage.md`) was missing from the
   injection map, so a Bob setup installed the skills but never the
-  "when to use the codegraph tools" rules. Bob now gets them like every
+  "when to use the cgh tools" rules. Bob now gets them like every
   other agent.
 - **cgh-vision sets a roomy Ollama context so images stop 400-ing**: a
   vision model encodes an image into many tokens, so a detailed diagram
@@ -1849,7 +1930,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   publishes its port and answers the handshake immediately, and queries
   hit the existing graph until the reindex catches up.
 - **Secure-mode init crashed on a non-UTF-8 config.toml**: enabling
-  secure mode reads `.codegraph/config.toml` to edit the `mode` line; a
+  secure mode reads `.cgh/config.toml` to edit the `mode` line; a
   CP1252 byte in it (an em dash in a comment) raised UnicodeDecodeError
   and took down every federated child refresh. It now decodes leniently
   and the write-back repairs the file to valid UTF-8. A failed federated
@@ -1860,10 +1941,10 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   feeds the same spinner/bar as a full scan (and its fallback does too).
 - **The `cgh` banner is the correct figlet again**: the hand-tweaked
   logo had a misaligned underscore floating above the `h`; it is now the
-  clean Standard figlet of `codegraph`.
+  clean Standard figlet of `cgh`.
 - **The non-UTF-8 tolerance now also covers the agent docs read during
   init**: `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` are read to splice in
-  the codegraph block; a CP1252 byte in a templated one crashed init
+  the cgh block; a CP1252 byte in a templated one crashed init
   (notably every federated child). Those reads decode leniently too.
 - **`cgh init` no longer crashes on a non-UTF-8 ignore file**: a
   template `.gitignore` carrying a CP1252 byte (an em dash in a header
@@ -1935,7 +2016,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   with no further network. Results cache by URL with a TTL (default
   24 h). A fetch is gated network egress: http/https only, private,
   loopback and link-local hosts refused (SSRF), refused in secure
-  mode unless `[codegraph] allow_fetch` is set, and every fetch and
+  mode unless `[cgh] allow_fetch` is set, and every fetch and
   refusal is written to the activity log.
 - **PII redaction: `cgh pii redact` and `sdk.redact_text`**: produce an
   anonymized copy of a text or markdown file, keeping only the
@@ -2119,7 +2200,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
 ## [0.9.0] - 2026-08-02
 
 ### Added
-- **Public exception hierarchy** (`codegraph.errors`): `CodegraphError`
+- **Public exception hierarchy** (`cgh.errors`): `CghError`
   base with `ConfigurationError`, `BackendError`, `IndexingError`;
   `CapabilityMissing` now inherits it (RuntimeError kept for
   compatibility) and the SDK exports the base, so embedders catch one
@@ -2141,9 +2222,9 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   `pii.image_identity` findings, so the secure-at-rest layer
   pseudonymizes them. Local Ollama only; the SDK `image_*` functions
   now resolve. Joins the `plugins` and `full` extras.
-- **Embedding SDK** (`codegraph.sdk`): the documented surface for
+- **Embedding SDK** (`cgh.sdk`): the documented surface for
   using cgh's bricks inside third-party code, without CLI, owner, MCP
-  or a `.codegraph/` repo: `scan_text` over installed scanners, the
+  or a `.cgh/` repo: `scan_text` over installed scanners, the
   egress gate as a pure function (secure allowlist by default),
   caller-keyed pseudonymization, `summarize` through the cgh-summarize
   backends (local-only by default), vision entry points raising a
@@ -2151,18 +2232,18 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   `SDK_API = 1`, SemVer on the surface, everything else stays
   internal. Recipes in docs/EMBEDDING.md.
 - **SDK embedding exception** (LICENSE): code exercised solely through
-  `codegraph.sdk` may be used under MIT alone, including commercially;
+  `cgh.sdk` may be used under MIT alone, including commercially;
   the graph index, MCP server, federation and shared memory stay under
   the dual license. cgh-pii, cgh-classify and cgh-summarize move to
   plain MIT so the grant is real end to end.
 - **Sensitive findings pseudonymized at rest (secure mode)**: `pii.*`
   and `secret.*` finding values are replaced at write time by stable
-  one-way pseudonyms keyed per repo (HMAC, `.codegraph/pseudo.key`),
+  one-way pseudonyms keyed per repo (HMAC, `.cgh/pseudo.key`),
   so the raw datum never reaches disk and reading the SQLite files
   directly, bypassing MCP, yields nothing recoverable. Dedup and
   cross-file search keep working on the pseudonyms.
 - **The index is guard-protected in secure mode**: agent Read/Grep and
-  any shell command touching `.codegraph/` are denied with a reason
+  any shell command touching `.cgh/` are denied with a reason
   pointing at the MCP tools, and the static deny lists (Claude
   settings, `.bobignore`) carry a standing index entry.
 
@@ -2192,7 +2273,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   and diffs on its own.
 - **Background processes use real logging**: the owner, the MCP proxy,
   the watcher and the deferred-scan worker emit through per-module
-  loggers behind one `[codegraph]`-prefixed stderr handler (configured
+  loggers behind one `[cgh]`-prefixed stderr handler (configured
   at the two daemon entrypoints, never on the root logger, so an
   embedding application keeps control). Twenty stderr prints converted
   with levels; owner.log now carries levels and module names, and
@@ -2218,9 +2299,9 @@ links into test code are gone, not real callers. To stay on 0.15, pin
 - **The plugin API covers what plugins actually need**: the finding
   store, activity log, knowledge record, config resolution, parser
   lookup, federation children, subprocess hygiene and a `server_root()`
-  accessor are re-exported (lazily) from `codegraph.plugin_api`, the
+  accessor are re-exported (lazily) from `cgh.plugin_api`, the
   one import path with a stability promise. All six first-party
-  plugins migrated off `codegraph.state/*` and friends, and a boundary
+  plugins migrated off `cgh.state/*` and friends, and a boundary
   test now fails any plugin import that reaches into internals, which
   is what keeps `API_VERSION` honest.
 - **Plugin floors in the install extras track plugin releases**: a
@@ -2275,7 +2356,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
 - **`cgh graph` works on DuckDB**: the CLI visualization went through
   raw-Cypher generators that only Kuzu understood, so every scope
   silently rendered "No edges found" on the default backend. The
-  generators now live once in `codegraph.viz.graphviews`, speak the
+  generators now live once in `cgh.viz.graphviews`, speak the
   GraphDB protocol only, and serve both entry points (the
   `visualize_graph` MCP tool and the CLI); the Kuzu-only ancestors are
   retired, and the init wizard's file count uses the protocol too.
@@ -2313,7 +2394,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   longer void the secure-at-rest guarantee.
 - **`add_directory` is confined**: the MCP tool indexes paths inside
   the repo root freely, but a path outside the root is only accepted
-  when a human already declared it in `[codegraph] extra_dirs` (via
+  when a human already declared it in `[cgh] extra_dirs` (via
   `cgh add-dir add` or config.toml), and the acceptance is logged.
   Without this, any prompt-injected MCP client could walk and index
   arbitrary readable directories, making their content queryable.
@@ -2493,7 +2574,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   `cgh insights`, and the `summaries` / `corpus_insights` MCP tools;
   insights batch the gate-cleared summaries into one model call and
   persist the result to the knowledge store.
-- **Global `mode` switch** in `[codegraph]`: `assist` (default) or
+- **Global `mode` switch** in `[cgh]`: `assist` (default) or
   `secure`. Secure is assist plus enforcement, nothing turns off; gate
   and guard consumers derive their defaults from it, each overridable.
 - **cgh-pii plugin** (in `plugins/cgh-pii`, published separately): every
@@ -2518,7 +2599,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   inline ones right after a file is indexed, heavy ones through a
   deferred queue that dedupes by git blob SHA and stays off the watcher
   hot path. Findings (`pii.email`, `secret.aws_key`, `confidential`,
-  `summary`, ...) live in `.codegraph/findings.db`, SQLite in WAL mode
+  `summary`, ...) live in `.cgh/findings.db`, SQLite in WAL mode
   so they stay readable while an owner holds the graph write lock and
   when no owner runs at all. They feed the full-text search (a search
   for "IBAN" surfaces flagged files), are purged with their file, and
@@ -2589,7 +2670,7 @@ links into test code are gone, not real callers. To stay on 0.15, pin
   and stop on their own a few seconds after the parent owner exits. Children
   already up are left untouched, which also keeps two repos federating each
   other from pinning each other alive. Opt out per repo with
-  `federate_auto_up = false` under `[codegraph]`.
+  `federate_auto_up = false` under `[cgh]`.
 
 ### Fixed
 - **CLI queries crashed on DuckDB repos**: `cgh search`, `cgh lookup`,
@@ -2636,7 +2717,7 @@ extras are opt-in and defaults are unchanged.
   cross-file CALLS resolution for Python via jedi, behind a `precise_calls`
   config flag (or `CGH_PRECISE_CALLS`).
 - **Walk-up root discovery**: `cgh` now resolves the nearest ancestor
-  `.codegraph/` from any subdirectory, the way git finds its repo root, so the
+  `.cgh/` from any subdirectory, the way git finds its repo root, so the
   commands work from anywhere inside an initialized project.
 
 ### Fixed
@@ -2674,7 +2755,7 @@ extras are opt-in and defaults are unchanged.
 ### Security
 - The owner's bearer-token check is now constant-time (`hmac.compare_digest`).
 - Removed the dead `.mcp.json` auth env-injection path: the `0600`
-  `.codegraph/auth.key` file is the shared secret, and `.codegraph/` is created
+  `.cgh/auth.key` file is the shared secret, and `.cgh/` is created
   `0700`. Corrected the auth documentation to match.
 - `index_changed_files` rejects a `since` ref beginning with `-`, and
   `pattern_search` passes the user pattern after `--` (ripgrep) / via `-e`
@@ -2776,7 +2857,7 @@ This release focuses on Windows support and install ergonomics.
 
 ### Fixed
 - `cgh federate add` now accepts subrepos indexed on DuckDB. It previously
-  rejected them with ".codegraph/ exists but graph.db missing" because the
+  rejected them with ".cgh/ exists but graph.db missing" because the
   CLI gated on the Kuzu file instead of "any graph DB present". The status
   table also reports the backend per subrepo (`ok (duckdb)` / `ok (kuzu)`).
 - Federated read-only fan-out degrades gracefully when a Kuzu child repo is
@@ -2842,7 +2923,7 @@ Highlights from this line:
 - `cgh status` shows the installed cgh version.
 
 ### Changed
-- Repository restructured: the top of `codegraph/` is now three files
+- Repository restructured: the top of `cgh/` is now three files
   (`__init__.py`, `__main__.py`, `indexer.py`) with everything else grouped
   into subpackages (`core/`, `parsers/`, `imports/`, `state/`, `analysis/`,
   `server/`, `cli/`, ...).
@@ -2869,7 +2950,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/altikva/cgh/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/altikva/cgh/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/altikva/cgh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0

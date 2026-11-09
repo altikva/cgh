@@ -14,7 +14,7 @@ import sqlite3
 
 import pytest
 
-from codegraph.core.utils import ro_sqlite_uri
+from cgh.core.utils import ro_sqlite_uri
 
 
 def _seed(db_path, rows=1):

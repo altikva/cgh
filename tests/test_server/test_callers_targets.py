@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from codegraph.analysis.callers import callers_of
+from cgh.analysis.callers import callers_of
 
 
 class _Conn:

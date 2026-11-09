@@ -14,15 +14,15 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cli import commands_init
-from codegraph.state import ipc, relocate
+from cgh.cli import commands_init
+from cgh.state import ipc, relocate
 
 
 def _checkouts(tmp_path: Path) -> tuple[Path, Path]:
     base = tmp_path.resolve()
     src, dst = base / "main", base / "wt"
-    (src / ".codegraph").mkdir(parents=True)
-    (dst / ".codegraph").mkdir(parents=True)
+    (src / ".cgh").mkdir(parents=True)
+    (dst / ".cgh").mkdir(parents=True)
     return src, dst
 
 

@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import argparse
 
-import codegraph.state.ipc as ipc
-from codegraph.cli.commands_index import cmd_stop
+import cgh.state.ipc as ipc
+from cgh.cli.commands_index import cmd_stop
 
 
 def test_cmd_stop_runs_the_serve_stop_teardown(tmp_path, monkeypatch):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     calls: dict[str, object] = {}
-    # cmd_serve imports these from codegraph.state.ipc at call time, so
+    # cmd_serve imports these from cgh.state.ipc at call time, so
     # patching the module attributes is enough to observe the teardown.
     monkeypatch.setattr(
         ipc, "unregister_worker", lambda root: calls.setdefault("worker", root)
@@ -41,9 +41,9 @@ def test_cmd_stop_runs_the_serve_stop_teardown(tmp_path, monkeypatch):
 
 
 def test_stop_verb_is_registered(tmp_path):
-    from codegraph.__main__ import _LogoArgumentParser, _register_setup_and_serve
+    from cgh.__main__ import _LogoArgumentParser, _register_setup_and_serve
 
-    ap = _LogoArgumentParser(prog="codegraph", add_help=False)
+    ap = _LogoArgumentParser(prog="cgh", add_help=False)
     sub = ap.add_subparsers(dest="cmd", parser_class=_LogoArgumentParser)
     _register_setup_and_serve(sub)
     args = ap.parse_args(["stop", "--root", str(tmp_path)])

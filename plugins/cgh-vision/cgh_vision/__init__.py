@@ -8,7 +8,7 @@
 #              verb, and, only with [plugin.vision] scan_on_index = true,
 #              the image parser and the deferred vision scanner that read
 #              every indexed image through a local model. Also the module
-#              codegraph.sdk reaches for its image_* functions, so the
+#              cgh.sdk reaches for its image_* functions, so the
 #              pipeline entry points are re-exported here: inventory,
 #              extract_diagram, extract_tables, extract_charts, route.
 
@@ -47,7 +47,7 @@ def register(api) -> None:
     api.register_scanner(VisionScanner(api.config, api.repo_root))
 
 
-# -- SDK surface (codegraph.sdk.image_*) ------------------------------------
+# -- SDK surface (cgh.sdk.image_*) ------------------------------------
 
 
 def inventory(path: Path, config: dict) -> dict:

@@ -56,7 +56,7 @@ def make_cli_registrar(config: dict):
             help="Recompute even if a cached result exists for this file "
             "(and refresh the cache)",
         )
-        from codegraph.plugin_api import add_format_option, add_out_option
+        from cgh.plugin_api import add_format_option, add_out_option
 
         add_out_option(p, what="the report")
         add_format_option(p)  # md (human) or json (the SDK dicts)
@@ -256,7 +256,7 @@ def _run_pdf(args, config: dict, src: Path) -> None:
 
 
 def _emit(args, result: dict) -> None:
-    from codegraph.plugin_api import emit_result
+    from cgh.plugin_api import emit_result
 
     from .pipeline import render_markdown
 
@@ -273,7 +273,7 @@ def _emit(args, result: dict) -> None:
 
 
 def _emit_pdf(args, src: Path, per_page: list[dict]) -> None:
-    from codegraph.plugin_api import emit_result
+    from cgh.plugin_api import emit_result
 
     from .pipeline import render_markdown
 

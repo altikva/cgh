@@ -1,14 +1,14 @@
 # Copyright (c) 2026 ALTIKVA. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Project:     cgh (codegraph)
+# Project:     cgh (cgh)
 # Description: A child with no owner attached is the normal resting state:
 #              the parent reads its database directly, so federated queries
 #              work anyway. Calling that "down" reported a fault that was
 #              not one.
 # Author:      jndjama (Joy Ndjama)
 
-from codegraph.cli.commands_monitor import _format_subrepos_cell
+from cgh.cli.commands_monitor import _format_subrepos_cell
 
 
 class TestSubrepoBadge:

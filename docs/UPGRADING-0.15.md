@@ -29,7 +29,7 @@ permission rules, for example `permissions.deny` in Claude Code.
 ## When code leaves the machine
 
 - `fetch_and_index` and `cgh fetch` need `allow_fetch = true` under
-  `[codegraph]` in `.codegraph/config.toml`, for everyone.
+  `[cgh]` in `.cgh/config.toml`, for everyone.
 - cgh-codegen sends the reference file, any file it extends and the spec
   to the model you configured, after a secret check. The check is regex
   based: it blocks known secret formats (private keys, AWS and GCP keys,
@@ -72,7 +72,7 @@ Then, in each repo:
 
 ## Old findings
 
-Findings recorded by older scanners stay in `.codegraph/findings.db`.
+Findings recorded by older scanners stay in `.cgh/findings.db`.
 cgh-summarize and cgh-vision stored text derived from your files
 (summaries, extracted tables and diagrams), which can quote a secret or
 personal data in clear. cgh-pii and cgh-classify stored counts, labels
@@ -83,7 +83,7 @@ There is no purge command. With the owner stopped (`cgh stop --root
 <repo>`), from the repo root:
 
 ```bash
-sqlite3 .codegraph/findings.db "DELETE FROM findings WHERE scanner IN ('classify', 'pii-regex', 'pii-ner', 'pii-llm', 'summarize', 'vision'); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);"
+sqlite3 .cgh/findings.db "DELETE FROM findings WHERE scanner IN ('classify', 'pii-regex', 'pii-ner', 'pii-llm', 'summarize', 'vision'); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);"
 ```
 
 `VACUUM` rewrites the file so the deleted rows do not linger in free

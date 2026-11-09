@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.cli.hook_answers import _rel
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server._paths import relative_answer, relative_result
+import cgh.server as _srv
+from cgh.cli.hook_answers import _rel
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server._paths import relative_answer, relative_result
 
 PARENT = Path("/work/project")
 CHILD = Path("/work/project/services/api")
@@ -147,7 +147,7 @@ def test_hook_rel_keeps_an_already_relative_path(tmp_path, monkeypatch):
 def _wrapped(monkeypatch, origin: str, root: Path):
     monkeypatch.setattr(_srv, "_call_origin", lambda: origin)
     monkeypatch.setattr(_srv, "_root", root)
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
     @_srv._logged_tool
     def symbol_lookup_fake(name: str) -> str:
@@ -188,7 +188,7 @@ class _FakeMcp:
 
 @pytest.fixture
 def tools(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     reset_connection()
     root = tmp_path.resolve()
@@ -209,9 +209,9 @@ def tools(tmp_path, monkeypatch):
     monkeypatch.setattr(_srv, "_conn", None)
     monkeypatch.setattr(_srv, "_fts_conn", None)
     monkeypatch.setattr(_srv, "_call_origin", lambda: "agent")
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
-    from codegraph.server import _register_insight, _register_query, _register_tests
+    from cgh.server import _register_insight, _register_query, _register_tests
 
     m = _FakeMcp()
     for register in (_register_insight, _register_query, _register_tests):

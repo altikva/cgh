@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from codegraph.cli.commands_monitor import _format_indexed_at
+from cgh.cli.commands_monitor import _format_indexed_at
 
 
 def test_missing_or_bad_timestamp_is_empty():

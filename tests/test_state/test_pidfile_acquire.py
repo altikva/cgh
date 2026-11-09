@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from codegraph.state import pidfile
+from cgh.state import pidfile
 
 
 def test_acquire_on_empty_dir_succeeds(tmp_path):
@@ -27,7 +27,7 @@ def test_acquire_on_empty_dir_succeeds(tmp_path):
 
 def test_acquire_takes_over_a_stale_pidfile(monkeypatch, tmp_path):
     # A crashed owner left a pidfile naming a now-dead pid.
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     pidfile._pidfile_path(tmp_path).write_text("999999\n", encoding="utf-8")
     monkeypatch.setattr(pidfile, "_is_process_alive", lambda pid: False)
 
@@ -38,7 +38,7 @@ def test_acquire_takes_over_a_stale_pidfile(monkeypatch, tmp_path):
 
 
 def test_acquire_rejects_and_never_clobbers_a_live_holder(monkeypatch, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     pidfile._pidfile_path(tmp_path).write_text("4242\n", encoding="utf-8")
     # 4242 is a different, live owner.
     monkeypatch.setattr(pidfile, "_is_process_alive", lambda pid: pid == 4242)
@@ -61,7 +61,7 @@ def test_acquire_rejects_and_never_clobbers_a_live_holder(monkeypatch, tmp_path)
 _CLAIMANT = (
     "import sys, os, time;"
     "from pathlib import Path;"
-    "from codegraph.state.pidfile import acquire;"
+    "from cgh.state.pidfile import acquire;"
     "ready, go = Path(sys.argv[2]), Path(sys.argv[3]);"
     "ready.write_text(str(os.getpid()));"
     "_ = [None for _ in iter(lambda: not go.exists(), False)];"

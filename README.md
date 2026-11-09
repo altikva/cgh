@@ -149,8 +149,8 @@ AI Assistant (Claude / Cursor / Codex / Gemini / IBM Bob)
 MCP server (cgh)                <-- stdio, no network
     |  SQL graph query + BM25 FTS
     v
-DuckDB graph DB (.codegraph/graph.duckdb)   <-- embedded, file-based
-SQLite FTS5 (.codegraph/fts.db)       <-- BM25 full-text search
+DuckDB graph DB (.cgh/graph.duckdb)   <-- embedded, file-based
+SQLite FTS5 (.cgh/fts.db)       <-- BM25 full-text search
     |  indexed from
     v
 Your source files (.py / .ts / .java / .go / .rs / .vue / .tf / .md)

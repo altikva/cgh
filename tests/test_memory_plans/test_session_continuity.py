@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.state.call_log as call_log
-from codegraph.server.tools_session import build_resume_bundle
-from codegraph.state.call_log import (
+import cgh.state.call_log as call_log
+from cgh.server.tools_session import build_resume_bundle
+from cgh.state.call_log import (
     knowledge_list,
     knowledge_record,
     knowledge_search,
@@ -33,7 +33,7 @@ from codegraph.state.call_log import (
 def repo(tmp_path):
     """A fresh call_log store bound to this tmp repo (the cache is
     keyed by root, so isolation only needs the reset hook)."""
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     call_log.reset_for_tests()
     yield tmp_path
     call_log.reset_for_tests()
@@ -106,7 +106,7 @@ class TestResumeBundle:
         assert total < 16 * 1024  # far below the uncapped size
 
     def test_checkpoint_supersedes_previous_digest(self, repo, monkeypatch):
-        import codegraph.server as srv
+        import cgh.server as srv
 
         monkeypatch.setattr(srv, "_root", repo)
         first = knowledge_record(
@@ -163,7 +163,7 @@ class TestResumeBundle:
 class TestFederatedKnowledge:
     def test_ro_search_reads_a_child_store(self, repo):
         child = repo / "child"
-        (child / ".codegraph").mkdir(parents=True)
+        (child / ".cgh").mkdir(parents=True)
         # The keyed cache gives the child its own store directly.
         knowledge_record(
             "API contract lives here", "types come from the api repo",
@@ -171,9 +171,7 @@ class TestFederatedKnowledge:
         )  # fmt: skip
         call_log.reset_for_tests()  # close so the RO open sees a settled file
 
-        hits = knowledge_search_ro(
-            child / ".codegraph" / "call_log.db", "contract", limit=5
-        )
+        hits = knowledge_search_ro(child / ".cgh" / "call_log.db", "contract", limit=5)
         assert len(hits) == 1
         assert hits[0]["title"] == "API contract lives here"
         assert knowledge_search_ro(child / "nope.db", "contract") == []
@@ -184,7 +182,7 @@ class TestLifecycleHooks:
         return io.StringIO(json.dumps({"cwd": str(root), **(extra or {})}))
 
     def test_hook_checkpoint_records_and_supersedes(self, repo, monkeypatch):
-        from codegraph.cli.commands_session import cmd_hook_checkpoint
+        from cgh.cli.commands_session import cmd_hook_checkpoint
 
         for trigger in ("PreCompact", "PreCompact"):
             monkeypatch.setattr(
@@ -199,7 +197,7 @@ class TestLifecycleHooks:
     def test_hook_resume_header_prints_when_store_has_content(
         self, repo, monkeypatch, capsys
     ):
-        from codegraph.cli.commands_session import cmd_hook_resume_header
+        from cgh.cli.commands_session import cmd_hook_resume_header
 
         monkeypatch.setattr("sys.stdin", self._payload(repo))
         cmd_hook_resume_header(Namespace())
@@ -212,7 +210,7 @@ class TestLifecycleHooks:
         assert "resume bundle" in out and "1 standing instruction" in out
 
     def test_hook_resume_header_nudges_after_compact(self, repo, monkeypatch, capsys):
-        from codegraph.cli.commands_session import cmd_hook_resume_header
+        from cgh.cli.commands_session import cmd_hook_resume_header
 
         # Seed an auto-checkpoint-only marker for session "sc"
         knowledge_record(
@@ -253,7 +251,7 @@ class TestLifecycleHooks:
 
 class TestHookSpecs:
     def test_lifecycle_specs_ship_and_render_with_empty_matcher(self):
-        from codegraph.cli.commands_init import (
+        from cgh.cli.commands_init import (
             _append_hook,
             _claude_hook_specs,
             _find_hook,

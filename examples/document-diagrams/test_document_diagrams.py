@@ -37,7 +37,7 @@ def test_office_extraction_skips_icons(tmp_path):
 def test_extracted_image_flows_through_the_sdk(tmp_path, monkeypatch):
     import cgh_vision.pipeline as pipeline
 
-    from codegraph import sdk
+    from cgh import sdk
 
     doc = tmp_path / "note.docx"
     _fake_docx(doc, b"\x89PNG" + b"0" * 8000)

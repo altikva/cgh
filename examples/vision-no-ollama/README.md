@@ -34,7 +34,7 @@ llama-server -m qwen2.5-vl-7b-q4_k_m.gguf \
 
 Then set `openai_base_url` in the config. `vision_no_ollama.py` does it
 inline; in a cgh repo it goes under `[plugin.vision]` in
-`.codegraph/config.toml`:
+`.cgh/config.toml`:
 
 ```toml
 [plugin.vision]

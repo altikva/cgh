@@ -16,8 +16,8 @@ import json
 
 import pytest
 
-from codegraph.__main__ import _outdated_store_hint
-from codegraph.state.scan_meta import GRAPH_FORMAT
+from cgh.__main__ import _outdated_store_hint
+from cgh.state.scan_meta import GRAPH_FORMAT
 
 
 class BinderException(Exception):
@@ -25,7 +25,7 @@ class BinderException(Exception):
 
 
 def _store(tmp_path, graph_format):
-    cg = tmp_path / ".codegraph"
+    cg = tmp_path / ".cgh"
     cg.mkdir()
     meta = {"root": str(tmp_path.resolve())}
     if graph_format is not None:

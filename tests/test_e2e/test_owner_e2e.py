@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cli.owner_client import call_owner_tool
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+from cgh.cli.owner_client import call_owner_tool
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX owner lifecycle")
 
@@ -52,7 +52,7 @@ def _wait_for(predicate, what: str, timeout: float = 10.0) -> None:
 def test_owner_serves_and_watcher_reindexes(tmp_path, monkeypatch, backend):
     if backend == "duckdb":
         pytest.importorskip("duckdb")
-    from codegraph.state.ipc import (
+    from cgh.state.ipc import (
         register_keepalive,
         spawn_owner,
         stop_owner,
@@ -70,7 +70,7 @@ def test_owner_serves_and_watcher_reindexes(tmp_path, monkeypatch, backend):
     index_repo(root, method="os_walk")
     reset_connection()
     graph_file = "graph.duckdb" if backend == "duckdb" else "graph.sqlite"
-    assert (root / ".codegraph" / graph_file).exists()
+    assert (root / ".cgh" / graph_file).exists()
 
     register_keepalive(root)
     try:

@@ -18,11 +18,11 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.server._budget import ANSWER_MAX_BYTES
-from codegraph.server.tools_knowledge import LIST_TARGET_BYTES, register
-from codegraph.state import knowledge_recall as kr
-from codegraph.state.call_log import (
+import cgh.server as _srv
+from cgh.server._budget import ANSWER_MAX_BYTES
+from cgh.server.tools_knowledge import LIST_TARGET_BYTES, register
+from cgh.state import knowledge_recall as kr
+from cgh.state.call_log import (
     knowledge_outcome_record,
     knowledge_record,
     reset_for_tests,
@@ -44,7 +44,7 @@ class _FakeMcp:
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     reset_for_tests()
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.setattr(_srv, "_root", tmp_path)
     yield tmp_path
     reset_for_tests()
@@ -69,7 +69,7 @@ def _fill(store, n: int, kind: str = "gotcha") -> list[int]:
                 body,
                 kind=kind,
                 tags="papercut,lock,owner",
-                file_refs="codegraph/state/ipc.py",
+                file_refs="cgh/state/ipc.py",
                 repo_root=store,
             )
         )
@@ -128,7 +128,7 @@ def test_entry_id_reads_the_entry_whole(store, klist):
     entry = out["entries"][0]
     assert entry["id"] == ids[1]
     assert entry["body"].count("\n") == 59
-    assert entry["file_refs"] == ["codegraph/state/ipc.py"]
+    assert entry["file_refs"] == ["cgh/state/ipc.py"]
     assert "body_clipped" not in entry
 
 

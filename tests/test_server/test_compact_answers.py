@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server._budget import dumps_answer
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server._budget import dumps_answer
 
 # Tools that reach the network or rebuild the index in the background.
 _SKIP = {"fetch_and_index", "force_index", "scan_repo", "add_directory"}
@@ -80,7 +80,7 @@ def _write_repo(root: Path) -> None:
 @pytest.fixture(scope="module")
 def tools(tmp_path_factory):
     mp = pytest.MonkeyPatch()
-    mp.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    mp.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     mp.setenv("CGH_DB", "sqlite")
     reset_connection()
     root = tmp_path_factory.mktemp("compact").resolve()

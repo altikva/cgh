@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis import on_demand
-from codegraph.cli import commands_hooks as h
-from codegraph.cli import owner_client
-from codegraph.cli.owner_client import OwnerReply
+from cgh.analysis import on_demand
+from cgh.cli import commands_hooks as h
+from cgh.cli import owner_client
+from cgh.cli.owner_client import OwnerReply
 
 
 def _source(n: int = 6, pad: int = 0) -> str:
@@ -38,10 +38,10 @@ def _source(n: int = 6, pad: int = 0) -> str:
 def repo(tmp_path, monkeypatch):
     """A git repo with an empty FTS index and answer mode on, no owner."""
     root = tmp_path / "repo"
-    (root / ".codegraph").mkdir(parents=True)
+    (root / ".cgh").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     (root / ".gitignore").write_text("gen/\n")
-    conn = sqlite3.connect(root / ".codegraph" / "fts.db")
+    conn = sqlite3.connect(root / ".cgh" / "fts.db")
     conn.execute(
         "CREATE TABLE symbols (sym_id TEXT PRIMARY KEY, kind TEXT, name TEXT, "
         "file_path TEXT, start_line INTEGER, end_line INTEGER, docstring TEXT)"
@@ -49,13 +49,13 @@ def repo(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-cg")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home-cg")
     monkeypatch.setattr(owner_client, "live_owner_port", lambda root: None)
     return root
 
 
 def _fts_rows(root) -> int:
-    conn = sqlite3.connect(root / ".codegraph" / "fts.db")
+    conn = sqlite3.connect(root / ".cgh" / "fts.db")
     try:
         return conn.execute("SELECT count(*) FROM symbols").fetchone()[0]
     finally:
@@ -90,7 +90,7 @@ class _FakeOwner:
         self.calls.append((tool, arguments or {}))
         if self.status == "indexed":
             path = self.root / arguments["file_path"]
-            conn = sqlite3.connect(self.root / ".codegraph" / "fts.db")
+            conn = sqlite3.connect(self.root / ".cgh" / "fts.db")
             for i in range(6):
                 conn.execute(
                     "INSERT INTO symbols VALUES (?, 'function', ?, ?, ?, ?, '')",
@@ -161,7 +161,7 @@ def test_file_outside_the_repo_is_parsed_and_never_written(
     assert "handler_3" in ctx
     assert owner.calls == []
     assert _fts_rows(repo) == 0
-    assert not (repo / ".codegraph" / "graph.duckdb").exists()
+    assert not (repo / ".cgh" / "graph.duckdb").exists()
 
 
 def test_home_directory_root_only_parses(monkeypatch, capsys, repo):
@@ -213,7 +213,7 @@ def test_slow_parse_falls_back_within_the_budget(monkeypatch, capsys, repo):
         def parse(self, path):
             time.sleep(2)
 
-    monkeypatch.setattr("codegraph.parsers.get_parser_for_path", lambda p: _Slow())
+    monkeypatch.setattr("cgh.parsers.get_parser_for_path", lambda p: _Slow())
     src = repo / "app.py"
     src.write_text(_source())
     start = time.monotonic()

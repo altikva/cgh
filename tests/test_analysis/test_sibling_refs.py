@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import refs, terraform
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis import refs, terraform
+from cgh.server.tools_query import register as register_query
 
 _ENV = {"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": "/usr/bin:/bin:/usr/local/bin"}
 
@@ -71,8 +71,8 @@ def setup(tmp_path, monkeypatch):
 
     home = base / "home"
     home.mkdir()
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", home)
-    (home / "config.toml").write_text(f'[codegraph]\nsiblings = ["{api}"]\n')
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", home)
+    (home / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
 
     proj = base / "front"
     proj.mkdir()
@@ -282,21 +282,19 @@ def test_sibling_named_by_path_too(setup):
 
 @pytest.mark.parametrize("tracked", [False, True])
 def test_a_project_config_never_grants_access(setup, tracked):
-    """Whatever its git status, a project's .codegraph/config.toml can come
+    """Whatever its git status, a project's .cgh/config.toml can come
     with a clone, a copied store or a seeded worktree: its siblings are
     ignored, and the error says where they belong."""
     proj, api, home, t = setup
     (home / "config.toml").unlink()
-    (proj / ".codegraph").mkdir()
-    (proj / ".codegraph" / "config.toml").write_text(
-        f'[codegraph]\nsiblings = ["{api}"]\n'
-    )
+    (proj / ".cgh").mkdir()
+    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
     if tracked:
-        _git(proj, "add", "-f", ".codegraph/config.toml")
+        _git(proj, "add", "-f", ".cgh/config.toml")
         _git(proj, "commit", "-qm", "ship config")
     out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
     assert "not a declared sibling" in out["error"]
-    assert "~/.codegraph/config.toml" in out["error"]
+    assert "~/.cgh/config.toml" in out["error"]
     assert "is ignored" in out["error"]
     assert refs.sibling_repos() == {}
 
@@ -304,7 +302,7 @@ def test_a_project_config_never_grants_access(setup, tracked):
 def test_relative_global_entry_is_ignored(setup):
     """A relative entry would name a different repo from every project."""
     _proj, _api, home, _t = setup
-    (home / "config.toml").write_text('[codegraph]\nsiblings = ["../api"]\n')
+    (home / "config.toml").write_text('[cgh]\nsiblings = ["../api"]\n')
     assert refs.sibling_repos() == {}
 
 

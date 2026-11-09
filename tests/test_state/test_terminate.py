@@ -12,7 +12,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from codegraph.state.pidfile import process_alive, terminate
+from cgh.state.pidfile import process_alive, terminate
 
 
 def test_terminate_stops_a_running_process():

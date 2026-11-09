@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from codegraph.state import deferred_scan
+from cgh.state import deferred_scan
 
 
 def test_identical_errors_collapse_to_one_line(monkeypatch, caplog):
@@ -24,7 +24,7 @@ def test_identical_errors_collapse_to_one_line(monkeypatch, caplog):
 
     monkeypatch.setattr(deferred_scan, "_process", _boom)
 
-    with caplog.at_level(logging.ERROR, logger="codegraph.state.deferred_scan"):
+    with caplog.at_level(logging.ERROR, logger="cgh.state.deferred_scan"):
         for name in ("a.py", "b.py", "c.py", "d.py"):
             deferred_scan.enqueue("/repo", f"/repo/{name}", "sha")
         deferred_scan.drain_for_tests()
@@ -44,7 +44,7 @@ def test_single_error_logs_once_without_count(monkeypatch, caplog):
         "_process",
         lambda r, p, s: (_ for _ in ()).throw(RuntimeError("one off")),
     )
-    with caplog.at_level(logging.ERROR, logger="codegraph.state.deferred_scan"):
+    with caplog.at_level(logging.ERROR, logger="cgh.state.deferred_scan"):
         deferred_scan.enqueue("/repo", "/repo/only.py", "sha")
         deferred_scan.drain_for_tests()
     lines = [r.getMessage() for r in caplog.records if "one off" in r.getMessage()]

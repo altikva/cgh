@@ -1,0 +1,746 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-04-12
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: IPC glue for multi-client cgh serve.
+#              One "owner" process runs FastMCP HTTP on a loopback port.
+#              Every Claude Code session launches its own cgh serve which
+#              acts as a stdio <-> HTTP proxy to the shared owner.
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from cgh.core.config import state_dir_for
+
+_PORT_FILE = "server.port"
+_OWNER_PID_FILE = "owner.pid"
+_OWNER_VERSION_FILE = "owner.version"
+_WORKERS_DIR = "workers"
+
+# The MCP client (Claude Code) drops a server whose initialize handshake does
+# not answer within roughly 30s. The proxy cannot answer it until the owner is
+# listening, so the owner-startup wait must stay comfortably under that budget:
+# a slower start reads as a dead server. The owner publishes its port before its
+# backgrounded reindex, so this window is ample in practice.
+_CLIENT_HANDSHAKE_BUDGET = 30.0
+_OWNER_STARTUP_TIMEOUT = 20.0
+
+
+def _state(repo_root: str | Path) -> Path:
+    """The resolved per-repo state dir: ``.cgh/``, or a legacy ``.codegraph/``
+    until an init/index/serve renames it. Runtime markers (port, owner pid,
+    workers, logs) must sit beside the data so a proxy finds a live owner even
+    before the dir is renamed; a hardcoded ``.cgh/`` would split a legacy repo
+    between two directories and spawn a second owner against a held lock."""
+
+    return state_dir_for(repo_root)
+
+
+def port_file(repo_root: str | Path) -> Path:
+    return _state(repo_root) / _PORT_FILE
+
+
+def owner_pidfile(repo_root: str | Path) -> Path:
+    return _state(repo_root) / _OWNER_PID_FILE
+
+
+def workers_dir(repo_root: str | Path) -> Path:
+    return _state(repo_root) / _WORKERS_DIR
+
+
+def register_worker(repo_root: str | Path) -> Path:
+    """
+    Drop a worker lock file named after this process's PID.
+    Called by every proxy on startup. The owner uses the worker count
+    to decide when to self-terminate.
+    """
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    lock = wd / f"{os.getpid()}"
+    lock.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    return lock
+
+
+def unregister_worker(repo_root: str | Path) -> None:
+    """Remove this process's worker lock. No-op if already gone."""
+    try:
+        (workers_dir(repo_root) / f"{os.getpid()}").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def live_workers(repo_root: str | Path) -> list[int]:
+    """
+    Return PIDs of currently-alive workers. Stale entries (dead PIDs)
+    are pruned from disk as a side effect. The synthetic "keepalive"
+    marker (used by `cgh serve --background`) counts as one synthetic
+    worker (pid 0) so the owner stays up across Claude sessions.
+    """
+    wd = workers_dir(repo_root)
+    if not wd.exists():
+        return []
+    alive: list[int] = []
+    for entry in wd.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.name == "keepalive":
+            alive.append(0)
+            continue
+        if entry.name.startswith("parent-"):
+            # A federated parent owner keeping this child alive. Counts
+            # as a worker (the child lives as long as the parent), prunes
+            # itself when the parent dies.
+            try:
+                parent_pid = int(entry.name.split("-", 1)[1])
+            except ValueError:
+                continue
+            if is_pid_alive(parent_pid):
+                alive.append(parent_pid)
+            else:
+                entry.unlink(missing_ok=True)
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if is_pid_alive(pid):
+            alive.append(pid)
+        else:
+            # Stale, drop it
+            entry.unlink(missing_ok=True)
+    return alive
+
+
+def prune_workers_on_exit(repo_root: str | Path) -> None:
+    """Owner exit: drop the keepalive and the markers of dead processes,
+    then the directory if it is empty. Markers of live proxies stay: the
+    proxy keeps running and respawns an owner on its next call, and that
+    owner must see it as a worker."""
+    unregister_keepalive(repo_root)
+    live_workers(repo_root)  # prunes the dead entries
+    try:
+        workers_dir(repo_root).rmdir()
+    except OSError:
+        pass
+
+
+def spawner_alive(spawner_pid: int) -> bool:
+    """Whether the process that spawned this owner is still its parent and
+    alive. A proxy from an older cgh registers its marker once, at start;
+    when an exiting owner of that version deleted it, the owner it respawns
+    would otherwise see no worker. An owner whose spawner exited (a CLI
+    that started it in the background) is reparented, so this turns
+    false."""
+    return spawner_pid > 1 and os.getppid() == spawner_pid and is_pid_alive(spawner_pid)
+
+
+def register_parent_marker(repo_root: str | Path) -> Path:
+    """Drop a `parent-<pid>` marker: a federated parent owner keeping this
+    child alive. Counts as a live worker for the owner's shutdown logic
+    (the child lives as long as the parent), but NOT as an MCP worker:
+    a child whose only company is its parent may release its write lock
+    between watcher bursts so the parent's read-only fan-out keeps
+    working."""
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    marker = wd / f"parent-{os.getpid()}"
+    marker.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    return marker
+
+
+def unregister_parent_marker(repo_root: str | Path) -> None:
+    """Remove this process's parent marker (and any legacy plain-pid
+    marker written by older versions). No-op if absent."""
+    try:
+        (workers_dir(repo_root) / f"parent-{os.getpid()}").unlink(missing_ok=True)
+        (workers_dir(repo_root) / f"{os.getpid()}").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def mcp_workers(repo_root: str | Path) -> list[int]:
+    """PIDs of live MCP proxies only: plain-pid markers, excluding the
+    keepalive and parent-<pid> markers. This is the population that can
+    have tool calls in flight."""
+    wd = workers_dir(repo_root)
+    if not wd.exists():
+        return []
+    alive: list[int] = []
+    for entry in wd.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if is_pid_alive(pid):
+            alive.append(pid)
+    return alive
+
+
+def register_keepalive(repo_root: str | Path) -> Path:
+    """Drop a non-pid worker marker that persists across cgh process exits."""
+    wd = workers_dir(repo_root)
+    wd.mkdir(parents=True, exist_ok=True)
+    marker = wd / "keepalive"
+    marker.write_text("background\n", encoding="utf-8")
+    return marker
+
+
+def unregister_keepalive(repo_root: str | Path) -> None:
+    """Remove the keepalive marker (called by `cgh serve --stop`)."""
+    try:
+        (workers_dir(repo_root) / "keepalive").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def read_owner_port(repo_root: str | Path) -> int | None:
+    p = port_file(repo_root)
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def read_owner_pid(repo_root: str | Path) -> int | None:
+    p = owner_pidfile(repo_root)
+    if not p.exists():
+        return None
+    try:
+        pid = int(p.read_text(encoding="utf-8").strip())
+        return pid if pid > 0 else None
+    except (ValueError, OSError):
+        return None
+
+
+def is_pid_alive(pid: int) -> bool:
+    # Delegate to the cross-platform probe; os.kill(pid, 0) is unsafe on
+    # Windows (it would terminate the process being checked).
+    from cgh.state.pidfile import process_alive
+
+    return process_alive(pid)
+
+
+def owner_version_file(repo_root: str | Path) -> Path:
+    return _state(repo_root) / _OWNER_VERSION_FILE
+
+
+def installed_cgh_version() -> str | None:
+    """The cgh version currently resolvable on disk, or None if it cannot be
+    read. importlib.metadata rescans site-packages when its directory mtime
+    changes, so a long-lived owner sees a version that was swapped underneath
+    it after startup, which is exactly the drift this guards against."""
+    try:
+        from importlib.metadata import version
+
+        return version("cgh")
+    except Exception:
+        # Any resolution failure reads as "unknown"; the drift check treats
+        # unknown as current, so this never forces a restart.
+        return None
+
+
+def _record_fingerprint(record_text: str, rel_path: str, ver: str | None) -> str | None:
+    """Fold RECORD into the version, but ONLY when RECORD actually describes the
+    imported source: its own path (`rel_path`) must appear as a hashed entry. A
+    PEP 660 editable RECORD is hashed yet lists only the `.pth` shim, not
+    `cgh/*`, so its hash never moves across source edits, a fingerprint
+    that looks precise but is blind. Requiring the module's own path to be listed
+    rejects that case (and any future layout where RECORD stops describing the
+    sources) without sniffing install modes. Returns None to signal "fall back
+    to the bare version"."""
+    if "sha256=" not in record_text or rel_path not in record_text:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256(record_text.encode("utf-8")).hexdigest()[:16]
+    return f"{ver or '?'}+{digest}"
+
+
+def installed_cgh_fingerprint() -> str | None:
+    """A build fingerprint that changes whenever the installed code changes,
+    even across a same-version reinstall. The version string alone cannot see a
+    develop-to-develop swap that keeps the number, which is how a stale owner
+    kept serving old code after a reinstall. The installer's RECORD can see it:
+    it lists a content hash per file, so hashing RECORD changes iff some file's
+    content changed, and it is static on disk (never recomputed), so the same
+    install yields the same fingerprint in the owner and in the checker, with no
+    restart-loop risk.
+
+    RECORD is read from the dist-info beside the actually-imported package, not
+    via importlib.metadata, whose distribution() can be shadowed by a stray
+    egg-info in the cwd and then report an empty RECORD. The RECORD must list the
+    imported module's own path (see _record_fingerprint); otherwise, or on any
+    failure, fall back to the bare version so the drift check stays coarse but
+    keeps its never-loop guarantee.
+    """
+    ver = installed_cgh_version()
+    try:
+        import cgh
+
+        pkg_file = Path(cgh.__file__).resolve()
+        site_packages = pkg_file.parent.parent
+        rel_path = pkg_file.relative_to(site_packages).as_posix()
+        for dist_info in sorted(site_packages.glob("cgh-*.dist-info")):
+            record = dist_info / "RECORD"
+            if not record.is_file():
+                continue
+            fp = _record_fingerprint(record.read_text(encoding="utf-8"), rel_path, ver)
+            if fp is not None:
+                return fp
+    except Exception:
+        # Any failure to fingerprint reads as "version only": the drift check
+        # still catches a version bump and still never forces a restart loop.
+        pass
+    return ver
+
+
+def write_owner_version(repo_root: str | Path, ver: str | None) -> None:
+    """Stamp the build fingerprint the owner is serving under. Best-effort: a
+    missing stamp just means the drift check stays quiet (fails safe, never a
+    restart loop)."""
+    if not ver:
+        return
+    try:
+        f = owner_version_file(repo_root)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(ver + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_owner_version(repo_root: str | Path) -> str | None:
+    p = owner_version_file(repo_root)
+    if not p.exists():
+        return None
+    try:
+        return p.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def owner_version_current(repo_root: str | Path) -> bool:
+    """True unless the running owner's stamped fingerprint and the installed
+    fingerprint are BOTH known and differ. The fingerprint folds a RECORD hash
+    into the version, so a same-version reinstall with new code is caught, not
+    just a version bump. Unknown on either side reads as current, so an
+    unreadable fingerprint can never drive a stop/respawn loop."""
+    stamped = read_owner_version(repo_root)
+    installed = installed_cgh_fingerprint()
+    if stamped is None or installed is None:
+        return True
+    return stamped == installed
+
+
+def stop_owner(repo_root: str | Path, graceful_timeout: float = 5.0) -> bool:
+    """Terminate this repo's owner and clear its ipc files. Returns True if an
+    owner was signalled. Cross-platform via pidfile.terminate (graceful on
+    POSIX so atexit cleanup runs, TerminateProcess on Windows)."""
+    pid = read_owner_pid(repo_root)
+    if pid is None:
+        return False
+    from cgh.state.pidfile import terminate
+
+    try:
+        terminate(pid, graceful_timeout=graceful_timeout)
+    except (ProcessLookupError, PermissionError):
+        pass
+    # Drop stale ipc files whether or not the owner ran its own atexit.
+    owner_pidfile(repo_root).unlink(missing_ok=True)
+    port_file(repo_root).unlink(missing_ok=True)
+    owner_version_file(repo_root).unlink(missing_ok=True)
+    return True
+
+
+def is_owner_alive(repo_root: str | Path) -> bool:
+    pid = read_owner_pid(repo_root)
+    port = read_owner_port(repo_root)
+    if pid is None or port is None:
+        return False
+    if not is_pid_alive(pid):
+        return False
+    # Probe the port, owner may be mid-shutdown
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.2)
+        try:
+            s.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def free_port() -> int:
+    """Ask the OS for an unused loopback port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def rotate_owner_log(repo_root: str | Path) -> None:
+    """
+    Rotate .cgh/owner.log if it exceeds `log_max_mb`. Keeps the
+    last `log_backup_count` rotations as `owner.log.1` … `owner.log.N`.
+
+    Called at owner spawn, owners restart often enough (stop/start, new
+    sessions, --reindex) that this bounds disk use without needing an
+    interceptor process between owner stdout and the log file.
+    """
+    from cgh.core.config import load_config
+
+    log_path = _state(repo_root) / "owner.log"
+    if not log_path.exists():
+        return
+
+    cfg = load_config(repo_root)
+    max_bytes = max(0, cfg.log_max_mb) * 1024 * 1024
+    backup_count = max(0, cfg.log_backup_count)
+
+    # max_mb=0 disables rotation entirely (truncate-only would lose data
+    # without warning, so we just no-op).
+    if max_bytes == 0:
+        return
+
+    try:
+        size = log_path.stat().st_size
+    except OSError:
+        return
+    if size < max_bytes:
+        return
+
+    # Roll: owner.log.{N-1} -> owner.log.{N}, ..., owner.log -> owner.log.1
+    # Drop the oldest if it exists.
+    if backup_count == 0:
+        log_path.unlink(missing_ok=True)
+        return
+
+    oldest = log_path.with_suffix(f".log.{backup_count}")
+    oldest.unlink(missing_ok=True)
+    for i in range(backup_count - 1, 0, -1):
+        src = log_path.with_suffix(f".log.{i}")
+        dst = log_path.with_suffix(f".log.{i + 1}")
+        if src.exists():
+            try:
+                # os.replace overwrites the destination atomically; plain
+                # rename raises FileExistsError on Windows when dst exists.
+                os.replace(src, dst)
+            except OSError:
+                pass
+    try:
+        os.replace(log_path, log_path.with_suffix(".log.1"))
+    except OSError:
+        # If rename fails (e.g. file held open on Windows) we bail rather
+        # than truncate, losing logs silently is worse than a big file.
+        pass
+
+
+def _reap_child(pid: int | None) -> None:
+    """Reap a dead owner that this process spawned, so it does not linger as a
+    zombie in the process table. ``os.waitpid`` only works from the parent; a
+    ChildProcessError means the pid is not our child (already reaped, or
+    spawned by a different process), which is fine. No-op on Windows, which has
+    no zombie processes, and on a missing pid."""
+    if not pid or os.name == "nt":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
+def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None:
+    """
+    Launch `cgh _serve_owner` as a detached background process.
+    Blocks up to ~5s waiting for the port file to appear.
+    Returns the port on success, None on timeout.
+    """
+    repo_root = Path(repo_root).resolve()
+    _state(repo_root).mkdir(parents=True, exist_ok=True)
+
+    # Reap a prior owner we spawned that has since died, so respawning does not
+    # leave its predecessor lingering as a zombie in the process table.
+    _reap_child(read_owner_pid(repo_root))
+
+    # Clear any stale state
+    port_file(repo_root).unlink(missing_ok=True)
+
+    # Rotate the log if it grew too large since the last owner exit.
+    rotate_owner_log(repo_root)
+
+    # In a frozen build (PyInstaller/Nuitka one-file or one-dir binary),
+    # sys.executable is the cgh binary itself, not a Python interpreter, so
+    # "-m cgh" cannot be run. The binary routes its own argv through the
+    # same CLI, so invoke the hidden _serve_owner subcommand directly. A normal
+    # install keeps the "python -m cgh" form.
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "_serve_owner", "--root", str(repo_root)]
+    else:
+        # -P keeps the repo (the cwd below) off sys.path: a repo with its own
+        # top-level `cgh/` directory would otherwise be imported in
+        # place of the installed cgh, and its code would run as the owner.
+        cmd = [
+            sys.executable,
+            "-P",
+            "-m",
+            "cgh",
+            "_serve_owner",
+            "--root",
+            str(repo_root),
+        ]
+    if watch:
+        cmd.append("--watch")
+    if reindex:
+        cmd.append("--reindex")
+
+    # Detach: own session/process group, stdio redirected to DEVNULL, owner
+    # logs go to .cgh/owner.log. start_new_session (setsid) is POSIX
+    # only; on Windows it is a no-op, so the owner would stay tied to the
+    # parent console and die when it closes. Pass the Windows creationflags
+    # instead so the owner truly survives the launching shell.
+    #
+    # On Windows use CREATE_NO_WINDOW, not DETACHED_PROCESS: a GUI/windowless
+    # parent (the MCP client, or a federation parent spawning one owner per
+    # child) has no console to detach from, so DETACHED_PROCESS allocates a
+    # fresh console for each owner and the user sees a console window flash
+    # open per repo. CREATE_NO_WINDOW runs the owner with no console at all
+    # while CREATE_NEW_PROCESS_GROUP still frees it from the parent's group,
+    # and stdio is already redirected to owner.log, so no console is needed.
+    log_path = _state(repo_root) / "owner.log"
+    logf = open(log_path, "ab", buffering=0)  # noqa: SIM115  # lives for the daemon's lifetime
+    popen_kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": logf,
+        "stderr": logf,
+        "close_fds": True,
+        # Start the owner in its OWN repo, so per-repo state that falls back to
+        # the process cwd can never open another worktree's call_log.db. The
+        # owner also chdirs to --root itself, this covers the spawn window
+        # before that runs.
+        "cwd": str(repo_root),
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **popen_kwargs)
+
+    # Wait for the owner to publish its port, then bridge to it. The owner
+    # publishes the port as soon as it is listening and runs its reindex in the
+    # background (see owner_main), so this no longer scales with repo size the
+    # way it did when the owner scanned before serving, and the old 300s wait
+    # would only ever block long past the point the MCP client had given up.
+    return _await_owner_port(repo_root, _OWNER_STARTUP_TIMEOUT)
+
+
+def _await_owner_port(
+    repo_root: str | Path,
+    timeout: float,
+    *,
+    _alive=is_owner_alive,
+    _read_port=read_owner_port,
+    _now=time.monotonic,
+    _sleep=time.sleep,
+) -> int | None:
+    """Poll until the owner is alive and serving, then return its port; None if
+    it does not come up within ``timeout``. The wait stays under the client's
+    handshake budget on purpose: an owner that cannot start in that window is
+    better reported as absent (the caller retries) than waited on past the point
+    the client has already timed the server out."""
+    deadline = _now() + timeout
+    while _now() < deadline:
+        if _alive(repo_root):
+            return _read_port(repo_root)
+        _sleep(0.25)
+    return None
+
+
+def _recover_owner(repo_root: str | Path | None, watch: bool) -> int | None:
+    """A request hit a dead owner port. Recover a live owner: attach to one
+    that another proxy already respawned, otherwise spawn a fresh one.
+    Returns the live port, or None if recovery is impossible (no repo_root,
+    or the owner would not come up). Never reindexes on recovery: the graph
+    is on disk, only the serving process is gone."""
+    if repo_root is None:
+        return None
+    if is_owner_alive(repo_root):
+        return read_owner_port(repo_root)
+    # The owner is gone. If it was our child it may be a zombie in the table;
+    # reap it so a defunct process does not linger, then spawn a fresh one.
+    _reap_child(read_owner_pid(repo_root))
+    # Our marker may be gone (an owner of an older cgh deleted every marker
+    # on exit): put it back so the new owner sees this proxy.
+    register_worker(repo_root)
+    return spawn_owner(repo_root, watch=watch, reindex=False)
+
+
+def proxy_stdio_to_http(
+    port: int,
+    repo_root: str | Path | None = None,
+    watch: bool = False,
+) -> int:
+    """
+    Bridge the current process's stdin/stdout to the owner's HTTP MCP
+    endpoint at http://127.0.0.1:<port>/mcp/. One JSON-RPC message per
+    stdin line in, one response line out.
+
+    Auth: sends `Authorization: Bearer <key>` from .cgh/auth.key
+    (the same key shipped with `cgh init`). Owner rejects anything else.
+
+    Self-healing: the owner shuts down when its last worker leaves, so a
+    long-lived proxy can outlive the owner it attached to. When a request
+    meets a refused connection, the proxy respawns (or re-attaches to) an
+    owner and retries, instead of surfacing a dead-port error forever.
+
+    Returns an exit code (0 on clean EOF).
+    """
+    import http.client
+
+    from cgh.state.auth import ensure_auth_key
+
+    # MCP stdio is UTF-8 on the wire. On Windows the std streams default to
+    # the ANSI codepage (cp1252), which garbles non-ASCII both ways: a
+    # client's "purgé" reaches the owner as mojibake, and the server's "•"
+    # goes out as a byte strict UTF-8 clients reject.
+    for _stream in (sys.stdin, sys.stdout):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
+
+    auth_token = (
+        ensure_auth_key(repo_root) if repo_root else os.environ.get("CGH_AUTH_KEY", "")
+    )
+
+    from cgh.state.call_log import ORIGIN_HEADER
+
+    url_path = "/mcp"
+
+    def _open() -> http.client.HTTPConnection:
+        # A short timeout covers the connect only: a live owner on localhost
+        # accepts at once, so a refusal or a stall here means there is no owner
+        # to talk to. The response then gets no timeout at all. Tools such as
+        # codegen or a full reindex legitimately run for minutes, and a read
+        # timeout used to look like a dead owner and trigger a resend (see the
+        # retry loop below). The MCP client already bounds how long it waits.
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        c.connect()
+        sock = getattr(c, "sock", None)
+        if sock is not None:
+            sock.settimeout(None)
+        return c
+
+    def _emit_error(line: str, message: str) -> None:
+        err = {
+            "jsonrpc": "2.0",
+            "id": json.loads(line).get("id") if line else None,
+            "error": {"code": -32000, "message": message},
+        }
+        sys.stdout.write(json.dumps(err) + "\n")
+        sys.stdout.flush()
+
+    session_id: str | None = None
+
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {auth_token}",
+            # Everything on this stdio bridge comes from an MCP client: the
+            # owner logs these calls as agent choices, apart from CLI and
+            # hook calls.
+            ORIGIN_HEADER: "agent",
+        }
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+
+        body = line.encode("utf-8")
+
+        # A request is retried only while it has not reached the owner. A
+        # refused connection means the owner died (it shuts down when its last
+        # worker leaves), so recover a live owner and try again against its
+        # port. Once the request is sent it is never sent again, whatever
+        # happens to the response: the owner may already be running the tool,
+        # and a second copy would run it twice, writing a file twice or
+        # starting a second reindex beside the first. This used to happen to
+        # every tool slower than the old 60 s read timeout, which raised an
+        # OSError and looked like a dead owner, so one call could run 3 times.
+        response_body: bytes = b""
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                conn = _open()
+                conn.request("POST", url_path, body=body, headers=headers)
+            except (ConnectionError, OSError) as exc:
+                if attempt == max_attempts:
+                    _emit_error(line, f"proxy: {exc}")
+                    break
+                # Try to bring an owner back before the next attempt. A
+                # fresh owner means a fresh port and a dropped session, so
+                # forget the stale session id and let the owner re-init.
+                recovered = _recover_owner(repo_root, watch)
+                if recovered:
+                    port = recovered
+                    session_id = None
+                time.sleep(0.1)
+                continue
+            try:
+                resp = conn.getresponse()
+                # Capture session header if present
+                new_sid = resp.getheader("Mcp-Session-Id") or resp.getheader(
+                    "mcp-session-id"
+                )
+                if new_sid:
+                    session_id = new_sid
+                response_body = resp.read()
+                conn.close()
+            except (ConnectionError, OSError, http.client.HTTPException) as exc:
+                _emit_error(
+                    line,
+                    f"proxy: the owner dropped the request after receiving it "
+                    f"({exc}); not resent, since the tool may already have run",
+                )
+            break
+
+        if not response_body:
+            continue
+
+        # FastMCP http/json_response returns a plain JSON body per request
+        try:
+            text = response_body.decode("utf-8", errors="replace").strip()
+            if not text:
+                continue
+            # Strip SSE framing if present ("data: {...}\n\n")
+            if text.startswith("data:"):
+                lines = [
+                    ln[len("data:") :].strip()
+                    for ln in text.splitlines()
+                    if ln.startswith("data:")
+                ]
+                text = "\n".join(ln for ln in lines if ln)
+            sys.stdout.write(text + "\n")
+            sys.stdout.flush()
+        except Exception as exc:
+            err = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32000, "message": f"proxy decode: {exc}"},
+            }
+            sys.stdout.write(json.dumps(err) + "\n")
+            sys.stdout.flush()
+
+    return 0

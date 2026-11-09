@@ -15,9 +15,9 @@ import sys
 
 import pytest
 
-from codegraph.core.config import load_config
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
+from cgh.core.config import load_config
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
 
 # Importing jedi pulls in parso, which lowers sys.recursionlimit to 3000 on
 # import. The indexer raises it to 8_192 (deep tree-sitter walks). Restore
@@ -37,7 +37,7 @@ def clean_db():
 
 
 def _write_config(root, body: str) -> None:
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(exist_ok=True)
     (cg / "config.toml").write_text(body, encoding="utf-8")
 
@@ -51,7 +51,7 @@ def test_precise_calls_resolves_cross_file(tmp_path):
     # a.py's caller() calls helper() DEFINED IN b.py. The name-matched
     # resolver is same-file only and would never link this; jedi follows the
     # import to b.py and the CALLS edge points across files.
-    _write_config(tmp_path, "[codegraph]\nprecise_calls = true\n")
+    _write_config(tmp_path, "[cgh]\nprecise_calls = true\n")
     (tmp_path / "b.py").write_text(
         "def helper():\n    return 2\n",
         encoding="utf-8",
@@ -79,7 +79,7 @@ def test_precise_calls_beats_same_name_collision(tmp_path):
     # helper(); a.py imports b.helper, also defines its OWN unrelated helper(),
     # and caller() calls the imported one. The name matcher prefers the
     # same-file helper (a.py::helper); jedi follows the call to b.py::helper.
-    _write_config(tmp_path, "[codegraph]\nprecise_calls = true\n")
+    _write_config(tmp_path, "[cgh]\nprecise_calls = true\n")
     (tmp_path / "b.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
     a_py = tmp_path / "a.py"
     a_py.write_text(
@@ -103,7 +103,7 @@ def test_precise_calls_beats_same_name_collision(tmp_path):
 def test_precise_calls_resolves_cross_file_method(tmp_path):
     # Method resolution: a.py calls w.run() on a Worker defined in b.py. The
     # edge must use the Class.method id scheme ("b.py::Worker.run").
-    _write_config(tmp_path, "[codegraph]\nprecise_calls = true\n")
+    _write_config(tmp_path, "[cgh]\nprecise_calls = true\n")
     (tmp_path / "b.py").write_text(
         "class Worker:\n    def run(self):\n        return 5\n",
         encoding="utf-8",
@@ -170,7 +170,7 @@ def test_precise_edges_survive_callee_reindex_without_name_fanout(tmp_path):
     # The caller's sites are stored by exact target. Indexing the callee
     # after the caller, and reindexing it, keeps the one precise edge; a
     # same-named function indexed later is NOT linked by name.
-    _write_config(tmp_path, "[codegraph]\nprecise_calls = true\n")
+    _write_config(tmp_path, "[cgh]\nprecise_calls = true\n")
     a_py = tmp_path / "a.py"
     a_py.write_text(
         "from b import helper\n\n\ndef caller():\n    return helper()\n",

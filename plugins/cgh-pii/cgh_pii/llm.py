@@ -126,7 +126,7 @@ def egress_class(config: dict) -> str:
     """ "local" only for a loopback endpoint. Anything else is "cloud" and
     must clear the gate. Computed from the active URL, never a static
     label, so a configurable host cannot smuggle content out unchecked."""
-    from codegraph.plugin_api import is_loopback_url
+    from cgh.plugin_api import is_loopback_url
 
     _, url = _endpoint(config)
     return "local" if is_loopback_url(url) else "cloud"
@@ -136,7 +136,7 @@ def _guard_egress(config: dict, repo_root, file_path: str) -> None:
     """A loopback probe never leaves the machine and is free. A cloud
     endpoint is egress: allowed only when pii_llm_allow_remote is set, and
     audited either way. Fails closed: an unresolvable posture denies."""
-    from codegraph.plugin_api import activity_log
+    from cgh.plugin_api import activity_log
 
     if egress_class(config) == "local":
         return

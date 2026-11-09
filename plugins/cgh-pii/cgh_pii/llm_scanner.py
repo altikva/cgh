@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.plugin_api import ScanFinding
+from cgh.plugin_api import ScanFinding
 
 from . import llm
 

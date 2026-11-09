@@ -41,9 +41,9 @@ def _boom_external():
 
 def _boom_in_cgh():
     """Raises inside a real cgh module so the deepest frame is in-cgh."""
-    from codegraph.core.utils import safe_id
+    from cgh.core.utils import safe_id
 
-    safe_id(None)  # AttributeError inside codegraph/core/utils.py
+    safe_id(None)  # AttributeError inside cgh/core/utils.py
 
 
 def _capture(fn) -> tuple[type, BaseException, object]:
@@ -94,12 +94,12 @@ class TestAllowlistPayload:
         assert "<external>" in payload["frames"]  # this test file's frames
         in_cgh = [f for f in payload["frames"] if f != "<external>"]
         assert in_cgh, "the raising cgh frame must be named"
-        assert all(f.startswith(("codegraph/", "cgh_")) for f in in_cgh)
+        assert all(f.startswith(("cgh/", "cgh_")) for f in in_cgh)
         assert all("/Users/" not in f for f in payload["frames"])
 
     def test_fingerprint_survives_releases_and_line_moves(self):
-        frames_v1 = ["<external>", "codegraph/core/utils.py:17 in rows"]
-        frames_v2 = ["<external>", "codegraph/core/utils.py:942 in rows"]
+        frames_v1 = ["<external>", "cgh/core/utils.py:17 in rows"]
+        frames_v2 = ["<external>", "cgh/core/utils.py:942 in rows"]
         assert fingerprint(KeyError, frames_v1) == fingerprint(KeyError, frames_v2)
         assert fingerprint(KeyError, frames_v1) != fingerprint(ValueError, frames_v1)
 
@@ -137,16 +137,16 @@ class TestSpool:
         assert purge(tmp_path) == 2
         assert list_reports(tmp_path) == []
 
-    def test_spool_lives_under_codegraph(self, tmp_path):
+    def test_spool_lives_under_cgh(self, tmp_path):
         write_report(tmp_path, self._payload(1))
-        assert spool_dir(tmp_path) == tmp_path / ".codegraph" / "bugreports"
+        assert spool_dir(tmp_path) == tmp_path / ".cgh" / "bugreports"
 
 
 class TestExcepthook:
     def test_hook_spools_and_chains(self, tmp_path, monkeypatch, capsys):
         import cgh_bugreport
 
-        (tmp_path / ".codegraph").mkdir()
+        (tmp_path / ".cgh").mkdir()
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cgh_bugreport, "_installed", False)
         seen = []
@@ -178,7 +178,7 @@ class TestSend:
         return calls, fake_run
 
     def _spooled(self, tmp_path) -> None:
-        (tmp_path / ".codegraph").mkdir(exist_ok=True)
+        (tmp_path / ".cgh").mkdir(exist_ok=True)
         exc_type, exc, tb = _capture(_boom_external)
         write_report(tmp_path, build_report(exc_type, exc, tb))
 

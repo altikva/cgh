@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-import codegraph.core.db as db
+import cgh.core.db as db
 
 
 def test_duckdb_available_true_in_dev_env():
@@ -45,7 +45,7 @@ def test_on_disk_file_wins_over_default(monkeypatch, tmp_path):
     # be SQLite (binary opening a repo indexed by a pip install).
     monkeypatch.delenv("CGH_DB", raising=False)
     monkeypatch.setattr(db, "duckdb_available", lambda: False)
-    cg = tmp_path / ".codegraph"
+    cg = tmp_path / ".cgh"
     cg.mkdir()
     (cg / "graph.duckdb").write_bytes(b"")
     assert db._backend(tmp_path) == "duckdb"

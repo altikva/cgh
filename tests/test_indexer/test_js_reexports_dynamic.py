@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+import cgh.server as _srv
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 REPO = {
     "tsconfig.json": json.dumps(
@@ -71,7 +71,7 @@ def repo(request, tmp_path, monkeypatch):
     if request.param == "duckdb":
         pytest.importorskip("duckdb")
     monkeypatch.setenv("CGH_DB", request.param)
-    from codegraph.imports.resolver import reset_for_tests
+    from cgh.imports.resolver import reset_for_tests
 
     reset_for_tests()
     reset_connection()
@@ -100,8 +100,8 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_insight import register as register_insight
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_insight import register as register_insight
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)
@@ -164,7 +164,7 @@ def test_impact_through_a_workspace_package_barrel(repo):
 
 
 def test_cgh_impact_walk_follows_barrels(repo):
-    from codegraph.analysis.impact import reverse_import_bfs
+    from cgh.analysis.impact import reverse_import_bfs
 
     via: dict[str, str] = {}
     files, truncated = reverse_import_bfs(
@@ -188,7 +188,7 @@ def test_interfaces_and_object_types_are_classes(repo):
 
 
 def test_parser_records_reexport_and_dynamic_kinds(tmp_path):
-    from codegraph.parsers.typescript import TypeScriptParser
+    from cgh.parsers.typescript import TypeScriptParser
 
     f = tmp_path / "m.ts"
     f.write_text(
@@ -211,7 +211,7 @@ def test_parser_records_reexport_and_dynamic_kinds(tmp_path):
 
 
 def test_vue_script_reexports_and_dynamic_imports(tmp_path):
-    from codegraph.parsers.vue import VueParser
+    from cgh.parsers.vue import VueParser
 
     f = tmp_path / "C.vue"
     f.write_text(

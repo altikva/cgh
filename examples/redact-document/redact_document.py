@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from codegraph import sdk
+from cgh import sdk
 
 DOCUMENT = """Meeting notes, 2026-08-05.
 Present: Jeanne Martin, Paul Dupont. Jeanne Martin chaired.

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.analysis.plugin_queries import find_symbol_files
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+from cgh.analysis.plugin_queries import find_symbol_files
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def test_unindexed_repo_returns_none(tmp_path):
 
 
 def test_exposed_through_public_plugin_api():
-    import codegraph.plugin_api as api
+    import cgh.plugin_api as api
 
     assert api.find_symbol_files is find_symbol_files
     assert "find_symbol_files" in dir(api)

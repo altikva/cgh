@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import types
 
-from codegraph.cli.commands_init import _select_tools
-from codegraph.integrations.skill_installer import install_usage_guidelines
+from cgh.cli.commands_init import _select_tools
+from cgh.integrations.skill_installer import install_usage_guidelines
 
 # (name, key, detected)
 _ALL = [
@@ -52,7 +52,7 @@ def test_bob_usage_guidelines_land_where_bob_loads_them(tmp_path):
     assert written is not None
     rules = tmp_path / ".bob" / "rules" / "cgh-usage.md"
     assert rules.is_file()
-    assert "codegraph" in rules.read_text(encoding="utf-8").lower()
+    assert "cgh" in rules.read_text(encoding="utf-8").lower()
 
 
 def test_bob_mcp_server_uses_absolute_command_and_cwd(tmp_path):
@@ -63,7 +63,7 @@ def test_bob_mcp_server_uses_absolute_command_and_cwd(tmp_path):
     import json
     import os
 
-    from codegraph.cli.commands_init import _install_integration
+    from cgh.cli.commands_init import _install_integration
 
     _install_integration(tmp_path, "bob")
     entry = json.loads((tmp_path / ".bob" / "mcp.json").read_text(encoding="utf-8"))[

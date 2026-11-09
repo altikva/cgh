@@ -27,7 +27,7 @@ python redact_document.py
 From your own code:
 
 ```python
-from codegraph import sdk
+from cgh import sdk
 
 clean = sdk.redact_text(text, only=["person"])          # names to [PERSON_1]
 clean = sdk.redact_text(text, only=["email", "iban"])   # regex categories

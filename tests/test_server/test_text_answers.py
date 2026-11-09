@@ -20,11 +20,11 @@ from typing import Any
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server._budget import wire_bytes
-from codegraph.server._text import (
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server._budget import wire_bytes
+from cgh.server._text import (
     _LOC_KEY,
     _POSITIONAL,
     _SECONDARY,
@@ -219,7 +219,7 @@ def test_pattern_search_hits_round_trip():
         "total": 5,
         "files": [
             {
-                "file": "codegraph/server/_budget.py",
+                "file": "cgh/server/_budget.py",
                 "hits": [[19, "x = 1"], [113, "def wire_bytes(text: str) -> int:"]],
             },
             {
@@ -328,20 +328,20 @@ def test_find_callers_round_trip():
             "callers": [
                 {
                     "caller": "register",
-                    "file": "codegraph/server/tools_knowledge.py",
+                    "file": "cgh/server/tools_knowledge.py",
                     "line": 102,
                     "resolution": "resolved",
                 },
                 {
                     "caller": "_counts_payload",
-                    "file": "codegraph/server/tools_query.py",
+                    "file": "cgh/server/tools_query.py",
                     "line": 51,
                     "resolution": "name",
                     "targets": ["a.py", "b.py"],
                 },
                 {
                     "caller": "run",
-                    "file": "codegraph/server/tools_query.py",
+                    "file": "cgh/server/tools_query.py",
                     "line": 262,
                     "resolution": "interface",
                     "via": "Base.run, Proto.run",
@@ -351,9 +351,7 @@ def test_find_callers_round_trip():
             "root": "/work/project",
         },
     )
-    assert (
-        "\ncodegraph/server/tools_query.py\n  51 _counts_payload name targets=" in text
-    )
+    assert "\ncgh/server/tools_query.py\n  51 _counts_payload name targets=" in text
 
 
 def test_search_symbols_round_trip():
@@ -410,7 +408,7 @@ def test_symbol_lookup_round_trip():
                 {
                     "kind": "function",
                     "name": "wire_bytes",
-                    "file": "codegraph/server/_budget.py",
+                    "file": "cgh/server/_budget.py",
                     "lines": "113-120",
                     "doc": "Bytes an agent receives.",
                     "scope": "parent",
@@ -438,7 +436,7 @@ def test_symbol_lookup_round_trip():
         },
     )
     assert (
-        "\ncodegraph/server/_budget.py:113-120 function wire_bytes\n  Bytes an agent receives.\n"
+        "\ncgh/server/_budget.py:113-120 function wire_bytes\n  Bytes an agent receives.\n"
         in text
     )
     not_found = {
@@ -606,15 +604,13 @@ def test_non_object_answers_pass_through():
 def no_global_config(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", home)
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", home)
     return home
 
 
 def _write_config(root: Path, value: str) -> None:
-    (root / ".codegraph").mkdir(exist_ok=True)
-    (root / ".codegraph" / "config.toml").write_text(
-        f'[mcp]\nanswer_format = "{value}"\n'
-    )
+    (root / ".cgh").mkdir(exist_ok=True)
+    (root / ".cgh" / "config.toml").write_text(f'[mcp]\nanswer_format = "{value}"\n')
 
 
 def test_default_is_json(tmp_path, no_global_config):
@@ -643,7 +639,7 @@ def test_global_config_and_unknown_values(tmp_path, monkeypatch, no_global_confi
 def _wrapped(monkeypatch, origin: str, root: Path):
     monkeypatch.setattr(_srv, "_call_origin", lambda: origin)
     monkeypatch.setattr(_srv, "_root", root)
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
     def find_callers(fn_name: str, format: str = "") -> str:
         return json.dumps(
@@ -709,7 +705,7 @@ class _FakeMcp:
 
 @pytest.fixture
 def tools(tmp_path, monkeypatch, no_global_config):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     reset_connection()
     root = (tmp_path / "repo").resolve()
@@ -730,9 +726,9 @@ def tools(tmp_path, monkeypatch, no_global_config):
     monkeypatch.setattr(_srv, "_conn", None)
     monkeypatch.setattr(_srv, "_fts_conn", None)
     monkeypatch.setattr(_srv, "_call_origin", lambda: "agent")
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
-    from codegraph.server import _register_query
+    from cgh.server import _register_query
 
     m = _FakeMcp()
     _register_query(m)

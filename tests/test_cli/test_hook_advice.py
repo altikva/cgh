@@ -19,13 +19,13 @@ import json
 
 import pytest
 
-from codegraph.cli import commands_hooks as h
-from codegraph.cli import hook_advice as a
+from cgh.cli import commands_hooks as h
+from cgh.cli import hook_advice as a
 
 
 @pytest.fixture(autouse=True)
 def _isolated_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-cg")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home-cg")
     for env in (
         "CGH_HOOK_ANSWERS",
         "CGH_HOOK_BASH_ADVICE",
@@ -122,7 +122,7 @@ def test_bash_advice_on_cat_depends_on_size(tmp_path):
 
 
 def test_bash_precheck_delivers_the_advice(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     out = _run(
         monkeypatch,
         capsys,
@@ -134,7 +134,7 @@ def test_bash_precheck_delivers_the_advice(monkeypatch, capsys, tmp_path):
 
 
 def test_bash_precheck_search_hint_wins_over_advice(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     out = _run(
         monkeypatch,
         capsys,
@@ -147,7 +147,7 @@ def test_bash_precheck_search_hint_wins_over_advice(monkeypatch, capsys, tmp_pat
 
 
 def test_bash_advice_opt_out_by_env(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.setenv("CGH_HOOK_BASH_ADVICE", "0")
     out = _run(
         monkeypatch,
@@ -159,12 +159,10 @@ def test_bash_advice_opt_out_by_env(monkeypatch, capsys, tmp_path):
 
 
 def test_bash_advice_opt_out_by_config(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "fts.db").write_bytes(b"")
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "fts.db").write_bytes(b"")
     assert a.bash_advice_enabled(tmp_path)
-    (tmp_path / ".codegraph" / "config.toml").write_text(
-        "[hooks]\nbash_advice = false\n"
-    )
+    (tmp_path / ".cgh" / "config.toml").write_text("[hooks]\nbash_advice = false\n")
     assert not a.bash_advice_enabled(tmp_path)
 
 
@@ -235,19 +233,19 @@ def test_compact_hint_counts_from_the_last_compaction(tmp_path):
 
 
 def test_compact_hook_emits_to_user_and_model(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     t = _transcript(tmp_path, a.COMPACT_THRESHOLDS[0] + 1)
     payload = {"session_id": "abc", "transcript_path": str(t), "cwd": str(tmp_path)}
     out = _run(monkeypatch, capsys, h.cmd_hook_compact_hint, payload)
     doc = json.loads(out)
     assert "/compact" in doc["systemMessage"]
     assert doc["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert (tmp_path / ".codegraph" / "sessions" / "compact-abc.json").is_file()
+    assert (tmp_path / ".cgh" / "sessions" / "compact-abc.json").is_file()
     assert _run(monkeypatch, capsys, h.cmd_hook_compact_hint, payload) == ""
 
 
 def test_compact_hook_opt_out(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.setenv("CGH_HOOK_COMPACT_HINT", "0")
     t = _transcript(tmp_path, a.COMPACT_THRESHOLDS[0] + 1)
     payload = {"session_id": "abc", "transcript_path": str(t), "cwd": str(tmp_path)}
@@ -263,7 +261,7 @@ def test_compact_hook_opt_out(monkeypatch, capsys, tmp_path):
     ],
 )
 def test_compact_hook_is_silent_on_missing_data(monkeypatch, capsys, tmp_path, payload):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     payload = {**payload, "cwd": str(tmp_path)}
     assert _run(monkeypatch, capsys, h.cmd_hook_compact_hint, payload) == ""
 
@@ -277,7 +275,7 @@ def test_compact_hook_is_silent_outside_a_cgh_repo(monkeypatch, capsys, tmp_path
 def test_compact_hook_is_registered_in_init_and_the_plugin():
     from pathlib import Path
 
-    from codegraph.cli.commands_init import _CLAUDE_HOOK_MARKERS, _claude_hook_specs
+    from cgh.cli.commands_init import _CLAUDE_HOOK_MARKERS, _claude_hook_specs
 
     specs = {s["marker"]: s for s in _claude_hook_specs("cgh")}
     assert specs["cgh-compact-hint"]["event"] == "UserPromptSubmit"
@@ -301,10 +299,10 @@ def indexed_repo(tmp_path):
     """A cgh repo whose FTS index holds one indexed source file."""
     import sqlite3
 
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     src = tmp_path / "billing.py"
     src.write_text("x = 1\n" * 8000)
-    conn = sqlite3.connect(tmp_path / ".codegraph" / "fts.db")
+    conn = sqlite3.connect(tmp_path / ".cgh" / "fts.db")
     conn.execute(
         "CREATE TABLE symbols (sym_id TEXT PRIMARY KEY, kind TEXT, name TEXT, "
         "file_path TEXT, start_line INTEGER, end_line INTEGER, docstring TEXT)"
@@ -379,9 +377,7 @@ def test_read_advice_opt_out_by_env(monkeypatch, capsys, indexed_repo):
 
 def test_read_advice_opt_out_by_config(monkeypatch, capsys, indexed_repo):
     (indexed_repo / "data.json").write_text("{}\n" * 20000)
-    (indexed_repo / ".codegraph" / "config.toml").write_text(
-        "[hooks]\nread_advice = false\n"
-    )
+    (indexed_repo / ".cgh" / "config.toml").write_text("[hooks]\nread_advice = false\n")
     assert _read(monkeypatch, capsys, indexed_repo, "data.json") == ""
 
 
@@ -396,7 +392,7 @@ def test_read_advice_skips_the_line_count_on_a_huge_file(tmp_path, monkeypatch):
 def _add_symbols(repo, path, rows, kind="function"):
     import sqlite3
 
-    conn = sqlite3.connect(repo / ".codegraph" / "fts.db")
+    conn = sqlite3.connect(repo / ".cgh" / "fts.db")
     for name, start, end in rows:
         conn.execute(
             "INSERT INTO symbols VALUES (?, ?, ?, ?, ?, ?, '')",
@@ -519,7 +515,7 @@ def test_search_hint_still_fires_after_a_heredoc():
 
 
 def test_bash_precheck_is_silent_on_a_heredoc_with_grep(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     payload = {
         "tool_input": {"command": "cat <<'EOF' > notes.md\ngrep foo\nEOF"},
         "cwd": str(tmp_path),
@@ -599,7 +595,7 @@ def test_broad_pattern(pattern, broad):
 
 
 def test_grep_precheck_delivers_the_advice(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     out = _grep(monkeypatch, capsys, tmp_path, pattern="x.*y", output_mode="content")
     ctx = _context(out)
     assert ctx.startswith("[cgh hook] Grep in content mode") and "\n" not in ctx
@@ -613,7 +609,7 @@ def test_grep_advice_is_silent_outside_a_cgh_repo(monkeypatch, capsys, tmp_path)
 
 
 def test_grep_advice_appends_to_the_identifier_nudge(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     ctx = _context(
         _grep(
             monkeypatch, capsys, tmp_path, pattern="charge_card", output_mode="content"
@@ -624,7 +620,7 @@ def test_grep_advice_appends_to_the_identifier_nudge(monkeypatch, capsys, tmp_pa
 
 
 def test_grep_advice_in_answer_mode_is_not_doubled(monkeypatch, capsys, indexed_repo):
-    from codegraph.cli import hook_answers as ha
+    from cgh.cli import hook_answers as ha
 
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
     monkeypatch.setattr(ha, "_callers", lambda root, name: None)
@@ -661,7 +657,7 @@ def test_grep_advice_in_answer_mode_without_an_answer(
 
 
 def test_grep_advice_opt_out_by_env(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.setenv("CGH_HOOK_GREP_ADVICE", "0")
     assert (
         _grep(monkeypatch, capsys, tmp_path, pattern="x.*y", output_mode="content")
@@ -670,9 +666,7 @@ def test_grep_advice_opt_out_by_env(monkeypatch, capsys, tmp_path):
 
 
 def test_grep_advice_opt_out_by_config(monkeypatch, capsys, indexed_repo):
-    (indexed_repo / ".codegraph" / "config.toml").write_text(
-        "[hooks]\ngrep_advice = false\n"
-    )
+    (indexed_repo / ".cgh" / "config.toml").write_text("[hooks]\ngrep_advice = false\n")
     assert not a.grep_advice_enabled(indexed_repo)
     out = _grep(
         monkeypatch, capsys, indexed_repo, pattern="x.*y", output_mode="content"

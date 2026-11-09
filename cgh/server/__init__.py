@@ -1,0 +1,964 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2025-04-11
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2025 ALTIKVA."
+# __contributors__ = ["jndjama (Joy Ndjama)"]
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# __maintainer__ = "jndjama (Joy Ndjama)"
+# __email__ = "joy.ndjama@altikva.com"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: fastmcp MCP server exposing code graph query tools to Claude Code.
+#              Run with:  python -m cgh.server --root /path/to/repo
+
+# ruff: noqa: E402  # tool modules must import after `mcp = FastMCP(...)` exists
+from __future__ import annotations
+
+import argparse
+import functools
+import json
+import os
+import sys
+import threading
+import time as _time
+from pathlib import Path
+
+from fastmcp import FastMCP
+
+from cgh.core.log import configure_background_logging
+from cgh.core.utils import short_path
+
+# ---------------------------------------------------------------------------
+# Module-level globals
+# ---------------------------------------------------------------------------
+
+
+def _resolve_signals(*names: str) -> list:
+    """Return the signals from ``names`` that exist on this platform.
+
+    SIGHUP and other POSIX signals are absent on Windows. Referencing
+    ``signal.SIGHUP`` directly there raises AttributeError, which would
+    crash `cgh serve` on startup, so resolve by name and skip what is
+    missing.
+    """
+    import signal as _signal
+
+    found = []
+    for name in names:
+        sig = getattr(_signal, name, None)
+        if sig is not None:
+            found.append(sig)
+    return found
+
+
+import logging
+
+_log = logging.getLogger(__name__)
+
+_conn = None
+_root: Path | None = None
+_fts_conn = None
+
+
+_rebuild_thread: threading.Thread | None = None
+_rebuild_guard = threading.Lock()
+
+
+def _start_graph_rebuild(exc: BaseException) -> bool:
+    """When a tool call fails on a corrupt graph, rebuild it in the
+    background instead of failing every call until the owner restarts.
+    Returns True when ``exc`` is such an error (a rebuild is running or was
+    just started)."""
+    global _rebuild_thread
+    from cgh.indexer import is_fatal_graph_error, rebuild_corrupt_graph
+
+    if _root is None or not is_fatal_graph_error(exc):
+        return False
+    root = _root
+
+    def run() -> None:
+        try:
+            rebuild_corrupt_graph(root, exc)
+        except Exception:
+            pass  # the next failing call starts another attempt
+
+    with _rebuild_guard:
+        if _rebuild_thread is None or not _rebuild_thread.is_alive():
+            _rebuild_thread = threading.Thread(
+                target=run, name="cgh-graph-rebuild", daemon=True
+            )
+            _rebuild_thread.start()
+    return True
+
+
+def _call_origin() -> str | None:
+    """Who triggered the current tool call, read from the HTTP request.
+
+    The stdio proxy and the CLI client both reach the owner over HTTP and
+    announce themselves in the X-Cgh-Origin header; a request without it is
+    an MCP client talking to the owner directly, so it counts as "agent". A
+    call outside any HTTP request is an in-process call ("internal").
+    """
+    from cgh.state.call_log import ORIGIN_HEADER, normalize_origin
+
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+    except Exception:
+        return "internal"
+    raw = request.headers.get(ORIGIN_HEADER)
+    if raw is None or not raw.strip():
+        return "agent"
+    return normalize_origin(raw)
+
+
+# Tools whose answer comes from the graph edges or nodes. On an index the
+# current cgh cannot fully trust (older graph format, a store copied from
+# another checkout), "no callers" and "no callers this index can see" look
+# the same; these responses then carry `stale: true` and the reason, so a
+# caller knows to fall back to pattern_search.
+_GRAPH_TOOLS = frozenset(
+    {
+        "architecture_overview",
+        "architecture_report",
+        "communities",
+        "context_for_task",
+        "doc_refs",
+        "domain_map",
+        "endpoints",
+        "file_summary",
+        "find_callees",
+        "find_callers",
+        "find_dead_code",
+        "hotspots",
+        "impact_of",
+        "import_cycles",
+        "imports_of",
+        "path_between",
+        "search_symbols",
+        "subgraph",
+        "symbol_lookup",
+        "tests_for",
+        "untested",
+    }
+)
+
+
+def _stale_reason(root) -> str:
+    """Why the graph under ``root`` may answer short, else ""."""
+    if root is None:
+        return ""
+    from cgh.state.scan_meta import (
+        copied_store_message,
+        outdated_store_message,
+    )
+
+    return outdated_store_message(root) or copied_store_message(root)
+
+
+def _mark_stale(result, reason: str):
+    """Add ``stale`` and ``stale_reason`` to a JSON-object tool result.
+    Anything else (plain text, a JSON list) is returned unchanged."""
+    if not reason or not isinstance(result, str) or not result.startswith("{"):
+        return result
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return result
+    if not isinstance(payload, dict) or "stale" in payload:
+        return result
+    payload["stale"] = True
+    payload["stale_reason"] = reason
+    return _budget_dumps(payload)
+
+
+# Tools that fan out to federated subrepos and tag each row with `scope`.
+# In a federated project their responses also carry `scopes`: for each
+# scope, the commit checked out and the one its index was built at, so an
+# answer can cite the commit it was read from.
+_FEDERATED_TOOLS = frozenset(
+    {
+        "architecture_overview",
+        "architecture_report",
+        "communities",
+        "doc_outline",
+        "doc_refs",
+        "domain_map",
+        "endpoints",
+        "find_callees",
+        "find_callers",
+        "find_dead_code",
+        "fts_search",
+        "imports_of",
+        "pattern_search",
+        "search_docs",
+        "search_symbols",
+        "subgraph",
+        "symbol_lookup",
+    }
+)
+
+
+def _scope_commits(root) -> dict | None:
+    """{scope: commit info} for a federated project, None otherwise."""
+    if root is None:
+        return None
+    from cgh.analysis.federation import has_subrepos, scope_commits
+
+    if not has_subrepos(root):
+        return None
+    return scope_commits(root)
+
+
+def _add_scopes(result, scopes: dict | None):
+    """Add ``scopes`` to a JSON-object tool result. A pattern_search aimed
+    at one repo and ref already names its commit, and is left alone."""
+    if not scopes or not isinstance(result, str) or not result.startswith("{"):
+        return result
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return result
+    if not isinstance(payload, dict) or "scopes" in payload:
+        return result
+    if payload.get("repo") or payload.get("ref"):
+        return result
+    payload["scopes"] = scopes
+    return _budget_dumps(payload)
+
+
+def _budget_dumps(payload: dict) -> str:
+    """A note added to an answer keeps it compact JSON with non-ASCII text
+    as is: indented, with every accent escaped, a capped 2.5 KB answer
+    came back over 4 KB."""
+    from cgh.server._budget import dumps_answer
+
+    return dumps_answer(payload)
+
+
+def _hard_cap(tool: str, result, kwargs: dict):
+    """The ceiling held even when the structured cap failed: an over-cap
+    text answer is cut as plain text."""
+    from cgh.server._budget import SIZE_ARGS, TOOL_CAPS, ToolCap, fit_wire
+
+    if not isinstance(result, str) or any(kwargs.get(a) for a in SIZE_ARGS):
+        return result
+    try:
+        return fit_wire(result, TOOL_CAPS.get(tool, ToolCap()).max_bytes)
+    except Exception:
+        return result
+
+
+# Callers whose answers skip the size ceiling: they are programs, not agents.
+_UNCAPPED_ORIGINS = frozenset({"cli", "hook"})
+
+# Callers whose answers get repo-relative paths plus one `root` to rebuild
+# the absolute path. The CLI keeps absolute paths: its commands open the
+# files they are handed and do their own shortening for display.
+_RELATIVE_ORIGINS = frozenset({"agent", "hook"})
+
+
+def _logged_tool(fn):
+    """Decorator that logs every MCP tool call to call_log.db."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        from cgh.server._budget import cap_tool_answer
+        from cgh.server._paths import relative_result
+        from cgh.server._text import TEXT_TOOLS, resolve_format, text_answer
+        from cgh.state.call_log import log_call
+
+        tool_name = fn.__name__
+        try:
+            origin = _call_origin()
+        except Exception:
+            origin = None
+        t0 = _time.perf_counter()
+        success = True
+        error = None
+        result = ""
+        try:
+            result = fn(*args, **kwargs)
+            if tool_name in _GRAPH_TOOLS:
+                try:
+                    result = _mark_stale(result, _stale_reason(_root))
+                except Exception:
+                    pass  # best-effort note: never fail the answer on it
+            if tool_name in _FEDERATED_TOOLS:
+                try:
+                    result = _add_scopes(result, _scope_commits(_root))
+                except Exception:
+                    pass  # best-effort note: never fail the answer on it
+            if origin in _RELATIVE_ORIGINS:
+                try:
+                    result = relative_result(result, _root)
+                except Exception:
+                    _log.debug("relative paths failed for %s", tool_name, exc_info=True)
+            # The CLI and the hooks render or filter the full answer
+            # themselves; an agent re-reads every byte on each later turn.
+            # This is the last step, after every note above, and the cap is
+            # measured on the escaped text the agent receives.
+            if origin not in _UNCAPPED_ORIGINS:
+                try:
+                    result = cap_tool_answer(tool_name, result, kwargs)
+                except Exception:
+                    _log.debug("answer cap failed for %s", tool_name, exc_info=True)
+                    result = _hard_cap(tool_name, result, kwargs)
+            # The grep-like text answer, for agents only: the CLI and the
+            # hooks parse JSON. Rendered from the fitted answer and held to
+            # the same ceiling on the text itself.
+            if origin == "agent" and tool_name in TEXT_TOOLS:
+                try:
+                    if resolve_format(kwargs.get("format"), _root) == "text":
+                        result = text_answer(tool_name, result)
+                except Exception:
+                    _log.debug("text answer failed for %s", tool_name, exc_info=True)
+            return result
+        except Exception as exc:
+            success = False
+            error = str(exc)[:500]
+            if _start_graph_rebuild(exc):
+                raise RuntimeError(
+                    "The graph index hit a fatal database error and is being "
+                    "rebuilt from source. Retry in a moment; scan_status shows "
+                    "the rebuild while it runs. Use pattern_search meanwhile. "
+                    f"Original error: {error[:200]}"
+                ) from exc
+            raise
+        finally:
+            latency = (_time.perf_counter() - t0) * 1000
+            try:
+                log_call(
+                    tool=tool_name,
+                    args=kwargs or {f"arg{i}": v for i, v in enumerate(args)},
+                    latency_ms=round(latency, 2),
+                    result_size=len(result) if isinstance(result, str) else 0,
+                    success=success,
+                    error=error,
+                    repo_root=_root,
+                    origin=origin,
+                )
+            except Exception:
+                pass  # never let logging break the tool
+
+    return wrapper
+
+
+def _get_conn():
+    # Deliberately no local cache: cgh.core.db is the single
+    # connection authority, so the watcher's idle release (dropping the
+    # write lock between bursts when no MCP worker is attached) takes
+    # effect here immediately, and the next tool call reopens lazily.
+    from cgh.core.db import get_connection
+
+    return get_connection(_root)
+
+
+def _get_fts():
+    global _fts_conn
+    if _fts_conn is None:
+        from cgh.core.fts import get_fts_conn
+
+        _fts_conn = get_fts_conn(_root)
+    return _fts_conn
+
+
+def _short_path(path: str) -> str:
+    """Shorten a file path for display (uses _root module global)."""
+    if _root:
+        return short_path(path, str(_root))
+    return path
+
+
+# ---------------------------------------------------------------------------
+# MCP server
+# ---------------------------------------------------------------------------
+
+from cgh.integrations.tool_guide import SEARCH_GUIDE
+
+mcp = FastMCP(
+    name="cgh",
+    instructions=(
+        "cgh, the context graph hub: the project memory of your coding agents,\n"
+        "plus a code and document graph and the Claude Code memory/plan index.\n\n"
+        "CALL THESE TOOLS BEFORE READING FILES, they return exact file paths\n"
+        "and line numbers so you only read the specific lines you need.\n"
+        "Paths are relative to the answer's `root` (a federated subrepo's\n"
+        "rows: to `roots[scope]`); join the two for a tool that wants an\n"
+        "absolute path, such as Read.\n\n" + SEARCH_GUIDE + "\n"
+        "Tool execution is SERVER-SIDE and costs zero model tokens; the JSON\n"
+        "response is capped. In doubt, call the tool: almost always cheaper\n"
+        "than Read/Grep over full files. knowledge_search is NOT a code\n"
+        "search, it reads saved notes, never the code.\n\n"
+        "Reflexes:\n"
+        "  • Session start / after compaction: resume(session_id?), ONE call\n"
+        "    returns standing instructions + digests + knowledge + plans; when\n"
+        "    last_session is your own, continue from its next step.\n"
+        "  • Context ~80% full: knowledge_record(...) then checkpoint(...);\n"
+        "    they survive compaction, raw conversation does NOT.\n"
+        "  • Durable rule stated mid-session: knowledge_record(\n"
+        "    kind='standing_instruction', ...), it leads every resume.\n"
+        "  • After git pull / checkout / rebase: scan_status, then\n"
+        "    incremental_reindex if stale. An answer tagged stale: true is\n"
+        "    not trustworthy when empty, confirm with pattern_search.\n"
+        "  • Federated repo (subrepos in config.toml): read tools fan out to\n"
+        "    each subrepo; every row carries a `scope`, use it to route Read\n"
+        "    and disambiguate. Cross-repo edges are not inferred; knowledge,\n"
+        "    memory and plans are never federated.\n"
+        "Only use Read for the exact line range a tool returned. Detail: the\n"
+        "cgh rule file and the cgh-use-cgh skill.\n"
+    ),
+)
+
+# Tool-search deferral hint (B of issue #527): a client with tool search on
+# (Claude Code) keeps only the tools marked anthropic/alwaysLoad in every
+# request's definitions and defers the rest, still callable on demand via
+# ToolSearch. Mark the core set so navigation/kickoff/continuity stay upfront
+# while the long tail defers, cutting cgh's per-request tool-schema bytes. The
+# _meta key is Claude-Code-specific and ignored by other clients (no-op), and
+# this wraps the registration decorator so every core tool is marked in one
+# place, from the same CORE_TOOLS that [tools] expose = "core" uses.
+from cgh.core.tool_exposure import CORE_TOOLS as _CORE_TOOLS
+
+_orig_tool = mcp.tool
+
+
+def _tool_marking_core(name_or_fn=None, **kwargs):
+    def _mark(fn):
+        name = kwargs.get("name") or getattr(fn, "__name__", None)
+        if name in _CORE_TOOLS:
+            kwargs["meta"] = {
+                **(kwargs.get("meta") or {}),
+                "anthropic/alwaysLoad": True,
+            }
+        return fn
+
+    if callable(name_or_fn) and not isinstance(name_or_fn, str):
+        _mark(name_or_fn)
+        return _orig_tool(name_or_fn, **kwargs)
+
+    def deco(fn):
+        _mark(fn)
+        return _orig_tool(fn, **kwargs)
+
+    return deco
+
+
+mcp.tool = _tool_marking_core
+
+# Register tools from sub-modules (must be after mcp = FastMCP)
+from cgh.server.tools_arch import register as _register_arch
+from cgh.server.tools_docs import register as _register_docs
+from cgh.server.tools_fetch import register as _register_fetch
+from cgh.server.tools_findings import register as _register_findings
+from cgh.server.tools_history import register as _register_history
+from cgh.server.tools_index import register as _register_index
+from cgh.server.tools_insight import register as _register_insight
+from cgh.server.tools_knowledge import (
+    register as _register_knowledge,
+)
+from cgh.server.tools_memory import register as _register_memory
+from cgh.server.tools_meta import register as _register_meta
+from cgh.server.tools_plans import register as _register_plans
+from cgh.server.tools_prs import register as _register_prs
+from cgh.server.tools_query import register as _register_query
+from cgh.server.tools_session import register as _register_session
+from cgh.server.tools_tests import register as _register_tests
+from cgh.server.tools_viz import register as _register_viz
+
+# architecture_overview / _report, domain_map, communities, endpoints: FIRST
+_register_arch(mcp)
+_register_query(mcp)
+_register_insight(mcp)  # file_summary, impact_of, path_between, import_cycles
+_register_tests(mcp)  # tests_for, impact_report, untested
+_register_prs(mcp)  # pr_overlap
+_register_docs(mcp)
+_register_index(mcp)
+_register_viz(mcp)
+_register_meta(mcp)
+_register_memory(mcp)
+_register_plans(mcp)
+_register_knowledge(mcp)
+_register_history(mcp)  # hotspots, who_knows
+_register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
+_register_fetch(mcp)  # fetch_and_index, search_fetched
+_register_session(mcp)  # checkpoint / resume session continuity
+
+# [tools] expose: narrows the tools/list response only. tools/call does not
+# pass through it, so a hidden tool still answers by name. Lists every tool
+# until owner_main records which tools are cgh's own.
+from cgh.server.tool_exposure import ToolExposureMiddleware
+
+tool_exposure = ToolExposureMiddleware()
+mcp.add_middleware(tool_exposure)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    """
+    Proxy entrypoint: every `cgh serve` invocation acts as a stdio<->HTTP
+    bridge to a single shared "owner" backend. The first caller lazily
+    spawns the owner; subsequent callers reuse it.
+
+    This is what Claude Code launches per session. The owner holds the
+    graph DB write lock; proxies are stateless bridges with no DB access.
+    """
+    global _root
+
+    ap = argparse.ArgumentParser(description="cgh MCP server (proxy mode)")
+    ap.add_argument("--root", default=os.getcwd(), help="Repo root (default: CWD)")
+    ap.add_argument(
+        "--watch", action="store_true", help="Request file watcher in the owner"
+    )
+    ap.add_argument(
+        "--reindex", action="store_true", help="Request a full re-index in the owner"
+    )
+    args = ap.parse_args()
+
+    _root = Path(args.root).resolve()
+
+    from cgh.state.ipc import (
+        installed_cgh_version,
+        is_owner_alive,
+        owner_version_current,
+        proxy_stdio_to_http,
+        read_owner_port,
+        read_owner_version,
+        register_worker,
+        spawn_owner,
+        stop_owner,
+        unregister_worker,
+    )
+
+    # Register this proxy as a worker BEFORE spawning the owner, so the
+    # owner's shutdown logic always sees at least one live worker.
+    register_worker(_root)
+
+    # Release the worker slot on any exit (normal, SIGTERM, SIGHUP).
+    import atexit as _atexit
+    import signal as _signal
+
+    _atexit.register(unregister_worker, _root)
+
+    def _graceful(signum, _frame):
+        unregister_worker(_root)
+        _signal.signal(signum, _signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for _sig in _resolve_signals("SIGTERM", "SIGHUP", "SIGINT"):
+        try:
+            _signal.signal(_sig, _graceful)
+        except (ValueError, OSError):
+            pass
+
+    configure_background_logging()
+
+    # Start (or reuse) the shared owner. A live owner is reused only when it
+    # is serving the installed version: one left running across a package
+    # upgrade holds stale code that can fail on a lazy import, so restart it
+    # rather than bridge to it.
+    if is_owner_alive(_root) and owner_version_current(_root):
+        port = read_owner_port(_root)
+        _log.info("attaching to existing owner on port %s", port)
+    else:
+        if is_owner_alive(_root):
+            _log.warning(
+                "owner is running cgh %s but %s is installed; restarting it "
+                "so calls run current code",
+                read_owner_version(_root),
+                installed_cgh_version(),
+            )
+            stop_owner(_root)
+        else:
+            _log.info("no owner running, launching one")
+        port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
+        if port is None:
+            _log.error("failed to start owner (see .cgh/owner.log)")
+            unregister_worker(_root)
+            sys.exit(1)
+        _log.info("owner up on port %s", port)
+
+    # Act as the stdio <-> HTTP bridge for this Claude session. Pass watch
+    # so a mid-session owner death can be self-healed with the same
+    # posture the session started with.
+    exit_code = proxy_stdio_to_http(port, repo_root=_root, watch=args.watch)
+    sys.exit(exit_code)
+
+
+def _startup_index_needed(root, reindex: bool) -> bool:
+    """Whether the owner indexes on start: on --reindex, whenever the store
+    records no completed scan, and when that scan used an older graph format.
+    An index killed halfway (a stopped owner, a killed hook) writes no scan
+    record, and an owner started without the flag would otherwise serve that
+    partial graph indefinitely."""
+    if reindex:
+        return True
+    from cgh.state.scan_meta import graph_format_outdated, read_meta
+
+    if read_meta(root) is None:
+        _log.info("no completed scan recorded for %s, indexing it", root)
+        return True
+    if graph_format_outdated(root):
+        # An upgrade changed what the graph stores; the incremental reindex
+        # this triggers falls back to one full re-parse.
+        _log.info("graph format of %s is outdated, re-indexing it", root)
+        return True
+    from cgh.indexer import module_sources_changed, older_writer_pending
+
+    try:
+        tf_changed = module_sources_changed(root)
+    except Exception:
+        tf_changed = False
+    if tf_changed:
+        # [terraform] module_sources or a ref it pins changed: the
+        # incremental reindex falls back to a walk that re-parses the .tf
+        # files.
+        _log.info("module_sources of %s changed, re-indexing Terraform", root)
+        return True
+    if older_writer_pending(root):
+        # An older cgh (a rollback) rewrote files without their references;
+        # the incremental reindex parses those files again.
+        _log.info("files of %s were written by an older cgh, re-indexing them", root)
+        return True
+    return False
+
+
+def owner_main(
+    root: str | None = None, watch: bool = False, reindex: bool = False
+) -> None:
+    """
+    Backend entrypoint, runs FastMCP over HTTP on a loopback port.
+    Spawned by the proxy via `python -m cgh _serve_owner`. Claude
+    Code never launches this directly.
+    """
+    global _root
+
+    _root = Path(root or os.getcwd()).resolve()
+    # Pin the process to its own repo. Per-repo state (call_log, findings, fts)
+    # falls back to Path.cwd() when a caller omits repo_root, so an owner
+    # spawned with a different cwd would open and HOLD another worktree's
+    # call_log.db read-write, blocking that repo's memory writes with "database
+    # is locked" while reads still work (so it reads as empty memory, not a
+    # lock). chdir keeps cwd == --root, so a stray cwd fallback can only ever
+    # touch this owner's own repo.
+    try:
+        os.chdir(_root)
+    except OSError:
+        pass
+
+    configure_background_logging()
+
+    # Single-writer guard on the owner itself
+    from cgh.state.pidfile import acquire as _pidfile_acquire
+
+    acquired, other_pid = _pidfile_acquire(_root)
+    if not acquired:
+        _log.error("another owner is running (pid %s); exiting.", other_pid)
+        sys.exit(1)
+
+    # Load / ensure the auth key for HTTP bridge security
+    from cgh.state.auth import ensure_auth_key
+
+    auth_key = ensure_auth_key(_root)
+
+    # Load installed plugins (proposal 001). The owner is the full home:
+    # parsers register into the shared registry (indexer + watcher pick
+    # them up), and each plugin's MCP registrar gets the FastMCP instance,
+    # exactly like the internal tools_*.py modules. A broken plugin is a
+    # logged warning, never a dead owner.
+    # The tools registered so far are cgh's own; whatever the plugin
+    # registrars add below is a plugin tool, which [tools] never hides.
+    from cgh.server.tool_exposure import registered_tool_names
+
+    try:
+        _builtin_tools: frozenset[str] | None = registered_tool_names(mcp)
+    except Exception as exc:
+        _log.warning("[tools] could not list built-in tools: %s", exc)
+        _builtin_tools = None
+    try:
+        from cgh.plugins import load_plugins, mcp_registrars
+
+        for _rec in load_plugins(_root):
+            if _rec.status != "active":
+                continue
+            _log.info(
+                "plugin %s: active%s",
+                _rec.name,
+                f" ({', '.join(_rec.surfaces)})" if _rec.surfaces else "",
+            )
+        for _plugin_name, _registrar in mcp_registrars():
+            try:
+                _registrar(mcp)
+            except Exception as exc:
+                _log.warning(
+                    "plugin %s: MCP registration failed: %s", _plugin_name, exc
+                )
+    except Exception as exc:
+        _log.warning("plugin loading failed: %s", exc)
+    if _builtin_tools is not None:
+        try:
+            tool_exposure.record(_builtin_tools, registered_tool_names(mcp))
+            _log.info("tools: %s", tool_exposure.exposure().label())
+        except Exception as exc:
+            # Unrecorded means the middleware lists every tool.
+            _log.warning("[tools] exposure not applied: %s", exc)
+
+    # Reindex + watcher (if requested)
+    if _startup_index_needed(_root, reindex):
+        import threading as _th_startup
+
+        from cgh.indexer import incremental_reindex
+
+        def _bg_reindex() -> None:
+            # Incremental, not a full index: a store that is already indexed
+            # only needs the files that changed while no owner was watching.
+            # incremental_reindex falls back to a full index by itself when
+            # there is nothing to compare against (no index yet, a moved root).
+            # Every owner start used to re-parse the whole repo, which with a
+            # dozen worktrees owners running at once saturated the machine.
+            # When another index of this repo is already running (init, a
+            # CLI index), the lock raises IndexBusy and this one is skipped.
+            _log.info("indexing %s ...", _root)
+            try:
+                stats = incremental_reindex(_root)
+                _log.info("done: %s", stats)
+            except RuntimeError as exc:
+                _log.warning("reindex skipped: %s", exc)
+
+        # Run in the background so the owner publishes its port and answers
+        # the MCP initialize handshake immediately. A large repo's reindex
+        # would otherwise block startup past the client's ~30s timeout
+        # (the reported "failed to restart cgh mcp"). Queries hit the
+        # existing graph until the reindex catches up, same as the watcher.
+        _th_startup.Thread(target=_bg_reindex, daemon=True).start()
+
+    if watch:
+        from cgh.state.watcher import start_watcher
+
+        try:
+            start_watcher(_root)
+        except Exception as exc:
+            _log.warning("watcher disabled: %s", exc)
+
+    # Pick a free port + publish port file + owner pid
+    from cgh.state.ipc import (
+        free_port,
+        installed_cgh_fingerprint,
+        owner_pidfile,
+        port_file,
+        write_owner_version,
+    )
+
+    port = free_port()
+    port_file(_root).write_text(str(port) + "\n", encoding="utf-8")
+    owner_pidfile(_root).write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    # Stamp the build fingerprint this owner is serving under. If the package is
+    # upgraded on disk while this process keeps running, the in-memory code
+    # no longer matches site-packages and a lazy import can fail against the
+    # new layout. The fingerprint folds a RECORD hash into the version, so a
+    # same-version reinstall (a develop-to-develop swap) is caught too, not just
+    # a version bump. The worker-watch loop below compares this stamp to the
+    # installed fingerprint and exits on drift so the next call respawns on
+    # current code.
+    _startup_version = installed_cgh_fingerprint()
+    write_owner_version(_root, _startup_version)
+
+    # Cleanup on exit
+    import atexit as _atexit
+
+    def _cleanup():
+        try:
+            # Let go of the federated children first: children whose only
+            # worker was this owner exit on their own grace period.
+            from cgh.analysis.federation import release_children
+
+            release_children(_root)
+        except Exception:
+            pass
+        try:
+            port_file(_root).unlink(missing_ok=True)
+            owner_pidfile(_root).unlink(missing_ok=True)
+            # Release the single-writer pidfile the owner acquired.
+            from cgh.state.pidfile import release as _pidfile_release
+
+            _pidfile_release(_root)
+            # Drop the keepalive and the dead markers only: the markers of
+            # proxies still running must survive, or the owner they respawn
+            # (after an upgrade exit, say) finds no worker and stops at 30s.
+            from cgh.state.ipc import prune_workers_on_exit
+
+            prune_workers_on_exit(_root)
+        except Exception:
+            pass
+
+    _atexit.register(_cleanup)
+
+    # Build auth middleware, rejects any request without the bearer token
+    import hmac
+
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+    from starlette.types import ASGIApp
+
+    class _BearerAuth(BaseHTTPMiddleware):
+        def __init__(self, app: ASGIApp, token: str) -> None:
+            super().__init__(app)
+            self._token = token
+
+        async def dispatch(self, request, call_next):
+            # Accept any path on 127.0.0.1 with correct bearer
+            header = request.headers.get("authorization", "")
+            expected = f"Bearer {self._token}"
+            # Constant-time compare so the loopback port gives no timing oracle
+            # on the token (this is the system's only auth check).
+            if not hmac.compare_digest(header, expected):
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                )
+            return await call_next(request)
+
+    _log.info("listening on 127.0.0.1:%s (auth: bearer)", port)
+
+    # Background thread: once at least one worker has registered, shut
+    # the owner down as soon as all workers exit. Grace windows are
+    # intentionally conservative to tolerate the brief gap while a new
+    # Claude session is starting its proxy.
+    import signal as _sig
+    import threading as _th
+    import time as _time
+
+    from cgh.state.ipc import live_workers, spawner_alive
+
+    # The process that started this owner. A proxy from an older cgh whose
+    # marker an exiting owner deleted still counts while it is alive.
+    _spawner = os.getppid()
+    _seen_worker = False
+    _idle_since: float | None = None
+
+    def _shutdown(reason: str) -> None:
+        _log.info("%s, shutting down", reason)
+        # Run cleanup explicitly, SIGTERM + os._exit would skip atexit.
+        try:
+            _cleanup()
+        except Exception:
+            pass
+        # Release the graph DB lock so a subsequent owner can start immediately.
+        try:
+            from cgh.core.db import reset_connection
+
+            reset_connection()
+        except Exception:
+            pass
+        # Hard exit, uvicorn has its own signal handlers and blocks
+        # cooperative shutdown from threads; os._exit gets us out reliably.
+        os._exit(0)
+
+    def _watch_workers() -> None:
+        nonlocal _seen_worker, _idle_since
+        grace_before_first = 30.0  # wait this long for the first worker
+        grace_while_idle = 5.0  # then exit after workers leave
+
+        started_at = _time.time()
+        while True:
+            _time.sleep(1.0)
+
+            # Exit if the installed package drifted from what this owner
+            # started under. The resident code no longer matches
+            # site-packages, so a not-yet-taken lazy import could resolve
+            # against the new layout and fail (that is how a fastmcp major
+            # bump took every tool down at once). The fingerprint catches a
+            # same-version reinstall too, so a develop-to-develop swap under a
+            # running owner is not missed. Exiting lets the proxy respawn a
+            # fresh owner on current code.
+            _current = installed_cgh_fingerprint()
+            if _startup_version and _current and _current != _startup_version:
+                _shutdown(
+                    f"cgh changed on disk ({_startup_version} -> {_current}) "
+                    "while this owner was running; exiting so the next call "
+                    "respawns on current code"
+                )
+                return
+
+            workers = live_workers(_root)
+
+            if workers or spawner_alive(_spawner):
+                _seen_worker = True
+                _idle_since = None
+                continue
+
+            if not _seen_worker:
+                if _time.time() - started_at > grace_before_first:
+                    _shutdown(f"no workers connected within {grace_before_first:.0f}s")
+                    return
+                continue
+
+            if _idle_since is None:
+                _idle_since = _time.time()
+            elif _time.time() - _idle_since > grace_while_idle:
+                _shutdown("last worker exited")
+                return
+
+    _th.Thread(target=_watch_workers, daemon=True).start()
+
+    # Federated children: bring up the owner of every initialized subrepo
+    # whose owner is down, so their watchers keep the child indexes fresh
+    # while this parent is alive. Runs in a thread, spawn_owner blocks a
+    # few seconds per child. Disable with federate_auto_up = false.
+    from cgh.analysis.federation import has_subrepos
+    from cgh.core.config import load_config as _load_config
+
+    if has_subrepos(_root) and _load_config(_root).federate_auto_up:
+
+        def _children_up() -> None:
+            from cgh.analysis.federation import autostart_children
+
+            try:
+                for res in autostart_children(_root):
+                    detail = res.get("reason") or (
+                        f"port {res['port']}" if "port" in res else ""
+                    )
+                    _log.info(
+                        "child %s: %s%s",
+                        res["name"],
+                        res["status"],
+                        f" ({detail})" if detail else "",
+                    )
+            except Exception as exc:
+                _log.warning("child autostart error: %s", exc)
+
+        _th.Thread(target=_children_up, daemon=True).start()
+
+    # SIGTERM / SIGINT from outside (kill, Ctrl-C) also do a clean shutdown.
+    def _signal_shutdown(signum, _frame):
+        _shutdown(f"received {_sig.Signals(signum).name}")
+
+    for s in _resolve_signals("SIGTERM", "SIGINT"):
+        try:
+            _sig.signal(s, _signal_shutdown)
+        except (ValueError, OSError):
+            pass
+
+    # Starlette middleware expects a different wiring than ASGIMiddleware
+    # FastMCP's run_http_async uses middleware=[ASGIMiddleware(...)]; since
+    # BaseHTTPMiddleware is an ASGIApp factory, we can wrap with a Middleware
+    # class from starlette.
+    from starlette.middleware import Middleware
+
+    mcp.run(
+        transport="http",
+        host="127.0.0.1",
+        port=port,
+        show_banner=False,
+        stateless_http=True,
+        json_response=True,
+        middleware=[Middleware(_BearerAuth, token=auth_key)],
+    )
+
+
+if __name__ == "__main__":
+    main()

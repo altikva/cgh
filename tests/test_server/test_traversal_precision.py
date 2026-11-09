@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 REPO = {
     "app/__init__.py": "",
@@ -112,9 +112,9 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_docs import register as register_docs
-    from codegraph.server.tools_insight import register as register_insight
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_docs import register as register_docs
+    from cgh.server.tools_insight import register as register_insight
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)
@@ -206,7 +206,7 @@ def test_subgraph_budget(repo):
 
 
 def test_fit_tokens_without_budget_is_a_no_op():
-    from codegraph.server._budget import fit_tokens
+    from cgh.server._budget import fit_tokens
 
     payload = {"rows": list(range(100))}
     assert fit_tokens(payload, ["rows"], 0) == 0
@@ -218,7 +218,7 @@ def test_fit_tokens_without_budget_is_a_no_op():
 
 @pytest.fixture
 def cli(repo, monkeypatch):
-    from codegraph.cli import commands_query
+    from cgh.cli import commands_query
 
     monkeypatch.setattr(commands_query, "_ask_owner", lambda *a, **k: None)
     return commands_query
@@ -265,7 +265,7 @@ def test_callees_exit_codes(repo, cli, capsys):
 
 
 def test_exact_mention_parsing():
-    from codegraph.parsers.markdown import _exact_mention
+    from cgh.parsers.markdown import _exact_mention
 
     assert _exact_mention("serialize") == "serialize"
     assert _exact_mention(" run_all() ") == "run_all"

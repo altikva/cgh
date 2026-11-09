@@ -1,0 +1,329 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2025-04-11
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2025 ALTIKVA."
+# __contributors__ = ["jndjama (Joy Ndjama)"]
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# __maintainer__ = "jndjama (Joy Ndjama)"
+# __email__ = "joy.ndjama@altikva.com"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Watchdog-based file watcher.  Triggers incremental re-indexing
+#              when source files are created or modified.  Debounced to 300 ms
+#              to avoid double-firing on editor write patterns.
+#
+#              Ignore chain: _IGNORE_DIRS -> .cghignore -> git check-ignore (batched)
+
+from __future__ import annotations
+
+import logging
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
+from watchdog.observers import Observer
+
+from cgh.analysis.federation import child_paths_to_skip, is_under_any
+from cgh.core.config import state_dir_for
+from cgh.core.utils import quiet_subprocess_kwargs
+from cgh.indexer import _is_cghignored, index_file, skipped_path_parts
+from cgh.parsers import is_supported
+
+_log = logging.getLogger(__name__)
+
+# Debounce window in seconds
+_DEBOUNCE = 0.3
+
+# Cache git-ignored status to avoid subprocess per file
+_GIT_IGNORE_CACHE: dict[str, bool] = {}
+_GIT_IGNORE_CACHE_TTL = 60  # seconds
+_GIT_IGNORE_CACHE_TS: float = 0
+
+
+class _CghHandler(FileSystemEventHandler):
+    """Event handler with batched scheduling: paths accumulate in one
+    pending set, a single debounce timer flushes them together, and the
+    git-ignore check runs ONCE per flush over every uncached path
+    (`git check-ignore --stdin -z`) instead of once per file. On a busy
+    monorepo this turns dozens of git processes per burst into one."""
+
+    def __init__(self, repo_root: Path) -> None:
+        super().__init__()
+        self._root = repo_root
+        self._pending: set[str] = set()
+        self._batch_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
+        # Cached at startup. Federation membership rarely changes mid-session;
+        # restart the owner if the user runs `cgh federate add`.
+        self._subrepos: list[Path] = child_paths_to_skip(repo_root)
+
+    def _cheap_ignore(self, path: str) -> bool:
+        """The zero-subprocess part of the ignore chain, safe to run in
+        the watchdog event thread."""
+        p = Path(path)
+
+        # 1. Unsupported extension
+        if not is_supported(p):
+            return True
+
+        # 2. Hardcoded ignored dirs and dot-names (MCP client configs kept)
+        if skipped_path_parts(p.parts):
+            return True
+
+        # 3. .cghignore (fast, in-memory)
+        if _is_cghignored(p, self._root):
+            return True
+
+        # 4. Federated subrepo, owned by its own index
+        return bool(self._subrepos and is_under_any(p, self._subrepos))
+
+    def _git_ignored_batch(self, paths: list[str]) -> set[str]:
+        """One `git check-ignore --stdin -z` for the whole batch. Returns
+        the subset of ``paths`` git considers ignored. Exit code 1 means
+        none ignored; anything above 1 is an error and nothing is treated
+        as ignored (indexing an ignored file once beats dropping a real
+        one)."""
+        try:
+            result = subprocess.run(
+                ["git", "check-ignore", "-z", "--stdin"],
+                input="\0".join(paths) + "\0",
+                capture_output=True,
+                text=True,
+                cwd=str(self._root),
+                timeout=5,
+                **quiet_subprocess_kwargs(),
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return set()
+        if result.returncode not in (0, 1):
+            return set()
+        return {p for p in result.stdout.split("\0") if p}
+
+    def _resolve_gitignored(self, paths: list[str]) -> dict[str, bool]:
+        """Cached batch resolution of git-ignore status."""
+        global _GIT_IGNORE_CACHE, _GIT_IGNORE_CACHE_TS
+
+        now = time.time()
+        if now - _GIT_IGNORE_CACHE_TS > _GIT_IGNORE_CACHE_TTL:
+            _GIT_IGNORE_CACHE.clear()
+            _GIT_IGNORE_CACHE_TS = now
+
+        unknown = [p for p in paths if p not in _GIT_IGNORE_CACHE]
+        if unknown:
+            ignored = self._git_ignored_batch(unknown)
+            for p in unknown:
+                _GIT_IGNORE_CACHE[p] = p in ignored
+        return {p: _GIT_IGNORE_CACHE.get(p, False) for p in paths}
+
+    def _schedule(self, path: str) -> None:
+        if self._cheap_ignore(path):
+            return
+        with self._lock:
+            self._pending.add(path)
+            if self._batch_timer is not None:
+                self._batch_timer.cancel()
+            self._batch_timer = threading.Timer(_DEBOUNCE, self._flush)
+            self._batch_timer.start()
+
+    def _flush(self) -> None:
+        with self._lock:
+            batch = sorted(self._pending)
+            self._pending.clear()
+            self._batch_timer = None
+        if not batch:
+            return
+        gitignored = self._resolve_gitignored(batch)
+        for path in batch:
+            if not gitignored.get(path, False):
+                self._reindex(path)
+        self._maybe_release_lock()
+
+    def _maybe_release_lock(self) -> None:
+        """Idle release: with no MCP proxy attached, nothing can have a
+        tool call in flight, so drop the cached write connection and give
+        the graph file lock back, a federated parent's read-only fan-out
+        needs it. Reopened lazily on the next index or tool call. The
+        parent-<pid> markers that keep an auto-started child alive do not
+        count: they never issue tool calls."""
+        try:
+            from cgh.state.ipc import mcp_workers
+
+            if mcp_workers(self._root):
+                return
+            from cgh.core.db import reset_connection
+
+            reset_connection()
+        except Exception:
+            pass
+
+    def _reindex(self, path: str) -> None:
+        from cgh.state.activity import log as _activity_log
+
+        try:
+            ok = index_file(path, self._root)
+            if ok:
+                rel = Path(path).relative_to(self._root)
+                _log.info("+ %s", rel)
+                _activity_log(self._root, "reindex", str(rel))
+        except Exception as exc:
+            _log.error("error %s: %s", path, exc)
+            _activity_log(self._root, "error", f"{path}: {exc}")
+            self._heal(exc)
+
+    def _heal(self, exc: Exception) -> None:
+        """A fatal graph error poisons the shared connection, so every MCP
+        call after it would fail until the owner restarts. Rebuild now."""
+        from cgh.indexer import rebuild_corrupt_graph
+
+        try:
+            if rebuild_corrupt_graph(self._root, exc) is not None:
+                _log.warning("graph was corrupt, rebuilt from source")
+        except Exception as heal_exc:
+            _log.error("graph rebuild failed: %s", heal_exc)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.dest_path)
+
+
+# Module-level handles so MCP tools can hot-extend the watcher to new dirs
+_active_observer: Observer | None = None
+_active_handler: _CghHandler | None = None
+
+
+class _AuxRescanHandler(FileSystemEventHandler):
+    """
+    Debounced handler that triggers a folder-level rescan callback on
+    any .md change. Used for the memory dir and the plans dir, we
+    re-scan the entire (small) folder instead of tracking per-file state.
+    """
+
+    def __init__(self, repo_root: Path, label: str, scan_fn) -> None:
+        super().__init__()
+        self._root = repo_root
+        self._label = label
+        self._scan_fn = scan_fn
+        self._timer: threading.Timer | None = None
+        self._lock = threading.Lock()
+
+    def _schedule(self, path: str) -> None:
+        if not path.endswith(".md"):
+            return
+        with self._lock:
+            if self._timer:
+                self._timer.cancel()
+            self._timer = threading.Timer(_DEBOUNCE * 3, self._rescan)
+            self._timer.start()
+
+    def _rescan(self) -> None:
+        try:
+            stats = self._scan_fn(self._root)
+            _log.info(
+                "%s rescan: indexed=%s removed=%s",
+                self._label,
+                stats.get("indexed", 0),
+                stats.get("removed", 0),
+            )
+        except Exception as exc:
+            _log.error("%s rescan error: %s", self._label, exc)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_deleted(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.src_path)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._schedule(event.dest_path)
+
+
+def start_watcher(repo_root: str | Path) -> Observer:
+    """
+    Start a background file watcher for `repo_root`.
+    Returns the Observer so the caller can stop it with observer.stop().
+    Also watches extra_dirs, the Claude Code memory dir, and the plans dir.
+    """
+    global _active_observer, _active_handler
+
+    root = Path(repo_root).resolve()
+    handler = _CghHandler(root)
+    observer = Observer()
+    observer.schedule(handler, str(root), recursive=True)
+
+    # Also watch extra_dirs from config
+    extra_paths: list[Path] = []
+    try:
+        import tomllib
+
+        cfg = state_dir_for(root) / "config.toml"
+        if cfg.exists():
+            with open(cfg, "rb") as f:
+                data = tomllib.load(f)
+            for rel in data.get("cgh", {}).get("extra_dirs", []):
+                p = (root / rel).resolve()
+                if p.exists() and p.is_dir():
+                    observer.schedule(handler, str(p), recursive=True)
+                    extra_paths.append(p)
+    except Exception:
+        pass
+
+    # Memory + plans dirs (auto-discovered; env / config-overridable)
+    from cgh.claude_state.memory import scan_memory_dir
+    from cgh.claude_state.plans import scan_plan_dir
+    from cgh.core.config import memory_dir, plans_dir
+
+    aux_targets: list[tuple[Path, str, object]] = []
+    try:
+        mdir = memory_dir(root)
+        if mdir.exists() and mdir.is_dir():
+            aux_targets.append((mdir, "memory", scan_memory_dir))
+    except Exception:
+        pass
+    try:
+        pdir = plans_dir(root)
+        if pdir.exists() and pdir.is_dir():
+            aux_targets.append((pdir, "plans", scan_plan_dir))
+    except Exception:
+        pass
+
+    for path, label, scan_fn in aux_targets:
+        aux_handler = _AuxRescanHandler(root, label, scan_fn)
+        observer.schedule(aux_handler, str(path), recursive=False)
+
+    observer.start()
+    _log.info("watching %s", root)
+    for p in extra_paths:
+        _log.info("watching %s (extra_dir)", p)
+    for path, label, _ in aux_targets:
+        _log.info("watching %s (%s)", path, label)
+
+    _active_observer = observer
+    _active_handler = handler
+    return observer
+
+
+def watch_forever(repo_root: str | Path) -> None:
+    """Block forever, watching for changes.  Ctrl-C to stop."""
+    observer = start_watcher(repo_root)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()

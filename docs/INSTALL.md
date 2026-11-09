@@ -166,9 +166,8 @@ python -m cgh ensurepath
 ```
 
 `pipx install cgh` and `uv tool install cgh` avoid this by managing PATH
-themselves. The Python import name is still `codegraph` (e.g.
-`from codegraph.parsers import ...`); only the CLI is named `cgh`, same
-pattern as `pip install pillow` then `import PIL`.
+themselves. The PyPI package, the Python import name (e.g.
+`from cgh.parsers import ...`) and the CLI are all `cgh`.
 
 ---
 

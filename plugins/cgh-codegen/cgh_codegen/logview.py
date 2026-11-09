@@ -35,7 +35,7 @@ def codegen_activity(
     the last ``limit`` of those. An empty list means codegen has done nothing
     here, or nothing within the scan window.
     """
-    from codegraph.plugin_api import activity_tail
+    from cgh.plugin_api import activity_tail
 
     entries = activity_tail(str(repo_root), max(1, scan))
     hits = [e for e in entries if len(e) >= 2 and e[1] in CODEGEN_EVENTS]

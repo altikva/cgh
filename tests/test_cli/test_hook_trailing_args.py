@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-import codegraph.__main__ as cli
+import cgh.__main__ as cli
 
 
 @pytest.mark.parametrize(

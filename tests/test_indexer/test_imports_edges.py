@@ -1,5 +1,5 @@
 """
-Tests for IMPORTS edge ingestion (codegraph.imports.resolver + indexer wire-up).
+Tests for IMPORTS edge ingestion (cgh.imports.resolver + indexer wire-up).
 
 The indexer must create File → File IMPORTS edges for resolvable imports
 so MCP tools like `imports_of`, `who_imports`, and the recursive reach
@@ -13,19 +13,19 @@ import textwrap
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.imports.resolver import (
+from cgh.core.db import get_connection, reset_connection
+from cgh.imports.resolver import (
     resolve_import,
     resolve_java,
     resolve_js_ts,
     resolve_python,
 )
-from codegraph.indexer import index_file
+from cgh.indexer import index_file
 
 
 @pytest.fixture(autouse=True)
 def clean_db():
-    from codegraph.imports.resolver import reset_for_tests
+    from cgh.imports.resolver import reset_for_tests
 
     reset_for_tests()
     reset_connection()
@@ -497,8 +497,8 @@ class TestImportCoverage:
         return tmp_path
 
     def test_scan_records_resolved_and_unresolved_counts(self, tmp_path):
-        from codegraph.indexer import index_repo
-        from codegraph.state.scan_meta import scan_status
+        from cgh.indexer import index_repo
+        from cgh.state.scan_meta import scan_status
 
         root = self._repo(tmp_path)
         index_repo(str(root))
@@ -511,8 +511,8 @@ class TestImportCoverage:
         """The fixture imports `fmt` and declares no module, so there is
         nothing in the repo for it to point at. It still has to be counted:
         an uncounted import and a repo that imports nothing read the same."""
-        from codegraph.indexer import index_repo
-        from codegraph.state.scan_meta import scan_status
+        from cgh.indexer import index_repo
+        from cgh.state.scan_meta import scan_status
 
         root = self._repo(tmp_path)
         index_repo(str(root))
@@ -524,8 +524,8 @@ class TestImportCoverage:
     def test_a_src_layout_repo_does_not_come_back_empty(self, tmp_path):
         """The regression this whole branch exists for: imports parsed, none
         resolved, no error anywhere."""
-        from codegraph.indexer import index_repo
-        from codegraph.state.scan_meta import scan_status
+        from cgh.indexer import index_repo
+        from cgh.state.scan_meta import scan_status
 
         root = self._repo(tmp_path)
         index_repo(str(root))

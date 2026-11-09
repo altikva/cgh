@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.state.call_log import (
+from cgh.state.call_log import (
     _get_conn,
     knowledge_list,
     knowledge_record,
@@ -26,7 +26,7 @@ from codegraph.state.call_log import (
 
 def _store(tmp_path: Path, name: str) -> Path:
     root = tmp_path / name
-    (root / ".codegraph").mkdir(parents=True)
+    (root / ".cgh").mkdir(parents=True)
     return root
 
 
@@ -108,7 +108,7 @@ def test_knowledge_list_exclude_tag(tmp_path):
 
 
 def test_doctor_strict_exits_nonzero_when_unconfigured(tmp_path):
-    from codegraph.cli.commands_monitor import cmd_doctor
+    from cgh.cli.commands_monitor import cmd_doctor
 
     with pytest.raises(SystemExit) as exc:
         cmd_doctor(Namespace(root=str(tmp_path), strict=True))
@@ -116,7 +116,7 @@ def test_doctor_strict_exits_nonzero_when_unconfigured(tmp_path):
 
 
 def test_doctor_without_strict_does_not_exit(tmp_path):
-    from codegraph.cli.commands_monitor import cmd_doctor
+    from cgh.cli.commands_monitor import cmd_doctor
 
     # No SystemExit even though the bare dir fails checks.
     cmd_doctor(Namespace(root=str(tmp_path), strict=False))
@@ -144,7 +144,7 @@ def test_old_schema_store_migrates_silently(tmp_path):
     reset_for_tests()
     root = _store(tmp_path, "old")
     # A store as cgh 0.13 left it: no superseded_by, no provenance columns.
-    conn = sqlite3.connect(root / ".codegraph" / "call_log.db")
+    conn = sqlite3.connect(root / ".cgh" / "call_log.db")
     conn.execute(
         "CREATE TABLE knowledge (id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "session_id TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', "
@@ -255,7 +255,7 @@ def test_provenance_columns_and_read_side(tmp_path):
     sid = knowledge_record("Cache key", "include tenant", kind="gotcha", repo_root=src)
     promote_knowledge(src, dst, source_branch="f/c", source_pr="ondonne-api#7")
 
-    from codegraph.state.call_log import knowledge_search
+    from cgh.state.call_log import knowledge_search
 
     for entry in (
         knowledge_list(repo_root=dst)[0],
@@ -286,7 +286,7 @@ def test_dry_run_writes_nothing(tmp_path):
 def test_cli_archive_json_and_rerun(tmp_path, capsys):
     import json
 
-    from codegraph.cli.commands_knowledge import cmd_knowledge
+    from cgh.cli.commands_knowledge import cmd_knowledge
 
     reset_for_tests()
     src = _store(tmp_path, "wt")
@@ -309,7 +309,7 @@ def test_cli_archive_json_and_rerun(tmp_path, capsys):
 
 
 def test_cli_rejects_same_store(tmp_path, capsys):
-    from codegraph.cli.commands_knowledge import cmd_knowledge
+    from cgh.cli.commands_knowledge import cmd_knowledge
 
     reset_for_tests()
     root = _store(tmp_path, "r")
@@ -350,7 +350,7 @@ def test_promote_while_another_process_writes_the_target(tmp_path):
         knowledge_record(f"learned {i}", f"body {i}", kind="gotcha", repo_root=src)
 
     writer = subprocess.Popen(
-        [sys.executable, "-c", _WRITER, str(dst / ".codegraph" / "call_log.db"), "80"],
+        [sys.executable, "-c", _WRITER, str(dst / ".cgh" / "call_log.db"), "80"],
         stdout=subprocess.PIPE,
         text=True,
     )

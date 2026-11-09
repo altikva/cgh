@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.db_sqlite import SQLiteGraphDB
+from cgh.core.db_sqlite import SQLiteGraphDB
 
 
 def _sqlite_columns(path: Path) -> dict[str, set[str]]:
@@ -36,7 +36,7 @@ def _sqlite_columns(path: Path) -> dict[str, set[str]]:
 
 def test_sqlite_has_every_duckdb_column(tmp_path: Path) -> None:
     duckdb = pytest.importorskip("duckdb")
-    from codegraph.core.schema_duckdb import init_schema
+    from cgh.core.schema_duckdb import init_schema
 
     dcon = duckdb.connect(str(tmp_path / "g.duckdb"))
     init_schema(dcon)
@@ -80,7 +80,7 @@ def test_sqlite_index_of_a_markdown_file(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "README.md").write_text("# Title\n\nSome text.\n\n## Part\n\nMore.\n")
     result = subprocess.run(
-        [sys.executable, "-m", "codegraph", "index", "--root", str(repo)],
+        [sys.executable, "-m", "cgh", "index", "--root", str(repo)],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "CGH_DB": "sqlite"},
@@ -88,7 +88,7 @@ def test_sqlite_index_of_a_markdown_file(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr[-2000:]
     assert "md_section has no column" not in result.stderr
-    lite = sqlite3.connect(repo / ".codegraph" / "graph.sqlite")
+    lite = sqlite3.connect(repo / ".cgh" / "graph.sqlite")
     try:
         n = lite.execute("select count(*) from md_section").fetchone()[0]
     finally:

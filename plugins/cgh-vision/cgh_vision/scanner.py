@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codegraph.plugin_api import ScanFinding
+from cgh.plugin_api import ScanFinding
 
 from . import cache
 from .backends import VisionError, available, endpoint_url, is_local
@@ -56,7 +56,7 @@ class VisionScanner:
         # Best-effort: a failed audit write must not block the scan
         # (the egress decision itself already happened above it).
         try:
-            from codegraph.plugin_api import activity_log
+            from cgh.plugin_api import activity_log
 
             activity_log(self.repo_root, "vision", message)
         except Exception:
@@ -212,12 +212,12 @@ class VisionScanner:
 
     def _sidecar_path(self, p: Path) -> Path:
         """Where the extraction sidecar lands. `auto_extract_out` defaults to
-        `.codegraph/vision` (outside the working tree, never committed by
+        `.cgh/vision` (outside the working tree, never committed by
         accident, cleaned with the index); `beside` writes `<file>.json`
         next to the source; any other value is a directory (absolute, or
         relative to the repo root) under which the file's repo-relative path
         is mirrored."""
-        out = str(self.config.get("auto_extract_out", ".codegraph/vision")).strip()
+        out = str(self.config.get("auto_extract_out", ".cgh/vision")).strip()
         if out.lower() in {"beside", "."}:
             return p.with_name(p.name + ".json")
         base = Path(out)

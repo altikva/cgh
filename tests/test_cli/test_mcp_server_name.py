@@ -18,13 +18,14 @@ import shutil
 
 import pytest
 
-from codegraph.integrations import mcp_name
+from cgh.integrations import mcp_name
 
-# Where each client's MCP config lives; claude, codex and gemini share one.
+# Where each client's JSON MCP config lives. Claude uses .mcp.json; Gemini
+# reads .gemini/settings.json. Codex uses TOML (.codex/config.toml) and is
+# covered by its own tests below, not this JSON-shaped parametrisation.
 CLIENT_FILES = {
     "claude": ".mcp.json",
-    "codex": ".mcp.json",
-    "gemini": ".mcp.json",
+    "gemini": ".gemini/settings.json",
     "cursor": ".cursor/mcp.json",
     "bob": ".bob/mcp.json",
 }
@@ -51,7 +52,7 @@ def no_cli_on_path(monkeypatch):
 
 @pytest.mark.parametrize("tool", sorted(CLIENT_FILES))
 def test_fresh_setup_writes_the_cgh_key(tmp_path, no_cli_on_path, tool):
-    from codegraph.cli.commands_init import _install_integration
+    from cgh.cli.commands_init import _install_integration
 
     _install_integration(tmp_path, tool)
 
@@ -60,7 +61,7 @@ def test_fresh_setup_writes_the_cgh_key(tmp_path, no_cli_on_path, tool):
 
 
 def test_fresh_auto_accept_writes_cgh_patterns(tmp_path):
-    from codegraph.cli.commands_init import _configure_claude_auto_accept
+    from cgh.cli.commands_init import _configure_claude_auto_accept
 
     added = _configure_claude_auto_accept(tmp_path)
 
@@ -70,7 +71,7 @@ def test_fresh_auto_accept_writes_cgh_patterns(tmp_path):
 
 
 def test_server_announces_itself_as_cgh():
-    from codegraph.server import mcp
+    from cgh.server import mcp
 
     assert mcp.name == "cgh"
 
@@ -110,7 +111,7 @@ def test_migrate_repo_moves_the_entry_and_keeps_its_settings(tmp_path, rel):
 def test_setup_over_a_legacy_config_leaves_one_cgh_entry(
     tmp_path, no_cli_on_path, tool
 ):
-    from codegraph.cli.commands_init import _install_integration
+    from cgh.cli.commands_init import _install_integration
 
     rel = CLIENT_FILES[tool]
     _write(
@@ -207,7 +208,7 @@ def test_allow_rules_renamed_and_restrictions_twinned(tmp_path, name):
 
 
 def test_auto_accept_over_legacy_rules_keeps_only_cgh(tmp_path):
-    from codegraph.cli.commands_init import _configure_claude_auto_accept
+    from cgh.cli.commands_init import _configure_claude_auto_accept
 
     path = tmp_path / ".claude" / "settings.local.json"
     _write(
@@ -250,13 +251,13 @@ def test_cgh_tool_name_reads_both_prefixes(name, expected):
     ],
 )
 def test_bob_hooks_count_a_save_under_either_prefix(tool, tool_input):
-    from codegraph.cli.commands_bob import _is_save
+    from cgh.cli.commands_bob import _is_save
 
     assert _is_save(tool, tool_input)
 
 
 def test_bob_hooks_ignore_other_servers():
-    from codegraph.cli.commands_bob import _is_save
+    from cgh.cli.commands_bob import _is_save
 
     assert not _is_save("mcp__other__checkpoint", {})
 
@@ -290,7 +291,7 @@ def test_legacy_findings_empty_on_a_migrated_repo(tmp_path):
 
 
 def _doctor_output(tmp_path, monkeypatch, capsys) -> str:
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     monkeypatch.setattr(commands_monitor.console, "width", 250)
     commands_monitor.cmd_doctor(argparse.Namespace(root=str(tmp_path), strict=False))
@@ -320,7 +321,7 @@ def test_doctor_is_quiet_on_a_migrated_repo(tmp_path, monkeypatch, capsys):
 
 
 def test_doctor_strict_does_not_block_on_the_old_key(tmp_path, monkeypatch, capsys):
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     _write(tmp_path / ".mcp.json", {"mcpServers": {"codegraph": {}}})
     monkeypatch.setattr(commands_monitor.console, "width", 250)
@@ -339,7 +340,7 @@ def test_doctor_strict_does_not_block_on_the_old_key(tmp_path, monkeypatch, caps
 
 
 def test_setup_migrate_renames_without_installing_anything(tmp_path):
-    from codegraph.cli.commands_init import cmd_setup
+    from cgh.cli.commands_init import cmd_setup
 
     _write(tmp_path / ".cursor" / "mcp.json", {"mcpServers": {"codegraph": {"a": 1}}})
 
@@ -460,7 +461,7 @@ def test_unreadable_settings_layer_blocks_the_rename(tmp_path, where):
 
 @pytest.mark.parametrize("tool", sorted(CLIENT_FILES))
 def test_setup_keeps_a_blocked_repo_on_codegraph(tmp_path, no_cli_on_path, tool):
-    from codegraph.cli.commands_init import _install_integration
+    from cgh.cli.commands_init import _install_integration
 
     rel = CLIENT_FILES[tool]
     _write(tmp_path / rel, {"mcpServers": {"codegraph": {"env": {"A": "1"}}}})
@@ -477,7 +478,7 @@ def test_setup_keeps_a_blocked_repo_on_codegraph(tmp_path, no_cli_on_path, tool)
 
 
 def test_blocked_auto_accept_keeps_the_codegraph_wildcards(tmp_path):
-    from codegraph.cli.commands_init import _configure_claude_auto_accept
+    from cgh.cli.commands_init import _configure_claude_auto_accept
 
     _legacy_repo(tmp_path)
     _write(
@@ -491,7 +492,7 @@ def test_blocked_auto_accept_keeps_the_codegraph_wildcards(tmp_path):
 
 
 def test_auto_accept_never_rewrites_an_unreadable_local_settings(tmp_path):
-    from codegraph.cli.commands_init import _configure_claude_auto_accept
+    from cgh.cli.commands_init import _configure_claude_auto_accept
 
     path = tmp_path / ".claude" / "settings.local.json"
     path.parent.mkdir(parents=True)
@@ -502,7 +503,7 @@ def test_auto_accept_never_rewrites_an_unreadable_local_settings(tmp_path):
 
 
 def test_setup_migrate_blocked_exits_1_and_changes_nothing(tmp_path, capsys):
-    from codegraph.cli.commands_init import cmd_setup
+    from cgh.cli.commands_init import cmd_setup
 
     _legacy_repo(tmp_path)
     _write(
@@ -521,7 +522,7 @@ def test_setup_migrate_blocked_exits_1_and_changes_nothing(tmp_path, capsys):
 
 
 def test_setup_migrate_force_renames_with_a_warning(tmp_path, capsys):
-    from codegraph.cli.commands_init import cmd_setup
+    from cgh.cli.commands_init import cmd_setup
 
     _legacy_repo(tmp_path)
     _write(
@@ -536,7 +537,7 @@ def test_setup_migrate_force_renames_with_a_warning(tmp_path, capsys):
 
 
 def test_init_step_leaves_a_blocked_repo_alone(tmp_path, capsys):
-    from codegraph.cli.commands_init import migrate_mcp_server_name
+    from cgh.cli.commands_init import migrate_mcp_server_name
 
     _legacy_repo(tmp_path)
     _write(
@@ -551,7 +552,7 @@ def test_init_step_leaves_a_blocked_repo_alone(tmp_path, capsys):
 
 
 def test_doctor_reports_a_blocker_as_a_strict_failure(tmp_path, monkeypatch, capsys):
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     _legacy_repo(tmp_path)
     _write(
@@ -569,3 +570,41 @@ def test_doctor_reports_a_blocker_as_a_strict_failure(tmp_path, monkeypatch, cap
     strict = next(line for line in out.splitlines() if line.startswith("strict:"))
     assert "MCP server name" in strict
     assert "mcp__codegraph__scan_repo" in out
+
+
+# ---------------------------------------------------------------------------
+# Codex: a TOML config, not .mcp.json
+# ---------------------------------------------------------------------------
+
+
+def test_codex_writes_toml_mcp_servers(tmp_path, no_cli_on_path):
+    import tomllib
+
+    from cgh.cli.commands_init import _install_integration
+
+    _install_integration(tmp_path, "codex")
+    cfg = tmp_path / ".codex" / "config.toml"
+    assert cfg.is_file()
+    assert not (tmp_path / ".mcp.json").exists()
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert list(data["mcp_servers"]) == ["cgh"]
+    assert data["mcp_servers"]["cgh"]["command"]
+
+
+def test_codex_preserves_existing_toml(tmp_path, no_cli_on_path):
+    import tomllib
+
+    from cgh.cli.commands_init import _install_integration
+
+    cfgdir = tmp_path / ".codex"
+    cfgdir.mkdir()
+    (cfgdir / "config.toml").write_text(
+        '# my codex config\nmodel = "o3"\n\n[mcp_servers.other]\ncommand = "x"\n',
+        encoding="utf-8",
+    )
+    _install_integration(tmp_path, "codex")
+    text = (cfgdir / "config.toml").read_text(encoding="utf-8")
+    assert "# my codex config" in text  # comment preserved
+    data = tomllib.loads(text)
+    assert data["model"] == "o3"
+    assert set(data["mcp_servers"]) == {"other", "cgh"}

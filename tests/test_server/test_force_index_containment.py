@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from codegraph.server.tools_index import _within_repo
+from cgh.server.tools_index import _within_repo
 
 
 def test_file_inside_repo(tmp_path):

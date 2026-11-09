@@ -28,7 +28,7 @@ Two properties carry the design:
 
 Sending is always manual (`auto_send` does not exist), refuses public
 repositories, dedups by fingerprint (new occurrences comment on the
-existing issue), and every send lands in `.codegraph/activity.log`.
+existing issue), and every send lands in `.cgh/activity.log`.
 The payload is shown and confirmed before anything leaves; `--yes`
 skips the question. Spool: capped at 20 reports, purged after 30 days,
 never indexed by cgh itself.

@@ -5,13 +5,13 @@
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The bundled skills are actually found and installed. Regression
-#              guard for the source-dir path (skills live at codegraph/skills,
-#              not codegraph/integrations/skills): a wrong path silently
+#              guard for the source-dir path (skills live at cgh/skills,
+#              not cgh/integrations/skills): a wrong path silently
 #              installed zero skills for every tool.
 
 from __future__ import annotations
 
-from codegraph.integrations.skill_installer import (
+from cgh.integrations.skill_installer import (
     _iter_skills,
     _skills_source_dir,
     install_bob,

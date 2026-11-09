@@ -1,5 +1,5 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Tests for codegraph.analysis.federation — config resolution, child status, iteration.
+# Tests for cgh.analysis.federation — config resolution, child status, iteration.
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis.federation import (
+from cgh.analysis.federation import (
     add_subrepo,
     child_paths_to_skip,
     is_under_any,
@@ -26,7 +26,7 @@ def _mk_repo(
     git: bool = False,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     if with_duckdb:
         (cg / "graph.duckdb").write_bytes(b"fake")
@@ -65,8 +65,8 @@ class TestResolveChildren:
 
     def test_skips_nonexistent(self, tmp_path):
         parent = _mk_repo(tmp_path / "p")
-        cfg = parent / ".codegraph" / "config.toml"
-        cfg.write_text('[codegraph]\nsubrepos = ["./gone"]\n')
+        cfg = parent / ".cgh" / "config.toml"
+        cfg.write_text('[cgh]\nsubrepos = ["./gone"]\n')
         # The path doesn't exist; resolve_children skips paths whose .resolve()
         # raises OSError, so empty result.
         # Note: on macOS Path.resolve() of a missing file doesn't always raise,
@@ -129,7 +129,7 @@ class TestVerifyChild:
         assert not st.ok
 
     def test_initialized_no_graphdb(self, tmp_path):
-        # .codegraph/ but neither graph.duckdb nor graph.sqlite.
+        # .cgh/ but neither graph.duckdb nor graph.sqlite.
         _mk_repo(tmp_path / "p", with_duckdb=False)
         st = verify_child(tmp_path / "p")
         assert st.exists and st.initialized
@@ -172,14 +172,14 @@ class TestAddRemoveSubrepo:
         parent = _mk_repo(tmp_path / "p")
         child = _mk_repo(parent / "nested")
         add_subrepo(parent, child)
-        cfg = (parent / ".codegraph" / "config.toml").read_text()
+        cfg = (parent / ".cgh" / "config.toml").read_text()
         assert '"./nested"' in cfg
 
     def test_absolute_storage_when_outside(self, tmp_path):
         parent = _mk_repo(tmp_path / "p")
         sibling = _mk_repo(tmp_path / "sibling")
         add_subrepo(parent, sibling)
-        cfg = (parent / ".codegraph" / "config.toml").read_text()
+        cfg = (parent / ".cgh" / "config.toml").read_text()
         assert str(sibling.resolve()) in cfg
 
     def test_remove_returns_false_when_not_present(self, tmp_path):

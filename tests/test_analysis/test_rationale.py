@@ -20,17 +20,17 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.rationale import (
+import cgh.server as _srv
+from cgh.analysis.rationale import (
     adr_ref,
     comments,
     entries,
     extract,
     resolve_adr,
 )
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, index_repo
-from codegraph.parsers import get_parser
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, index_repo
+from cgh.parsers import get_parser
 
 PY = """\
 # NOTE: module-level note
@@ -259,8 +259,8 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_meta import register as register_meta
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_meta import register as register_meta
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)
@@ -339,7 +339,7 @@ def test_context_for_task_lists_rationale(repo):
 
 
 def test_cgh_why(repo, capsys):
-    from codegraph.cli.commands_query import cmd_why
+    from cgh.cli.commands_query import cmd_why
 
     args = argparse.Namespace(
         root=str(repo), target="Store.get", tag="", limit=50, json=True

@@ -14,13 +14,13 @@ from __future__ import annotations
 import re
 import tomllib
 
-from codegraph.core.config import generate_default_config
+from cgh.core.config import generate_default_config
 
 
 def test_template_is_valid_toml():
     data = tomllib.loads(generate_default_config())
-    assert set(data) >= {"codegraph", "parsers", "mcp", "plugins", "paths", "roles"}
-    assert data["codegraph"]["max_file_size_kb"] == 500
+    assert set(data) >= {"cgh", "parsers", "mcp", "plugins", "paths", "roles"}
+    assert data["cgh"]["max_file_size_kb"] == 500
     assert data["mcp"]["auto_watch"] is True
 
 
@@ -55,7 +55,7 @@ def test_uncommenting_every_option_still_parses():
             lines.append(line)
     data = tomllib.loads("\n".join(lines))
 
-    cg = data["codegraph"]
+    cg = data["cgh"]
     assert "mode" not in cg  # secure mode is gone, nothing to choose
     assert cg["allow_fetch"] is False
     assert cg["federate_auto_up"] is True

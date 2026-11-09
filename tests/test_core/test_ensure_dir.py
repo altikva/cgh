@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core import utils
-from codegraph.core.utils import ensure_dir
+from cgh.core import utils
+from cgh.core.utils import ensure_dir
 
 
 def test_creates_missing_parents(tmp_path: Path) -> None:

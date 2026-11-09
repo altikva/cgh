@@ -21,12 +21,12 @@ import threading
 
 import pytest
 
-from codegraph.state.index_lock import IndexBusy, holder, index_lock
+from cgh.state.index_lock import IndexBusy, holder, index_lock
 
 
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
@@ -40,7 +40,7 @@ def other_process():
 
 
 def _claim(root, pid: int) -> None:
-    (root / ".codegraph" / "index.lock").write_text(f"{pid}\n", encoding="utf-8")
+    (root / ".cgh" / "index.lock").write_text(f"{pid}\n", encoding="utf-8")
 
 
 def test_a_live_index_in_another_process_blocks_a_second(root, other_process):
@@ -60,7 +60,7 @@ def test_a_lock_left_by_a_dead_process_is_taken_over(root, other_process):
 
 
 def test_another_thread_of_this_process_is_refused(root, monkeypatch):
-    monkeypatch.setattr("codegraph.state.index_lock._BUSY_WAIT_S", 0.2)
+    monkeypatch.setattr("cgh.state.index_lock._BUSY_WAIT_S", 0.2)
     inside, release = threading.Event(), threading.Event()
 
     def hold():
@@ -85,7 +85,7 @@ def test_nested_runs_in_one_thread_share_the_lock(root):
             assert holder(root)["pid"] == os.getpid()
         # The inner exit must not release what the outer run still holds.
         assert holder(root)["pid"] == os.getpid()
-    assert not (root / ".codegraph" / "index.lock").exists()
+    assert not (root / ".cgh" / "index.lock").exists()
 
 
 def _git_repo(tmp_path):
@@ -99,12 +99,12 @@ def _git_repo(tmp_path):
          "commit", "-qm", "init"],
         check=True,
     )  # fmt: skip
-    (tmp_path / ".codegraph").mkdir(exist_ok=True)
+    (tmp_path / ".cgh").mkdir(exist_ok=True)
     return tmp_path
 
 
 def test_index_repo_refuses_a_repo_being_indexed(tmp_path, other_process):
-    from codegraph.indexer import index_repo
+    from cgh.indexer import index_repo
 
     repo = _git_repo(tmp_path)
     _claim(repo, other_process)
@@ -115,7 +115,7 @@ def test_index_repo_refuses_a_repo_being_indexed(tmp_path, other_process):
 def test_incremental_falling_back_to_full_keeps_its_own_lock(tmp_path):
     # No index yet: the incremental pass falls back to a full index_repo, which
     # takes the lock again on the same thread. It must nest, not refuse itself.
-    from codegraph.indexer import incremental_reindex
+    from cgh.indexer import incremental_reindex
 
     repo = _git_repo(tmp_path)
     result = incremental_reindex(repo)
@@ -124,7 +124,7 @@ def test_incremental_falling_back_to_full_keeps_its_own_lock(tmp_path):
 
 
 def test_scan_status_reports_a_running_index(root):
-    from codegraph.state.scan_meta import scan_status
+    from cgh.state.scan_meta import scan_status
 
     assert scan_status(root)["indexing"] is None
     with index_lock(root):

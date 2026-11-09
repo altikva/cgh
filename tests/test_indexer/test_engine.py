@@ -1,9 +1,9 @@
-"""Tests for codegraph.indexer — file indexing engine."""
+"""Tests for cgh.indexer — file indexing engine."""
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, index_repo
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, index_repo
 
 
 @pytest.fixture(autouse=True)
@@ -178,7 +178,7 @@ class TestRootMismatchGuard:
     def test_moved_index_forces_full_rebuild(self, tmp_path):
         import shutil
 
-        from codegraph.indexer import incremental_reindex
+        from cgh.indexer import incremental_reindex
 
         src = tmp_path / "src"
         src.mkdir()

@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from codegraph.parsers.java import JavaParser
+from cgh.parsers.java import JavaParser
 
 
 @pytest.fixture

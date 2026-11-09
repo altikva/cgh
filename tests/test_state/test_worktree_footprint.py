@@ -37,7 +37,7 @@ def repo_and_worktree(tmp_path):
 
 
 def test_worktree_is_detected(repo_and_worktree):
-    from codegraph.integrations.worktree import in_git_worktree
+    from cgh.integrations.worktree import in_git_worktree
 
     main, wt = repo_and_worktree
     assert in_git_worktree(main) is False
@@ -45,7 +45,7 @@ def test_worktree_is_detected(repo_and_worktree):
 
 
 def test_hide_footprint_cleans_the_worktree(repo_and_worktree):
-    from codegraph.integrations.worktree import hide_footprint
+    from cgh.integrations.worktree import hide_footprint
 
     _main, wt = repo_and_worktree
     (wt / "CLAUDE.md").write_text("original\n\nblock\n")
@@ -60,7 +60,7 @@ def test_hide_footprint_cleans_the_worktree(repo_and_worktree):
 
 
 def test_disabled_is_a_noop(repo_and_worktree):
-    from codegraph.integrations.worktree import hide_footprint
+    from cgh.integrations.worktree import hide_footprint
 
     _main, wt = repo_and_worktree
     (wt / "CLAUDE.md").write_text("original\n\nx\n")
@@ -70,7 +70,7 @@ def test_disabled_is_a_noop(repo_and_worktree):
 
 
 def test_main_checkout_is_left_alone(repo_and_worktree):
-    from codegraph.integrations.worktree import hide_footprint
+    from cgh.integrations.worktree import hide_footprint
 
     main, _wt = repo_and_worktree
     (main / "CLAUDE.md").write_text("original\n\ny\n")
@@ -80,7 +80,7 @@ def test_main_checkout_is_left_alone(repo_and_worktree):
 
 def test_missing_git_binary_is_not_fatal(repo_and_worktree, monkeypatch):
     """git absent from PATH must degrade to "not a worktree", not crash init."""
-    from codegraph.integrations import worktree
+    from cgh.integrations import worktree
 
     _main, wt = repo_and_worktree
 

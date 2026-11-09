@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from codegraph.state.pidfile import _parse_proc_stat_state, process_alive
+from cgh.state.pidfile import _parse_proc_stat_state, process_alive
 
 
 class TestParseState:
@@ -30,12 +30,12 @@ class TestParseState:
 class TestProcessAlive:
     def test_zombie_is_dead(self, monkeypatch):
         monkeypatch.setattr("os.kill", lambda pid, sig: None)
-        monkeypatch.setattr("codegraph.state.pidfile._process_state", lambda pid: "Z")
+        monkeypatch.setattr("cgh.state.pidfile._process_state", lambda pid: "Z")
         assert process_alive(4242) is False
 
     def test_running_is_alive(self, monkeypatch):
         monkeypatch.setattr("os.kill", lambda pid, sig: None)
-        monkeypatch.setattr("codegraph.state.pidfile._process_state", lambda pid: "S")
+        monkeypatch.setattr("cgh.state.pidfile._process_state", lambda pid: "S")
         assert process_alive(4242) is True
 
     def test_missing_pid_is_dead(self, monkeypatch):

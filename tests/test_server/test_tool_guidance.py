@@ -14,9 +14,9 @@ from __future__ import annotations
 import asyncio
 import re
 
-import codegraph.server as srv
-from codegraph.integrations.skill_installer import _USAGE_BODY
-from codegraph.integrations.tool_guide import SEARCH_GUIDE
+import cgh.server as srv
+from cgh.integrations.skill_installer import _USAGE_BODY
+from cgh.integrations.tool_guide import SEARCH_GUIDE
 
 
 def _tools() -> dict[str, str]:

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-import codegraph.state.deferred_scan as deferred
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
+import cgh.state.deferred_scan as deferred
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def clean_state():
 
 class TestNullStripping:
     def test_deferred_scanner_never_sees_nulls(self, tmp_path, monkeypatch):
-        (tmp_path / ".codegraph").mkdir()
+        (tmp_path / ".cgh").mkdir()
         binary = tmp_path / "doc.docx"
         binary.write_bytes(b"PK\x03\x04\x00\x00fake zip\x00payload")
 
@@ -40,7 +40,7 @@ class TestNullStripping:
                 seen.append(text)
                 return [ScanFinding(key="probe.ok", value="1")]
 
-        monkeypatch.setattr("codegraph.plugins.scanners", lambda: [("test", Probe())])
+        monkeypatch.setattr("cgh.plugins.scanners", lambda: [("test", Probe())])
         deferred._process(str(tmp_path), str(binary), "sha1")
 
         assert len(seen) == 1

@@ -19,12 +19,12 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import on_demand
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_insight import register as register_insight
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis import on_demand
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_insight import register as register_insight
+from cgh.server.tools_query import register as register_query
 
 
 class _FakeMcp:
@@ -42,11 +42,11 @@ class _FakeMcp:
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     """A git repo with one indexed file, as the owner sees it."""
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-cg")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home-cg")
     repo = (tmp_path / "repo").resolve()
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    (repo / ".gitignore").write_text("gen/\n.codegraph/\n")
+    (repo / ".gitignore").write_text("gen/\n.cgh/\n")
     reset_connection()
     _srv._root = repo
     _srv._conn = None
@@ -160,7 +160,7 @@ def test_root_without_git_is_never_written(tmp_path):
 def test_busy_index_lock_gives_up(root, monkeypatch):
     import threading
 
-    from codegraph.state import index_lock
+    from cgh.state import index_lock
 
     (root / "late.py").write_text("def late():\n    return 1\n")
     key = str(root.resolve())

@@ -16,9 +16,9 @@ import pytest
 # Optional grammar: skip the whole module when the extra is absent.
 pytest.importorskip("tree_sitter_c_sharp")
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file
-from codegraph.parsers.csharp import CSharpParser
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file
+from cgh.parsers.csharp import CSharpParser
 
 
 @pytest.fixture

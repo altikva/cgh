@@ -2,7 +2,7 @@
 Tests for the safe-extract wrapper around parser.parse(path).
 
 The indexer must never crash because one file is malformed or recurses
-too deep. It logs to stderr + .codegraph/activity.log, returns False
+too deep. It logs to stderr + .cgh/activity.log, returns False
 from index_file, and lets the rest of the scan continue.
 """
 
@@ -13,8 +13,8 @@ import textwrap
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import _MIN_RECURSION_DEPTH, index_file
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import _MIN_RECURSION_DEPTH, index_file
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,7 @@ class TestParseErrorHandling:
         def _raising_parse(self, path):
             raise RecursionError("simulated")
 
-        from codegraph.parsers import python as python_parser
+        from cgh.parsers import python as python_parser
 
         monkeypatch.setattr(python_parser.PythonParser, "parse", _raising_parse)
 
@@ -68,7 +68,7 @@ class TestParseErrorHandling:
         assert "Traceback" not in captured.err
 
         # Activity log received the parse_error event
-        from codegraph.state.activity import tail as _tail
+        from cgh.state.activity import tail as _tail
 
         events = _tail(tmp_path, n=20)
         assert any(
@@ -83,7 +83,7 @@ class TestParseErrorHandling:
         def _raising_parse(self, path):
             raise ValueError("synthetic parse failure")
 
-        from codegraph.parsers import python as python_parser
+        from cgh.parsers import python as python_parser
 
         monkeypatch.setattr(python_parser.PythonParser, "parse", _raising_parse)
 
@@ -120,7 +120,7 @@ class TestParseErrorHandling:
         assert index_file(good_a, tmp_path) is True
 
         # Monkey-patch the parser to fail on the next call (B)
-        from codegraph.parsers import python as python_parser
+        from cgh.parsers import python as python_parser
 
         original_parse = python_parser.PythonParser.parse
         calls = {"count": 0}

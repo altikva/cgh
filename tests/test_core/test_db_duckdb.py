@@ -1,5 +1,5 @@
 """
-Tests for the DuckDB backend (codegraph.core.db_duckdb + schema_duckdb).
+Tests for the DuckDB backend (cgh.core.db_duckdb + schema_duckdb).
 
 This PR introduces the schema + adapter end-to-end. The indexer + MCP
 tools don't yet emit SQL — that's the next PR in the migration chain —
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db_duckdb import DuckDBGraphDB, DuckDBQueryResult
-from codegraph.core.protocol import GraphDB, QueryResult
+from cgh.core.db_duckdb import DuckDBGraphDB, DuckDBQueryResult
+from cgh.core.protocol import GraphDB, QueryResult
 
 
 @pytest.fixture
@@ -143,13 +143,13 @@ class TestBackendSelection:
     auto-detection of what's on disk."""
 
     def test_default_backend_is_duckdb_for_fresh_repo(self, tmp_path, monkeypatch):
-        """No env var + no .codegraph/ files -> duckdb (the default).
+        """No env var + no .cgh/ files -> duckdb (the default).
 
         Existing repos keep whatever graph DB is on disk via auto-detection;
         only brand-new repos get the default.
         """
         monkeypatch.delenv("CGH_DB", raising=False)
-        from codegraph.core.db import get_connection, reset_connection
+        from cgh.core.db import get_connection, reset_connection
 
         reset_connection()
         try:
@@ -160,7 +160,7 @@ class TestBackendSelection:
 
     def test_duckdb_backend_opens_duckdb(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CGH_DB", "duckdb")
-        from codegraph.core.db import get_connection, reset_connection
+        from cgh.core.db import get_connection, reset_connection
 
         reset_connection()
         try:
@@ -176,10 +176,10 @@ class TestBackendSelection:
     def test_auto_detect_duckdb_when_only_duckdb_on_disk(self, tmp_path, monkeypatch):
         """No env var + a graph.duckdb on disk -> pick DuckDB automatically."""
         monkeypatch.delenv("CGH_DB", raising=False)
-        from codegraph.core.db import get_readonly_connection, reset_connection
+        from cgh.core.db import get_readonly_connection, reset_connection
 
         # Seed: create a duckdb-backed graph with the schema initialized.
-        cg = tmp_path / ".codegraph"
+        cg = tmp_path / ".cgh"
         cg.mkdir()
         seed = DuckDBGraphDB(str(cg / "graph.duckdb"))
         seed.upsert_node("File", "path", "/a.py", {"lang": "python"})
@@ -196,11 +196,11 @@ class TestBackendSelection:
     def test_auto_detect_sqlite_when_only_sqlite_on_disk(self, tmp_path, monkeypatch):
         """No env var + a graph.sqlite on disk -> pick SQLite automatically."""
         monkeypatch.delenv("CGH_DB", raising=False)
-        from codegraph.core.db import get_readonly_connection, reset_connection
-        from codegraph.core.db_sqlite import SQLiteGraphDB
+        from cgh.core.db import get_readonly_connection, reset_connection
+        from cgh.core.db_sqlite import SQLiteGraphDB
 
         # Seed: create a sqlite-backed graph with the schema initialized.
-        cg = tmp_path / ".codegraph"
+        cg = tmp_path / ".cgh"
         cg.mkdir()
         seed = SQLiteGraphDB(str(cg / "graph.sqlite"))
         seed.upsert_node("File", "path", "/a.py", {"lang": "python"})

@@ -1,0 +1,227 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-09-19
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Keep cgh's own footprint out of git inside a worktree. Running
+#              `cgh init` in a git worktree writes machine-local tooling (the
+#              agent usage block in CLAUDE.md/AGENTS.md, the MCP wiring, the cgh
+#              skills and usage rule). On a sprint branch that already carries
+#              them, those writes show up as committable changes an agent can
+#              land by accident. hide_footprint does the housekeeping the
+#              ondonne sprint script did by hand: mark the tracked files init
+#              modified as skip-worktree, and add the untracked ones it created
+#              to .git/info/exclude. Best-effort throughout: a git failure
+#              leaves the files in place, it never aborts init. Only acts inside
+#              a worktree (git-dir != git-common-dir); the main checkout is where
+#              these files are meant to be committed and is left untouched.
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from cgh.core.config import state_dir_for
+
+# The paths cgh init writes or edits. Files are classified per path; skill and
+# rule dirs are matched by glob because their exact names depend on which
+# skills shipped. .mcp.json and the settings files carry the MCP wiring.
+_FOOTPRINT_FILES = (
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".mcp.json",
+    ".cursor/rules/cgh-usage.mdc",
+    ".claude/settings.local.json",
+    ".claude/settings.json",
+    ".claude/rules/cgh-usage.md",
+)
+_FOOTPRINT_GLOBS = (
+    ".claude/skills/cgh-*",
+    ".cursor/rules/cgh-*",
+)
+
+
+def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    from cgh.plugin_api import quiet_subprocess_kwargs
+
+    cmd = ["git", "-C", str(root), *args]
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+            **quiet_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # git missing from PATH or hung: report a failed run so every caller
+        # takes its "not a git repo" path instead of aborting init.
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
+
+
+def in_git_worktree(root: Path) -> bool:
+    """True when ``root`` sits in a LINKED git worktree, not the main checkout.
+    A worktree's git-dir (``.../.git/worktrees/<name>``) differs from its
+    common dir (``.../.git``); in the main checkout they are the same."""
+    out = _git(
+        root, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]
+    )
+    if out.returncode != 0:
+        return False
+    lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+    if len(lines) != 2:
+        return False
+    git_dir, common_dir = lines
+    return Path(git_dir).resolve() != Path(common_dir).resolve()
+
+
+def _list_worktrees(repo: Path) -> list[Path]:
+    """Absolute paths of every worktree of ``repo`` (main checkout + linked),
+    from ``git worktree list``. Empty if ``repo`` is not a git repo."""
+    out = _git(repo, ["worktree", "list", "--porcelain"])
+    if out.returncode != 0:
+        return []
+    paths: list[Path] = []
+    for line in out.stdout.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line[len("worktree ") :].strip()).resolve())
+    return paths
+
+
+def worktree_sibling(current_root: str | Path, subrepo: str | Path) -> Path | None:
+    """A worktree of ``subrepo`` that sits beside ``current_root``, or None.
+
+    When the current repo is a linked worktree, a federated child configured by
+    its main-checkout path points at the wrong branch. If the child has its own
+    worktree in the same parent directory as the current one (the sprint layout
+    ``<root>/<chantier>/{api,front}``) and that worktree is cgh-indexed, return
+    it so federation reads the matching branch. Returns None outside a worktree,
+    when the configured child is itself a linked worktree, when no cgh-indexed
+    sibling exists, or when several do (a flat layout where every ticket's
+    worktrees share one directory), so the caller keeps the configured path."""
+    current_root = Path(current_root).resolve()
+    subrepo = Path(subrepo).resolve()
+    if not in_git_worktree(current_root):
+        return None
+    # Only the child's MAIN checkout is replaced. A child configured as a
+    # linked worktree (a seed checkout, another chantier) was chosen on
+    # purpose: keep it.
+    if in_git_worktree(subrepo):
+        return None
+    parent = current_root.parent
+    candidates = [
+        wt
+        for wt in _list_worktrees(subrepo)
+        if wt not in (subrepo, current_root)
+        and wt.parent == parent
+        and (state_dir_for(wt)).is_dir()
+    ]
+    # Exactly one sibling, or none: in a flat layout where every ticket
+    # worktree of every repo shares one directory, several candidates sit
+    # beside the current one and any pick would read another ticket's
+    # branch. Keep the configured path then.
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _exclude_file(root: Path) -> Path | None:
+    out = _git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return Path(out.stdout.strip()) / "info" / "exclude"
+
+
+def _footprint_relpaths(root: Path) -> list[str]:
+    """The cgh-managed paths that actually exist under ``root``, repo-relative."""
+    found: list[str] = []
+    for rel in _FOOTPRINT_FILES:
+        if (root / rel).exists():
+            found.append(rel)
+    for pattern in _FOOTPRINT_GLOBS:
+        parent = root / str(Path(pattern).parent)
+        name_glob = Path(pattern).name
+        if parent.is_dir():
+            for match in sorted(parent.glob(name_glob)):
+                found.append(str(match.relative_to(root)))
+    return found
+
+
+def _path_status(root: Path, rel: str) -> str:
+    """ "tracked-modified", "untracked", or "clean" for a single path, read from
+    git. "clean" covers unmodified-tracked, gitignored, and anything git will
+    not report, none of which needs hiding."""
+    out = _git(root, ["status", "--porcelain", "--ignored", "--", rel])
+    if out.returncode != 0:
+        return "clean"
+    line = next((ln for ln in out.stdout.splitlines() if ln.strip()), "")
+    if not line:
+        return "clean"
+    code = line[:2]
+    if code == "??":
+        return "untracked"
+    if code in ("!!",):
+        return "clean"  # already ignored, nothing to hide
+    if "M" in code or "A" in code:
+        return "tracked-modified"
+    return "clean"
+
+
+def _add_excludes(root: Path, patterns: list[str]) -> None:
+    """Append gitignore patterns to the worktree's shared info/exclude, once."""
+    path = _exclude_file(root)
+    if path is None:
+        return
+    try:
+        existing = (
+            set(path.read_text(encoding="utf-8").splitlines())
+            if path.exists()
+            else set()
+        )
+        new = [p for p in patterns if p not in existing]
+        if not new:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            if existing and not _ends_with_newline(path):
+                fh.write("\n")
+            fh.write("\n".join(new) + "\n")
+    except OSError:
+        return
+
+
+def _ends_with_newline(path: Path) -> bool:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return True
+    return not data or data.endswith(b"\n")
+
+
+def hide_footprint(root: str | Path, *, enabled: bool = True) -> list[str]:
+    """Keep cgh init's own writes out of git when run inside a worktree.
+
+    Marks the tracked files init modified as skip-worktree and adds the
+    untracked ones it created to the worktree's info/exclude. Returns the
+    repo-relative paths it hid (empty when disabled, outside a worktree, or
+    with nothing to hide). Best-effort: any git error is swallowed so init is
+    never blocked by this housekeeping.
+    """
+    root = Path(root).resolve()
+    if not enabled or not in_git_worktree(root):
+        return []
+
+    hidden: list[str] = []
+    to_exclude: list[str] = []
+    for rel in _footprint_relpaths(root):
+        status = _path_status(root, rel)
+        if status == "tracked-modified":
+            res = _git(root, ["update-index", "--skip-worktree", rel])
+            if res.returncode == 0:
+                hidden.append(rel)
+        elif status == "untracked":
+            to_exclude.append("/" + rel)
+            hidden.append(rel)
+    if to_exclude:
+        _add_excludes(root, to_exclude)
+    return hidden

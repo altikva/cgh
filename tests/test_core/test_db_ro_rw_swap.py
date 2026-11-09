@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db import (
+from cgh.core.db import (
     get_connection,
     get_readonly_connection,
     reset_connection,

@@ -18,11 +18,11 @@ import subprocess
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import churn
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_history import register as register_history
+import cgh.server as _srv
+from cgh.analysis import churn
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_history import register as register_history
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 

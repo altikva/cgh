@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from codegraph.indexer import _bind_scanner_root
+from cgh.indexer import _bind_scanner_root
 
 
 class _Scanner:
@@ -45,8 +45,8 @@ def test_scanner_without_the_attribute_is_left_alone(tmp_path):
 
 
 def test_deferred_process_repairs_the_binding(tmp_path, monkeypatch):
-    import codegraph.plugins as plugins
-    import codegraph.state.deferred_scan as ds
+    import cgh.plugins as plugins
+    import cgh.state.deferred_scan as ds
 
     seen_roots: list = []
 

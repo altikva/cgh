@@ -2,13 +2,13 @@
 
 import pytest
 
-from codegraph.indexer import _is_cghignored, _load_cghignore
+from cgh.indexer import _is_cghignored, _load_cghignore
 
 
 @pytest.fixture(autouse=True)
 def reset_cache():
     """Reset the cghignore pattern cache between tests."""
-    import codegraph.indexer as idx
+    import cgh.indexer as idx
 
     idx._cghignore_patterns = None
     yield

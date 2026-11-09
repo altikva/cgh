@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-import codegraph.plugins as plugins
-from codegraph import sdk
-from codegraph.plugin_api import ScanFinding
+import cgh.plugins as plugins
+from cgh import sdk
+from cgh.plugin_api import ScanFinding
 
 
 @pytest.fixture(autouse=True)

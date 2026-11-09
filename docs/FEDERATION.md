@@ -1,9 +1,9 @@
 # Federation
 
-When you work in a parent folder that holds several sub-projects, each with its own `.git` and its own `.codegraph/` index, you don't want the parent to re-index everything. Per-child `.gitignore` semantics get lost, large trees (node_modules, vendor) get walked, duplicate work explodes. The federation model fixes this:
+When you work in a parent folder that holds several sub-projects, each with its own `.git` and its own `.cgh/` index, you don't want the parent to re-index everything. Per-child `.gitignore` semantics get lost, large trees (node_modules, vendor) get walked, duplicate work explodes. The federation model fixes this:
 
 - The parent **only indexes files outside any declared subrepo** (its README, top-level configs, cross-repo docs).
-- Each subrepo keeps its own `.codegraph/` as the canonical index for its own code.
+- Each subrepo keeps its own `.cgh/` as the canonical index for its own code.
 - At MCP query time, the parent **fans out read-only queries** to each child's DB and aggregates results, tagging every hit with a `scope` field (`parent` or the child's basename).
 
 ### Setup
@@ -14,7 +14,7 @@ cd apps/api && cgh init && cgh index
 
 # In the parent
 cd ../..
-cgh init                                   # auto-detects nested .codegraph/, offers to federate
+cgh init                                   # auto-detects nested .cgh/, offers to federate
 cgh federate add ./apps/api ./apps/web     # (or declare manually)
 cgh federate list                          # status + owner state per child
 cgh index                                  # parent indexes only its own files

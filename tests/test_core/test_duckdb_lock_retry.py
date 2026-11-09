@@ -1,5 +1,5 @@
 """
-Tests for codegraph.core.db_duckdb._connect_with_retry, which retries a
+Tests for cgh.core.db_duckdb._connect_with_retry, which retries a
 DuckDB open when a concurrent writer holds the file lock.
 """
 
@@ -8,8 +8,8 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-import codegraph.core.db_duckdb as db_duckdb
-from codegraph.core.db_duckdb import _connect_with_retry
+import cgh.core.db_duckdb as db_duckdb
+from cgh.core.db_duckdb import _connect_with_retry
 
 # ---- tests -----------------------------------------------------------------
 

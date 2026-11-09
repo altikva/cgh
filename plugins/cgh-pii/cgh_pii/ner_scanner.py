@@ -17,7 +17,7 @@ from pathlib import Path
 # ner extra is not installed; see the register() guard in __init__.
 from presidio_analyzer import AnalyzerEngine
 
-from codegraph.plugin_api import ScanFinding
+from cgh.plugin_api import ScanFinding
 
 _ENTITY_KEYS = {
     "PERSON": "pii.person",

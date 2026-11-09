@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from codegraph.plugin_api import ScanFinding
+from cgh.plugin_api import ScanFinding
 
 _EMAIL = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")
 _PHONE = re.compile(r"(?<![\w./-])(?:\+|00)\d{1,3}[\s.-]?\d(?:[\s.-]?\d){6,11}\b")

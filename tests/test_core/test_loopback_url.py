@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.utils import is_loopback_url
+from cgh.core.utils import is_loopback_url
 
 
 @pytest.mark.parametrize(

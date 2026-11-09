@@ -21,8 +21,8 @@ pytest.importorskip("cgh_codegen")
 from cgh_codegen.flow import run_generation
 from cgh_codegen.picker import CodegenError
 
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
 
 
 class FakeBackend:

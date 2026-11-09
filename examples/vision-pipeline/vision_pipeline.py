@@ -17,7 +17,7 @@ from __future__ import annotations
 import secrets
 import sys
 
-from codegraph import sdk
+from cgh import sdk
 
 SECRET = secrets.token_bytes(32)
 

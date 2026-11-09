@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from codegraph import indexer
+from cgh import indexer
 
 
 def test_index_file_skips_a_file_gone_since_the_walk(tmp_path, monkeypatch):

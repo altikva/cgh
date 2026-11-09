@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from codegraph.state.git_hooks import (
+from cgh.state.git_hooks import (
     HOOK_EVENTS,
     git_hooks_status,
     hooks_target_info,

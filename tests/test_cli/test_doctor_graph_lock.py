@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import argparse
 
-from codegraph.cli import commands_monitor
-from codegraph.core import db
-from codegraph.state import ipc
+from cgh.cli import commands_monitor
+from cgh.core import db
+from cgh.state import ipc
 
 
 def _graph_row(tmp_path, monkeypatch, capsys, owner_alive: bool) -> str:
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "graph.duckdb").write_bytes(b"")
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "graph.duckdb").write_bytes(b"")
     monkeypatch.setattr(db, "get_readonly_connection", lambda root: None)
     monkeypatch.setattr(ipc, "is_owner_alive", lambda root: owner_alive)
     monkeypatch.setattr(ipc, "read_owner_pid", lambda root: 4242)

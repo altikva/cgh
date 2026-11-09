@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 def test_spawn_owner_pins_cwd_to_root(monkeypatch, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     captured = {}
 
     class FakePopen:

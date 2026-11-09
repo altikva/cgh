@@ -18,8 +18,8 @@ pytest.importorskip("cgh_codegen")
 
 from cgh_codegen.gate import egress_decision
 
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
 
 
 def _label(root, file: str, key: str, value: str = "true", severity: str = "info"):
@@ -68,9 +68,9 @@ def test_strict_posture_requires_explicit_non_confidential_label(tmp_path):
 def test_posture_defaults_to_open_even_with_legacy_secure_mode(tmp_path):
     from cgh_codegen.gate import egress_posture
 
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nmode = "secure"\n', encoding="utf-8"
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "config.toml").write_text(
+        '[cgh]\nmode = "secure"\n', encoding="utf-8"
     )
     assert egress_posture(tmp_path, {}) == "open"
     assert egress_posture(tmp_path, {"egress": "strict"}) == "strict"

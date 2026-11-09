@@ -22,7 +22,7 @@ import time
 
 import pytest
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 class _Owner(http.server.ThreadingHTTPServer):

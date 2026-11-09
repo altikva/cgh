@@ -44,7 +44,7 @@ class CliBackend:
         return bool(self._command) and shutil.which(self._command[0]) is not None
 
     def generate(self, system: str, user: str) -> tuple[str, float]:
-        from codegraph.plugin_api import quiet_subprocess_kwargs
+        from cgh.plugin_api import quiet_subprocess_kwargs
 
         prompt = f"{system}\n\n{user}"
         try:

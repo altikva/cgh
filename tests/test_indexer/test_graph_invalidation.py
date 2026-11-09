@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.indexer as idx
-from codegraph.core import db as dbmod
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.state.scan_meta import read_meta
+import cgh.indexer as idx
+from cgh.core import db as dbmod
+from cgh.core.db import get_connection, reset_connection
+from cgh.state.scan_meta import read_meta
 
 duckdb = pytest.importorskip("duckdb")
 
@@ -181,7 +181,7 @@ def test_invalidated_readonly_connection_is_dropped(tmp_path):
 
 
 def test_reopen_that_stays_invalidated_fails_loudly(tmp_path, monkeypatch):
-    from codegraph.core.db_duckdb import DuckDBGraphDB
+    from cgh.core.db_duckdb import DuckDBGraphDB
 
     root = _repo(tmp_path)
     reset_connection(root)
@@ -244,7 +244,7 @@ def test_full_index_rebuilds_after_a_fatal_a_step_swallowed(tmp_path, monkeypatc
     assert state["calls"] == 2  # the run was redone on a fresh graph
     assert stats["errors"] == 0
     assert _graph(root) == {"helper2": True, "main_calls": 2}
-    log = (root / ".codegraph" / "activity.log").read_text(encoding="utf-8")
+    log = (root / ".cgh" / "activity.log").read_text(encoding="utf-8")
     assert "graph_corrupt_recover" in log
     reset_connection(root)
 
@@ -293,9 +293,9 @@ _REAL_INVALIDATION = r"""
 import json, resource, signal, sys
 from pathlib import Path
 
-import codegraph.indexer as idx
-from codegraph.core.db import get_connection
-from codegraph.state.scan_meta import read_meta
+import cgh.indexer as idx
+from cgh.core.db import get_connection
+from cgh.state.scan_meta import read_meta
 
 root = Path(sys.argv[1])
 real = idx._ingest_code

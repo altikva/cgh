@@ -15,12 +15,12 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server._budget import FILE_SUMMARY_MAX_BYTES
-from codegraph.server.tools_insight import register as register_insight
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server._budget import FILE_SUMMARY_MAX_BYTES
+from cgh.server.tools_insight import register as register_insight
+from cgh.server.tools_query import register as register_query
 
 
 class _FakeMcp:

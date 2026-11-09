@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.analysis.roles import classify
+from cgh.analysis.roles import classify
 
 
 @pytest.mark.parametrize(
@@ -53,10 +53,10 @@ def test_a_repo_under_a_tests_directory_is_not_all_tests(tmp_path):
 
 
 def test_custom_rules_still_win(tmp_path):
-    from codegraph.analysis.roles import reset_rules_cache
+    from cgh.analysis.roles import reset_rules_cache
 
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "config.toml").write_text(
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "config.toml").write_text(
         '[roles]\n"/tests/fixtures/" = "fixture:test"\n', encoding="utf-8"
     )
     reset_rules_cache()

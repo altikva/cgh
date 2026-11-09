@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 # Match cgh's IGNORE_DIRS to stay consistent with indexer behavior.
@@ -297,7 +298,7 @@ def pattern_search(
         try:
             import tomllib
 
-            cfg = repo_root / ".cgh" / "config.toml"
+            cfg = state_dir_for(repo_root) / "config.toml"
             if cfg.exists():
                 with open(cfg, "rb") as f:
                     for rel in tomllib.load(f).get("cgh", {}).get("extra_dirs", []):

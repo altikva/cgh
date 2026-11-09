@@ -33,6 +33,7 @@ from cgh.cli import (
     progress_console,
     show_progress,
 )
+from cgh.core.config import state_dir_for
 
 # ---------------------------------------------------------------------------
 # cmd_index
@@ -443,6 +444,16 @@ def cmd_stop(args: argparse.Namespace) -> None:
     cmd_serve(args)
 
 
+def cmd_path(args: argparse.Namespace) -> None:
+    """`cgh path --state`: print the resolved per-repo state directory so
+    external scripts read it instead of hardcoding `.cgh/` (or the legacy
+    `.codegraph/`). Prints the absolute path, one line, nothing else, so it
+    is safe in `$(cgh path --state)`."""
+    from cgh.core.config import state_dir_for
+
+    print(state_dir_for(args.root).resolve())
+
+
 # ---------------------------------------------------------------------------
 # cmd_force_index
 # ---------------------------------------------------------------------------
@@ -511,7 +522,7 @@ def cmd_reindex_hook(args: argparse.Namespace) -> None:
     """
     try:
         root = os.path.abspath(getattr(args, "root", os.getcwd()))
-        if not (Path(root) / ".cgh").is_dir():
+        if not (state_dir_for(root)).is_dir():
             return  # repo is not indexed by cgh, nothing to do
 
         from cgh.state.ipc import is_owner_alive, read_owner_port

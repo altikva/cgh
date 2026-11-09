@@ -23,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from cgh.cli import LOGO, VERSION, _get_conn, _lang_color, console
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 # ---------------------------------------------------------------------------
@@ -141,7 +142,7 @@ def _stats_content(root: str) -> Group:
     except Exception:
         pass
 
-    cgh_dir = Path(root) / ".cgh"
+    cgh_dir = state_dir_for(root)
     db_sizes: dict = {}
     total_size = 0
     for f in sorted(cgh_dir.glob("*")) if cgh_dir.exists() else []:
@@ -384,7 +385,7 @@ def _stats_json(root: str) -> str:
     except Exception:
         pass
 
-    cgh_dir = Path(root) / ".cgh"
+    cgh_dir = state_dir_for(root)
     db_sizes: dict = {}
     for f in sorted(cgh_dir.glob("*")) if cgh_dir.exists() else []:
         if f.is_file() and not f.name.endswith(("-shm", "-wal")):
@@ -477,7 +478,7 @@ def _status_via_fts(root: str) -> dict:
     try:
         import sqlite3 as _sql
 
-        fts_path = Path(root) / ".cgh" / "fts.db"
+        fts_path = state_dir_for(root) / "fts.db"
         if fts_path.exists():
             from cgh.core.utils import ro_sqlite_uri
 
@@ -621,10 +622,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     # Owner
     owner_pid = None
     owner_port = None
-    if (Path(root) / ".cgh").exists():
+    if (state_dir_for(root)).exists():
         try:
             owner_pid = int(
-                (Path(root) / ".cgh" / "owner.pid").read_text(encoding="utf-8").strip()
+                (state_dir_for(root) / "owner.pid").read_text(encoding="utf-8").strip()
             )
         except (OSError, ValueError):
             pass
@@ -689,7 +690,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     try:
         import tomllib
 
-        cfg = Path(root) / ".cgh" / "config.toml"
+        cfg = state_dir_for(root) / "config.toml"
         if cfg.exists():
             with open(cfg, "rb") as f:
                 extra_dirs = tomllib.load(f).get("cgh", {}).get("extra_dirs", [])
@@ -990,7 +991,7 @@ def _backend_info(root: str) -> dict:
     Always returns the same shape, caller can switch on ``on_disk`` to
     distinguish the empty case without checking for missing keys.
     """
-    cg = Path(root) / ".cgh"
+    cg = state_dir_for(root)
     duck = cg / "graph.duckdb"
     lite = cg / "graph.sqlite"
 
@@ -1026,7 +1027,7 @@ def _backend_status_line(root: str) -> str:
       - the CGH_DB env var if set, with a warning when it disagrees with
         what's on disk (the next `cgh index` would write a second file)
     """
-    cg = Path(root) / ".cgh"
+    cg = state_dir_for(root)
     duck = cg / "graph.duckdb"
     lite = cg / "graph.sqlite"
 
@@ -1256,7 +1257,7 @@ def cmd_reset(args: argparse.Namespace) -> None:
     from cgh.state.ipc import owner_pidfile
 
     root = Path(os.path.abspath(args.root))
-    cg_dir = root / ".cgh"
+    cg_dir = state_dir_for(root)
     if not cg_dir.exists():
         console.print("[yellow]Not initialized.[/yellow]")
         return
@@ -1523,7 +1524,7 @@ def cmd_history(args: argparse.Namespace) -> None:
 
     root = os.path.abspath(args.root)
     days = args.days
-    cgh_dir = Path(root) / ".cgh"
+    cgh_dir = state_dir_for(root)
     log_path = cgh_dir / "call_log.db"
 
     console.print(LOGO)
@@ -1793,7 +1794,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         healthy, detail = owner_probe(root)
         print(detail)
         raise SystemExit(0 if healthy else 1)
-    cgh_dir = root / ".cgh"
+    cgh_dir = state_dir_for(root)
     notices = _config_notices(root)
 
     console.print(LOGO)
@@ -2199,7 +2200,7 @@ def _print_claude_audit(audit: dict) -> None:
 def cmd_compact(args: argparse.Namespace) -> None:
     """Vacuum SQLite DBs and show before/after sizes."""
     root = os.path.abspath(args.root)
-    cgh_dir = Path(root) / ".cgh"
+    cgh_dir = state_dir_for(root)
 
     console.print(LOGO)
 

@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _PORT_FILE = "server.port"
 _OWNER_PID_FILE = "owner.pid"
 _OWNER_VERSION_FILE = "owner.version"
@@ -39,7 +41,6 @@ def _state(repo_root: str | Path) -> Path:
     workers, logs) must sit beside the data so a proxy finds a live owner even
     before the dir is renamed; a hardcoded ``.cgh/`` would split a legacy repo
     between two directories and spawn a second owner against a held lock."""
-    from cgh.core.config import state_dir_for
 
     return state_dir_for(repo_root)
 

@@ -27,6 +27,8 @@ import re
 import time
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 IMAGE_EXTS = frozenset(
     {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 )
@@ -63,14 +65,14 @@ def _root_for(target: Path, cwd: str | None) -> Path | None:
         starts.append(Path(cwd))
     for start in starts:
         for parent in [start, *start.parents]:
-            if (parent / ".cgh").is_dir():
+            if (state_dir_for(parent)).is_dir():
                 return parent
     return None
 
 
 def _record_path(root: Path, session_id: str, kind: str = "images") -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
-    return root / ".cgh" / "sessions" / f"{kind}-{safe}.json"
+    return state_dir_for(root) / "sessions" / f"{kind}-{safe}.json"
 
 
 def _load(path: Path) -> dict[str, dict]:

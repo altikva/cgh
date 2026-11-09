@@ -17,11 +17,13 @@ import signal
 import subprocess
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _PID_FILE = "server.pid"
 
 
 def _pidfile_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _PID_FILE
+    return state_dir_for(repo_root) / _PID_FILE
 
 
 def process_alive(pid: int) -> bool:

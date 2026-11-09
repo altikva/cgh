@@ -25,6 +25,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from cgh.analysis.federation import child_paths_to_skip, is_under_any
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 from cgh.indexer import _is_cghignored, index_file, skipped_path_parts
 from cgh.parsers import is_supported
@@ -270,7 +271,7 @@ def start_watcher(repo_root: str | Path) -> Observer:
     try:
         import tomllib
 
-        cfg = root / ".cgh" / "config.toml"
+        cfg = state_dir_for(root) / "config.toml"
         if cfg.exists():
             with open(cfg, "rb") as f:
                 data = tomllib.load(f)

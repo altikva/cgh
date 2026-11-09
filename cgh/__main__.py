@@ -55,6 +55,7 @@ from cgh.cli.commands_index import (
     cmd_force_index,
     cmd_index,
     cmd_memory_index,
+    cmd_path,
     cmd_plan_index,
     cmd_reindex_hook,
     cmd_serve,
@@ -408,6 +409,15 @@ def _register_setup_and_serve(sub) -> None:
     # --- stop (discoverable alias for `serve --stop`) ---
     p = sub.add_parser("stop", help="Stop this repo's owner and unregister the worker")
     _add_root(p)
+
+    # --- path (resolved paths, so external scripts stop hardcoding .cgh/) ---
+    p = sub.add_parser("path", help="Print a resolved path for this repo (for scripts)")
+    _add_root(p)
+    p.add_argument(
+        "--state",
+        action="store_true",
+        help="Print the state directory (.cgh/, or a legacy .codegraph/ until migrated)",
+    )
 
     # --- _serve_owner (hidden internal subcommand) ---
     p = sub.add_parser("_serve_owner", help=argparse.SUPPRESS)
@@ -1025,6 +1035,7 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "stop": cmd_stop,
+        "path": cmd_path,
         "_serve_owner": _cmd_serve_owner,
         "_hook_precheck_grep": cmd_hook_precheck_grep,
         "_hook_precheck_read": cmd_hook_precheck_read,

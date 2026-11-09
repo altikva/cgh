@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from cgh.cli import hook_advice, hook_answers
+from cgh.core.config import state_dir_for
 
 # Bare identifier: starts with a letter or underscore, followed by 2+ word
 # chars, no regex metachars. Matches names like `user_manager` or `MyClass`
@@ -138,7 +139,7 @@ def _grep_one_file(root: Path, target: Path) -> str | None:
         if rel is None:
             return None
         count = _count_symbols(
-            root / ".cgh" / "fts.db", str(target.resolve()), str(rel)
+            state_dir_for(root) / "fts.db", str(target.resolve()), str(rel)
         )
         outcome = on_demand.for_hook(root, target, count, parse=False)
     except Exception:
@@ -289,7 +290,7 @@ def _shell_answer(command: str, cwd: Path) -> str | None:
 
 
 def _in_cgh_repo(start: Path) -> bool:
-    return any((p / ".cgh").is_dir() for p in (start, *start.parents))
+    return any((state_dir_for(p)).is_dir() for p in (start, *start.parents))
 
 
 _HINT_LABEL_RE = re.compile(r"`([^`]+)`")
@@ -457,7 +458,7 @@ def _artifact_precheck(
     documents cgh parses now, whose summaries were saved when they were still
     opaque. Advisory and best-effort throughout: a missing DB or a bad row must
     never break the Read."""
-    db = repo_root / ".cgh" / "call_log.db"
+    db = state_dir_for(repo_root) / "call_log.db"
     hit_body: str | None = None
     if db.is_file():
         try:
@@ -749,7 +750,7 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
     # considers root for this file. Stops at filesystem root.
     repo_root: Path | None = None
     for parent in [target.parent, *target.parents]:
-        if (parent / ".cgh" / "fts.db").is_file():
+        if (state_dir_for(parent) / "fts.db").is_file():
             repo_root = parent
             break
     # A file outside every cgh repo (a scratchpad, another checkout) read
@@ -801,7 +802,7 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
             pass
         sys.exit(0)
 
-    fts_db = repo_root / ".cgh" / "fts.db"
+    fts_db = state_dir_for(repo_root) / "fts.db"
     try:
         from cgh.core.utils import ro_sqlite_uri
 

@@ -20,6 +20,8 @@ import queue
 import threading
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _QUEUE: queue.Queue[tuple[str, str, str]] = queue.Queue()
 _WORKER_STARTED = threading.Event()
 _LOCK = threading.Lock()
@@ -147,7 +149,7 @@ def _plugin_allowed(repo_root: str, name: str) -> bool:
     the start (a script appending [plugins] to a fresh worktree) would
     otherwise be ignored until a restart, while every file still costs
     a backend call."""
-    cfg_path = Path(repo_root) / ".cgh" / "config.toml"
+    cfg_path = state_dir_for(repo_root) / "config.toml"
     try:
         mtime = cfg_path.stat().st_mtime
     except OSError:

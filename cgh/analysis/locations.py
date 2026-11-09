@@ -22,6 +22,8 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 _IDENT = re.compile(
     r"\b(?:[a-z]+(?:_[a-z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+"
     r"|[a-z]+[A-Z][A-Za-z0-9]+)\b"
@@ -43,7 +45,7 @@ def task_locations(root: Path, text: str, max_lines: int = 25) -> list[str]:
     from cgh.core.utils import ro_sqlite_uri
 
     root = Path(root).resolve()
-    db = root / ".cgh" / "fts.db"
+    db = state_dir_for(root) / "fts.db"
     if not db.is_file() or not text.strip():
         return []
     out: list[str] = []

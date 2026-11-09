@@ -15,6 +15,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 _META_FILE = "scan_meta.json"
@@ -80,7 +81,7 @@ GRAPH_FORMAT = 15
 
 
 def _meta_path(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _META_FILE
+    return state_dir_for(repo_root) / _META_FILE
 
 
 def _git(repo_root: str | Path, *args: str) -> str | None:

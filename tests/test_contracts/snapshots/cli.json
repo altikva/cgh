@@ -51,6 +51,7 @@
     "packages",
     "papercut",
     "parsers",
+    "path",
     "plan-index",
     "plugins",
     "prs",
@@ -670,6 +671,14 @@
       "parsers": {
         "options": [
           "--help",
+          "-h"
+        ]
+      },
+      "path": {
+        "options": [
+          "--help",
+          "--root",
+          "--state",
           "-h"
         ]
       },

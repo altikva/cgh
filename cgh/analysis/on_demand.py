@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from cgh.core.config import state_dir_for
 from cgh.core.utils import quiet_subprocess_kwargs
 
 # How long a lookup may spend making a file indexable before it gives up and
@@ -182,7 +183,7 @@ def fts_behind(root: Path, target: Path) -> bool:
     index, so its rows there may be stale. Cheap enough for a hook: two
     stats. Every index of a file ends with an FTS write, so a file older
     than that write was indexed in its current form, or skipped."""
-    db = root / ".cgh" / "fts.db"
+    db = state_dir_for(root) / "fts.db"
     try:
         mtime = target.stat().st_mtime
     except OSError:

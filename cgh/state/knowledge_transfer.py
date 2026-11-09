@@ -23,6 +23,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
 from cgh.state.call_log import _LOG_LOCK, _SESSION_STATE_TAGS, _get_conn
 
 RECORD_KNOWLEDGE = "knowledge"
@@ -108,7 +109,7 @@ def commit_time(root: str | Path, rev: str) -> float:
 def _ro_connect(repo_root: str | Path) -> sqlite3.Connection:
     """A read-only connection: export must not write, nor wait on, a store a
     running owner holds."""
-    path = Path(repo_root) / ".cgh" / "call_log.db"
+    path = state_dir_for(repo_root) / "call_log.db"
     if not path.is_file():
         raise KnowledgeTransferError(f"no knowledge store at {path}")
     return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)

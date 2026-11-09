@@ -35,6 +35,7 @@ import shlex
 from pathlib import Path
 
 from cgh.cli import hook_answers
+from cgh.core.config import state_dir_for
 
 _WRAPPERS = frozenset({"sudo", "time", "command", "exec", "nice", "env"})
 # Runners in front of the real program: `uv run pytest`, `python -m pytest`.
@@ -474,7 +475,7 @@ _CHUNK = 1 << 20
 def _state_path(root: Path, session_id: str) -> Path:
     from cgh.core.utils import ensure_dir
 
-    path = root / ".cgh" / "sessions"
+    path = state_dir_for(root) / "sessions"
     ensure_dir(path)
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
     return path / f"compact-{safe}.json"
@@ -490,7 +491,7 @@ def hint_count(root: Path, session_id: str, kind: str) -> int:
     try:
         from cgh.core.utils import ensure_dir
 
-        path = root / ".cgh" / "sessions"
+        path = state_dir_for(root) / "sessions"
         ensure_dir(path)
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "unknown"
         path = path / f"hints-{safe}.json"

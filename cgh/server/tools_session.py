@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 
+from cgh.core.config import state_dir_for
 from cgh.server._budget import dumps_answer
 
 # The share of the post-instructions budget reserved for the knowledge bucket,
@@ -248,7 +249,7 @@ def _collect_sections(
         federated: list[dict] = []
         for child in resolve_children(repo_root):
             for row in knowledge_search_ro(
-                child / ".cgh" / "call_log.db", task or "", limit=5
+                state_dir_for(child) / "call_log.db", task or "", limit=5
             ):
                 row["scope"] = child.name
                 federated.append(row)

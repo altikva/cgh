@@ -23,6 +23,8 @@ import time
 from collections import Counter
 from pathlib import Path
 
+from cgh.core.config import state_dir_for
+
 # Bob's file-writing tools and the input key holding the target path.
 _WRITE_TOOLS = frozenset(
     {
@@ -71,7 +73,7 @@ def _session_id(payload: dict) -> str:
 def _state_dir(root: Path) -> Path:
     from cgh.core.utils import ensure_dir
 
-    path = root / ".cgh" / "sessions"
+    path = state_dir_for(root) / "sessions"
     ensure_dir(path)
     return path
 
@@ -106,7 +108,7 @@ def _settings(root: Path) -> dict:
 
     try:
         data = tomllib.loads(
-            (root / ".cgh" / "config.toml").read_text(encoding="utf-8")
+            (state_dir_for(root) / "config.toml").read_text(encoding="utf-8")
         )
     except (OSError, tomllib.TOMLDecodeError):
         data = {}

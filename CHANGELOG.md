@@ -51,13 +51,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   subrepos; weighted hybrid fusion with the BM25 index comes next.
 
 ### Fixed
-- **`cgh init` ignores `.cgh/` through `.git/info/exclude`, not the tracked
-  `.gitignore`.** It no longer appends `.cgh/` (and `.cgh/auth.key`) to the
-  committed `.gitignore`, which left an unrequested diff that blocked tearing
-  down an agent worktree after a merge. The entry goes in the repo's local
-  `.git/info/exclude` (the shared common dir for a worktree) and only when the
-  path is not already ignored, so no repository gets a diff it did not ask for.
-  Outside a git repo it is a no-op.
+- **`cgh init` ignores its state dir with a self-contained `.cgh/.gitignore`,
+  not the tracked one.** It no longer appends `.cgh/` (and `.cgh/auth.key`) to
+  the repo's committed `.gitignore`, which left an unrequested diff that
+  blocked tearing down an agent worktree after a merge. Instead it writes a
+  `.gitignore` of `*` inside `.cgh/` itself: git then ignores the whole dir,
+  the auth key included, with no diff to any tracked file and no dependence on
+  a git command, from any subdirectory and whether or not a repo exists yet.
 - **Every state-dir path follows the resolver, never a hardcoded `.cgh/`.** All
   reads and writes of the per-repo state (the graph DB, FTS, call log, auth
   key, config, logs, locks) now resolve through `state_dir_for`, which reads a

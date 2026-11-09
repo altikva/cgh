@@ -799,8 +799,7 @@ def init_project(root: Path) -> dict:
     # Generate auth key
     from cgh.state.auth import (
         ensure_auth_key,
-        ensure_gitignore_has_auth_key,
-        ensure_locally_ignored,
+        ensure_state_dir_ignored,
         get_auth_key_path,
     )
 
@@ -809,13 +808,13 @@ def init_project(root: Path) -> dict:
         ensure_auth_key(root)
         created.append(str(key_path))
 
-    # Keep .cgh/ out of version control through the repo's local
-    # .git/info/exclude, never the tracked .gitignore: an init in a worktree
-    # must not leave an unrequested diff that blocks its teardown. .cgh/ covers
-    # auth.key, so the dedicated auth-key call is then a no-op.
-    if ensure_locally_ignored(root, ".cgh/"):
-        created.append(".git/info/exclude (updated)")
-    ensure_gitignore_has_auth_key(root)
+    # Keep the whole .cgh/ dir (auth key included) out of version control with
+    # a self-contained .cgh/.gitignore of `*`, never the repo's tracked
+    # .gitignore: an init in a worktree must not leave an unrequested diff that
+    # blocks its teardown, and the secret must be protected with no dependency
+    # on a git command.
+    if ensure_state_dir_ignored(root):
+        created.append(str(cg_dir / ".gitignore"))
 
     return {
         "root": str(root),

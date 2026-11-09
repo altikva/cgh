@@ -18,59 +18,34 @@
 
 from __future__ import annotations
 
-import os
 import secrets
-import subprocess
 from pathlib import Path
 
 AUTH_KEY_FILE = "auth.key"
 _CGH_DIR = ".cgh"
 
 
-def ensure_locally_ignored(repo_root: str | Path, pattern: str) -> bool:
-    """Ignore ``pattern`` through the repo's local ``.git/info/exclude`` (the
-    shared common dir for a worktree) instead of the tracked ``.gitignore``, so
-    cgh never writes an unrequested diff into a committed file. No-op outside a
-    git repo, when the path is already ignored (by an existing rule), or when
-    it is already in the exclude file. Returns True only when it added a line.
-    Fails closed: any git or IO error leaves the repo untouched."""
-    root = Path(repo_root)
+def ensure_state_dir_ignored(repo_root: str | Path) -> bool:
+    """Keep the whole ``.cgh/`` state dir (the auth key included) out of
+    version control with a self-contained ``.cgh/.gitignore`` of ``*``.
 
-    def _git(*args: str) -> subprocess.CompletedProcess[str] | None:
-        try:
-            return subprocess.run(
-                ["git", "-C", str(root), *args],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-
-    rev = _git("rev-parse", "--git-path", "info/exclude")
-    if rev is None or rev.returncode != 0:
-        return False  # not a git repo (or git unavailable): nothing to do
-    rel = rev.stdout.strip()
-    exclude_path = Path(rel) if os.path.isabs(rel) else root / rel
-
-    already = _git("check-ignore", "-q", pattern)
-    if already is not None and already.returncode == 0:
-        return False  # already ignored by .gitignore or the exclude file
-
-    existing = (
-        exclude_path.read_text(encoding="utf-8", errors="replace")
-        if exclude_path.exists()
-        else ""
-    )
-    if pattern in existing:
-        return False
+    The file lives inside cgh's own directory, so it protects the credential
+    whether or not a git repo exists yet, from any subdirectory, however git
+    is configured, and it never writes a diff into the repo's tracked
+    ``.gitignore`` (which would block tearing down an agent worktree). This is
+    the only protection the secret needs, so it does not depend on a git
+    command succeeding. Returns True when it wrote the file."""
+    ignore = Path(repo_root) / _CGH_DIR / ".gitignore"
     try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(exclude_path, "a", encoding="utf-8") as f:
-            f.write(f"\n# cgh (local, not committed)\n{pattern}\n")
+        if ignore.exists():
+            lines = ignore.read_text(encoding="utf-8", errors="replace").splitlines()
+            if any(ln.strip() == "*" for ln in lines):
+                return False
+        ignore.parent.mkdir(parents=True, exist_ok=True)
+        ignore.write_text("*\n", encoding="utf-8")
+        return True
     except OSError:
         return False
-    return True
 
 
 def generate_auth_key() -> str:
@@ -118,8 +93,8 @@ def ensure_auth_key(repo_root: str | Path) -> str:
 
 def ensure_gitignore_has_auth_key(repo_root: str | Path) -> bool:
     """
-    Keep .cgh/auth.key out of version control, through the repo's local
-    .git/info/exclude rather than the tracked .gitignore (see
-    ensure_locally_ignored). Returns True if a line was added.
+    Keep .cgh/auth.key out of version control. The whole .cgh/ dir is ignored
+    by a self-contained .cgh/.gitignore (see ensure_state_dir_ignored), which
+    covers the auth key. Returns True if that file was written.
     """
-    return ensure_locally_ignored(repo_root, f"{_CGH_DIR}/{AUTH_KEY_FILE}")
+    return ensure_state_dir_ignored(repo_root)

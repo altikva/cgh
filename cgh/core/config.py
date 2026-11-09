@@ -800,6 +800,7 @@ def init_project(root: Path) -> dict:
     from cgh.state.auth import (
         ensure_auth_key,
         ensure_gitignore_has_auth_key,
+        ensure_locally_ignored,
         get_auth_key_path,
     )
 
@@ -808,19 +809,12 @@ def init_project(root: Path) -> dict:
         ensure_auth_key(root)
         created.append(str(key_path))
 
-    # Add .cgh to .gitignore if not already there
-    gitignore = root / ".gitignore"
-    if gitignore.exists():
-        # A user/template .gitignore may not be UTF-8 (e.g. a CP1252 em dash
-        # in a header comment). We only scan for a substring, so decode
-        # leniently instead of crashing init on the encoding.
-        content = gitignore.read_text(encoding="utf-8", errors="replace")
-        if ".cgh" not in content:
-            with open(gitignore, "a", encoding="utf-8") as f:
-                f.write("\n# cgh index\n.cgh/\n")
-            created.append(".gitignore (updated)")
-
-    # Ensure auth.key is in .gitignore
+    # Keep .cgh/ out of version control through the repo's local
+    # .git/info/exclude, never the tracked .gitignore: an init in a worktree
+    # must not leave an unrequested diff that blocks its teardown. .cgh/ covers
+    # auth.key, so the dedicated auth-key call is then a no-op.
+    if ensure_locally_ignored(root, ".cgh/"):
+        created.append(".git/info/exclude (updated)")
     ensure_gitignore_has_auth_key(root)
 
     return {

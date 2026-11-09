@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import tomllib
 
-from codegraph.analysis.federation import (
+from cgh.analysis.federation import (
     _read_config_toml,
     _toml_escape,
     _write_config_toml,
@@ -38,12 +38,12 @@ class TestWriterRoundTrip:
         # A Windows-style path with backslashes (incl. \s, which is an invalid
         # raw TOML escape) must round-trip through the writer and parse.
         cfg = tmp_path / "config.toml"
-        data = {"codegraph": {"subrepos": ["./edf-sa\\services-backup"]}}
+        data = {"cgh": {"subrepos": ["./edf-sa\\services-backup"]}}
         _write_config_toml(cfg, data)
         parsed = tomllib.loads(cfg.read_text(encoding="utf-8"))
-        assert parsed["codegraph"]["subrepos"] == ["./edf-sa\\services-backup"]
+        assert parsed["cgh"]["subrepos"] == ["./edf-sa\\services-backup"]
         # And our own resilient reader agrees.
-        assert _read_config_toml(cfg)["codegraph"]["subrepos"] == [
+        assert _read_config_toml(cfg)["cgh"]["subrepos"] == [
             "./edf-sa\\services-backup"
         ]
 
@@ -57,7 +57,7 @@ class TestAddSubrepoForwardSlash:
 
         add_subrepo(parent, child)
 
-        raw = (parent / ".codegraph" / "config.toml").read_text(encoding="utf-8")
+        raw = (parent / ".cgh" / "config.toml").read_text(encoding="utf-8")
         assert "./edf-sa/services-backup" in raw
         assert "\\" not in raw  # no backslash escaping needed at all
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph import sdk
+from cgh import sdk
 
 SECRET = b"0123456789abcdef0123456789abcdef"
 

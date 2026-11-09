@@ -21,10 +21,10 @@ import subprocess
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_query as cq
-from codegraph.analysis.federation import ScopedResult, add_subrepo
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+import cgh.cli.commands_query as cq
+from cgh.analysis.federation import ScopedResult, add_subrepo
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 
 def _git(root, *args):

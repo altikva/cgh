@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.cli.commands_files import _index_decision
+from cgh.cli.commands_files import _index_decision
 
 
 def test_missing_file(tmp_path):
@@ -46,7 +46,7 @@ def test_over_size_cap(tmp_path, monkeypatch):
         max_file_size_kb = 0  # everything is "too big"
 
     monkeypatch.setattr(
-        "codegraph.core.config.load_config", lambda root: _Cfg(), raising=True
+        "cgh.core.config.load_config", lambda root: _Cfg(), raising=True
     )
     ok, reason = _index_decision(f, tmp_path)
     assert ok is False and "max_file_size_kb" in reason

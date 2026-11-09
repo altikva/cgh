@@ -1,12 +1,12 @@
 """
-Tests for codegraph.indexer._ingest_endpoints proving it survives a
+Tests for cgh.indexer._ingest_endpoints proving it survives a
 non-string node id (an int) from find_node_keys without crashing,
 coercing it instead.
 """
 
 from __future__ import annotations
 
-from codegraph.indexer import _ingest_endpoints
+from cgh.indexer import _ingest_endpoints
 
 # ---- test doubles ----------------------------------------------------------
 

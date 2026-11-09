@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-from codegraph.imports.resolver import reset_for_tests, resolve_rust
-from codegraph.parsers.rust import RustParser
+from cgh.imports.resolver import reset_for_tests, resolve_rust
+from cgh.parsers.rust import RustParser
 
 
 class TestRustParserModDeclarations:

@@ -16,7 +16,7 @@ import json
 import os
 import shutil
 
-from codegraph.cli.commands_init import _mcp_command
+from cgh.cli.commands_init import _mcp_command
 
 
 class TestMcpCommand:
@@ -50,12 +50,12 @@ class TestMcpCommand:
         command, args = _mcp_command()
 
         assert os.path.isabs(command)
-        assert args[:4] == ["-P", "-m", "codegraph", "serve"]
+        assert args[:4] == ["-P", "-m", "cgh", "serve"]
 
 
 class TestSetupWritesTheBobMcpJson:
     def test_writes_dot_bob_mcp_json(self, tmp_path, monkeypatch):
-        from codegraph.cli.commands_init import _install_integration
+        from cgh.cli.commands_init import _install_integration
 
         monkeypatch.setattr(
             shutil, "which", lambda n: "/opt/bin/cgh" if n == "cgh" else None
@@ -72,7 +72,7 @@ class TestSetupWritesTheBobMcpJson:
     def test_timeout_is_in_milliseconds(self, tmp_path, monkeypatch):
         """Bob reads "timeout" in ms: 300 meant 0.3 s and cancelled every
         tool call, so the entry must carry a value Bob snaps to 2 minutes."""
-        from codegraph.cli.commands_init import _install_integration
+        from cgh.cli.commands_init import _install_integration
 
         monkeypatch.setattr(shutil, "which", lambda n: None)
         _install_integration(tmp_path, "bob")
@@ -81,7 +81,7 @@ class TestSetupWritesTheBobMcpJson:
         assert entry["mcpServers"]["cgh"]["timeout"] == 120_000
 
     def test_always_allow_covers_safe_tools_only(self, tmp_path, monkeypatch):
-        from codegraph.cli.commands_init import _install_integration
+        from cgh.cli.commands_init import _install_integration
 
         monkeypatch.setattr(shutil, "which", lambda n: None)
         _install_integration(tmp_path, "bob")
@@ -95,7 +95,7 @@ class TestSetupWritesTheBobMcpJson:
     def test_reinit_keeps_user_approvals_and_larger_timeout(
         self, tmp_path, monkeypatch
     ):
-        from codegraph.cli.commands_init import _install_integration
+        from cgh.cli.commands_init import _install_integration
 
         monkeypatch.setattr(shutil, "which", lambda n: None)
         bob = tmp_path / ".bob"
@@ -126,8 +126,8 @@ def test_bob_always_allow_matches_registered_tools():
     """The static scan must see the same tools the server registers."""
     import asyncio
 
-    import codegraph.server as srv
-    from codegraph.cli.commands_init import _BOB_CONFIRM_TOOLS, _bob_always_allow
+    import cgh.server as srv
+    from cgh.cli.commands_init import _BOB_CONFIRM_TOOLS, _bob_always_allow
 
     # fastmcp 2.x names it get_tools (a dict keyed by name); 3.0 and later
     # expose list_tools. The supported range spans both.

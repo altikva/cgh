@@ -18,9 +18,9 @@ import subprocess
 
 import pytest
 
-from codegraph.cli.commands_impact import cmd_impact
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+from cgh.cli.commands_impact import cmd_impact
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 
 
 def _git(root, *args):
@@ -177,7 +177,7 @@ def test_impact_follows_calls_and_imports_in_function_bodies(tmp_path, capsys):
 
 
 def test_impact_missing_index_fails_cleanly(tmp_path, capsys):
-    # No .codegraph/ -> graceful JSON error, exit 1.
+    # No .cgh/ -> graceful JSON error, exit 1.
     _git(tmp_path, "init")
     (tmp_path / "x.py").write_text("y = 1\n", encoding="utf-8")
     _git(tmp_path, "add", "-A")

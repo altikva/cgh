@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_arch import register as register_arch
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_arch import register as register_arch
 
 FILES = {
     "package.json": {"name": "acme", "workspaces": ["packages/*"]},
@@ -110,7 +110,7 @@ def test_tool_answers_who_depends_on_a_package(repo):
 
 
 def _cli(repo: Path, capsys, **kw) -> str:
-    from codegraph.cli.commands_query import cmd_packages
+    from cgh.cli.commands_query import cmd_packages
 
     args = argparse.Namespace(
         root=str(repo),

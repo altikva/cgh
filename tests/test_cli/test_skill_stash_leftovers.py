@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.integrations import skill_installer as si
+from cgh.integrations import skill_installer as si
 
 
 @pytest.fixture

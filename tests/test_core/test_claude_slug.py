@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.core.config import _claude_project_slug_from_abs
+from cgh.core.config import _claude_project_slug_from_abs
 
 
 def test_posix_path():

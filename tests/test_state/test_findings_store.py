@@ -15,9 +15,9 @@ import subprocess
 
 import pytest
 
-import codegraph.plugins as plugins
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
+import cgh.plugins as plugins
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
 
 
 @pytest.fixture(autouse=True)
@@ -116,8 +116,8 @@ class TestScannerPipeline:
         # Register the scanner the way a plugin would.
         plugins._registries.scanners.append(("test-plugin", _FlagSecret()))
 
-        from codegraph.core.db import reset_connection
-        from codegraph.indexer import index_repo
+        from cgh.core.db import reset_connection
+        from cgh.indexer import index_repo
 
         reset_connection()
         try:
@@ -135,7 +135,7 @@ class TestScannerPipeline:
         assert store.findings_for_file(tmp_path, str(clean)) == []
 
         # Findings are searchable through the FTS.
-        from codegraph.core.fts import fts_search, get_fts_conn
+        from cgh.core.fts import fts_search, get_fts_conn
 
         hits = fts_search(get_fts_conn(tmp_path), "secret marker", limit=10)
         assert any(h.kind == "finding" for h in hits)
@@ -151,9 +151,9 @@ class TestScannerPipeline:
 
         plugins._registries.scanners.append(("test-plugin", _Deferred()))
 
-        from codegraph.core.db import reset_connection
-        from codegraph.indexer import index_repo
-        from codegraph.state.deferred_scan import drain_for_tests
+        from cgh.core.db import reset_connection
+        from cgh.indexer import index_repo
+        from cgh.state.deferred_scan import drain_for_tests
 
         reset_connection()
         try:
@@ -178,8 +178,8 @@ class TestScannerPipeline:
 
         plugins._registries.scanners.append(("test-plugin", _Boom()))
 
-        from codegraph.core.db import reset_connection
-        from codegraph.indexer import index_repo
+        from cgh.core.db import reset_connection
+        from cgh.indexer import index_repo
 
         reset_connection()
         try:

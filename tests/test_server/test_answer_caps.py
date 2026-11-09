@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server._budget import (
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server._budget import (
     ANSWER_MAX_BYTES,
     CONTEXT_MAX_BYTES,
     TOOL_CAPS,
@@ -137,7 +137,7 @@ def test_a_large_json_list_is_trimmed_under_items():
 
 def _wrapped(monkeypatch, origin: str):
     monkeypatch.setattr(_srv, "_call_origin", lambda: origin)
-    monkeypatch.setattr("codegraph.state.call_log.log_call", lambda **k: None)
+    monkeypatch.setattr("cgh.state.call_log.log_call", lambda **k: None)
 
     @_srv._logged_tool
     def find_callers(fn_name: str) -> str:
@@ -210,7 +210,7 @@ def _write_repo(root: Path) -> None:
 
 @pytest.fixture
 def big_repo(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     reset_connection()
     root = tmp_path.resolve()
@@ -221,7 +221,7 @@ def big_repo(tmp_path, monkeypatch):
     _srv._fts_conn = None
     monkeypatch.setattr(_srv, "_call_origin", lambda: "agent")
 
-    from codegraph.state.call_log import knowledge_record
+    from cgh.state.call_log import knowledge_record
 
     for i in range(60):
         knowledge_record(
@@ -231,7 +231,7 @@ def big_repo(tmp_path, monkeypatch):
             repo_root=root,
         )
 
-    from codegraph.server import (
+    from cgh.server import (
         _register_arch,
         _register_docs,
         _register_insight,

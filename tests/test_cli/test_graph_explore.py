@@ -20,15 +20,15 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.cli.commands_graph import SCOPES, cmd_graph
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server.tools_viz import register as register_viz
-from codegraph.viz import generate_graph_view_html
-from codegraph.viz.graphdata import build_graph_payload
+import cgh.server as _srv
+from cgh.cli.commands_graph import SCOPES, cmd_graph
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server.tools_viz import register as register_viz
+from cgh.viz import generate_graph_view_html
+from cgh.viz.graphdata import build_graph_payload
 
-VIEW_JS = Path(__file__).resolve().parents[2] / "codegraph" / "viz" / "graph_view.js"
+VIEW_JS = Path(__file__).resolve().parents[2] / "cgh" / "viz" / "graph_view.js"
 
 
 class _FakeMcp:
@@ -100,7 +100,7 @@ def indexed_repo(tmp_path):
 
 
 def _conn(root):
-    from codegraph.core.db import get_readonly_connection
+    from cgh.core.db import get_readonly_connection
 
     return get_readonly_connection(str(root))
 
@@ -357,7 +357,7 @@ class TestDocsViewDiscriminant:
         return [n["n"] for n in view["nodes"] if n["k"] == "section"]
 
     def test_config_sections_are_left_out(self):
-        from codegraph.viz.graphdata import _docs_view
+        from cgh.viz.graphdata import _docs_view
 
         conn = self._Conn([("Guide", "doc"), ("mcpServers", "config")])
 
@@ -366,7 +366,7 @@ class TestDocsViewDiscriminant:
         assert self._titles(view) == ["# Guide"]
 
     def test_an_index_without_the_column_keeps_everything(self):
-        from codegraph.viz.graphdata import _docs_view
+        from cgh.viz.graphdata import _docs_view
 
         conn = self._Conn(
             [("Guide", "doc"), ("mcpServers", "config")], knows_kind=False

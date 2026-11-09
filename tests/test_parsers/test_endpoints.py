@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.analysis.endpoints import extract
+from cgh.analysis.endpoints import extract
 
 
 def _by_path(eps):

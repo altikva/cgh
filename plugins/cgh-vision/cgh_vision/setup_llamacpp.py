@@ -64,10 +64,10 @@ def _config_block(port: int) -> str:
 
 
 def _write_config(console, root: Path, port: int) -> None:
-    """Append the [plugin.vision] block to .codegraph/config.toml when
+    """Append the [plugin.vision] block to .cgh/config.toml when
     it has none. Never clobber an existing table: print it instead so
     the user merges by hand."""
-    cfg = root / ".codegraph" / "config.toml"
+    cfg = root / ".cgh" / "config.toml"
     block = _config_block(port)
     if not cfg.exists():
         console.print(
@@ -112,9 +112,9 @@ def _offer_to_start(console, root: Path, port: int) -> None:
             return
     except (EOFError, KeyboardInterrupt):
         return
-    log = root / ".codegraph" / "llama-server.log"
+    log = root / ".cgh" / "llama-server.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    from codegraph.plugin_api import quiet_subprocess_kwargs
+    from cgh.plugin_api import quiet_subprocess_kwargs
 
     kwargs = dict(quiet_subprocess_kwargs())
     if os.name == "nt":
@@ -144,7 +144,7 @@ def setup_llamacpp(
     """Wire cgh-vision to a local llama.cpp server instead of Ollama."""
     from rich.console import Console
 
-    from codegraph.plugin_api import find_codegraph_root
+    from cgh.plugin_api import find_cgh_root
 
     console = Console(stderr=True)
     console.print("[bold]cgh vision setup (llama.cpp, no Ollama)[/bold]")
@@ -155,7 +155,7 @@ def setup_llamacpp(
         for line in hint.splitlines():
             console.print(f"  [cyan]{line}[/cyan]")
         if argv and shutil.which(argv[0]) and (assume_yes or _yes(console, argv)):
-            from codegraph.plugin_api import quiet_subprocess_kwargs
+            from cgh.plugin_api import quiet_subprocess_kwargs
 
             try:
                 subprocess.run(argv, timeout=1800, **quiet_subprocess_kwargs())
@@ -174,7 +174,7 @@ def setup_llamacpp(
         "[dim](weights + mmproj auto-downloaded on first run).[/dim]"
     )
 
-    root = find_codegraph_root(os.getcwd()) or Path(os.getcwd())
+    root = find_cgh_root(os.getcwd()) or Path(os.getcwd())
     _write_config(console, Path(root), port)
     _offer_to_start(console, Path(root), port)
 

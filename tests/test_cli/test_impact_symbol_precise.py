@@ -22,10 +22,10 @@ import subprocess
 
 import pytest
 
-from codegraph.analysis.impact import build_impact_report
-from codegraph.cli.commands_impact import cmd_impact
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+from cgh.analysis.impact import build_impact_report
+from cgh.cli.commands_impact import cmd_impact
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 HELPERS = """import os
 

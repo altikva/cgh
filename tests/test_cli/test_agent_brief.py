@@ -15,9 +15,9 @@ import json
 
 import pytest
 
-from codegraph.cli import agent_brief as ab
-from codegraph.cli import commands_hooks as h
-from codegraph.core.fts import get_fts_conn, upsert_symbol
+from cgh.cli import agent_brief as ab
+from cgh.cli import commands_hooks as h
+from cgh.core.fts import get_fts_conn, upsert_symbol
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def repo(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setenv("CGH_AGENT_LOCATIONS", "1")
     monkeypatch.delenv("CGH_HOOK_AGENT_RULE", raising=False)
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home")
     return tmp_path
 
 
@@ -87,8 +87,8 @@ def test_rule_is_appended_once(monkeypatch, capsys, repo):
 
 def test_rule_line_is_short_and_names_the_prefix(repo):
     assert "the cgh MCP tools" in ab.rule_line(repo)
-    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"codegraph": {}}}))
-    assert "mcp__codegraph__*" in ab.rule_line(repo)
+    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"cgh": {}}}))
+    assert "mcp__cgh__*" in ab.rule_line(repo)
     (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"cgh": {}}}))
     line = ab.rule_line(repo)
     assert "mcp__cgh__*" in line
@@ -109,7 +109,7 @@ def test_rule_opt_out_by_env(monkeypatch, capsys, repo):
 
 def test_rule_opt_out_by_config(monkeypatch, capsys, repo):
     monkeypatch.delenv("CGH_AGENT_LOCATIONS")
-    (repo / ".codegraph" / "config.toml").write_text("[hooks]\nagent_rule = false\n")
+    (repo / ".cgh" / "config.toml").write_text("[hooks]\nagent_rule = false\n")
     tool_input = {"prompt": "Make `charge_card` retry once."}
     assert _run(monkeypatch, capsys, {"tool_input": tool_input, "cwd": str(repo)}) == {}
 
@@ -141,7 +141,7 @@ def test_bad_payload_never_blocks(monkeypatch, capsys):
 def test_hook_installs_by_default(monkeypatch, tmp_path):
     from pathlib import Path
 
-    from codegraph.cli.commands_init import (
+    from cgh.cli.commands_init import (
         _CLAUDE_HOOK_MARKERS,
         _claude_hook_specs,
         ensure_claude_hooks_installed,

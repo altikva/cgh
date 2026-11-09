@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.callers import callers_of
-from codegraph.analysis.impact import build_impact_report, reverse_calls_bfs
-from codegraph.analysis.interfaces import InterfaceResolver, qualified_methods
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+import cgh.server as _srv
+from cgh.analysis.callers import callers_of
+from cgh.analysis.impact import build_impact_report, reverse_calls_bfs
+from cgh.analysis.interfaces import InterfaceResolver, qualified_methods
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 REPO = {
     "app/__init__.py": "",
@@ -182,8 +182,8 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_insight import register as register_insight
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_insight import register as register_insight
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)

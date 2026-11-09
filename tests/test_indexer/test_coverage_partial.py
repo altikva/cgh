@@ -1,7 +1,7 @@
 # Copyright (c) 2026 ALTIKVA. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Project:     cgh (codegraph)
+# Project:     cgh (cgh)
 # Description: A scan that short-circuits unchanged files measures only what
 #              it parsed. Letting that smaller number land would replace a
 #              full measurement with a partial one, silently.
@@ -9,15 +9,15 @@
 
 import json
 
-from codegraph.cli.commands_monitor import _imports_coverage_line
-from codegraph.state.scan_meta import _kept_stats
+from cgh.cli.commands_monitor import _imports_coverage_line
+from cgh.state.scan_meta import _kept_stats
 
 FULL = {"python": {"seen": 217, "resolved": 46}}
 PARTIAL = {"python": {"seen": 190, "resolved": 31}}
 
 
 def _repo_with_meta(tmp_path, stats):
-    cg = tmp_path / ".codegraph"
+    cg = tmp_path / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     (cg / "scan_meta.json").write_text(json.dumps({"stats": stats}))
     return tmp_path

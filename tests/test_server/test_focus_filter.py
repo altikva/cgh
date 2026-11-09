@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from codegraph.server._focus import focus_filter
+from cgh.server._focus import focus_filter
 
 
 def _items():

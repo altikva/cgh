@@ -24,13 +24,13 @@ import sqlite3
 import textwrap
 from pathlib import Path
 
-from codegraph.cli.commands_monitor import (
+from cgh.cli.commands_monitor import (
     _empty_status_source,
     _status_via_fts,
     _status_via_owner,
     _status_via_ro_open,
 )
-from codegraph.core.db import reset_connection
+from cgh.core.db import reset_connection
 
 # The keys every status-source dict must carry, regardless of tier.
 _SOURCE_KEYS = {
@@ -45,7 +45,7 @@ _SOURCE_KEYS = {
 def _seed_graph(repo_root: Path) -> None:
     """Index a tiny repo on the default backend so a graph DB exists."""
     reset_connection()
-    from codegraph.indexer import index_repo
+    from cgh.indexer import index_repo
 
     try:
         index_repo(str(repo_root))
@@ -54,8 +54,8 @@ def _seed_graph(repo_root: Path) -> None:
 
 
 def _make_fts(repo_root: Path, n_symbols: int) -> None:
-    """Build a minimal .codegraph/fts.db with a symbols table of n rows."""
-    cg = repo_root / ".codegraph"
+    """Build a minimal .cgh/fts.db with a symbols table of n rows."""
+    cg = repo_root / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(cg / "fts.db")
     c.execute("CREATE TABLE symbols (name TEXT)")
@@ -117,7 +117,7 @@ def test_owner_not_attempted_when_dead(tmp_path):
 
 
 def test_ro_open_none_when_no_graph(tmp_path):
-    # No .codegraph graph DB on disk -> RO open returns None -> "none".
+    # No .cgh graph DB on disk -> RO open returns None -> "none".
     reset_connection()
     src = _status_via_ro_open(str(tmp_path))
     assert src["counts_source"] == "none"

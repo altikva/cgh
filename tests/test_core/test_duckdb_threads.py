@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 import time
 
-from codegraph.core.db_duckdb import DuckDBGraphDB
+from cgh.core.db_duckdb import DuckDBGraphDB
 
 
 class _SlowConn:

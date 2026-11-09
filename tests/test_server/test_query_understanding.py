@@ -15,12 +15,12 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
-from codegraph.analysis.query_intent import clear_centrality_cache
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis.pattern import PATTERN_ANSWER_BYTES
+from cgh.analysis.query_intent import clear_centrality_cache
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_query import register as register_query
 
 _FILES = {
     "app/webhooks.py": (

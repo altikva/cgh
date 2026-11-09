@@ -123,7 +123,7 @@ when you export a stable `CGH_REDACT_SECRET` (16+ chars). Secrets are
 the exception: a token or password gets a random pseudonym, the same
 within one run but never derived from its value, so nobody holding the
 output and the key can brute-force it back. From code:
-`codegraph.sdk.redact_text(text, only=["person"])`.
+`cgh.sdk.redact_text(text, only=["person"])`.
 
 Read the output before you share it. The same limits apply as above:
 the regex tier misses what does not fit its patterns.

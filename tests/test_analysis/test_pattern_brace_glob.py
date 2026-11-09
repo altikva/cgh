@@ -17,7 +17,7 @@ import subprocess
 
 import pytest
 
-from codegraph.analysis import pattern as P
+from cgh.analysis import pattern as P
 
 
 @pytest.mark.parametrize(

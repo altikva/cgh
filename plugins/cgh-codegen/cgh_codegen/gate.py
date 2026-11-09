@@ -44,7 +44,7 @@ def egress_decision(
     any part of it elsewhere: a second copy of a security decision is how a
     confidential file eventually slips out while the log still says audited.
     """
-    from codegraph.plugin_api import findings_for_file
+    from cgh.plugin_api import findings_for_file
 
     rows = findings_for_file(repo_root, str(file_path))
 

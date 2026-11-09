@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.analysis import fetch_index as fx
+from cgh.analysis import fetch_index as fx
 
 PAGE = (
     b"<html><head><title>Guide</title></head><body>"
@@ -26,12 +26,12 @@ ON = {"allow_fetch": True}
 
 
 def _repo(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
 def _repo_once(tmp_path):
-    (tmp_path / ".codegraph").mkdir(exist_ok=True)
+    (tmp_path / ".cgh").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -130,11 +130,11 @@ def test_refused_without_allow_fetch(tmp_path, monkeypatch):
 def test_refused_in_assist_config_without_the_flag(tmp_path, monkeypatch):
     """Assist used to allow fetches; now the config flag is the only key."""
     _mock_fetch(monkeypatch)
-    from codegraph.core.config import load_config
+    from cgh.core.config import load_config
 
     root = _repo(tmp_path)
-    (root / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nmode = "assist"\n', encoding="utf-8"
+    (root / ".cgh" / "config.toml").write_text(
+        '[cgh]\nmode = "assist"\n', encoding="utf-8"
     )
     cfg = {"allow_fetch": load_config(root).allow_fetch}
     with pytest.raises(fx.FetchError, match="allow_fetch"):
@@ -143,11 +143,11 @@ def test_refused_in_assist_config_without_the_flag(tmp_path, monkeypatch):
 
 def test_allowed_with_flag(tmp_path, monkeypatch):
     _mock_fetch(monkeypatch)
-    from codegraph.core.config import load_config
+    from cgh.core.config import load_config
 
     root = _repo(tmp_path)
-    (root / ".codegraph" / "config.toml").write_text(
-        "[codegraph]\nallow_fetch = true\n", encoding="utf-8"
+    (root / ".cgh" / "config.toml").write_text(
+        "[cgh]\nallow_fetch = true\n", encoding="utf-8"
     )
     cfg = {"allow_fetch": load_config(root).allow_fetch}
     out = fx.fetch_and_index(root, "https://x.example/doc", config=cfg)

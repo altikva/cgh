@@ -42,7 +42,7 @@ def layout(tmp_path):
     front_wt = tmp_path / "wt" / "c" / "front"
     _git(api_main, "worktree", "add", "-q", str(api_wt))
     _git(front_main, "worktree", "add", "-q", str(front_wt))
-    (front_wt / ".codegraph").mkdir()
+    (front_wt / ".cgh").mkdir()
     return {
         "api_main": api_main,
         "front_main": front_main,
@@ -52,7 +52,7 @@ def layout(tmp_path):
 
 
 def test_prefers_sibling_worktree(layout):
-    from codegraph.integrations.worktree import worktree_sibling
+    from cgh.integrations.worktree import worktree_sibling
 
     assert (
         worktree_sibling(layout["api_wt"], layout["front_main"])
@@ -61,24 +61,24 @@ def test_prefers_sibling_worktree(layout):
 
 
 def test_main_checkout_no_redirect(layout):
-    from codegraph.integrations.worktree import worktree_sibling
+    from cgh.integrations.worktree import worktree_sibling
 
     assert worktree_sibling(layout["api_main"], layout["front_main"]) is None
 
 
-def test_sibling_without_codegraph_ignored(layout):
-    from codegraph.integrations.worktree import worktree_sibling
+def test_sibling_without_cgh_ignored(layout):
+    from cgh.integrations.worktree import worktree_sibling
 
-    shutil.rmtree(layout["front_wt"] / ".codegraph")
+    shutil.rmtree(layout["front_wt"] / ".cgh")
     assert worktree_sibling(layout["api_wt"], layout["front_main"]) is None
 
 
 def test_resolve_children_uses_sibling(layout):
-    cfgdir = layout["api_wt"] / ".codegraph"
+    cfgdir = layout["api_wt"] / ".cgh"
     cfgdir.mkdir(exist_ok=True)
     front = str(layout["front_main"])
-    (cfgdir / "config.toml").write_text(f'[codegraph]\nsubrepos = ["{front}"]\n')
-    from codegraph.analysis.federation import resolve_children
+    (cfgdir / "config.toml").write_text(f'[cgh]\nsubrepos = ["{front}"]\n')
+    from cgh.analysis.federation import resolve_children
 
     children = resolve_children(layout["api_wt"])
     assert layout["front_wt"].resolve() in children
@@ -88,7 +88,7 @@ def test_resolve_children_uses_sibling(layout):
 def test_configured_child_worktree_is_kept(tmp_path):
     """A child configured as a linked worktree (a seed checkout) is never
     swapped for a ticket worktree that happens to sit beside the parent."""
-    from codegraph.integrations.worktree import worktree_sibling
+    from cgh.integrations.worktree import worktree_sibling
 
     api_main = tmp_path / "ws" / "api"
     front_main = tmp_path / "ws" / "front"
@@ -100,7 +100,7 @@ def test_configured_child_worktree_is_kept(tmp_path):
     front_ticket = tmp_path / "t" / "front-371"
     _git(api_main, "worktree", "add", "-q", str(api_ticket))
     _git(front_main, "worktree", "add", "-q", str(front_ticket))
-    (front_ticket / ".codegraph").mkdir()
+    (front_ticket / ".cgh").mkdir()
 
     assert worktree_sibling(api_ticket, seed_front) is None
 
@@ -108,8 +108,8 @@ def test_configured_child_worktree_is_kept(tmp_path):
 def test_flat_layout_with_several_siblings_keeps_configured_path(tmp_path):
     """Every ticket worktree in one directory: two front tickets sit beside
     an api ticket, so neither is picked."""
-    from codegraph.analysis.federation import resolve_children
-    from codegraph.integrations.worktree import worktree_sibling
+    from cgh.analysis.federation import resolve_children
+    from cgh.integrations.worktree import worktree_sibling
 
     api_main = tmp_path / "ws" / "api"
     front_main = tmp_path / "ws" / "front"
@@ -120,10 +120,10 @@ def test_flat_layout_with_several_siblings_keeps_configured_path(tmp_path):
     for name in ("front-371", "front-375"):
         wt = tmp_path / "t" / name
         _git(front_main, "worktree", "add", "-q", str(wt))
-        (wt / ".codegraph").mkdir()
+        (wt / ".cgh").mkdir()
 
     assert worktree_sibling(api_ticket, front_main) is None
-    cfg = api_ticket / ".codegraph"
+    cfg = api_ticket / ".cgh"
     cfg.mkdir()
-    (cfg / "config.toml").write_text(f'[codegraph]\nsubrepos = ["{front_main}"]\n')
+    (cfg / "config.toml").write_text(f'[cgh]\nsubrepos = ["{front_main}"]\n')
     assert resolve_children(api_ticket) == [front_main.resolve()]

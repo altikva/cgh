@@ -23,7 +23,7 @@ pytest.importorskip("duckdb")
 
 _PROBE = (
     "import importlib.util, sys\n"
-    "import codegraph.core.db_duckdb\n"
+    "import cgh.core.db_duckdb\n"
     "entry = sys.modules.get('pandas', 'absent')\n"
     "print('none' if entry is None else 'absent' if entry == 'absent' else 'module')\n"
     "print(importlib.util.find_spec('pandas') is None)\n"
@@ -61,7 +61,7 @@ def test_missing_pandas_gets_the_sentinel():
 @pytest.mark.skipif(_pandas_installed(), reason="pandas is installed here")
 def test_missing_pandas_still_raises_import_error():
     code = (
-        "import codegraph.core.db_duckdb\n"
+        "import cgh.core.db_duckdb\n"
         "try:\n    import pandas\nexcept ImportError:\n    print('import-error')\n"
     )
     assert _run(code) == ["import-error"]
@@ -71,7 +71,7 @@ def test_installed_pandas_is_never_shadowed(tmp_path):
     fake = tmp_path / "pandas"
     fake.mkdir()
     (fake / "__init__.py").write_text("MARK = 'fake'\n")
-    code = "import codegraph.core.db_duckdb, sys\nimport pandas\nprint(pandas.MARK)\n"
+    code = "import cgh.core.db_duckdb, sys\nimport pandas\nprint(pandas.MARK)\n"
     assert _run(code, tmp_path) == ["fake"]
 
 
@@ -80,7 +80,7 @@ def test_parameter_binding_does_not_search_for_pandas():
     # Count the path-finder lookups of pandas during parameterized executes.
     code = (
         "import importlib.machinery as m\n"
-        "import codegraph.core.db_duckdb, duckdb\n"
+        "import cgh.core.db_duckdb, duckdb\n"
         "hits = []\n"
         "orig = m.PathFinder.find_spec\n"
         "def spy(name, *a, **k):\n"

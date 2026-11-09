@@ -19,16 +19,16 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.callers import callers_of
-from codegraph.analysis.impact import (
+import cgh.server as _srv
+from cgh.analysis.callers import callers_of
+from cgh.analysis.impact import (
     build_impact_report,
     format_changed_entry,
     split_changed_entry,
 )
-from codegraph.analysis.terraform import ModuleSources
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, index_repo
+from cgh.analysis.terraform import ModuleSources
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, index_repo
 
 MAIN = (
     'module "kms" {\n'
@@ -75,7 +75,7 @@ REPO = {
         "      source: terraform_output\n"
         "      tf_output: module.kms.keyring_id\n"
     ),
-    ".codegraph/config.toml": (
+    ".cgh/config.toml": (
         "[terraform]\n"
         "module_sources = {"
         ' "git::https://github.com/acme/tf-modules" = "../tf-modules",'
@@ -141,8 +141,8 @@ class _FakeMcp:
 
 
 def _tools() -> dict:
-    from codegraph.server.tools_insight import register as register_insight
-    from codegraph.server.tools_query import register as register_query
+    from cgh.server.tools_insight import register as register_insight
+    from cgh.server.tools_query import register as register_query
 
     m = _FakeMcp()
     register_query(m)
@@ -179,7 +179,7 @@ def test_name_search_lands_on_the_module_input(repo):
 def test_cgh_search_lists_terraform_blocks_and_inputs(repo, capsys):
     import argparse
 
-    import codegraph.cli.commands_query as cq
+    import cgh.cli.commands_query as cq
 
     cq.cmd_search(
         argparse.Namespace(
@@ -210,7 +210,7 @@ def test_string_values_stay_in_text_search(repo):
     tools = _tools()
     out = json.loads(tools["search_symbols"]("acme-data-keys"))
     assert out["results"] == []
-    from codegraph.core.fts import fts_search, get_fts_conn
+    from cgh.core.fts import fts_search, get_fts_conn
 
     hits = fts_search(get_fts_conn(repo), "acme-data-keys", limit=5)
     assert any(h.name == "module.kms.keyring_name" for h in hits)
@@ -242,7 +242,7 @@ def test_mapped_remote_module_links_inputs_and_outputs(repo):
 
 def test_mapped_checkout_is_read_never_indexed_or_written(repo):
     modules = repo.parent / "tf-modules"
-    assert not (modules / ".codegraph").exists()
+    assert not (modules / ".cgh").exists()
     assert sorted(
         str(p.relative_to(modules)) for p in modules.rglob("*") if p.is_file()
     ) == sorted(MODULES)
@@ -388,7 +388,7 @@ def test_impact_of_a_tf_path_is_block_precise(repo):
 
 
 def test_cli_reads_changed_lines_from_git(repo):
-    from codegraph.cli.commands_impact import _changed_ranges, _git_changed_lines
+    from cgh.cli.commands_impact import _changed_ranges, _git_changed_lines
 
     diff = (
         "diff --git a/env/main.tf b/env/main.tf\n"

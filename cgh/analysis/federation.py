@@ -1,0 +1,815 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-04-28
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Read-only federation across a parent repo and its subrepos.
+#              The parent indexes only files outside subrepo paths; queries
+#              iterate parent + each subrepo, opening their `.cgh/`
+#              databases read-only and aggregating results with a `scope`
+#              tag so callers can tell which repo a result came from.
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from cgh.core.config import load_config
+from cgh.core.protocol import GraphDB
+
+_DB_DIR = ".cgh"
+_DUCKDB_FILE = "graph.duckdb"
+_SQLITE_FILE = "graph.sqlite"
+_FTS_FILE = "fts.db"
+
+
+def _detect_backend_file(repo_root: Path) -> tuple[str, Path] | None:
+    """Single tie-break authority lives in core.db; kept as a thin alias
+    for existing callers and tests."""
+    from cgh.core.db import detect_backend_file
+
+    return detect_backend_file(repo_root)
+
+
+# ---------------------------------------------------------------------------
+# Subrepo resolution
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChildStatus:
+    """Verification result for one declared subrepo."""
+
+    path: Path
+    exists: bool
+    initialized: bool  # has a .cgh/ dir
+    has_duckdb: bool  # graph.duckdb present
+    has_sqlite: bool  # graph.sqlite present
+    has_fts: bool  # fts.db present
+    is_git_repo: bool  # has a .git dir (informational)
+    error: str | None = None  # populated when something failed
+
+    @property
+    def has_graphdb(self) -> bool:
+        return self.has_duckdb or self.has_sqlite
+
+    @property
+    def ok(self) -> bool:
+        return self.exists and self.initialized and self.has_graphdb and not self.error
+
+
+def resolve_children(repo_root: str | Path) -> list[Path]:
+    """
+    Return absolute, resolved subrepo paths declared in config.toml.
+
+    Skips paths that don't exist on disk (caller can use `verify_child` to
+    surface those). Order preserved from config.
+    """
+    from cgh.integrations.worktree import worktree_sibling
+
+    root = Path(repo_root).resolve()
+    cfg = load_config(root)
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for entry in cfg.subrepos:
+        p = Path(entry).expanduser()
+        if not p.is_absolute():
+            p = root / p
+        try:
+            p = p.resolve()
+        except OSError:
+            continue
+        # When this repo is a linked worktree, a child configured by its
+        # main-checkout path points at the wrong branch. Prefer the child's
+        # own worktree sitting beside this one, when it is cgh-indexed, so
+        # federation reads the matching branch instead of the main checkout.
+        sibling = worktree_sibling(root, p)
+        if sibling is not None:
+            p = sibling
+        if p == root or p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+def child_paths_to_skip(repo_root: str | Path) -> list[Path]:
+    """
+    Paths the parent indexer / watcher must NOT touch, every declared
+    subrepo, regardless of whether it's currently initialized. We skip
+    even un-initialized ones so adding a subrepo later doesn't require
+    re-indexing the parent.
+    """
+    return resolve_children(repo_root)
+
+
+def is_under_any(path: str | Path, roots: list[Path]) -> bool:
+    """Return True if `path` lives under any of `roots` (inclusive).
+
+    Both sides are resolved and case-normalized before comparison. This matters
+    on Windows: the filesystem is case-insensitive and `resolve()` may change
+    casing or 8.3 short-names, while a candidate built as `root / "a/b.tf"` from
+    a git ls-files path mixes separators. The previous version only resolved the
+    roots (via resolve_children) and left an already-absolute candidate
+    untouched, so on Windows the case/short-name mismatch made every federated
+    subrepo fail to match, and none of their files were skipped from the parent
+    scan. pathlib's relative_to is case-sensitive, so we compare normcase'd
+    strings on a path-separator boundary instead.
+    """
+    if not roots:
+        return False
+
+    def _norm(pp: Path) -> str:
+        try:
+            pp = pp.resolve()
+        except OSError:
+            pp = pp.absolute()
+        return os.path.normcase(str(pp))
+
+    p_norm = _norm(Path(path))
+    for root in roots:
+        r_norm = _norm(Path(root))
+        if p_norm == r_norm or p_norm.startswith(r_norm + os.sep):
+            return True
+    return False
+
+
+def verify_child(child_path: str | Path) -> ChildStatus:
+    """Inspect a subrepo path, return what's present / missing."""
+    p = Path(child_path).expanduser()
+    if not p.is_absolute():
+        # Caller is responsible for absoluting. We don't know the parent root here.
+        p = p.resolve()
+    if not p.exists():
+        return ChildStatus(
+            path=p,
+            exists=False,
+            initialized=False,
+            has_duckdb=False,
+            has_sqlite=False,
+            has_fts=False,
+            is_git_repo=False,
+            error="path does not exist",
+        )
+
+    cg = p / _DB_DIR
+    return ChildStatus(
+        path=p,
+        exists=True,
+        initialized=cg.is_dir(),
+        has_duckdb=(cg / _DUCKDB_FILE).exists(),
+        has_sqlite=(cg / _SQLITE_FILE).exists(),
+        has_fts=(cg / _FTS_FILE).exists(),
+        is_git_repo=(p / ".git").exists(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Read-only connections, fresh per call, NOT cached. Federation calls these
+# many times per query (one per subrepo) and connections must be released so
+# subrepo owners can keep writing.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def open_graphdb_ro(repo_root: Path) -> Iterator[GraphDB | None]:
+    """
+    Open a fresh read-only GraphDB connection for ``repo_root``, regardless
+    of which backend the child repo uses. Detection looks at the file
+    actually on disk: ``graph.duckdb`` -> DuckDB, ``graph.sqlite`` -> SQLite.
+
+    Yields None when the DB is missing, locked, or unreadable. Always
+    closes the connection so the child's own owner can keep writing.
+    """
+    detected = _detect_backend_file(repo_root)
+    if detected is None:
+        yield None
+        return
+    backend, db_path = detected
+
+    from cgh.core.db import open_graphdb_file_ro
+
+    conn = open_graphdb_file_ro(backend, db_path)
+    try:
+        yield conn
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+@contextmanager
+def open_fts_ro(repo_root: Path) -> Iterator[sqlite3.Connection | None]:
+    """
+    Open a read-only SQLite (FTS) connection for `repo_root`. Yields None
+    if the file is missing.
+    """
+    db_path = repo_root / _DB_DIR / _FTS_FILE
+    if not db_path.exists():
+        yield None
+        return
+    conn = None
+    try:
+        # mode=ro requires URI form. immutable=0 because subrepos can be
+        # written to by their own owners while we read.
+        from cgh.core.utils import ro_sqlite_uri
+
+        conn = sqlite3.connect(
+            ro_sqlite_uri(db_path), uri=True, check_same_thread=False
+        )
+        yield conn
+    except sqlite3.Error:
+        yield None
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Federation iterators
+# ---------------------------------------------------------------------------
+
+
+def iter_db_roots(repo_root: str | Path) -> list[Path]:
+    """
+    Return [parent_root, *initialized_subrepo_roots]. Subrepos that don't
+    have a graph DB in `.cgh/` yet are skipped (with no error).
+    """
+    parent = Path(repo_root).resolve()
+    roots = [parent]
+    for child in resolve_children(parent):
+        st = verify_child(child)
+        if st.ok:
+            roots.append(child)
+    return roots
+
+
+@dataclass
+class ScopedResult:
+    """A federated tool result tagged with the repo it came from."""
+
+    scope: str  # repo display name (e.g. "parent", "child1")
+    scope_path: Path  # absolute path of the source repo
+    payload: Any  # whatever the per-scope function returned
+    error: str | None = None
+
+
+def _scope_name(repo_root: Path, parent: Path) -> str:
+    """Short label for a repo, 'parent' for the root, basename otherwise."""
+    if repo_root == parent:
+        return "parent"
+    return repo_root.name
+
+
+# Commit lookups are a git run per scope; tool calls come in bursts, so a
+# short-lived cache keeps them off the hot path without serving a commit
+# that is out of date for longer than a few seconds.
+_COMMIT_TTL_S = 5.0
+_commit_cache: dict[str, tuple[float, dict]] = {}
+
+
+def scope_commit(repo_path: Path) -> dict:
+    """What a scope's answers are read from: ``head`` (the commit checked
+    out now) and ``branch``, ``indexed_commit`` (the commit the index was
+    last brought to) and ``index_at_head`` (whether the two agree; the
+    graph tools answer from the index, pattern_search from the files on
+    disk). Values are None when the repo is not a git work tree or was
+    never indexed."""
+    import time
+
+    from cgh.state.scan_meta import (
+        current_git_branch,
+        current_git_head,
+        read_meta,
+    )
+
+    key = str(repo_path)
+    now = time.monotonic()
+    hit = _commit_cache.get(key)
+    if hit and now - hit[0] < _COMMIT_TTL_S:
+        return hit[1]
+    head = current_git_head(repo_path)
+    indexed = (read_meta(repo_path) or {}).get("git_head")
+    info = {
+        "head": head,
+        "branch": current_git_branch(repo_path) if head else None,
+        "indexed_commit": indexed,
+        "index_at_head": bool(head) and head == indexed,
+    }
+    _commit_cache[key] = (now, info)
+    return info
+
+
+def scope_commits(repo_root: str | Path) -> dict[str, dict]:
+    """{scope: scope_commit} for the parent and each existing child, keyed
+    like the `scope` field of federated results."""
+    root = Path(repo_root).resolve()
+    out = {"parent": scope_commit(root)}
+    for child in resolve_children(root):
+        if child.is_dir():
+            out[_scope_name(child, root)] = scope_commit(child)
+    return out
+
+
+def reset_for_tests() -> None:
+    _commit_cache.clear()
+
+
+def for_each_graphdb(
+    repo_root: str | Path,
+    fn: Callable[[GraphDB, Path], Any],
+) -> list[ScopedResult]:
+    """
+    Run ``fn(conn, scope_path)`` against the graph DB of the parent and
+    each initialized subrepo. Failures are captured per-scope. Tries to
+    RO-open the parent, only works when no other process holds the
+    write lock. For tools running inside the parent's owner (which
+    already holds a write conn), use ``for_each_child_graphdb`` instead
+    and call your local write conn for the parent scope yourself.
+    """
+    parent = Path(repo_root).resolve()
+    return [_run_one_graphdb(root, parent, fn) for root in iter_db_roots(parent)]
+
+
+def for_each_child_graphdb(
+    repo_root: str | Path,
+    fn: Callable[[GraphDB, Path], Any],
+) -> list[ScopedResult]:
+    """
+    Children-only iteration. The caller (typically a parent-owner MCP tool)
+    is expected to have already queried its own DB and is now fanning out
+    to the subrepos to aggregate cross-repo results.
+    """
+    parent = Path(repo_root).resolve()
+    return [_run_one_graphdb(root, parent, fn) for root in iter_db_roots(parent)[1:]]
+
+
+def _outdated_child(root: Path) -> str:
+    """Why a child's graph cannot be queried as is, or "" when it can: its
+    index was written in an older graph format and needs `cgh index` (or its
+    own owner starting) to be upgraded."""
+    from cgh.state.scan_meta import (
+        GRAPH_FORMAT,
+        read_meta,
+        recorded_graph_format,
+    )
+
+    try:
+        fmt = recorded_graph_format(read_meta(root))
+    except Exception:  # best-effort probe: never fail a fan-out on it
+        return ""
+    if fmt is None or fmt >= GRAPH_FORMAT:
+        return ""
+    return (
+        f"index in graph format {fmt}, this cgh needs {GRAPH_FORMAT}: "
+        f"run `cgh index --root {root}` (or start its owner) to upgrade it"
+    )
+
+
+def _run_one_graphdb(
+    root: Path,
+    parent: Path,
+    fn: Callable[[GraphDB, Path], Any],
+) -> ScopedResult:
+    scope = _scope_name(root, parent)
+    outdated = _outdated_child(root) if root != parent else ""
+    if outdated:
+        # A read-only open cannot re-parse, and an older-format graph answers
+        # short (missing tables, missing edges) without any error. Leave the
+        # child out with a warning, so the answer is flagged partial.
+        return ScopedResult(scope=scope, scope_path=root, payload=None, error=outdated)
+    with open_graphdb_ro(root) as conn:
+        if conn is None:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error="db unavailable (missing or locked)",
+            )
+        try:
+            payload = fn(conn, root)
+            return ScopedResult(scope=scope, scope_path=root, payload=payload)
+        except Exception as exc:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+
+def federate_scoped(
+    get_parent_conn: Callable[[], GraphDB],
+    repo_root: str | Path | None,
+    query_fn: Callable[[GraphDB], Any],
+) -> tuple[list[tuple[str, list]], list[dict]]:
+    """Run ``query_fn(conn)`` against the parent's in-process write conn and
+    each federated child's RO graph DB.
+
+    Returns ``(scoped, warnings)`` where ``scoped`` is ``[(scope, payload), …]``
+    (scope "parent" first, then each child by name) and ``warnings`` is
+    ``[{scope, error}, …]`` for any scope whose query failed.
+
+    This is the one place the parent+children fan-out lives; MCP tool modules
+    call it instead of each re-implementing the loop.
+    """
+    scoped: list[tuple[str, list]] = []
+    warnings: list[dict] = []
+    try:
+        scoped.append(("parent", query_fn(get_parent_conn()) or []))
+    except Exception as exc:
+        warnings.append({"scope": "parent", "error": f"{type(exc).__name__}: {exc}"})
+    if repo_root is not None:
+        for s in for_each_child_graphdb(repo_root, lambda c, _r: query_fn(c)):
+            if s.error:
+                warnings.append({"scope": s.scope, "error": s.error})
+                continue
+            scoped.append((s.scope, s.payload or []))
+    return scoped, warnings
+
+
+def federate_flat(
+    get_parent_conn: Callable[[], GraphDB],
+    repo_root: str | Path | None,
+    query_fn: Callable[[GraphDB], Any],
+) -> tuple[list[dict], list[dict]]:
+    """Flattened view of :func:`federate_scoped`: every payload row gets a
+    ``"scope"`` key and all rows land in one list. Returns ``(rows, warnings)``."""
+    scoped, warnings = federate_scoped(get_parent_conn, repo_root, query_fn)
+    rows: list[dict] = []
+    for scope, payload in scoped:
+        for item in payload:
+            item["scope"] = scope
+            rows.append(item)
+    return rows, warnings
+
+
+def for_each_fts(
+    repo_root: str | Path,
+    fn: Callable[[sqlite3.Connection, Path], Any],
+) -> list[ScopedResult]:
+    """Same as for_each_graphdb but for the FTS sqlite databases."""
+    parent = Path(repo_root).resolve()
+    return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)]
+
+
+def for_each_child_fts(
+    repo_root: str | Path,
+    fn: Callable[[sqlite3.Connection, Path], Any],
+) -> list[ScopedResult]:
+    """Children-only FTS iteration, the parent caller uses its cached conn."""
+    parent = Path(repo_root).resolve()
+    return [_run_one_fts(root, parent, fn) for root in iter_db_roots(parent)[1:]]
+
+
+def _run_one_fts(
+    root: Path,
+    parent: Path,
+    fn: Callable[[sqlite3.Connection, Path], Any],
+) -> ScopedResult:
+    scope = _scope_name(root, parent)
+    with open_fts_ro(root) as conn:
+        if conn is None:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error="fts db unavailable",
+            )
+        try:
+            payload = fn(conn, root)
+            return ScopedResult(scope=scope, scope_path=root, payload=payload)
+        except Exception as exc:
+            return ScopedResult(
+                scope=scope,
+                scope_path=root,
+                payload=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+
+def _child_fts_fallback(
+    repo_root: str | Path,
+    fn: Callable[[sqlite3.Connection], Any],
+    scopes: set[str] | None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Run ``fn`` on the FTS index of the named children.
+
+    A child whose own owner is running holds the graph DB's write lock, which
+    blocks read-only opens from the parent. SQLite takes concurrent readers,
+    so the child still answers from FTS rather than dropping out of the
+    results. Pass ``scopes`` to retry only the children that actually failed.
+
+    Returns ``([(scope, [FTSResult, …]), …], failures)`` where failures are
+    ``(scope, error)`` pairs for children that no backend could answer.
+    """
+    buckets: list[tuple[str, list]] = []
+    failures: list[tuple[str, str]] = []
+    for scoped in for_each_child_fts(repo_root, lambda conn, _r: fn(conn)):
+        if scopes is not None and scoped.scope not in scopes:
+            continue
+        if scoped.error:
+            failures.append(
+                (scoped.scope, f"graph db unavailable; fts fallback: {scoped.error}")
+            )
+            continue
+        buckets.append((scoped.scope, list(scoped.payload or [])))
+        outdated = _outdated_child(scoped.scope_path)
+        if outdated:
+            # Names still answer from FTS, but blocks only the newer format
+            # indexes (Terraform, endpoints) are missing: say so.
+            failures.append((scoped.scope, f"answered from FTS only; {outdated}"))
+    return buckets, failures
+
+
+def child_fts_symbol_search(
+    repo_root: str | Path,
+    query: str,
+    limit: int,
+    scopes: set[str] | None = None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Fuzzy symbol search over children's FTS index instead of their graph."""
+    from cgh.core.fts import fts_search
+
+    return _child_fts_fallback(
+        repo_root, lambda conn: fts_search(conn, query, limit=limit), scopes
+    )
+
+
+def child_fts_symbol_lookup(
+    repo_root: str | Path,
+    name: str,
+    scopes: set[str] | None = None,
+) -> tuple[list[tuple[str, list]], list[tuple[str, str]]]:
+    """Exact-name symbol lookup over children's FTS index."""
+    from cgh.core.fts import fts_lookup_symbol
+
+    return _child_fts_fallback(
+        repo_root, lambda conn: fts_lookup_symbol(conn, name), scopes
+    )
+
+
+def has_subrepos(repo_root: str | Path) -> bool:
+    """Cheap check, useful for tools to take a fast no-op path when off."""
+    return bool(resolve_children(repo_root))
+
+
+@dataclass
+class OwnerStatus:
+    """Per-child owner liveness, used by `cgh federate list/up/down`."""
+
+    alive: bool
+    pid: int | None
+    port: int | None
+
+
+def child_owner_status(child_path: str | Path) -> OwnerStatus:
+    """Inspect whether a federated child has its own MCP owner running."""
+    from cgh.state.ipc import is_owner_alive, read_owner_pid, read_owner_port
+
+    p = Path(child_path)
+    return OwnerStatus(
+        alive=is_owner_alive(p),
+        pid=read_owner_pid(p),
+        port=read_owner_port(p),
+    )
+
+
+def autostart_children(repo_root: str | Path) -> list[dict]:
+    """Start an owner (with watcher) for every initialized subrepo whose
+    owner is down. Called by the parent owner right after it comes up.
+
+    Children started here get the calling process's pid registered as a
+    worker in their ``.cgh/workers/``, so they live exactly as long
+    as the parent owner and exit on their own grace period once it dies.
+    Children already up are left untouched, in particular they do NOT get
+    the pid marker: two repos federating each other would otherwise keep
+    each other alive forever.
+
+    Returns one status dict per declared child:
+    ``{"child", "name", "status": started|already-up|skipped|failed, ...}``.
+    """
+    from cgh.state.ipc import (
+        is_owner_alive,
+        register_parent_marker,
+        spawn_owner,
+        unregister_parent_marker,
+    )
+
+    results: list[dict] = []
+    for child in resolve_children(repo_root):
+        st = verify_child(child)
+        if not st.ok:
+            reason = "not initialized" if not st.initialized else "no graph DB"
+            if not st.exists:
+                reason = "path does not exist"
+            results.append(
+                {
+                    "child": str(child),
+                    "name": child.name,
+                    "status": "skipped",
+                    "reason": reason,
+                }
+            )
+            continue
+        if is_owner_alive(child):
+            results.append(
+                {"child": str(child), "name": child.name, "status": "already-up"}
+            )
+            continue
+        # Register before spawning so the child's grace window for the
+        # first worker always sees this parent as a live worker. The
+        # parent-<pid> marker keeps the child alive without counting as
+        # an MCP worker, so the child may drop its write lock when idle.
+        register_parent_marker(child)
+        port = spawn_owner(child, watch=True, reindex=False)
+        if port is None:
+            unregister_parent_marker(child)
+            results.append(
+                {"child": str(child), "name": child.name, "status": "failed"}
+            )
+        else:
+            results.append(
+                {
+                    "child": str(child),
+                    "name": child.name,
+                    "status": "started",
+                    "port": port,
+                }
+            )
+    return results
+
+
+def release_children(repo_root: str | Path) -> None:
+    """Drop this process's worker marker from every declared subrepo.
+
+    Called on parent-owner shutdown. Children whose only worker was the
+    parent then exit after their idle grace; children with other workers
+    (or a keepalive from `cgh federate up`) keep running. Removing a
+    marker that was never written is a no-op.
+    """
+    from cgh.state.ipc import unregister_parent_marker
+
+    for child in resolve_children(repo_root):
+        unregister_parent_marker(child)
+
+
+# ---------------------------------------------------------------------------
+# Config mutation helpers (used by the CLI)
+# ---------------------------------------------------------------------------
+
+
+def add_subrepo(
+    repo_root: str | Path, child_path: str | Path
+) -> tuple[Path, ChildStatus]:
+    """
+    Append `child_path` to the parent's config.toml and return its status.
+    Idempotent, if already present, just returns the current status.
+    Raises ValueError if the child path doesn't exist.
+    """
+    parent = Path(repo_root).resolve()
+    child = Path(child_path).expanduser()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
+
+    if not child.exists():
+        raise ValueError(f"subrepo path does not exist: {child}")
+    if child == parent:
+        raise ValueError("subrepo cannot be the parent itself")
+
+    # Store as relative when it's under the parent, else absolute. Always use
+    # forward slashes: str(Path) yields backslashes on Windows, and a backslash
+    # in a TOML string is an escape (e.g. \s is invalid), which would corrupt
+    # config.toml so it no longer parses. Forward slashes are portable and
+    # Path accepts them on every platform.
+    try:
+        rel = child.relative_to(parent)
+        stored = "./" + rel.as_posix()
+    except ValueError:
+        stored = child.as_posix()
+
+    cfg_path = parent / _DB_DIR / "config.toml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    from cgh.core.config_edit import set_key
+
+    existing = _read_config_toml(cfg_path)
+    subs = list(existing.get("cgh", {}).get("subrepos", []))
+    if stored not in subs:
+        subs.append(stored)
+        # In-place edit: comments and nested tables survive, a missing
+        # [cgh] table is created, and an unreadable config raises
+        # instead of being overwritten.
+        set_key(cfg_path, "cgh", "subrepos", subs)
+
+    return child, verify_child(child)
+
+
+def remove_subrepo(repo_root: str | Path, child_path: str | Path) -> bool:
+    """Remove a subrepo from config.toml. Returns True if removed."""
+    parent = Path(repo_root).resolve()
+    child = Path(child_path).expanduser()
+    child = (parent / child).resolve() if not child.is_absolute() else child.resolve()
+
+    cfg_path = parent / _DB_DIR / "config.toml"
+    if not cfg_path.exists():
+        return False
+    existing = _read_config_toml(cfg_path)
+    cg = existing.get("cgh", {})
+    subs = list(cg.get("subrepos", []))
+
+    # Match either the stored form or the resolved absolute form
+    new_subs = []
+    removed = False
+    for entry in subs:
+        p = Path(entry).expanduser()
+        p = (parent / p).resolve() if not p.is_absolute() else p.resolve()
+        if p == child:
+            removed = True
+            continue
+        new_subs.append(entry)
+
+    if removed:
+        from cgh.core.config_edit import set_key
+
+        set_key(cfg_path, "cgh", "subrepos", new_subs)
+    return removed
+
+
+# ---------------------------------------------------------------------------
+# TOML I/O, minimal, preserves only what we touch (cgh table). Other
+# tables are pass-through. We don't pull in tomli-w to keep deps light.
+# ---------------------------------------------------------------------------
+
+
+def _read_config_toml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        import tomllib
+
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
+def _write_config_toml(path: Path, data: dict) -> None:
+    """Re-emit the config in a stable, hand-written-friendly TOML form."""
+    lines: list[str] = []
+    cg = data.get("cgh", {})
+    if cg:
+        lines.append("[cgh]")
+        for key, value in cg.items():
+            lines.append(_emit_toml_value(key, value))
+        lines.append("")
+
+    # Pass-through other top-level tables (parsers, mcp, paths, …)
+    for table, body in data.items():
+        if table == "cgh":
+            continue
+        if not isinstance(body, dict):
+            continue
+        lines.append(f"[{table}]")
+        for key, value in body.items():
+            lines.append(_emit_toml_value(key, value))
+        lines.append("")
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _toml_escape(s: str) -> str:
+    """Escape a string for a TOML basic ("...") value: backslash first, then
+    the double quote. Without this, a Windows path or any value with a
+    backslash produces invalid TOML."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _emit_toml_value(key: str, value: Any) -> str:
+    if isinstance(value, bool):
+        return f"{key} = {'true' if value else 'false'}"
+    if isinstance(value, int):
+        return f"{key} = {value}"
+    if isinstance(value, str):
+        return f'{key} = "{_toml_escape(value)}"'
+    if isinstance(value, list):
+        items = ", ".join(_format_scalar(v) for v in value)
+        return f"{key} = [{items}]"
+    return f'{key} = "{_toml_escape(str(value))}"'
+
+
+def _format_scalar(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    return f'"{_toml_escape(str(v))}"'

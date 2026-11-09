@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import federation
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis import federation
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server.tools_query import register as register_query
 
 _ENV = {"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": "/usr/bin:/bin:/usr/local/bin"}
 
@@ -52,7 +52,7 @@ class _FakeMcp:
 def _repo(path: Path, branch: str, body: str) -> None:
     path.mkdir(parents=True)
     (path / "mod.py").write_text(body)
-    (path / ".gitignore").write_text(".codegraph/\n")
+    (path / ".gitignore").write_text(".cgh/\n")
     _git(path, "init", "-q", "-b", branch)
     _git(path, "add", "-A")
     _git(path, "commit", "-qm", "init")
@@ -62,7 +62,7 @@ def _repo(path: Path, branch: str, body: str) -> None:
 def fed(tmp_path, monkeypatch):
     if shutil.which("git") is None:
         pytest.skip("git not on PATH")
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     federation.reset_for_tests()
     reset_connection()
@@ -70,12 +70,12 @@ def fed(tmp_path, monkeypatch):
     parent, child = base / "parent", base / "parent" / "api"
     _repo(parent, "main", "def front():\n    return 1\n")
     _repo(child, "develop", "def needle_fn():\n    return 2\n")
-    (parent / ".gitignore").write_text(".codegraph/\napi/\n")
+    (parent / ".gitignore").write_text(".cgh/\napi/\n")
     index_repo(child, method="os_walk")
     reset_connection()
-    (parent / ".codegraph").mkdir(exist_ok=True)
-    (parent / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
+    (parent / ".cgh").mkdir(exist_ok=True)
+    (parent / ".cgh" / "config.toml").write_text(
+        '[cgh]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
     )
     index_repo(parent, method="os_walk")
     _srv._root = parent
@@ -110,7 +110,7 @@ def test_index_behind_head_is_visible(fed):
 
 
 def test_no_scopes_without_federation(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     root = tmp_path.resolve()
     (root / "mod.py").write_text("def solo():\n    return 1\n")
@@ -128,7 +128,7 @@ def test_no_scopes_without_federation(tmp_path, monkeypatch):
 
 def test_federate_list_shows_the_commit(fed, capsys):
     parent, child, _t = fed
-    from codegraph.cli import commands_federate as cf
+    from cgh.cli import commands_federate as cf
 
     cf.console.width = 200
     cf._render_status_table(parent, [child])

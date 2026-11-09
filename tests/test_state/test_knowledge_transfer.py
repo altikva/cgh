@@ -18,16 +18,16 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cli.commands_knowledge import cmd_knowledge
-from codegraph.state import ipc
-from codegraph.state.call_log import (
+from cgh.cli.commands_knowledge import cmd_knowledge
+from cgh.state import ipc
+from cgh.state.call_log import (
     _get_conn,
     knowledge_outcome_record,
     knowledge_record,
     knowledge_search,
     reset_for_tests,
 )
-from codegraph.state.knowledge_transfer import (
+from cgh.state.knowledge_transfer import (
     commit_time,
     export_records,
     import_records,
@@ -37,7 +37,7 @@ from codegraph.state.knowledge_transfer import (
 
 def _store(tmp_path: Path, name: str) -> Path:
     root = tmp_path / name
-    (root / ".codegraph").mkdir(parents=True)
+    (root / ".cgh").mkdir(parents=True)
     return root
 
 
@@ -221,4 +221,4 @@ def test_import_refuses_while_owner_alive(src, tmp_path, monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "owner is running" in err and "cgh stop --root" in err
-    assert not (dst / ".codegraph" / "call_log.db").exists()
+    assert not (dst / ".cgh" / "call_log.db").exists()

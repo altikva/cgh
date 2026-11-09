@@ -284,6 +284,6 @@ Written by the index-time scanner (`scan_on_index = true`).
 
 ## Embedding
 
-The pipeline is part of the cgh SDK surface (`codegraph.sdk.image_*`,
+The pipeline is part of the cgh SDK surface (`cgh.sdk.image_*`,
 MIT): `image_inventory`, `extract_diagram`, `extract_table`,
 `extract_chart`. See cgh's `docs/EMBEDDING.md`.

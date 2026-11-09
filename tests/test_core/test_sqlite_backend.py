@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.db import get_readonly_connection, reset_connection
-from codegraph.core.graph_model import EDGES, NODES
-from codegraph.indexer import index_repo
+from cgh.core.db import get_readonly_connection, reset_connection
+from cgh.core.graph_model import EDGES, NODES
+from cgh.indexer import index_repo
 
 SRC = (
     "class Repo:\n"
@@ -64,7 +64,7 @@ def test_sqlite_indexes_and_queries(tmp_path, monkeypatch):
     index_repo(str(root))
     reset_connection()
 
-    assert (root / ".codegraph" / "graph.sqlite").exists()
+    assert (root / ".cgh" / "graph.sqlite").exists()
     conn = get_readonly_connection(root)
     assert conn is not None
     assert conn.count_nodes("Function") == 3  # add (method), store, top

@@ -22,9 +22,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _fresh(tmp_path, monkeypatch):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.chdir(tmp_path)
-    import codegraph.state.call_log as cl
+    import cgh.state.call_log as cl
 
     cl.reset_for_tests()
     yield tmp_path
@@ -44,8 +44,8 @@ def _make_artifact(tmp_path, name="design.pdf", data=b"%PDF-1.4 fake pdf bytes")
 
 
 def test_note_records_a_note_tagged_artifact(_fresh):
-    from codegraph.cli.commands_artifact import cmd_artifact
-    from codegraph.state.call_log import knowledge_list
+    from cgh.cli.commands_artifact import cmd_artifact
+    from cgh.state.call_log import knowledge_list
 
     _make_artifact(_fresh)
     cmd_artifact(
@@ -60,13 +60,13 @@ def test_note_records_a_note_tagged_artifact(_fresh):
     assert "design.pdf" in (top["file_refs"] or [])
     assert "Q3 revenue chart" in top["body"]
     # the content hash is embedded so recall can judge freshness
-    from codegraph.cli.commands_artifact import parse_stored_sha
+    from cgh.cli.commands_artifact import parse_stored_sha
 
     assert parse_stored_sha(top["body"]) is not None
 
 
 def test_note_without_summary_exits(_fresh):
-    from codegraph.cli.commands_artifact import cmd_artifact
+    from cgh.cli.commands_artifact import cmd_artifact
 
     _make_artifact(_fresh)
     with pytest.raises(SystemExit):
@@ -74,14 +74,14 @@ def test_note_without_summary_exits(_fresh):
 
 
 def test_note_on_missing_file_exits(_fresh):
-    from codegraph.cli.commands_artifact import cmd_artifact
+    from cgh.cli.commands_artifact import cmd_artifact
 
     with pytest.raises(SystemExit):
         cmd_artifact(_ns("note", path="nope.pdf", summary="whatever"))
 
 
 def test_recall_reports_fresh_then_stale(_fresh):
-    from codegraph.cli.commands_artifact import (
+    from cgh.cli.commands_artifact import (
         _find_note,
         _freshness,
         _relref,
@@ -111,8 +111,8 @@ def test_recall_reports_fresh_then_stale(_fresh):
 
 
 def test_list_surfaces_only_artifacts(_fresh):
-    from codegraph.cli.commands_artifact import cmd_artifact
-    from codegraph.state.call_log import knowledge_list, knowledge_record
+    from cgh.cli.commands_artifact import cmd_artifact
+    from cgh.state.call_log import knowledge_list, knowledge_record
 
     _make_artifact(_fresh, name="a.png", data=b"\x89PNG fake")
     cmd_artifact(_ns("note", path="a.png", summary="a screenshot of the login form"))
@@ -128,11 +128,11 @@ def test_list_surfaces_only_artifacts(_fresh):
 
 
 def test_read_hook_surfaces_saved_summary(_fresh, monkeypatch, capsys):
-    from codegraph.cli.commands_artifact import cmd_artifact
-    from codegraph.cli.commands_hooks import cmd_hook_precheck_read
+    from cgh.cli.commands_artifact import cmd_artifact
+    from cgh.cli.commands_hooks import cmd_hook_precheck_read
 
-    # repo_root discovery keys on .codegraph/fts.db existing
-    (_fresh / ".codegraph" / "fts.db").write_bytes(b"")
+    # repo_root discovery keys on .cgh/fts.db existing
+    (_fresh / ".cgh" / "fts.db").write_bytes(b"")
     p = _make_artifact(_fresh, name="report.pdf", data=b"%PDF report body")
     cmd_artifact(
         _ns("note", path="report.pdf", summary="the 2026 headcount plan, 42 hires")
@@ -156,7 +156,7 @@ def test_read_hook_surfaces_saved_summary(_fresh, monkeypatch, capsys):
 def test_artifact_is_wired_into_the_installed_rule_and_skill():
     # The always-loaded rule cgh init writes must carry the artifact reflex,
     # and the bundled skill must be present for auto-install.
-    from codegraph.integrations.skill_installer import (
+    from cgh.integrations.skill_installer import (
         _USAGE_BODY,
         list_bundled_skills,
     )
@@ -167,7 +167,7 @@ def test_artifact_is_wired_into_the_installed_rule_and_skill():
 
 
 def _run_read_hook(monkeypatch, capsys, root, path):
-    from codegraph.cli.commands_hooks import cmd_hook_precheck_read
+    from cgh.cli.commands_hooks import cmd_hook_precheck_read
 
     payload = {"tool_input": {"file_path": str(path)}, "cwd": str(root)}
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
@@ -180,7 +180,7 @@ def _run_read_hook(monkeypatch, capsys, root, path):
 def test_parsed_documents_are_not_artifacts():
     # cgh parses these into sections now; only images and legacy or
     # OpenDocument office files stay opaque.
-    from codegraph.cli.commands_artifact import ARTIFACT_EXTS, PARSED_DOC_EXTS
+    from cgh.cli.commands_artifact import ARTIFACT_EXTS, PARSED_DOC_EXTS
 
     assert {".pdf", ".docx", ".xlsx", ".pptx"} <= PARSED_DOC_EXTS
     assert not (ARTIFACT_EXTS & PARSED_DOC_EXTS)
@@ -190,7 +190,7 @@ def test_parsed_documents_are_not_artifacts():
 def test_read_hook_does_not_ask_to_record_a_parsed_document(
     _fresh, monkeypatch, capsys
 ):
-    (_fresh / ".codegraph" / "fts.db").write_bytes(b"")
+    (_fresh / ".cgh" / "fts.db").write_bytes(b"")
     big = _make_artifact(_fresh, name="manual.pdf", data=b"%PDF" + b"x" * 200_000)
     out = _run_read_hook(monkeypatch, capsys, _fresh, big)
     assert "can't parse" not in out

@@ -18,13 +18,13 @@ import subprocess
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.federation import reset_for_tests
-from codegraph.analysis.pattern import PATTERN_ANSWER_BYTES
-from codegraph.analysis.query_intent import clear_centrality_cache
-from codegraph.core.db import reset_connection
-from codegraph.server._budget import wire_bytes
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis.federation import reset_for_tests
+from cgh.analysis.pattern import PATTERN_ANSWER_BYTES
+from cgh.analysis.query_intent import clear_centrality_cache
+from cgh.core.db import reset_connection
+from cgh.server._budget import wire_bytes
+from cgh.server.tools_query import register as register_query
 
 _LINES = [
     "    value = compute_total(order, taxes)  # total de la commande",
@@ -97,10 +97,10 @@ def federated(tmp_path) -> dict:
         child = tmp_path / name
         _write_tree(child, n_dirs=3)
         children.append(child)
-    cfg = root / ".codegraph" / "config.toml"
+    cfg = root / ".cgh" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     listed = ", ".join(json.dumps(str(c)) for c in children)
-    cfg.write_text(f"[codegraph]\nsubrepos = [{listed}]\n", encoding="utf-8")
+    cfg.write_text(f"[cgh]\nsubrepos = [{listed}]\n", encoding="utf-8")
     yield _setup(root, children)
     _teardown()
 

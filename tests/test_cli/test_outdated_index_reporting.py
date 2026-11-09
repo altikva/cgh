@@ -24,13 +24,13 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_query as cq
-import codegraph.cli.owner_client as oc
-from codegraph.cli import commands_monitor
-from codegraph.cli.owner_client import OwnerReply
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.state.scan_meta import GRAPH_FORMAT, scan_status
+import cgh.cli.commands_query as cq
+import cgh.cli.owner_client as oc
+from cgh.cli import commands_monitor
+from cgh.cli.owner_client import OwnerReply
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.state.scan_meta import GRAPH_FORMAT, scan_status
 
 
 def _git(root, *args):
@@ -47,7 +47,7 @@ def repo(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     (root / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
-    (root / ".gitignore").write_text(".codegraph/\n", encoding="utf-8")
+    (root / ".gitignore").write_text(".cgh/\n", encoding="utf-8")
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "a")
@@ -59,7 +59,7 @@ def repo(tmp_path):
 
 
 def _set_format(root: Path, fmt: int | None) -> None:
-    path = root / ".codegraph" / "scan_meta.json"
+    path = root / ".cgh" / "scan_meta.json"
     meta = json.loads(path.read_text(encoding="utf-8"))
     if fmt is None:
         meta.pop("graph_format", None)
@@ -92,7 +92,7 @@ def test_older_format_reads_outdated(repo, capsys, fmt):
 
 
 def test_reparse_running_reads_reindexing(repo, capsys):
-    from codegraph.state import index_lock
+    from cgh.state import index_lock
 
     _set_format(repo, GRAPH_FORMAT - 1)
     index_lock._lock_path(repo).write_text(f"{os.getpid()}\n", encoding="utf-8")
@@ -129,7 +129,7 @@ def _doctor(repo, monkeypatch, capsys, strict: bool) -> str:
 
 def test_doctor_flags_outdated_index_without_blocking(repo, monkeypatch, capsys):
     assert "graph format" not in _doctor(repo, monkeypatch, capsys, strict=False)
-    (repo / ".codegraph" / "config.toml").write_text("[codegraph]\n")
+    (repo / ".cgh" / "config.toml").write_text("[cgh]\n")
     _set_format(repo, GRAPH_FORMAT - 1)
     out = _doctor(repo, monkeypatch, capsys, strict=True)  # must not raise
     line = next(ln for ln in out.splitlines() if "graph format" in ln)
@@ -138,12 +138,12 @@ def test_doctor_flags_outdated_index_without_blocking(repo, monkeypatch, capsys)
 
 
 def test_init_from_outdated_source_warns_before_seeding(tmp_path, repo, monkeypatch):
-    from codegraph.cli import commands_init
-    from codegraph.state import relocate
+    from cgh.cli import commands_init
+    from cgh.state import relocate
 
     _set_format(repo, GRAPH_FORMAT - 1)
     target = tmp_path / "target"
-    (target / ".codegraph").mkdir(parents=True)
+    (target / ".cgh").mkdir(parents=True)
     buf = io.StringIO()
     monkeypatch.setattr(commands_init, "console", Console(file=buf, width=300))
 

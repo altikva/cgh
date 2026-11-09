@@ -14,7 +14,7 @@ import argparse
 
 import pytest
 
-from codegraph.state import deferred_scan
+from cgh.state import deferred_scan
 
 
 @pytest.fixture(autouse=True)
@@ -33,9 +33,9 @@ def test_cli_index_queues_no_deferred_scan(tmp_path, monkeypatch):
         deferred_scan.enqueue(root, str(tmp_path / "mod.py"), "sha")
         return {"indexed": 1, "skipped": 0, "errors": 0, "elapsed_s": 0.0}
 
-    monkeypatch.setattr("codegraph.indexer.index_repo", _fake_index_repo)
+    monkeypatch.setattr("cgh.indexer.index_repo", _fake_index_repo)
 
-    from codegraph.cli.commands_index import cmd_index
+    from cgh.cli.commands_index import cmd_index
 
     cmd_index(argparse.Namespace(root=str(tmp_path), verbose=False, method="auto"))
     deferred_scan.drain_for_tests()

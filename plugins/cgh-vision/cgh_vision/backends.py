@@ -57,7 +57,7 @@ def is_local(config: dict) -> bool:
     'nothing leaves the machine' is only true for a loopback URL, so
     this checks the real endpoint, not the backend name.
     A llama-server on 127.0.0.1 is local; a cloud gateway is not."""
-    from codegraph.plugin_api import is_loopback_url
+    from cgh.plugin_api import is_loopback_url
 
     return is_loopback_url(endpoint_url(config))
 

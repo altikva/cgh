@@ -1,13 +1,13 @@
 # Plugins
 
-cgh discovers pip-installed plugins through the `cgh` entry point group: install one, and the next run picks it up. A plugin can add file parsers, per-file scanners, MCP tools, and CLI subcommands through a small versioned API (`codegraph.plugin_api`, contracts documented in its docstrings).
+cgh discovers pip-installed plugins through the `cgh` entry point group: install one, and the next run picks it up. A plugin can add file parsers, per-file scanners, MCP tools, and CLI subcommands through a small versioned API (`cgh.plugin_api`, contracts documented in its docstrings).
 
 ```bash
 pip install some-cgh-plugin   # discovery is automatic
 cgh plugins                   # list plugins: status, version, surfaces
 ```
 
-Control which plugins load per repo in `.codegraph/config.toml`:
+Control which plugins load per repo in `.cgh/config.toml`:
 
 ```toml
 [plugins]

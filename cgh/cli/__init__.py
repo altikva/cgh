@@ -1,0 +1,111 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-04-12
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: CLI package: shared console, helpers, and logo.
+
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+
+from rich.console import Console
+
+from cgh import __version__ as VERSION
+from cgh.core.utils import lang_color as _lang_color
+from cgh.core.utils import rows as _rows
+from cgh.core.utils import short_path as _short_path
+
+console = Console()
+
+_PROGRESS_CONSOLE: Console | None = None
+
+
+def show_progress() -> bool:
+    """Whether to animate spinners / progress bars.
+
+    Off when a parent asked for quiet via CGH_NO_PROGRESS=1 (a federated
+    child run with captured output, a git hook, a background owner): those
+    must never spray ANSI into a pipe or a log. On otherwise, including on
+    terminals rich mis-detects as non-tty, notably git-bash / mintty on
+    Windows (isatty is False there even though a human is watching), which
+    is why we also trust MSYSTEM.
+    """
+    if os.environ.get("CGH_NO_PROGRESS") == "1":
+        return False
+    return console.is_terminal or bool(os.environ.get("MSYSTEM"))
+
+
+def progress_console() -> Console:
+    """A console that actually renders live progress even where isatty is
+    unreliable (git-bash). Only used when show_progress() is True."""
+    global _PROGRESS_CONSOLE
+    if _PROGRESS_CONSOLE is None:
+        _PROGRESS_CONSOLE = Console(force_terminal=True)
+    return _PROGRESS_CONSOLE
+
+
+@contextmanager
+def status(message: str):
+    """A spinner during a quiet phase, or a silent no-op when progress is
+    disabled (background / captured). Safe to wrap any blocking step."""
+    if show_progress():
+        with progress_console().status(message, spinner="dots"):
+            yield
+    else:
+        yield
+
+
+LOGO = r"""[bold cyan]
+           _
+  ___ __ _| |__
+ / __/ _` | '_ \
+| (_| (_| | | | |
+ \___\__, |_| |_|
+     |___/
+[/bold cyan]"""
+
+
+def _get_conn(root, readonly=False):
+    """
+    Get a graph DB connection. If readonly=True and DB is locked,
+    returns None instead of crashing, caller must handle.
+    """
+    if readonly:
+        from cgh.core.db import get_readonly_connection
+
+        return get_readonly_connection(root)
+    from cgh.core.db import get_connection
+
+    return get_connection(root)
+
+
+def _query_conn(root):
+    """A read-only graph connection for a query command answering without
+    an owner (None when locked, see _get_conn). A store written in an older
+    graph format is refused first, on stderr with exit 1: it lacks edges a
+    re-parse adds, so its answers would be silently incomplete. An owner
+    re-parses such a store when it starts, so only this local path checks."""
+    import sys
+
+    from cgh.state.scan_meta import outdated_store_message
+
+    message = outdated_store_message(root)
+    if message:
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
+    return _get_conn(root, readonly=True)
+
+
+__all__ = [
+    "LOGO",
+    "VERSION",
+    "_get_conn",
+    "_lang_color",
+    "_query_conn",
+    "_rows",
+    "_short_path",
+    "console",
+]

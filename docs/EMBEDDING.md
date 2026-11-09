@@ -1,9 +1,9 @@
 # Embedding cgh in your own code
 
-`codegraph.sdk` is the one import path third-party code may rely on.
+`cgh.sdk` is the one import path third-party code may rely on.
 It exposes cgh's bricks as explicit functions, no CLI, no owner
-process, no MCP server, no `.codegraph/` directory. Everything else
-under `codegraph.*` is internal and changes without notice.
+process, no MCP server, no `.cgh/` directory. Everything else
+under `cgh.*` is internal and changes without notice.
 
 Licensing: cgh is Apache-2.0 from 0.19 on, so embedding it, including
 commercially, needs no special exception. See [LICENSE](../LICENSE)
@@ -21,7 +21,7 @@ pip install cgh-summarize          # optional: text summaries (frozen, PyPI only
 ## Scan text and decide egress inside an agent loop
 
 ```python
-from codegraph import sdk
+from cgh import sdk
 
 findings = sdk.scan_text(document_text, path="upload.txt", scanners=["pii"])
 
@@ -61,7 +61,7 @@ NER tier (`cgh-pii[ner]`); the regex categories work with cgh-pii
 alone.
 
 ```python
-from codegraph import sdk
+from cgh import sdk
 
 clean = sdk.redact_text(text, only=["person"])           # names -> [PERSON_1]
 clean = sdk.redact_text(text, only=["email", "iban"])    # regex categories

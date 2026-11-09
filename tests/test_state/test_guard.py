@@ -24,14 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
-from codegraph.state.guard import cleanup_guard_leftovers, sync_static_rules
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
+from cgh.state.guard import cleanup_guard_leftovers, sync_static_rules
 
 _BLOCK = (
-    "# >>> cgh guard (managed, do not edit) >>>\n"
-    ".codegraph/\nkey.pem\n"
-    "# <<< cgh guard <<<\n"
+    "# >>> cgh guard (managed, do not edit) >>>\n.cgh/\nkey.pem\n# <<< cgh guard <<<\n"
 )
 
 
@@ -43,9 +41,9 @@ def clean_store():
 
 
 def _repo(tmp_path: Path, mode: str = "secure") -> Path:
-    (tmp_path / ".codegraph").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".codegraph" / "config.toml").write_text(
-        f'[codegraph]\nmode = "{mode}"\n', encoding="utf-8"
+    (tmp_path / ".cgh").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".cgh" / "config.toml").write_text(
+        f'[cgh]\nmode = "{mode}"\n', encoding="utf-8"
     )
     return tmp_path
 
@@ -82,14 +80,14 @@ class TestHookAlwaysAllows:
         [
             ("Read", {"file_path": "{barred}"}),
             ("Bash", {"command": "cat {barred}"}),
-            ("Read", {"file_path": "{root}/.codegraph/findings.db"}),
-            ("Bash", {"command": "sqlite3 .codegraph/findings.db .dump"}),
+            ("Read", {"file_path": "{root}/.cgh/findings.db"}),
+            ("Bash", {"command": "sqlite3 .cgh/findings.db .dump"}),
         ],
     )
     def test_claude_hook_allows_what_used_to_be_denied(
         self, tmp_path, monkeypatch, tool, tool_input
     ):
-        from codegraph.cli.commands_guard import cmd_hook_guard
+        from cgh.cli.commands_guard import cmd_hook_guard
 
         root = _repo(tmp_path)
         barred = _bar(root, "payroll.xlsx")
@@ -102,7 +100,7 @@ class TestHookAlwaysAllows:
         assert (code, out, err) == (0, "", "")
 
     def test_codex_hook_prints_no_decision(self, tmp_path, monkeypatch):
-        from codegraph.cli.commands_guard import cmd_hook_guard_codex
+        from cgh.cli.commands_guard import cmd_hook_guard_codex
 
         root = _repo(tmp_path)
         barred = _bar(root, "payroll.xlsx")
@@ -118,7 +116,7 @@ class TestHookAlwaysAllows:
         assert (code, out, err) == (0, "", "")
 
     def test_garbage_payload_still_allows(self, monkeypatch):
-        from codegraph.cli.commands_guard import cmd_hook_guard
+        from cgh.cli.commands_guard import cmd_hook_guard
 
         monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
         cmd_hook_guard(Namespace())  # no raise, no exit
@@ -132,7 +130,7 @@ class TestHookAlwaysAllows:
             {"cwd": str(root), "tool_name": "Read", "tool_input": {"file_path": "x"}}
         )
         proc = subprocess.run(
-            [sys.executable, "-m", "codegraph", command, "#", "cgh-guard"],
+            [sys.executable, "-m", "cgh", command, "#", "cgh-guard"],
             input=payload,
             capture_output=True,
             text=True,
@@ -154,13 +152,13 @@ class TestCleanupClaudeRules:
         return path
 
     def _sidecar(self, root: Path, rules: list[str]) -> Path:
-        path = root / ".codegraph" / "guard_denies.json"
+        path = root / ".cgh" / "guard_denies.json"
         path.write_text(json.dumps(rules), encoding="utf-8")
         return path
 
     def test_rules_are_kept_and_counted_by_default(self, tmp_path):
         root = _repo(tmp_path)
-        ours = ["Read(.codegraph/**)", f"Read({root}/payroll.xlsx)"]
+        ours = ["Read(.cgh/**)", f"Read({root}/payroll.xlsx)"]
         deny = ["Read(./.env)", *ours]
         settings = self._settings(root, deny)
         sidecar = self._sidecar(root, ours)
@@ -175,7 +173,7 @@ class TestCleanupClaudeRules:
 
     def test_removes_only_sidecar_rules(self, tmp_path):
         root = _repo(tmp_path)
-        ours = ["Read(.codegraph/**)", f"Read({root}/payroll.xlsx)"]
+        ours = ["Read(.cgh/**)", f"Read({root}/payroll.xlsx)"]
         user = ["Read(./.env)", "Bash(rm -rf *)"]
         settings = self._settings(root, user[:1] + ours + user[1:], model="opus")
         sidecar = self._sidecar(root, ours)
@@ -192,17 +190,17 @@ class TestCleanupClaudeRules:
     def test_rule_identical_to_ours_is_kept_without_sidecar(self, tmp_path):
         """Without the sidecar cgh cannot prove it wrote a rule: hands off."""
         root = _repo(tmp_path)
-        settings = self._settings(root, ["Read(.codegraph/**)"])
+        settings = self._settings(root, ["Read(.cgh/**)"])
         assert cleanup_guard_leftovers(root).kept_rules == 0
         report = cleanup_guard_leftovers(root, remove_rules=True)
         assert report.claude_rules == []
         data = json.loads(settings.read_text(encoding="utf-8"))
-        assert data["permissions"]["deny"] == ["Read(.codegraph/**)"]
+        assert data["permissions"]["deny"] == ["Read(.cgh/**)"]
 
     def test_empty_deny_list_is_dropped(self, tmp_path):
         root = _repo(tmp_path)
-        settings = self._settings(root, ["Read(.codegraph/**)"])
-        self._sidecar(root, ["Read(.codegraph/**)"])
+        settings = self._settings(root, ["Read(.cgh/**)"])
+        self._sidecar(root, ["Read(.cgh/**)"])
         cleanup_guard_leftovers(root, remove_rules=True)
         assert "permissions" not in json.loads(settings.read_text(encoding="utf-8"))
 
@@ -211,7 +209,7 @@ class TestCleanupClaudeRules:
         path = root / ".claude" / "settings.local.json"
         path.parent.mkdir(parents=True)
         path.write_text("{ not json", encoding="utf-8")
-        sidecar = self._sidecar(root, ["Read(.codegraph/**)"])
+        sidecar = self._sidecar(root, ["Read(.cgh/**)"])
         report = cleanup_guard_leftovers(root, remove_rules=True)
         assert path.read_text(encoding="utf-8") == "{ not json"
         assert sidecar.exists()  # kept so a later run can finish
@@ -220,8 +218,8 @@ class TestCleanupClaudeRules:
     def test_plugin_api_shim_writes_and_removes_nothing(self, tmp_path):
         root = _repo(tmp_path)
         _bar(root, "payroll.xlsx")
-        settings = self._settings(root, ["Read(.codegraph/**)", "Read(./.env)"])
-        sidecar = self._sidecar(root, ["Read(.codegraph/**)"])
+        settings = self._settings(root, ["Read(.cgh/**)", "Read(./.env)"])
+        sidecar = self._sidecar(root, ["Read(.cgh/**)"])
         before = settings.read_text(encoding="utf-8")
         assert sync_static_rules(root) == (0, 0)
         assert settings.read_text(encoding="utf-8") == before
@@ -242,7 +240,7 @@ class TestCleanupBobignore:
         path = root / ".bobignore"
         path.write_text("node_modules/\n" + _BLOCK + "dist/\n", encoding="utf-8")
         report = cleanup_guard_leftovers(root, remove_rules=True)
-        assert report.bobignore_lines == [".codegraph/", "key.pem"]
+        assert report.bobignore_lines == [".cgh/", "key.pem"]
         assert path.read_text(encoding="utf-8") == "node_modules/\ndist/\n"
 
     def test_file_holding_only_the_block_is_deleted(self, tmp_path):
@@ -254,10 +252,10 @@ class TestCleanupBobignore:
     def test_user_file_without_block_is_untouched(self, tmp_path):
         root = _repo(tmp_path)
         path = root / ".bobignore"
-        path.write_text(".codegraph/\nsecrets/\n", encoding="utf-8")
+        path.write_text(".cgh/\nsecrets/\n", encoding="utf-8")
         report = cleanup_guard_leftovers(root, remove_rules=True)
         assert not report.changed and report.kept_rules == 0
-        assert path.read_text(encoding="utf-8") == ".codegraph/\nsecrets/\n"
+        assert path.read_text(encoding="utf-8") == ".cgh/\nsecrets/\n"
 
 
 class TestCleanupHooks:
@@ -336,7 +334,7 @@ class TestCleanupHooks:
 
 class TestGuardCommand:
     def test_prints_deprecation_and_keeps_rules(self, tmp_path, capsys):
-        from codegraph.cli.commands_guard import cmd_guard
+        from cgh.cli.commands_guard import cmd_guard
 
         root = _repo(tmp_path)
         (root / ".bobignore").write_text(_BLOCK, encoding="utf-8")
@@ -348,7 +346,7 @@ class TestGuardCommand:
         assert (root / ".bobignore").read_text(encoding="utf-8") == _BLOCK
 
     def test_remove_rules_removes_only_cgh_rules(self, tmp_path, capsys):
-        from codegraph.cli.commands_guard import cmd_guard
+        from cgh.cli.commands_guard import cmd_guard
 
         root = _repo(tmp_path)
         (root / ".bobignore").write_text("dist/\n" + _BLOCK, encoding="utf-8")
@@ -358,7 +356,7 @@ class TestGuardCommand:
             json.dumps({"permissions": {"deny": ["Read(./.env)", "Read(key.pem)"]}}),
             encoding="utf-8",
         )
-        sidecar = root / ".codegraph" / "guard_denies.json"
+        sidecar = root / ".cgh" / "guard_denies.json"
         sidecar.write_text(json.dumps(["Read(key.pem)"]), encoding="utf-8")
 
         cmd_guard(Namespace(root=str(root), action="status", remove_rules=True))
@@ -378,7 +376,7 @@ class TestGuardCommand:
             [
                 sys.executable,
                 "-m",
-                "codegraph",
+                "cgh",
                 "guard",
                 "--remove-rules",
                 "--root",
@@ -394,7 +392,7 @@ class TestGuardCommand:
     def test_setup_keeps_rules_and_says_how_to_remove(
         self, tmp_path, monkeypatch, capsys
     ):
-        from codegraph.cli.commands_init import cmd_setup
+        from cgh.cli.commands_init import cmd_setup
 
         root = _repo(tmp_path)
         (root / ".bobignore").write_text("dist/\n" + _BLOCK, encoding="utf-8")

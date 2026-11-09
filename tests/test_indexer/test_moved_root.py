@@ -4,7 +4,7 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: A .codegraph store copied to another directory, then indexed
+# Description: A .cgh store copied to another directory, then indexed
 #              with a full `cgh index`, must not keep any node of the old root.
 #              Before, the full walk upserted the new paths beside the old ones
 #              and every caller was reported twice.
@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import incremental_reindex, index_repo
-from codegraph.state.scan_meta import clear_meta, read_meta
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import incremental_reindex, index_repo
+from cgh.state.scan_meta import clear_meta, read_meta
 
 FILES = {
     "pkg/helpers.py": "def normalize(x):\n    return x\n",
@@ -33,7 +33,7 @@ FILES = {
 @pytest.fixture(params=["duckdb", "sqlite"])
 def backend(request, monkeypatch):
     monkeypatch.setenv("CGH_DB", request.param)
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     yield request.param
     reset_connection()
@@ -67,7 +67,7 @@ def _assert_clean(new: Path, old: Path) -> None:
     into = [r for r in rows if str(r[1]).endswith("::normalize")]
     assert len(into) == 1, rows
     assert all(str(old) not in str(v) for r in rows for v in r), rows
-    fts = sqlite3.connect(new / ".codegraph" / "fts.db")
+    fts = sqlite3.connect(new / ".cgh" / "fts.db")
     try:
         fts_paths = {
             p for (p,) in fts.execute("SELECT DISTINCT file_path FROM symbols")
@@ -123,19 +123,19 @@ def _seed(tmp_path: Path) -> tuple[Path, Path]:
     """What `cgh init --from` does for a ticket worktree: a seed checkout is
     indexed once, the ticket is a `git worktree add` of it, and the seed's
     store is copied over and rewritten to the ticket's root."""
-    from codegraph.state.relocate import relocate_store
+    from cgh.state.relocate import relocate_store
 
     seed = tmp_path / "seed"
     ticket = tmp_path / "ticket"
     _make(seed)
-    (seed / ".gitignore").write_text(".codegraph/\n")
+    (seed / ".gitignore").write_text(".cgh/\n")
     _git(seed, "init", "-q", "-b", "main")
     _git(seed, "add", "-A")
     _git(seed, "commit", "-q", "-m", "init")
     index_repo(seed)
     reset_connection()
     _git(seed, "worktree", "add", "-q", "-b", "ticket", str(ticket))
-    (ticket / ".codegraph").mkdir()
+    (ticket / ".cgh").mkdir()
     relocate_store(seed, ticket)
     reset_connection()
     return seed.resolve(), ticket.resolve()
@@ -145,7 +145,7 @@ def test_seeded_worktree_stays_incremental(tmp_path, backend, monkeypatch):
     # A seed rewrites the recorded root, so the copied-store check trusts it
     # and the reindex that follows the seed parses only what the ticket
     # branch changed, instead of rebuilding the whole graph.
-    import codegraph.indexer as indexer
+    import cgh.indexer as indexer
 
     seed, ticket = _seed(tmp_path)
     assert read_meta(ticket)["root"] == str(ticket)
@@ -169,16 +169,16 @@ def test_seeded_worktree_stays_incremental(tmp_path, backend, monkeypatch):
 
 
 def test_extra_dir_outside_the_root_is_not_foreign(tmp_path, backend):
-    from codegraph.indexer import _foreign_root
+    from cgh.indexer import _foreign_root
 
     root = tmp_path / "repo"
     _make(root)
     side = tmp_path / "side"
     side.mkdir()
     (side / "s.py").write_text("def s():\n    return 1\n", encoding="utf-8")
-    cfg = root / ".codegraph" / "config.toml"
+    cfg = root / ".cgh" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text('[codegraph]\nextra_dirs = ["../side"]\n', encoding="utf-8")
+    cfg.write_text('[cgh]\nextra_dirs = ["../side"]\n', encoding="utf-8")
     index_repo(root, method="os_walk")
     clear_meta(root)
     assert _foreign_root(root) == ""
@@ -187,7 +187,7 @@ def test_extra_dir_outside_the_root_is_not_foreign(tmp_path, backend):
 def _status(root: Path, capsys, as_json: bool) -> str:
     import argparse
 
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     commands_monitor.console.width = 300
     commands_monitor.cmd_status(
@@ -201,7 +201,7 @@ def test_status_flags_a_copied_store_before_the_next_index(tmp_path, backend, ca
     # every answer pointed at the old tree.
     import json
 
-    from codegraph.state.scan_meta import scan_status
+    from cgh.state.scan_meta import scan_status
 
     old, new = _copy(tmp_path)
     ss = scan_status(new)
@@ -220,7 +220,7 @@ def test_status_flags_a_copied_store_before_the_next_index(tmp_path, backend, ca
 def test_doctor_flags_a_copied_store(tmp_path, backend, capsys, monkeypatch):
     import argparse
 
-    from codegraph.cli import commands_monitor
+    from cgh.cli import commands_monitor
 
     old, new = _copy(tmp_path)
     monkeypatch.setattr(commands_monitor.console, "width", 300)
@@ -231,7 +231,7 @@ def test_doctor_flags_a_copied_store(tmp_path, backend, capsys, monkeypatch):
 
 
 def test_query_commands_warn_on_stderr(tmp_path, backend, capsys):
-    from codegraph.cli.commands_query import _warn_if_copied
+    from cgh.cli.commands_query import _warn_if_copied
 
     old, new = _copy(tmp_path)
     _warn_if_copied(str(new))
@@ -243,7 +243,7 @@ def test_query_commands_warn_on_stderr(tmp_path, backend, capsys):
 def test_seeded_worktree_is_not_flagged_as_copied(tmp_path, backend, capsys):
     import json
 
-    from codegraph.state.scan_meta import scan_status
+    from cgh.state.scan_meta import scan_status
 
     _seed_root, ticket = _seed(tmp_path)
     ss = scan_status(ticket)
@@ -257,7 +257,7 @@ def test_impact_refuses_a_copied_store(tmp_path, backend, capsys, as_json):
     import argparse
     import json
 
-    from codegraph.cli.commands_impact import cmd_impact
+    from cgh.cli.commands_impact import cmd_impact
 
     old, new = _copy(tmp_path)
     args = argparse.Namespace(
@@ -280,8 +280,8 @@ def test_impact_refuses_a_copied_store(tmp_path, backend, capsys, as_json):
 def test_path_lookups_refuse_a_copied_store(tmp_path, backend, capsys):
     import argparse
 
-    from codegraph.cli.commands_files import cmd_files
-    from codegraph.cli.commands_query import cmd_outline
+    from cgh.cli.commands_files import cmd_files
+    from cgh.cli.commands_query import cmd_outline
 
     old, new = _copy(tmp_path)
     with pytest.raises(SystemExit) as exc:
@@ -308,7 +308,7 @@ def test_path_lookups_refuse_a_copied_store(tmp_path, backend, capsys):
 def test_path_lookups_answer_on_the_original_store(tmp_path, backend, capsys):
     import argparse
 
-    from codegraph.cli.commands_files import cmd_files
+    from cgh.cli.commands_files import cmd_files
 
     old, _new = _copy(tmp_path)
     cmd_files(
@@ -323,7 +323,7 @@ def test_endpoints_refuses_a_copied_store(tmp_path, backend, capsys, as_json):
     import argparse
     import json
 
-    from codegraph.cli.commands_query import cmd_endpoints
+    from cgh.cli.commands_query import cmd_endpoints
 
     old, new = _copy(tmp_path)
     args = argparse.Namespace(

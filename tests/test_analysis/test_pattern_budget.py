@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from codegraph.analysis.pattern import (
+from cgh.analysis.pattern import (
     MORE_FILES_SHOWN,
     PATTERN_ANSWER_BYTES,
     SHOWN_LINE_LEN,
@@ -21,8 +21,8 @@ from codegraph.analysis.pattern import (
     group_hits,
     match_finder,
 )
-from codegraph.server._budget import answer_bytes
-from codegraph.server.tools_query import _fit_extra, _hits_payload
+from cgh.server._budget import answer_bytes
+from cgh.server.tools_query import _fit_extra, _hits_payload
 
 
 def _hits(

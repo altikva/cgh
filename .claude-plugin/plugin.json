@@ -25,6 +25,6 @@
       "args": ["serve", "--root", ".", "--watch", "--reindex"]
     }
   },
-  "skills": "./codegraph/skills",
+  "skills": "./cgh/skills",
   "hooks": "./.claude-plugin/hooks.json"
 }

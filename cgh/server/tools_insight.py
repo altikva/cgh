@@ -1,0 +1,948 @@
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# __creation__ = 2026-06-07
+# __author__ = "jndjama (Joy Ndjama)"
+# __copyright__ = "Copyright 2026 ALTIKVA."
+# __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+# -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Description: Read-only graph-insight MCP tools built over the GraphDB
+#              protocol: file_summary (one-shot file orientation),
+#              impact_of (reverse blast radius over CALLS / IMPORTS),
+#              path_between (shortest path over an edge type), and
+#              import_cycles (SCC detection on the IMPORTS graph) and
+#              shared_types (same-named types with agreeing fields in two
+#              federated scopes, deduced at query time). All are federated
+#              across subrepos and return JSON strings.
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from cgh.server._budget import dumps_answer
+
+# Hard caps so a pathological graph never blows up the JSON response.
+_SYMBOL_CAP = 200
+_IMPACT_CAP = 300
+_FANOUT_CAP = 500
+_PATH_VISIT_CAP = 5000
+
+# Reverse CALLS reach over-counts because CALLS edges are name-matched
+# best-effort (same caveat find_dead_code carries). Keep the wording in
+# one place so the note stays consistent.
+_CALLS_NOTE = (
+    "CALLS edges are name-matched best-effort, so reverse reach may "
+    "over-count: a caller listed here may resolve to a same-named symbol "
+    "in another file. Treat as a candidate set, not ground truth."
+)
+
+
+# What file_summary keeps of a docstring once the answer is over its ceiling,
+# and of the lists of import edges, before the symbol list itself is cut.
+_SUMMARY_DOC_CLIP = 60
+_SUMMARY_MODULE_DOC_CLIP = 160
+_SUMMARY_EDGES_KEPT = 3
+# Room kept for the hint and the counts added when the symbol list is cut.
+_SUMMARY_HINT_ROOM = 300
+
+
+def _first_line(row: dict) -> int:
+    """Start line of a symbol row, from its "start-end" range."""
+    try:
+        return int(str(row.get("lines", "")).split("-", 1)[0])
+    except ValueError:
+        return 0
+
+
+def _fit_summary(payload: dict, max_bytes: int) -> None:
+    """Bring a file_summary answer under ``max_bytes``, keeping each symbol's
+    name and line range. Docstring heads go first (clipped, then dropped from
+    the last symbol up), then the module doc is clipped and the import lists
+    shortened to a few rows, then to their totals, and only then the symbol list
+    loses its tail, with `symbols_total`, `dropped` and a hint saying where
+    the rest starts."""
+    from cgh.server._budget import answer_bytes
+
+    symbols = payload["functions"] + payload["classes"]
+    for row in symbols:
+        if not row.get("doc"):
+            row.pop("doc", None)
+    if answer_bytes(payload) <= max_bytes:
+        return
+    budget = max_bytes - _SUMMARY_HINT_ROOM
+    for row in symbols:
+        if len(row.get("doc", "")) > _SUMMARY_DOC_CLIP:
+            row["doc"] = row["doc"][:_SUMMARY_DOC_CLIP]
+    for row in reversed(symbols):
+        if answer_bytes(payload) <= budget:
+            return
+        row.pop("doc", None)
+    payload["module_doc"] = payload["module_doc"][:_SUMMARY_MODULE_DOC_CLIP]
+    # The symbols matter more here than the import edges imports_of lists:
+    # the edges shrink to a few rows, then to their totals alone.
+    for kept in (_SUMMARY_EDGES_KEPT, 0):
+        for key in ("imported_by", "imports"):
+            rows = payload[key]
+            if len(rows) > kept and answer_bytes(payload) > budget:
+                payload.setdefault(f"{key}_total", len(rows))
+                del rows[kept:]
+                payload["truncated"] = True
+                payload["hint"] = "Import lists cut to fit: imports_of for every edge."
+    if answer_bytes(payload) <= budget:
+        return
+    total = len(symbols)
+    functions, classes = payload["functions"], payload["classes"]
+    cut: list[dict] = []
+    while answer_bytes(payload) > budget and len(functions) + len(classes) > 1:
+        longest = functions if len(functions) >= len(classes) else classes
+        cut.append(longest.pop())
+    if not cut:
+        return
+    start = min(_first_line(r) for r in cut)
+    payload["truncated"] = True
+    payload["symbols_total"] = total
+    payload["dropped"] = (payload.get("dropped") or 0) + len(cut)
+    payload["hint"] = (
+        f"Symbol list cut to fit: {total - len(cut)} of {total} shown, the "
+        f"others start at line {start} or later. symbol_lookup(name) for one "
+        "symbol, imports_of for the import edges, or Read a line range."
+    )
+
+
+def register(mcp) -> None:
+    """Register graph-insight tools on the given FastMCP instance."""
+    import cgh.server as _srv
+    from cgh.analysis.federation import federate_flat, for_each_child_graphdb
+    from cgh.server import _get_conn, _logged_tool
+
+    def _federate(query_fn):
+        """Parent + federated children fan-out, flattened. Returns
+        (results_with_scope, warnings). See federation.federate_flat."""
+        return federate_flat(_get_conn, _srv._root, query_fn)
+
+    def _abs(path: str) -> str:
+        """Resolve a repo-relative path against the parent root."""
+        if not os.path.isabs(path) and _srv._root:
+            return str(_srv._root / path)
+        return path
+
+    def _looks_like_path(arg: str) -> bool:
+        """Heuristic: does this argument name a file rather than a symbol?"""
+        if "/" in arg or "\\" in arg:
+            return True
+        _, ext = os.path.splitext(arg)
+        return ext in {
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".vue",
+            ".go",
+            ".rs",
+            ".java",
+            ".tf",
+            ".md",
+        }
+
+    @mcp.tool()
+    @_logged_tool
+    def file_summary(file_path: str) -> str:
+        """
+        One-shot orientation for a single file. Returns its role / layer /
+        lang / module_doc, the functions and classes it defines (name, line
+        range, docstring head), the modules it imports, and the files that
+        import it. Use this BEFORE reading a file to decide which line
+        ranges actually matter.
+
+        Args:
+          file_path: repo-relative or absolute path to the File node.
+
+        Federated: the file may live in the parent or in any subrepo, so we
+        query all scopes and aggregate. Each symbol / import row carries a
+        `scope` tag when some come from a federated child. Symbols are
+        capped at 200 with a truncation note, and the answer at about
+        2 KB: past that, docstring heads are clipped then dropped, the
+        import lists keep a few rows (`imports_total`, `imported_by_total`),
+        and last the symbol list loses its tail, with `truncated`,
+        `symbols_total`, `dropped` and a `hint` naming the line the rest
+        starts at. Each symbol keeps its name and line range.
+
+        A repo file the graph does not hold yet (new, or changed since its
+        last index) is indexed first: the answer then carries
+        `indexed_now: true` and `on_demand: "indexed"`. A gitignored file
+        is never indexed (`on_demand: "ignored"`).
+        """
+        from cgh.analysis import on_demand
+        from cgh.server._budget import (
+            FILE_SUMMARY_MAX_BYTES,
+            drop_parent_scope,
+            dumps_answer,
+        )
+
+        target = _abs(file_path)
+        # A repo file the graph lacks or holds in an older version is
+        # indexed now, then summarized (the owner holds the write connection).
+        status = (
+            on_demand.ensure_indexed(_srv._root, Path(target))
+            if _srv._root
+            else "fresh"
+        )
+
+        def query(conn):
+            rows: list[dict] = []
+            # File node metadata. There is at most one per scope.
+            for f in conn.find_nodes(
+                "File",
+                where={"path": target},
+                return_fields=["path", "lang", "role", "layer", "module_doc"],
+            ):
+                rows.append(
+                    {
+                        "_kind": "file",
+                        "path": f["path"],
+                        "lang": f.get("lang") or "",
+                        "role": f.get("role") or "",
+                        "layer": f.get("layer") or "",
+                        "module_doc": (f.get("module_doc") or "")[:300],
+                    }
+                )
+            for label, kind in [("Function", "function"), ("Class", "class")]:
+                for s in conn.find_nodes(
+                    label,
+                    where={"file_path": target},
+                    return_fields=["name", "start_line", "end_line", "docstring"],
+                    order_by=["start_line"],
+                    limit=_SYMBOL_CAP + 1,
+                ):
+                    rows.append(
+                        {
+                            "_kind": "symbol",
+                            "symbol_kind": kind,
+                            "name": s["name"],
+                            "lines": f"{s['start_line']}-{s['end_line']}",
+                            "doc": (s.get("docstring") or "")[:100],
+                        }
+                    )
+            for imp in conn.find_neighbors(
+                "IMPORTS", src_key=target, return_dst=["path"]
+            ):
+                rows.append({"_kind": "import", "module": imp["dst_path"]})
+            for imp in conn.find_neighbors(
+                "IMPORTS", dst_key=target, return_src=["path"]
+            ):
+                rows.append({"_kind": "imported_by", "file": imp["src_path"]})
+            return rows
+
+        results, warnings = _federate(query)
+
+        meta = {"role": "", "layer": "", "lang": "", "module_doc": ""}
+        functions: list[dict] = []
+        classes: list[dict] = []
+        imports: list[dict] = []
+        imported_by: list[dict] = []
+        found = False
+        for row in results:
+            kind = row.pop("_kind")
+            scope = row.get("scope", "parent")
+            if kind == "file":
+                found = True
+                for k in ("role", "layer", "lang", "module_doc"):
+                    if not meta[k] and row.get(k):
+                        meta[k] = row[k]
+            elif kind == "symbol":
+                bucket = functions if row["symbol_kind"] == "function" else classes
+                bucket.append(
+                    {
+                        "name": row["name"],
+                        "lines": row["lines"],
+                        "doc": row["doc"],
+                        "scope": scope,
+                    }
+                )
+            elif kind == "import":
+                imports.append({"module": row["module"], "scope": scope})
+            elif kind == "imported_by":
+                imported_by.append({"file": row["file"], "scope": scope})
+
+        total_symbols = len(functions) + len(classes)
+        truncated = total_symbols > _SYMBOL_CAP
+        if truncated:
+            # Trim functions first, then classes, to the global cap.
+            keep_fn = min(len(functions), _SYMBOL_CAP)
+            functions = functions[:keep_fn]
+            classes = classes[: max(0, _SYMBOL_CAP - keep_fn)]
+
+        payload: dict = {
+            "file": target,
+            "found": found,
+            "role": meta["role"],
+            "layer": meta["layer"],
+            "lang": meta["lang"],
+            "module_doc": meta["module_doc"],
+            "functions": functions,
+            "classes": classes,
+            "imports": imports,
+            "imported_by": imported_by,
+            "truncated": truncated,
+        }
+        if truncated:
+            payload["note"] = f"symbols capped at {_SYMBOL_CAP}"
+        if status not in ("fresh", "unsupported"):
+            payload["on_demand"] = status
+            if status == "indexed":
+                payload["indexed_now"] = True
+                payload["note"] = " ".join(
+                    filter(None, [payload.get("note"), on_demand.note(status)])
+                )
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
+        drop_parent_scope(functions + classes + imports + imported_by)
+        _fit_summary(payload, FILE_SUMMARY_MAX_BYTES)
+        return dumps_answer(payload)
+
+    @mcp.tool()
+    @_logged_tool
+    def impact_of(
+        symbol_or_file: str, max_depth: int = 3, focus: str = "", max_tokens: int = 0
+    ) -> str:
+        """
+        Reverse blast radius: what depends on a symbol or file. If the
+        argument looks like a path (or matches a File node) we walk IMPORTS
+        backward to find every file that transitively imports it. Otherwise
+        we resolve it as a function name and walk CALLS backward to find
+        every transitive caller.
+
+        JS / TS: dynamic imports with a literal specifier (`import('./x')`)
+        count as imports, and a barrel that re-exports a file (`export *
+        from './x'`, `export { a } from './x'`) passes it on: the barrel's
+        importers are reached in the same hop. Each impacted file says
+        `via` which link reached it ("import", "reexport", "dynamic",
+        "interface", "terraform").
+
+        Terraform: a .tf path or an address (var.region) walks back the
+        blocks that reference it.
+
+        Args:
+          symbol_or_file: a function name, or a repo-relative / absolute path.
+          max_depth:      how many hops of reverse reach (default 3).
+          focus:          when the blast radius overflows the cap, keep the
+                          impacted nodes matching these term(s) (matched on
+                          path, role and layer) instead of the first N, e.g.
+                          focus="router" or focus="frontend api".
+          max_tokens:     approximate size budget of the answer (about 4
+                          characters per token of JSON); 0 (default) is no
+                          budget. Over it, the farthest impacted nodes go
+                          first, `truncated` is set and `dropped` counts them.
+
+        Returns JSON with `direction` ("callers" or "importers"), the
+        `impacted` set grouped by role / layer for files, any reaching
+        endpoints, a `count` (of the impacted nodes returned), and
+        `truncated`.
+
+        Federated per scope. CALLS reverse reach over-counts (see `note`):
+        edges are name-matched, so a listed caller may belong to a
+        same-named symbol elsewhere. Each impacted function carries the
+        `resolution` of the call edge that reached it ("resolved", "name",
+        "ambiguous", "interface", see find_callers): the guessed ones are
+        where the over-count lives. A function that is the only
+        implementation of an interface method (Protocol or ABC) also counts
+        the callers of that interface method ("interface"); with several
+        implementations the walk does not guess.
+        """
+        arg = symbol_or_file
+        as_path = _looks_like_path(arg)
+
+        def _resolve_is_file(conn) -> bool:
+            hits = conn.find_nodes("File", where={"path": _abs(arg)}, limit=1)
+            return bool(hits)
+
+        # Decide direction once, against the parent conn, then reuse it for
+        # every scope so the result set is homogeneous.
+        if not as_path:
+            try:
+                as_path = _resolve_is_file(_get_conn())
+            except Exception:
+                as_path = False
+
+        direction = "importers" if as_path else "callers"
+        edge = "IMPORTS" if as_path else "CALLS"
+
+        from cgh.analysis.impact import REEXPORT, import_edges_into
+        from cgh.analysis.terraform import dependent_files as tf_dependents
+        from cgh.analysis.terraform import impacted_files as tf_impacted_files
+        from cgh.analysis.terraform import nodes_named as tf_nodes_named
+        from cgh.analysis.terraform import referrers as tf_referrers
+
+        tf_ids: set[str] = set()
+
+        def reverse_bfs(
+            conn,
+            start_keys: list[str],
+            first_hop: list[str] | None = None,
+            reached_by: dict[str, str] | None = None,
+            dispatch=None,
+            via: dict[str, str] | None = None,
+        ) -> tuple[list[str], bool]:
+            """Bounded reverse BFS: collect source keys reachable into the
+            start keys within max_depth hops. Returns (keys, truncated).
+            ``first_hop`` keys count as reached in the first hop (the files
+            calling a file's methods through an interface). ``reached_by``,
+            when given, maps each reached key to the key it was found
+            calling (the edge that brought it in). ``dispatch(key)``, when
+            given, names the interface methods whose only implementation is
+            the function ``key``: their callers reach it too. ``via``, when
+            given (file walks), maps each reached file to the link that
+            brought it in: "import", "reexport", "dynamic", "terraform" or
+            "interface". A barrel re-exporting a reached file passes it on
+            to its importers within the same hop.
+
+            Terraform has no imports or calls: a .tf file's dependents are
+            the files whose blocks reference its blocks, and a block's are
+            the blocks referencing it (the TF reference edges)."""
+            extra = [k for k in first_hop or () if k not in start_keys]
+            if via is None:
+                via = {}
+            via.update(dict.fromkeys(extra, "interface"))
+            seen: set[str] = set(start_keys) | set(extra)
+            frontier = list(start_keys) + extra
+            ordered: list[str] = list(extra)
+            truncated = False
+            depth = 0
+            kinds: dict[str, str] = {}
+            while frontier and depth < max(1, int(max_depth)):
+                depth += 1
+                next_frontier: list[str] = []
+                # Grows while it is walked: the importers of a barrel that
+                # re-exports a reached file are reached in the same hop.
+                queue = list(frontier)
+                for key in queue:
+                    if as_path:
+                        kinds = import_edges_into(conn, key, limit=_FANOUT_CAP)
+                        rows = srcs = list(kinds)
+                        srcs = srcs + tf_dependents(conn, key, limit=_FANOUT_CAP)
+                    elif key in tf_ids:
+                        rows = srcs = tf_referrers(conn, key, limit=_FANOUT_CAP)
+                        tf_ids.update(srcs)
+                    else:
+                        rows = conn.find_neighbors(
+                            edge, dst_key=key, return_src=["id"], limit=_FANOUT_CAP
+                        )
+                        srcs = [r["src_id"] for r in rows]
+                    callee = dict.fromkeys(srcs, key)
+                    for iface in dispatch(key) if dispatch is not None else ():
+                        for r in conn.find_neighbors(
+                            edge, dst_key=iface, return_src=["id"], limit=_FANOUT_CAP
+                        ):
+                            if r["src_id"] not in callee:
+                                callee[r["src_id"]] = iface
+                                srcs.append(r["src_id"])
+                    if len(rows) >= _FANOUT_CAP:
+                        truncated = True
+                    for s in srcs:
+                        if s in seen:
+                            continue
+                        seen.add(s)
+                        if reached_by is not None:
+                            reached_by[s] = callee.get(s, key)
+                        ordered.append(s)
+                        kind = kinds.get(s) if as_path else ""
+                        if as_path:
+                            via[s] = "terraform" if kind is None else kind or "import"
+                        if kind == REEXPORT:
+                            queue.append(s)
+                        else:
+                            next_frontier.append(s)
+                        if len(ordered) >= _IMPACT_CAP:
+                            return ordered, True
+                frontier = next_frontier
+            return ordered, truncated
+
+        def query(conn):
+            from cgh.analysis.interfaces import (
+                InterfaceResolver,
+                interface_caller_files,
+                qualified_methods,
+            )
+
+            # Resolve the starting key(s) within this scope.
+            first_hop: list[str] = []
+            iface_keys: set[str] = set()
+            reached_by: dict[str, str] = {}
+            via: dict[str, str] = {}
+            resolver = InterfaceResolver(conn)
+
+            def dispatch(key: str) -> list[str]:
+                """Interface methods whose single implementation is ``key``:
+                a call through them can only land there."""
+                if key in tf_ids:
+                    return []
+                found = [
+                    i
+                    for i in resolver.interfaces_of(key)
+                    if i not in start_keys and resolver.sole_implementation(i) == key
+                ]
+                iface_keys.update(found)
+                return found
+
+            if as_path:
+                start_keys = [_abs(arg)]
+                if not start_keys[0].endswith((".tf", ".tfvars")):
+                    # Callers through an interface the file implements do
+                    # not import it.
+                    first_hop = interface_caller_files(conn, start_keys[0])
+            else:
+                start_keys = [
+                    r["id"]
+                    for r in conn.find_nodes(
+                        "Function", where={"name": arg}, return_fields=["id"]
+                    )
+                ]
+                if "." in arg:
+                    # Class.method: that method and the interface methods it
+                    # implements (their callers reach it through them).
+                    own = qualified_methods(conn, arg)
+                    for fid in own:
+                        ifaces = resolver.interfaces_of(fid)
+                        iface_keys.update(i for i in ifaces if i not in own)
+                        for key in (fid, *ifaces):
+                            if key not in start_keys:
+                                start_keys.append(key)
+                    # A Terraform address (var.region, google_x.y).
+                    found = [str(r["id"]) for r in tf_nodes_named(conn, arg)]
+                    tf_ids.update(found)
+                    start_keys += found
+            if not start_keys:
+                return []
+            if as_path and start_keys[0].endswith((".tf", ".tfvars")):
+                # Terraform: walk back from the file's blocks, so only the
+                # files holding blocks that reference them count, not every
+                # file of the module directory.
+                keys, _changed, trunc = tf_impacted_files(
+                    conn,
+                    {start_keys[0]: None},
+                    max_depth=max_depth,
+                    cap=_IMPACT_CAP,
+                )
+            else:
+                keys, trunc = reverse_bfs(
+                    conn,
+                    start_keys,
+                    first_hop,
+                    None if as_path else reached_by,
+                    None if as_path else dispatch,
+                    via,
+                )
+
+            out: list[dict] = []
+            if as_path:
+                # Each impacted key is a file path; enrich with role / layer.
+                for path in keys:
+                    role = layer = lang = ""
+                    fnodes = conn.find_nodes(
+                        "File",
+                        where={"path": path},
+                        return_fields=["role", "layer", "lang"],
+                        limit=1,
+                    )
+                    if fnodes:
+                        role = fnodes[0].get("role") or ""
+                        layer = fnodes[0].get("layer") or ""
+                        lang = fnodes[0].get("lang") or ""
+                    out.append(
+                        {
+                            "node": path,
+                            "node_kind": "file",
+                            "role": role,
+                            "layer": layer,
+                            "lang": lang,
+                            "via": via.get(path, "import"),
+                            "_trunc": trunc,
+                        }
+                    )
+            else:
+                # Each impacted key is a Function id "file::name", carrying
+                # the resolution of the CALLS edge that brought it in.
+                from cgh.analysis.provenance import (
+                    INTERFACE,
+                    RESOLVED,
+                    EdgeProvenance,
+                )
+
+                prov = EdgeProvenance(conn)
+                prov.prefetch([k for k in keys if k not in tf_ids])
+
+                def _resolution(fid: str) -> str:
+                    callee = reached_by.get(fid, "")
+                    if fid in tf_ids or not callee:
+                        return RESOLVED
+                    if callee in iface_keys:
+                        return INTERFACE
+                    return prov.of(fid, callee)
+
+                for fid in keys:
+                    file_path = fid.rsplit("::", 1)[0] if "::" in fid else ""
+                    role = layer = ""
+                    if file_path:
+                        fnodes = conn.find_nodes(
+                            "File",
+                            where={"path": file_path},
+                            return_fields=["role", "layer"],
+                            limit=1,
+                        )
+                        if fnodes:
+                            role = fnodes[0].get("role") or ""
+                            layer = fnodes[0].get("layer") or ""
+                    out.append(
+                        {
+                            "node": fid,
+                            "node_kind": "tf_block" if fid in tf_ids else "function",
+                            "file": file_path,
+                            "role": role,
+                            "layer": layer,
+                            "resolution": _resolution(fid),
+                            "_trunc": trunc,
+                        }
+                    )
+            return out
+
+        results, warnings = _federate(query)
+
+        impacted: list[dict] = []
+        by_role: dict[str, int] = {}
+        by_layer: dict[str, int] = {}
+        endpoints: list[dict] = []
+        truncated = len(results) > _IMPACT_CAP
+        files_for_endpoints: set[tuple[str, str]] = set()
+        for row in results:
+            if row.pop("_trunc", False):
+                truncated = True
+            scope = row.get("scope", "parent")
+            role = row.get("role") or ""
+            layer = row.get("layer") or ""
+            if role:
+                by_role[role] = by_role.get(role, 0) + 1
+            if layer:
+                by_layer[layer] = by_layer.get(layer, 0) + 1
+            impacted.append(row)
+            fp = row.get("file") or (row["node"] if row["node_kind"] == "file" else "")
+            if fp:
+                files_for_endpoints.add((scope, fp))
+            if role and ("router" in role.lower() or "endpoint" in role.lower()):
+                endpoints.append(
+                    {"file": fp or row["node"], "role": role, "scope": scope}
+                )
+
+        # Over the cap, keep the items relevant to `focus` (matched on
+        # node / file / role / layer) instead of the arbitrary first N,
+        # and report the drop rather than truncate silently.
+        from cgh.server._focus import focus_filter
+
+        focus_note = None
+        if len(impacted) > _IMPACT_CAP:
+            impacted, focus_note = focus_filter(
+                impacted,
+                focus,
+                lambda r: " ".join(
+                    str(r.get(k, "")) for k in ("node", "file", "role", "layer")
+                ),
+                _IMPACT_CAP,
+            )
+            truncated = True
+
+        # Endpoints declared in any impacted file (DEFINES_ENDPOINT), not
+        # the throwaway routes of test files.
+        def endpoint_query(conn):
+            from cgh.analysis.impact import endpoints_in_files
+
+            return endpoints_in_files(
+                conn, sorted({fp for _s, fp in files_for_endpoints})
+            )
+
+        if files_for_endpoints:
+            ep_rows, ep_warnings = _federate(endpoint_query)
+            warnings = warnings + ep_warnings
+
+            def _ep_key(e: dict) -> tuple:
+                return (
+                    e["file"],
+                    e.get("method", ""),
+                    e.get("path", ""),
+                    e.get("line"),
+                )
+
+            seen_ep = {_ep_key(e) for e in endpoints}
+            for e in ep_rows:
+                key = _ep_key(e)
+                if key in seen_ep:
+                    continue
+                seen_ep.add(key)
+                endpoints.append(e)
+
+        payload: dict = {
+            "target": arg,
+            "direction": direction,
+            "depth": int(max_depth),
+            "impacted": impacted,
+            "count": len(impacted),
+            "by_role": by_role,
+            "by_layer": by_layer,
+            "endpoints": endpoints,
+            "truncated": truncated,
+        }
+        if focus_note:
+            payload["focus_note"] = focus_note
+        if not as_path:
+            payload["note"] = _CALLS_NOTE
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
+        if max_tokens > 0:
+            from cgh.server._budget import fit_tokens
+
+            # Impacted nodes come nearest first: the farthest go first.
+            if fit_tokens(payload, ["impacted"], max_tokens):
+                payload["count"] = len(payload["impacted"])
+        return dumps_answer(payload)
+
+    @mcp.tool()
+    @_logged_tool
+    def shared_types(
+        name: str = "", min_confidence: float = 0.5, limit: int = 100
+    ) -> str:
+        """
+        Types shared across federated repos, deduced at query time: a class,
+        interface or object type alias defined under the same name in two
+        scopes whose field names agree, such as a backend Pydantic model and
+        the frontend TypeScript interface mirroring it. Federation stores no
+        cross-repo edge; this view stores nothing either.
+
+        Args:
+          name:           only this type name (default: every shared name).
+          min_confidence: lowest share of matching fields to report, 0..1
+                          (default 0.5). snake_case and camelCase compare
+                          equal.
+          limit:          most pairs to return, best first (default 100).
+
+        Returns JSON `shared_types`: one `{name, scopes, matched_fields,
+        confidence, deduced: true, definitions, only_in}` per pair, with
+        `definitions` giving each side's scope, file, line and fields and
+        `only_in` the fields one side lacks (drift). Reads Python and
+        TypeScript / JavaScript declarations. Children are opened read-only.
+        """
+        from cgh.analysis.shared_types import shared_types_report
+
+        payload = shared_types_report(
+            _get_conn,
+            _srv._root,
+            name=name,
+            min_confidence=float(min_confidence),
+            limit=int(limit),
+        )
+        return dumps_answer(payload)
+
+    @mcp.tool()
+    @_logged_tool
+    def path_between(src: str, dst: str, edge: str = "CALLS") -> str:
+        """
+        Shortest path between two symbols or files over an edge type. With
+        edge="CALLS" (default) src / dst are function names; with
+        edge="IMPORTS" they are file paths. Runs a forward BFS from src and
+        reconstructs the first path that reaches dst.
+
+        Args:
+          src:  start function name (CALLS) or file path (IMPORTS).
+          dst:  end function name (CALLS) or file path (IMPORTS).
+          edge: "CALLS" or "IMPORTS" (default "CALLS").
+
+        Returns JSON `{src, dst, edge, path: [...], length}` or
+        `{found: false}`. Per scope: a path is reported from the first scope
+        that contains one, so it never crosses repo boundaries. Over CALLS,
+        `hops` lists each step as {from, to, resolution} ("resolved",
+        "name", "ambiguous", see find_callers), so a path resting on a
+        guessed edge shows it. A call to an interface method (Protocol or
+        ABC) with exactly one implementation in the scope continues into
+        that implementation, a hop marked "interface"; with several, the
+        path does not guess and stops there.
+        """
+        edge = (edge or "CALLS").upper()
+        if edge not in {"CALLS", "IMPORTS"}:
+            return dumps_answer(
+                {"found": False, "error": f"unsupported edge type: {edge}"}
+            )
+        is_calls = edge == "CALLS"
+
+        def query(conn):
+            # Resolve start / end keys for this scope.
+            if is_calls:
+                start_ids = [
+                    r["id"]
+                    for r in conn.find_nodes(
+                        "Function", where={"name": src}, return_fields=["id"]
+                    )
+                ]
+                dst_ids = {
+                    r["id"]
+                    for r in conn.find_nodes(
+                        "Function", where={"name": dst}, return_fields=["id"]
+                    )
+                }
+                ret = ["id"]
+                ret_key = "dst_id"
+            else:
+                start_ids = [_abs(src)]
+                dst_ids = {_abs(dst)}
+                ret = ["path"]
+                ret_key = "dst_path"
+            if not start_ids or not dst_ids:
+                return None
+
+            # Forward BFS with parent pointers for path reconstruction. Over
+            # CALLS, an interface method with a single implementation leads
+            # on to it (a dispatch step, not a call edge).
+            from cgh.analysis.interfaces import InterfaceResolver
+
+            resolver = InterfaceResolver(conn) if is_calls else None
+            dispatched: set[tuple[str, str]] = set()
+            visited: set[str] = set(start_ids)
+            parent: dict[str, str | None] = {k: None for k in start_ids}
+            frontier = list(start_ids)
+            hit: str | None = None
+            for s in start_ids:
+                if s in dst_ids:
+                    hit = s
+                    break
+            while frontier and hit is None and len(visited) < _PATH_VISIT_CAP:
+                next_frontier: list[str] = []
+                for cur in frontier:
+                    rows = conn.find_neighbors(edge, src_key=cur, return_dst=ret)
+                    for r in rows:
+                        nxt = r[ret_key]
+                        if nxt in visited:
+                            continue
+                        visited.add(nxt)
+                        parent[nxt] = cur
+                        if nxt in dst_ids:
+                            hit = nxt
+                            break
+                        next_frontier.append(nxt)
+                        impl = resolver.sole_implementation(nxt) if resolver else ""
+                        if impl and impl not in visited:
+                            visited.add(impl)
+                            parent[impl] = nxt
+                            dispatched.add((nxt, impl))
+                            if impl in dst_ids:
+                                hit = impl
+                                break
+                            next_frontier.append(impl)
+                    if hit is not None:
+                        break
+                frontier = next_frontier
+            if hit is None:
+                return None
+            # Reconstruct.
+            chain: list[str] = []
+            node: str | None = hit
+            while node is not None:
+                chain.append(node)
+                node = parent.get(node)
+            chain.reverse()
+            if not is_calls:
+                return {"path": chain}
+            from itertools import pairwise
+
+            from cgh.analysis.provenance import INTERFACE, EdgeProvenance
+
+            prov = EdgeProvenance(conn)
+            prov.prefetch(chain[:-1])
+            hops = [
+                {
+                    "from": a,
+                    "to": b,
+                    "resolution": INTERFACE if (a, b) in dispatched else prov.of(a, b),
+                }
+                for a, b in pairwise(chain)
+            ]
+            return {"path": chain, "hops": hops}
+
+        results = None
+        warnings: list[dict] = []
+        # We need per-scope payloads (a path lives in one scope), so use the
+        # scoped variant directly rather than the flat helper.
+        try:
+            parent_chain = query(_get_conn())
+        except Exception as exc:
+            parent_chain = None
+            warnings.append(
+                {"scope": "parent", "error": f"{type(exc).__name__}: {exc}"}
+            )
+        if parent_chain:
+            results = ("parent", parent_chain)
+        if results is None and _srv._root is not None:
+            for s in for_each_child_graphdb(_srv._root, lambda c, _r: query(c)):
+                if s.error:
+                    warnings.append({"scope": s.scope, "error": s.error})
+                    continue
+                if s.payload:
+                    results = (s.scope, s.payload)
+                    break
+
+        if results is None:
+            payload: dict = {"src": src, "dst": dst, "edge": edge, "found": False}
+            if warnings:
+                payload["partial"] = True
+                payload["warnings"] = warnings
+            return dumps_answer(payload)
+
+        scope, found = results
+        chain = found["path"]
+        payload = {
+            "src": src,
+            "dst": dst,
+            "edge": edge,
+            "found": True,
+            "scope": scope,
+            "path": chain,
+            "length": len(chain) - 1,
+        }
+        if "hops" in found:
+            payload["hops"] = found["hops"]
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
+        return dumps_answer(payload)
+
+    @mcp.tool()
+    @_logged_tool
+    def import_cycles(limit: int = 50) -> str:
+        """
+        Detect import cycles in the File->File IMPORTS graph. Builds the
+        adjacency from every IMPORTS edge and reports each strongly-connected
+        component of size > 1 (a cycle). Runs per scope: cycles never cross
+        repo boundaries, so each component lives in one scope.
+
+        Args:
+          limit: cap on the number of cycles returned (default 50).
+
+        Returns JSON `{cycles: [[file, file, ...], ...], count, truncated}`,
+        each cycle tagged inline with its scope via the file paths it holds.
+        """
+
+        from cgh.analysis.cycles import find_import_cycles
+
+        def query(conn):
+            return [{"cycle": c} for c in find_import_cycles(conn)]
+
+        results, warnings = _federate(query)
+        cycles = [r["cycle"] for r in results]
+        truncated = len(cycles) > limit
+        cycles = cycles[:limit]
+        payload: dict = {
+            "cycles": cycles,
+            "count": len(cycles),
+            "truncated": truncated,
+        }
+        if warnings:
+            payload["partial"] = True
+            payload["warnings"] = warnings
+        return dumps_answer(payload)

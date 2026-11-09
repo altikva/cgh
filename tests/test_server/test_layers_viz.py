@@ -14,10 +14,10 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_viz import register as register_viz
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_viz import register as register_viz
 
 
 class _FakeMcp:
@@ -90,8 +90,8 @@ def test_overview_accepts_str_root(viz_repo):
     # The CLI passes root as a str (os.path.abspath); viz_full_overview did
     # root.name and crashed the default `cgh graph overview` view. It must
     # render the repo basename from a str root without raising.
-    from codegraph.core.db import get_connection
-    from codegraph.viz.graphviews import viz_full_overview
+    from cgh.core.db import get_connection
+    from cgh.viz.graphviews import viz_full_overview
 
     root = viz_repo
     (root / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")

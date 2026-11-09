@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import incremental_reindex, index_file, index_repo
-from codegraph.state.scan_meta import GRAPH_FORMAT, read_meta
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import incremental_reindex, index_file, index_repo
+from cgh.state.scan_meta import GRAPH_FORMAT, read_meta
 
 
 @pytest.fixture(params=["duckdb", "sqlite"])
@@ -188,7 +188,7 @@ def _simulate_pre_upgrade_index(root: Path) -> None:
     conn = get_connection(root)
     conn.execute("DELETE FROM call_site")
     conn.execute("DELETE FROM edge_calls")
-    meta_path = root / ".codegraph" / "scan_meta.json"
+    meta_path = root / ".cgh" / "scan_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta.pop("graph_format", None)
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
@@ -219,7 +219,7 @@ def test_incremental_after_upgrade_falls_back_to_full(tmp_path, backend):
     index_repo(tmp_path)
     _simulate_pre_upgrade_index(tmp_path)
 
-    from codegraph.server import _startup_index_needed
+    from cgh.server import _startup_index_needed
 
     assert _startup_index_needed(tmp_path, reindex=False)
     stats = incremental_reindex(tmp_path)

@@ -8,7 +8,7 @@
 #              application, load this file yourself (tomllib) and pass
 #              the dict to the sdk.image_* functions. In a cgh repo the
 #              same keys live under [plugin.vision] in
-#              .codegraph/config.toml.
+#              .cgh/config.toml.
 
 # Where the Ollama daemon listens. Keep it loopback for confidential
 # images: a remote URL means the raw image bytes travel to that host.

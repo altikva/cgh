@@ -92,7 +92,7 @@ def _cmd_preview(console, root: Path, report_id: str) -> None:
 
 
 def _gh(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
-    from codegraph.plugin_api import quiet_subprocess_kwargs
+    from cgh.plugin_api import quiet_subprocess_kwargs
 
     return subprocess.run(
         ["gh", *args],
@@ -197,7 +197,7 @@ def _anchor(payload: dict) -> str:
 
 def _audit(root: Path, message: str) -> None:
     try:
-        from codegraph.plugin_api import activity_log
+        from cgh.plugin_api import activity_log
 
         activity_log(root, "bugreport", message)
     except Exception:

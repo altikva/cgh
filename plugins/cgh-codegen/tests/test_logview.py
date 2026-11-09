@@ -16,7 +16,7 @@ pytest.importorskip("cgh_codegen")
 
 from cgh_codegen.logview import codegen_activity
 
-from codegraph.plugin_api import activity_log
+from cgh.plugin_api import activity_log
 
 
 def test_keeps_only_codegen_events(tmp_path):

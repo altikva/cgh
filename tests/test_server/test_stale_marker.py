@@ -16,11 +16,11 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
-from codegraph.server.tools_query import register as register_query
-from codegraph.state.scan_meta import _meta_path
+import cgh.server as _srv
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
+from cgh.server.tools_query import register as register_query
+from cgh.state.scan_meta import _meta_path
 
 
 class _FakeMcp:
@@ -37,7 +37,7 @@ class _FakeMcp:
 
 @pytest.fixture
 def tools(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     root = tmp_path.resolve()
     (root / "mod.py").write_text(

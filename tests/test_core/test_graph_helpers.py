@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.core.db_duckdb import DuckDBGraphDB
+from cgh.core.db_duckdb import DuckDBGraphDB
 
 # ---- backend factory -------------------------------------------------------
 

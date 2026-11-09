@@ -16,7 +16,7 @@ Notes:
   static analysis misses most of them. The script collects each declared
   runtime dependency whole; add a `--collect-all <pkg>` here when a new
   runtime dependency lands, or the frozen binary will fail on first use of it.
-- The binary needs the frozen-aware owner spawn in `codegraph/state/ipc.py`
+- The binary needs the frozen-aware owner spawn in `cgh/state/ipc.py`
   (`sys.frozen` branch) so `cgh serve` can launch its owner process.
 - Size is dominated by the DuckDB native library (~50 MB); a one-file,
   stripped build lands around 54 MB on macOS arm64.

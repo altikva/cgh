@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from fastmcp import Client, FastMCP
 
-from codegraph.core import config as config_mod
-from codegraph.core.config import load_config
-from codegraph.core.tool_exposure import CORE_TOOLS, compute_exposure
-from codegraph.server.tool_exposure import (
+from cgh.core import config as config_mod
+from cgh.core.config import load_config
+from cgh.core.tool_exposure import CORE_TOOLS, compute_exposure
+from cgh.server.tool_exposure import (
     ToolExposureMiddleware,
     registered_tool_names,
 )
@@ -20,13 +20,13 @@ from codegraph.server.tool_exposure import (
 
 @pytest.fixture(autouse=True)
 def _no_global_config(tmp_path, monkeypatch):
-    # A [tools] table in the developer's ~/.codegraph/config.toml must not
+    # A [tools] table in the developer's ~/.cgh/config.toml must not
     # leak into these tests.
     monkeypatch.setattr(config_mod, "GLOBAL_DIR", tmp_path / "global-home")
 
 
 def _write_config(root: Path, body: str) -> None:
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     (cg / "config.toml").write_text(body, encoding="utf-8")
 
@@ -88,7 +88,7 @@ def _client_name_observable() -> bool:
     be observed, rather than assert behaviour the harness cannot set up."""
     from fastmcp.server.middleware import Middleware
 
-    from codegraph.server.tool_exposure import _client_name
+    from cgh.server.tool_exposure import _client_name
 
     probe = FastMCP(name="probe")
 
@@ -160,7 +160,7 @@ def test_default_auto_lists_core_for_other_clients(tmp_path):
 def test_default_auto_lists_every_real_tool_for_claude(tmp_path, monkeypatch):
     """The real server, with the owner's snapshot taken and no [tools]
     table: a Claude client sees exactly what is registered."""
-    import codegraph.server as srv
+    import cgh.server as srv
 
     monkeypatch.setattr(srv, "_root", tmp_path)
     names = registered_tool_names(srv.mcp)
@@ -255,7 +255,7 @@ def test_exposure_error_lists_every_tool(tmp_path):
 
 def test_status_summary_on_the_real_server(tmp_path, monkeypatch):
     """What live_graph_stats hands `cgh status` under expose = "core"."""
-    import codegraph.server as srv
+    import cgh.server as srv
 
     _write_config(tmp_path, '[tools]\nexpose = "core"\n')
     monkeypatch.setattr(srv, "_root", tmp_path)

@@ -31,7 +31,7 @@ def register(api) -> None:
 
     api.register_cli(make_cli_registrar(api.config, api.repo_root))
 
-    # codegraph.sdk.scan_text(scanners=["pii"]) runs this one on text the
+    # cgh.sdk.scan_text(scanners=["pii"]) runs this one on text the
     # caller hands over; it never touches the index. It keeps the PII
     # patterns unless pii = false is set, so SDK callers see the same
     # findings as before 0.4.0.

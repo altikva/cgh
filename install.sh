@@ -127,7 +127,7 @@ if [ -n "${CGH_TRUSTED_HOST:-}" ]; then
 fi
 
 # --- what to install --------------------------------------------------------
-# The PyPI package is `cgh` (not `codegraph`, which is an unrelated project).
+# The PyPI package is `cgh` (not `cgh`, which is an unrelated project).
 # CGH_PLUGINS=1 installs the first-party plugins in the same shot:
 #   curl -fsSL .../install.sh | CGH_PLUGINS=1 bash
 SPEC="cgh"

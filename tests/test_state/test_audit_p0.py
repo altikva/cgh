@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.plugin_api import ScanFinding
-from codegraph.state import findings as store
+from cgh.plugin_api import ScanFinding
+from cgh.state import findings as store
 
 
 @pytest.fixture(autouse=True)
@@ -28,9 +28,9 @@ def clean_state():
 
 class TestFindingsStoredAsIs:
     def test_legacy_secure_config_stores_raw_values(self, tmp_path):
-        (tmp_path / ".codegraph").mkdir()
-        (tmp_path / ".codegraph" / "config.toml").write_text(
-            '[codegraph]\nmode = "secure"\n', encoding="utf-8"
+        (tmp_path / ".cgh").mkdir()
+        (tmp_path / ".cgh" / "config.toml").write_text(
+            '[cgh]\nmode = "secure"\n', encoding="utf-8"
         )
         store.record_findings(
             tmp_path,
@@ -40,10 +40,10 @@ class TestFindingsStoredAsIs:
         )
         rows = store.query_findings(tmp_path, key_prefix="pii.")
         assert rows[0]["value"] == "joy@altikva.com"
-        assert not (tmp_path / ".codegraph" / "pseudo.key").exists()
+        assert not (tmp_path / ".cgh" / "pseudo.key").exists()
 
     def test_existing_pseudonyms_are_left_alone(self, tmp_path):
-        (tmp_path / ".codegraph").mkdir()
+        (tmp_path / ".cgh").mkdir()
         old = "<pii.email:3fa2b4c5d6>"
         store.record_findings(
             tmp_path,
@@ -59,8 +59,8 @@ class TestAddDirectoryContainment:
     """Exercise the containment logic through the registered MCP tool."""
 
     def _register(self, root):
-        import codegraph.server as srv
-        from codegraph.server.tools_index import register as register_tools
+        import cgh.server as srv
+        from cgh.server.tools_index import register as register_tools
 
         class FakeMCP:
             def __init__(self):
@@ -80,10 +80,8 @@ class TestAddDirectoryContainment:
         return mcp, old_root
 
     def _init_repo(self, root):
-        (root / ".codegraph").mkdir(parents=True, exist_ok=True)
-        (root / ".codegraph" / "config.toml").write_text(
-            "[codegraph]\n", encoding="utf-8"
-        )
+        (root / ".cgh").mkdir(parents=True, exist_ok=True)
+        (root / ".cgh" / "config.toml").write_text("[cgh]\n", encoding="utf-8")
 
     def test_outside_root_undeclared_is_refused(self, tmp_path):
         import json
@@ -99,7 +97,7 @@ class TestAddDirectoryContainment:
         try:
             out = json.loads(mcp.tools["add_directory"](str(outside)))
         finally:
-            import codegraph.server as srv
+            import cgh.server as srv
 
             srv._root = old_root
         assert out["status"] == "error"
@@ -113,16 +111,16 @@ class TestAddDirectoryContainment:
         repo.mkdir()
         sibling.mkdir()
         (sibling / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (repo / ".codegraph").mkdir()
-        (repo / ".codegraph" / "config.toml").write_text(
-            f'[codegraph]\nextra_dirs = ["{sibling.resolve()}"]\n', encoding="utf-8"
+        (repo / ".cgh").mkdir()
+        (repo / ".cgh" / "config.toml").write_text(
+            f'[cgh]\nextra_dirs = ["{sibling.resolve()}"]\n', encoding="utf-8"
         )
 
         mcp, old_root = self._register(repo)
         try:
             out = json.loads(mcp.tools["add_directory"](str(sibling)))
         finally:
-            import codegraph.server as srv
+            import cgh.server as srv
 
             srv._root = old_root
         assert out["status"] != "error"
@@ -140,7 +138,7 @@ class TestAddDirectoryContainment:
         try:
             out = json.loads(mcp.tools["add_directory"]("docs"))
         finally:
-            import codegraph.server as srv
+            import cgh.server as srv
 
             srv._root = old_root
         assert out["status"] != "error"

@@ -1,6 +1,6 @@
-"""Tests for codegraph.core.utils — shared helper functions."""
+"""Tests for cgh.core.utils — shared helper functions."""
 
-from codegraph.core.utils import lang_color, rows, safe_id, short_path
+from cgh.core.utils import lang_color, rows, safe_id, short_path
 
 
 class TestShortPath:

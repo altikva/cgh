@@ -35,9 +35,9 @@ def _own_package_dirs() -> dict[str, Path]:
     plugins. Everything else reduces to <external>."""
     dirs: dict[str, Path] = {}
     try:
-        import codegraph
+        import cgh
 
-        dirs["codegraph"] = Path(codegraph.__file__).parent
+        dirs["cgh"] = Path(cgh.__file__).parent
     except Exception:
         pass
     import sys
@@ -51,7 +51,7 @@ def _own_package_dirs() -> dict[str, Path]:
 
 
 def _normalize_frame(filename: str, lineno: int, func: str) -> str:
-    """`codegraph/state/watcher.py:123 in _flush` for in-cgh frames,
+    """`cgh/state/watcher.py:123 in _flush` for in-cgh frames,
     `<external>` for everything else. The path is package-relative, so
     nothing about the machine or the repo appears."""
     path = Path(filename)
@@ -144,7 +144,7 @@ def _cgh_version() -> str:
 
 def _mode() -> str:
     try:
-        from codegraph.plugin_api import load_config
+        from cgh.plugin_api import load_config
 
         return load_config(None).mode
     except Exception:
@@ -153,7 +153,7 @@ def _mode() -> str:
 
 def _plugin_versions() -> list[str]:
     try:
-        from codegraph.plugin_api import loaded_plugins
+        from cgh.plugin_api import loaded_plugins
 
         return [
             f"{p.name}=={p.version or '?'}"

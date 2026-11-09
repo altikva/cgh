@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import asyncio
 
-from codegraph.core.tool_exposure import CORE_TOOLS
+from cgh.core.tool_exposure import CORE_TOOLS
 
 
 def _listed_tools():
-    import codegraph.server as srv
+    import cgh.server as srv
 
     mcp = srv.mcp
     # Mirror registered_tool_names' version handling: the oldest fastmcp floor

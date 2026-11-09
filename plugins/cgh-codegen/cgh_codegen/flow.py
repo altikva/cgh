@@ -380,7 +380,7 @@ def _ruff_run(
     missing) yields None so the caller keeps the input unchanged."""
     import subprocess
 
-    from codegraph.plugin_api import quiet_subprocess_kwargs
+    from cgh.plugin_api import quiet_subprocess_kwargs
 
     try:
         proc = subprocess.run(
@@ -406,7 +406,7 @@ def _run_verify(root: Path, command: str) -> tuple[bool, str]:
     import shlex
     import subprocess
 
-    from codegraph.plugin_api import quiet_subprocess_kwargs
+    from cgh.plugin_api import quiet_subprocess_kwargs
 
     argv = shlex.split(command)
     if not argv:
@@ -427,7 +427,7 @@ def _run_verify(root: Path, command: str) -> tuple[bool, str]:
 
 
 def _audit(root: Path, event: str, detail: str) -> None:
-    from codegraph.plugin_api import activity_log
+    from cgh.plugin_api import activity_log
 
     activity_log(root, event, detail)
 
@@ -483,7 +483,7 @@ def _write_expected(tgt: Path, body: str, expected: str | None, target: str) -> 
 
 
 def _provenance_path(root: Path) -> Path:
-    return root / ".codegraph" / "codegen" / "provenance.json"
+    return root / ".cgh" / "codegen" / "provenance.json"
 
 
 def _load_provenance(root: Path) -> dict:

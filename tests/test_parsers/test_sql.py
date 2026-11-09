@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
-from codegraph.parsers import get_parser, is_supported
-from codegraph.parsers.base import FileIndex
+from cgh.parsers import get_parser, is_supported
+from cgh.parsers.base import FileIndex
 
 
 def _section(idx, title):

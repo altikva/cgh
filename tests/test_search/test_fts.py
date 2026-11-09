@@ -1,8 +1,8 @@
-"""Tests for codegraph.core.fts — BM25 full-text search."""
+"""Tests for cgh.core.fts — BM25 full-text search."""
 
 import pytest
 
-from codegraph.core.fts import (
+from cgh.core.fts import (
     commit,
     delete_file_symbols,
     fts_search,

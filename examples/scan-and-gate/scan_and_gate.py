@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from codegraph import sdk
+from cgh import sdk
 
 DOCUMENT = """Invoice 2026-118
 Bill to: Jeanne Martin <jeanne.martin@example.com>

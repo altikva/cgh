@@ -75,7 +75,7 @@ damaged existing file is worse than no change, which is the opposite of the
 tradeoff for a new file, where the failed draft is left for you to read.
 Anything the addition needs must already be imported in the file.
 
-Configure the backend in `.codegraph/config.toml`:
+Configure the backend in `.cgh/config.toml`:
 
 ```toml
 [plugin.codegen]

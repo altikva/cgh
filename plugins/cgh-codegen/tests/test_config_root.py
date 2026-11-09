@@ -18,8 +18,8 @@ from cgh_codegen.cli import plugin_config_for_root
 
 
 def test_reads_the_table_from_the_given_root(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "config.toml").write_text(
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "config.toml").write_text(
         '[plugin.codegen]\ncommand = "claude -p --model haiku"\n', encoding="utf-8"
     )
     cfg = plugin_config_for_root(tmp_path, {})
@@ -27,8 +27,8 @@ def test_reads_the_table_from_the_given_root(tmp_path):
 
 
 def test_falls_back_when_root_has_no_table(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "config.toml").write_text("", encoding="utf-8")
+    (tmp_path / ".cgh").mkdir()
+    (tmp_path / ".cgh" / "config.toml").write_text("", encoding="utf-8")
     fallback = {"command": "fallback"}
     assert plugin_config_for_root(tmp_path, fallback) is fallback
 

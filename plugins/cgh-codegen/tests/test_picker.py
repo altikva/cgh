@@ -58,7 +58,7 @@ def test_target_outside_repo_is_rejected(tmp_path):
 def test_picks_sibling_from_filesystem_when_graph_absent(tmp_path, monkeypatch):
     # No graph: find_symbol_files returns None. The picker must still find
     # the sibling test in the same directory.
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", lambda root, q: None)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", lambda root, q: None)
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_order_service.py").write_text("# order\n", encoding="utf-8")
@@ -85,7 +85,7 @@ def test_graph_hit_outranks_a_bare_sibling(tmp_path, monkeypatch):
             ]
         return []
 
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", fake_find)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", fake_find)
     out = pick_reference(tmp_path, "src/user_service_v2.py")
     assert out["reference"] == "src/user_service.py"
     assert "defines a matching symbol" in out["reason"]
@@ -93,7 +93,7 @@ def test_graph_hit_outranks_a_bare_sibling(tmp_path, monkeypatch):
 
 
 def test_no_analogue_returns_none_reference(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", lambda root, q: [])
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", lambda root, q: [])
     (tmp_path / "readme.txt").write_text("hi\n", encoding="utf-8")  # wrong suffix
     out = pick_reference(tmp_path, "src/brand_new.py")
     assert out["reference"] is None
@@ -117,7 +117,7 @@ def test_sibling_outranks_a_nonsibling_graph_hit(tmp_path, monkeypatch):
         # Report the non-sibling graph_hit for any query.
         return [{"kind": "class", "name": "Gamma", "file": str(graph_hit), "line": 1}]
 
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", fake_find)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", fake_find)
     out = pick_reference(tmp_path, "src/alpha.py")
     assert out["reference"] == "src/beta.py"
     assert "sibling in the same directory" in out["reason"]
@@ -145,7 +145,7 @@ def test_name_overlap_beats_a_bare_graph_hit_sibling(tmp_path, monkeypatch):
             }
         ]
 
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", fake_find)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", fake_find)
     out = pick_reference(tmp_path, "tests/test_family_dedup.py")
     assert out["reference"] == "tests/test_dedup_family.py"
 
@@ -159,7 +159,7 @@ def test_graph_candidates_returns_unavailable_on_timeout(tmp_path, monkeypatch):
         time.sleep(30)  # a wedged owner never answers
         return []
 
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", slow_find)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", slow_find)
     start = time.monotonic()
     files, available = _graph_candidates(tmp_path, ["user"], timeout=0.3)
     elapsed = time.monotonic() - start
@@ -174,7 +174,7 @@ def test_pick_reference_falls_back_to_siblings_when_graph_hangs(tmp_path, monkey
         time.sleep(30)
         return []
 
-    monkeypatch.setattr("codegraph.plugin_api.find_symbol_files", slow_find)
+    monkeypatch.setattr("cgh.plugin_api.find_symbol_files", slow_find)
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_order_service.py").write_text("# order\n", encoding="utf-8")

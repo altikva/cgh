@@ -21,12 +21,12 @@ from pathlib import Path
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis import arch_report as ar
-from codegraph.analysis import communities as cm
-from codegraph.analysis import federation
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_repo
+import cgh.server as _srv
+from cgh.analysis import arch_report as ar
+from cgh.analysis import communities as cm
+from cgh.analysis import federation
+from cgh.core.db import reset_connection
+from cgh.indexer import index_repo
 from tests.test_analysis.test_communities import _FakeMcp, _write_two_package_repo
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def repo(request, tmp_path, monkeypatch):
     if request.param == "duckdb":
         pytest.importorskip("duckdb")
     monkeypatch.setenv("CGH_DB", request.param)
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     cm.reset_for_tests()
     root = tmp_path.resolve() / "repo"
@@ -190,7 +190,7 @@ def repo(request, tmp_path, monkeypatch):
 
 
 def _tool(name: str):
-    from codegraph.server.tools_arch import register
+    from cgh.server.tools_arch import register
 
     m = _FakeMcp()
     register(m)
@@ -218,7 +218,7 @@ def test_report_is_deterministic(repo):
 
 
 def test_cli_report_writes_out_file(repo, tmp_path, capsys):
-    from codegraph.cli.commands_query import cmd_report
+    from cgh.cli.commands_query import cmd_report
 
     target = tmp_path / "out" / "ARCH.md"
     args = argparse.Namespace(
@@ -250,12 +250,12 @@ def test_pivots_come_from_hotspots_with_git_history(tmp_path, monkeypatch):
     if shutil.which("git") is None:
         pytest.skip("git not on PATH")
     monkeypatch.setenv("CGH_DB", "sqlite")
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     reset_connection()
     cm.reset_for_tests()
     root = tmp_path.resolve() / "repo"
     _write_two_package_repo(root)
-    (root / ".gitignore").write_text(".codegraph/\n")
+    (root / ".gitignore").write_text(".cgh/\n")
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
@@ -271,7 +271,7 @@ def test_pivots_come_from_hotspots_with_git_history(tmp_path, monkeypatch):
 
 
 def test_federated_report_has_a_section_per_scope(tmp_path, monkeypatch):
-    monkeypatch.setattr("codegraph.indexer._run_scanners", lambda *a, **k: None)
+    monkeypatch.setattr("cgh.indexer._run_scanners", lambda *a, **k: None)
     monkeypatch.setenv("CGH_DB", "sqlite")
     federation.reset_for_tests()
     reset_connection()
@@ -288,9 +288,9 @@ def test_federated_report_has_a_section_per_scope(tmp_path, monkeypatch):
         )
     index_repo(child, method="os_walk")
     reset_connection()
-    (parent / ".codegraph").mkdir(exist_ok=True)
-    (parent / ".codegraph" / "config.toml").write_text(
-        '[codegraph]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
+    (parent / ".cgh").mkdir(exist_ok=True)
+    (parent / ".cgh" / "config.toml").write_text(
+        '[cgh]\nsubrepos = ["./api"]\nfederate_auto_up = false\n'
     )
     index_repo(parent, method="os_walk")
     _srv._root = parent

@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from codegraph.cli import commands_hooks as h
+from cgh.cli import commands_hooks as h
 
 
 def _run(monkeypatch, capsys, func, payload: dict) -> str:
@@ -80,7 +80,7 @@ def test_grep_too_short_pattern_is_silent(monkeypatch, capsys):
 
 
 def test_read_without_index_is_silent(monkeypatch, capsys, tmp_path):
-    # No .codegraph/fts.db up-tree: nothing to suggest.
+    # No .cgh/fts.db up-tree: nothing to suggest.
     f = tmp_path / "module.py"
     f.write_text("x = 1\n")
     out = _run(
@@ -120,15 +120,15 @@ def test_bad_stdin_is_silent(monkeypatch, capsys):
     "command",
     [
         "git grep -n resolve_import",
-        "cd /repo && git grep -n resolve_import -- codegraph/",
-        "grep -rn def_foo codegraph/",
+        "cd /repo && git grep -n resolve_import -- cgh/",
+        "grep -rn def_foo cgh/",
         "grep -Rn def_foo .",
         "grep --recursive def_foo src",
         "LC_ALL=C rg resolve_import",
         "time ag resolve_import",
         "find . -name '*.py'",
-        "sed -n '120,180p' codegraph/core/fts.py",
-        "cat codegraph/indexer.py",
+        "sed -n '120,180p' cgh/core/fts.py",
+        "cat cgh/indexer.py",
         "head -40 web/app.tsx",
     ],
 )
@@ -143,10 +143,10 @@ def test_shell_search_hint_fires_on_code_lookups(command):
         "uv run pytest -q | grep FAILED",
         "gh pr checks 345 | grep -v pass",
         # rg would fire on its own; downstream of a pipe it only filters.
-        "git diff --stat | rg codegraph",
+        "git diff --stat | rg cgh",
         # One file that is not source: a log, a config.
-        "grep ERROR .codegraph/owner.log",
-        "tail -f .codegraph/owner.log",
+        "grep ERROR .cgh/owner.log",
+        "tail -f .cgh/owner.log",
         "cat pyproject.toml",
         "sed -n '1,40p' CHANGELOG.md",
         # Not a lookup at all.
@@ -170,7 +170,7 @@ def test_shell_search_hint_survives_unbalanced_quotes():
 
 
 def test_bash_precheck_emits_context_in_a_cgh_repo(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     out = _run(
         monkeypatch,
         capsys,
@@ -191,7 +191,7 @@ def test_bash_precheck_is_silent_outside_a_cgh_repo(monkeypatch, capsys, tmp_pat
 
 
 def test_bash_precheck_is_silent_on_an_ordinary_command(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     out = _run(
         monkeypatch,
         capsys,
@@ -206,7 +206,7 @@ def test_bash_precheck_is_registered_everywhere_init_and_the_plugin_install():
     # three separate registries; a hook missing from one is silently absent.
     from pathlib import Path
 
-    from codegraph.cli.commands_init import _CLAUDE_HOOK_MARKERS, _claude_hook_specs
+    from cgh.cli.commands_init import _CLAUDE_HOOK_MARKERS, _claude_hook_specs
 
     specs = {s["marker"]: s for s in _claude_hook_specs("cgh")}
     assert specs["cgh-precheck-bash"]["matcher"] == "Bash"

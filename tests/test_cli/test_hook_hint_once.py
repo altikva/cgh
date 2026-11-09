@@ -17,14 +17,14 @@ import json
 
 import pytest
 
-from codegraph.cli import commands_hooks as h
+from cgh.cli import commands_hooks as h
 
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     monkeypatch.delenv("CGH_HOOK_ANSWERS", raising=False)
-    monkeypatch.setattr("codegraph.core.config.GLOBAL_DIR", tmp_path / "home-codegraph")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home-cgh")
     return tmp_path
 
 

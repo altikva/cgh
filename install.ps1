@@ -71,7 +71,7 @@ if ($env:CGH_TRUSTED_HOST) {
 }
 
 # --- install ----------------------------------------------------------------
-# The PyPI package is `cgh` (not `codegraph`, an unrelated project).
+# The PyPI package is `cgh` (not `cgh`, an unrelated project).
 # $env:CGH_PLUGINS = 1 installs the default first-party plugins in one shot:
 #   $env:CGH_PLUGINS = 1; irm .../install.ps1 | iex
 $spec = "cgh"

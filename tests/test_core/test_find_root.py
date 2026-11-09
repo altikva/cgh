@@ -4,39 +4,39 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: find_codegraph_root walks up to the nearest .codegraph/, the way
+# Description: find_cgh_root walks up to the nearest .cgh/, the way
 #              git finds its repo root, so cgh works from any subdirectory.
 
 from __future__ import annotations
 
-from codegraph.core.config import find_codegraph_root
+from cgh.core.config import find_cgh_root
 
 
 def test_finds_in_current_dir(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
-    assert find_codegraph_root(tmp_path) == tmp_path.resolve()
+    (tmp_path / ".cgh").mkdir()
+    assert find_cgh_root(tmp_path) == tmp_path.resolve()
 
 
 def test_finds_in_ancestor(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     deep = tmp_path / "a" / "b" / "c"
     deep.mkdir(parents=True)
-    assert find_codegraph_root(deep) == tmp_path.resolve()
+    assert find_cgh_root(deep) == tmp_path.resolve()
 
 
 def test_returns_none_when_absent(tmp_path):
     deep = tmp_path / "x" / "y"
     deep.mkdir(parents=True)
-    assert find_codegraph_root(deep) is None
+    assert find_cgh_root(deep) is None
 
 
 def test_nearest_root_wins(tmp_path):
-    # A federated child has its own .codegraph/ inside the parent's. From the
+    # A federated child has its own .cgh/ inside the parent's. From the
     # child's subdir, the nearest (the child) must win, not the parent.
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     child = tmp_path / "child"
     child.mkdir()
-    (child / ".codegraph").mkdir()
+    (child / ".cgh").mkdir()
     sub = child / "sub"
     sub.mkdir()
-    assert find_codegraph_root(sub) == child.resolve()
+    assert find_cgh_root(sub) == child.resolve()

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from codegraph.core.fts import (
+from cgh.core.fts import (
     delete_file_symbols,
     fts_search,
     get_fts_conn,

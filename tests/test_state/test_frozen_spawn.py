@@ -5,7 +5,7 @@
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: spawn_owner adapts its launch command to a frozen binary. A
-#              normal install spawns "python -m codegraph _serve_owner"; a
+#              normal install spawns "python -m cgh _serve_owner"; a
 #              PyInstaller/Nuitka binary (sys.frozen set) has no interpreter to
 #              run -m against, so it invokes the _serve_owner subcommand on the
 #              binary itself.
@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_normal_install_spawns_via_dash_m(capture_spawn, tmp_path, monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     ipc.spawn_owner(tmp_path, watch=False, reindex=False)
     cmd = capture_spawn["cmd"]
-    assert cmd[:5] == ["/opt/cgh/bin/cgh", "-P", "-m", "codegraph", "_serve_owner"]
+    assert cmd[:5] == ["/opt/cgh/bin/cgh", "-P", "-m", "cgh", "_serve_owner"]
 
 
 def test_frozen_binary_spawns_the_subcommand_directly(
@@ -50,10 +50,10 @@ def test_frozen_binary_spawns_the_subcommand_directly(
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     ipc.spawn_owner(tmp_path, watch=True, reindex=False)
     cmd = capture_spawn["cmd"]
-    # No "-m codegraph": the binary routes its own argv through the CLI.
+    # No "-m cgh": the binary routes its own argv through the CLI.
     assert cmd[0] == "/opt/cgh/bin/cgh"
     assert cmd[1] == "_serve_owner"
-    assert "-m" not in cmd and "codegraph" not in cmd
+    assert "-m" not in cmd and "cgh" not in cmd
     assert "--watch" in cmd  # flags still appended
 
 

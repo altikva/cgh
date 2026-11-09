@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import types
 
-from codegraph.cli.commands_examples import (
+from cgh.cli.commands_examples import (
     _description,
     cmd_examples,
     discover_examples,
@@ -25,10 +25,10 @@ def test_description_skips_the_title_heading():
 
 def test_base_example_is_discovered():
     names = {e["name"] for e in discover_examples()}
-    # starter-config ships inside the base codegraph package.
+    # starter-config ships inside the base cgh package.
     assert "starter-config" in names
     base = next(e for e in discover_examples() if e["name"] == "starter-config")
-    assert base["package"] == "codegraph"
+    assert base["package"] == "cgh"
     assert base["description"] and base["description"] != "starter-config"
 
 

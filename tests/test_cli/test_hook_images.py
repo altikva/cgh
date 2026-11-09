@@ -16,8 +16,8 @@ import os
 
 import pytest
 
-from codegraph.cli import commands_hooks as h
-from codegraph.cli import hook_images
+from cgh.cli import commands_hooks as h
+from cgh.cli import hook_images
 
 
 def _run(monkeypatch, capsys, payload: dict) -> str:
@@ -30,7 +30,7 @@ def _run(monkeypatch, capsys, payload: dict) -> str:
 
 @pytest.fixture
 def repo(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
@@ -84,7 +84,7 @@ def test_pdf_ignored(monkeypatch, capsys, repo):
     pdf.write_bytes(b"%PDF-1.4" + b"x" * 10)
     assert hook_images.reread_hint(_payload(pdf), pdf) is None
     assert hook_images.reread_hint(_payload(pdf), pdf) is None
-    assert not (repo / ".codegraph" / "sessions").exists()
+    assert not (repo / ".cgh" / "sessions").exists()
 
 
 def test_no_session_id_silent(monkeypatch, capsys, repo):
@@ -92,7 +92,7 @@ def test_no_session_id_silent(monkeypatch, capsys, repo):
     img.write_bytes(b"p" * 10)
     for _ in range(2):
         assert _run(monkeypatch, capsys, _payload(img, session=None)) == ""
-    assert not (repo / ".codegraph" / "sessions").exists()
+    assert not (repo / ".cgh" / "sessions").exists()
 
 
 def test_image_outside_repo_uses_cwd(tmp_path, monkeypatch, capsys, repo):
@@ -103,7 +103,7 @@ def test_image_outside_repo_uses_cwd(tmp_path, monkeypatch, capsys, repo):
     payload = _payload(img, cwd=repo)
     assert hook_images.reread_hint(payload, img) is None
     assert "cap.gif" in (hook_images.reread_hint(payload, img) or "")
-    record = repo / ".codegraph" / "sessions" / "images-s1.json"
+    record = repo / ".cgh" / "sessions" / "images-s1.json"
     assert str(img.resolve()) in json.loads(record.read_text())
 
 
@@ -115,7 +115,7 @@ def test_cap_respected(monkeypatch, repo):
         img.write_bytes(bytes([i]) * 10)
         imgs.append(img)
         assert hook_images.reread_hint(_payload(img), img) is None
-    record = repo / ".codegraph" / "sessions" / "images-s1.json"
+    record = repo / ".cgh" / "sessions" / "images-s1.json"
     data = json.loads(record.read_text())
     assert len(data) == 5
     assert str(imgs[-1].resolve()) in data
@@ -125,7 +125,7 @@ def test_cap_respected(monkeypatch, repo):
 def test_unwritable_sessions_dir_silent(monkeypatch, repo):
     img = repo / "shot.png"
     img.write_bytes(b"p" * 10)
-    (repo / ".codegraph" / "sessions").write_text("not a dir")
+    (repo / ".cgh" / "sessions").write_text("not a dir")
     assert hook_images.reread_hint(_payload(img), img) is None
     assert hook_images.reread_hint(_payload(img), img) is None
 

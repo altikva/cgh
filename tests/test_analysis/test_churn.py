@@ -18,7 +18,7 @@ import subprocess
 
 import pytest
 
-from codegraph.analysis import churn
+from cgh.analysis import churn
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 

@@ -46,9 +46,9 @@ scripted or empty-repo bootstrap.
 
 **What it does:**
 
-1. Creates `.codegraph/` directory and `config.toml`
-2. Generates MCP auth key (`.codegraph/auth.key`)
-3. Adds `.codegraph/` and `.codegraph/auth.key` to `.gitignore`
+1. Creates `.cgh/` directory and `config.toml`
+2. Generates MCP auth key (`.cgh/auth.key`)
+3. Adds `.cgh/` and `.cgh/auth.key` to `.gitignore`
 4. Detects installed AI tools (Claude Code, Cursor, Codex, Gemini, IBM Bob)
 5. Removes the guard hooks an older cgh wrote (only those); keeps its deny rules and `.bobignore` block and prints how many remain (`cgh guard --remove-rules` removes them)
 5. Prompts (multi-select) which tools to install MCP configs for: pick one or many
@@ -155,9 +155,9 @@ cgh setup <target> [--root DIR]
 
 The server is registered as `cgh` in every client config, so its tools
 reach the agent as `mcp__cgh__<tool>`. Each target also renames an entry
-an older cgh wrote as `codegraph`, keeping its settings. The rename is
+an older cgh wrote as `cgh`, keeping its settings. The rename is
 refused (and `setup migrate` exits 1) while a deny / ask rule or hook
-matcher keyed on `mcp__codegraph`, or an unreadable settings file, would
+matcher keyed on `mcp__cgh`, or an unreadable settings file, would
 stop applying; `cgh setup migrate --force` overrides.
 
 **Example:**
@@ -167,7 +167,7 @@ cgh setup claude     # writes .mcp.json
 cgh setup cursor     # writes .cursor/mcp.json
 cgh setup bob        # writes .bob/mcp.json + .bob/skills/
 cgh setup all        # writes configs for all tools
-cgh setup migrate    # only renames codegraph to cgh, see docs/UPGRADING-0.19.md
+cgh setup migrate    # only renames cgh to cgh, see docs/UPGRADING-0.19.md
 ```
 
 ---
@@ -893,7 +893,7 @@ cgh doctor [--strict] [--owner] [--root DIR]
 
 Checks performed:
 
-1. `.codegraph/` directory exists
+1. `.cgh/` directory exists
 2. Graph DB (`graph.duckdb` or `graph.sqlite`) is accessible. A graph locked by
    this checkout's own running owner counts as healthy (the owner holds the
    write lock for its whole life); a lock with no owner here fails.
@@ -1080,7 +1080,7 @@ cgh knowledge promote --to <checkout> [--from <worktree>] [--pr repo#N] \
 
 | Flag | Description |
 |------|-------------|
-| `--to` | Target checkout; must hold a `.codegraph/` store |
+| `--to` | Target checkout; must hold a `.cgh/` store |
 | `--from` | Source worktree (default: the current directory) |
 | `--pr` | Pull request stored on each promoted entry, e.g. `ondonne-api#2142` |
 | `--kinds` | Exact kinds to promote (default: decision, gotcha, pattern, style, glossary, standing_instruction, and plain notes) |
@@ -1121,7 +1121,7 @@ or more `--file`, or both; `corrected` needs an entry and takes the id of the
 entry that fixed it. `outcomes` lists the rated entries and files with their
 status (`preferred`, `useful`, `contested`, `dead_end`, `corrected`, `faded`),
 decayed score and verdict counts. Verdicts fade with a half-life set by
-`[codegraph] knowledge_half_life_days` (30 days by default).
+`[cgh] knowledge_half_life_days` (30 days by default).
 
 #### `knowledge export` / `knowledge import`
 
@@ -1189,7 +1189,7 @@ cgh guard [status|sync] [--remove-rules] [--root DIR]
 Both actions do the same thing: print the deprecation note and remove
 the guard hook entries an older cgh wrote into the Claude Code, Gemini
 CLI and Codex configs (they do nothing any more). The `Read()` deny rules
-it recorded in `.codegraph/guard_denies.json` and its managed block in
+it recorded in `.cgh/guard_denies.json` and its managed block in
 `.bobignore` still keep files from your agent, so they are kept and
 counted. `--remove-rules` removes exactly those, and the sidecar.
 Entries you wrote yourself are never touched. `cgh init` and `cgh setup`

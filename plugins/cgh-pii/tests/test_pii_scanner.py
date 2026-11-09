@@ -22,7 +22,7 @@ pytest.importorskip("cgh_pii")
 
 from cgh_pii.regex_scanner import _ASSIGNMENT, RegexPiiScanner
 
-import codegraph.plugins as plugins
+import cgh.plugins as plugins
 
 
 def _scan(text: str, disabled=None):
@@ -180,7 +180,7 @@ class TestEndToEnd:
     @pytest.fixture(autouse=True)
     def clean_registries(self):
         plugins._reset_for_tests()
-        from codegraph.state import findings as store
+        from cgh.state import findings as store
 
         store.reset_for_tests()
         yield
@@ -190,7 +190,7 @@ class TestEndToEnd:
     def test_indexed_repo_records_pii_findings(self, tmp_path):
         import cgh_pii
 
-        from codegraph.plugin_api import PluginAPI
+        from cgh.plugin_api import PluginAPI
 
         api = PluginAPI(
             "pii", tmp_path, {"scan_on_index": True, "pii": True}, plugins._registries
@@ -203,8 +203,8 @@ class TestEndToEnd:
             "SUPPORT = 'joy@altikva.com'\nKEY = 'AKIAIOSFODNN7EXAMPLE'\n"
         )
 
-        from codegraph.core.db import reset_connection
-        from codegraph.indexer import index_repo
+        from cgh.core.db import reset_connection
+        from cgh.indexer import index_repo
 
         reset_connection()
         try:
@@ -212,7 +212,7 @@ class TestEndToEnd:
         finally:
             reset_connection()
 
-        from codegraph.state.findings import query_findings
+        from cgh.state.findings import query_findings
 
         rows = query_findings(tmp_path)
         by_key = {r["key"]: r for r in rows}
@@ -223,7 +223,7 @@ class TestEndToEnd:
     def test_ner_absent_is_a_clean_skip(self, tmp_path, capsys):
         import cgh_pii
 
-        from codegraph.plugin_api import PluginAPI
+        from cgh.plugin_api import PluginAPI
 
         api = PluginAPI(
             "pii", tmp_path, {"scan_on_index": True, "ner": True}, plugins._registries
@@ -252,7 +252,7 @@ class TestRegistration:
     def _register(self, tmp_path, config):
         import cgh_pii
 
-        from codegraph.plugin_api import PluginAPI
+        from cgh.plugin_api import PluginAPI
 
         api = PluginAPI("pii", tmp_path, config, plugins._registries)
         cgh_pii.register(api)
@@ -270,7 +270,7 @@ class TestRegistration:
 
         import cgh_pii
 
-        from codegraph import sdk
+        from cgh import sdk
 
         monkeypatch.setattr(
             plugins,

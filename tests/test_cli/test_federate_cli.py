@@ -17,11 +17,11 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-import codegraph.cli.commands_federate as fed
+import cgh.cli.commands_federate as fed
 
 
 def _mk_subrepo(root: Path, *, duckdb: bool) -> Path:
-    cg = root / ".codegraph"
+    cg = root / ".cgh"
     cg.mkdir(parents=True, exist_ok=True)
     (cg / ("graph.duckdb" if duckdb else "graph.sqlite")).write_bytes(b"fake")
     (cg / "fts.db").write_bytes(b"fake")
@@ -40,7 +40,7 @@ class TestFederateAdd:
     def test_add_duckdb_subrepo_succeeds(self, tmp_path, captured_console):
         parent = tmp_path / "parent"
         parent.mkdir()
-        (parent / ".codegraph").mkdir()
+        (parent / ".cgh").mkdir()
         child = _mk_subrepo(tmp_path / "child", duckdb=True)
 
         fed._cmd_add(argparse.Namespace(root=str(parent), paths=[str(child)]))
@@ -52,7 +52,7 @@ class TestFederateAdd:
     def test_add_sqlite_subrepo_succeeds(self, tmp_path, captured_console):
         parent = tmp_path / "parent"
         parent.mkdir()
-        (parent / ".codegraph").mkdir()
+        (parent / ".cgh").mkdir()
         child = _mk_subrepo(tmp_path / "child", duckdb=False)
 
         fed._cmd_add(argparse.Namespace(root=str(parent), paths=[str(child)]))
@@ -62,9 +62,9 @@ class TestFederateAdd:
     def test_add_subrepo_without_graphdb_warns(self, tmp_path, captured_console):
         parent = tmp_path / "parent"
         parent.mkdir()
-        (parent / ".codegraph").mkdir()
+        (parent / ".cgh").mkdir()
         child = tmp_path / "child"
-        (child / ".codegraph").mkdir(parents=True)  # initialized, but no DB
+        (child / ".cgh").mkdir(parents=True)  # initialized, but no DB
 
         fed._cmd_add(argparse.Namespace(root=str(parent), paths=[str(child)]))
 

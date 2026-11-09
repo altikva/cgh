@@ -40,7 +40,7 @@ def _git_files(directory: Path) -> list[Path] | None:
     non-ignored), or None when it is not a git work tree."""
     kwargs: dict = {}
     try:
-        from codegraph.plugin_api import quiet_subprocess_kwargs
+        from cgh.plugin_api import quiet_subprocess_kwargs
 
         kwargs = quiet_subprocess_kwargs()
     except Exception:

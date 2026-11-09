@@ -73,7 +73,7 @@ def test_name_without_ner_raises_clearly(monkeypatch):
 
 
 def test_sdk_redact_text_delegates():
-    from codegraph import sdk
+    from cgh import sdk
 
     out = sdk.redact_text("mail a@x.com", only=["email"])
     assert out == "mail [EMAIL_1]"

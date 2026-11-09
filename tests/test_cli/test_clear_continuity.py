@@ -16,8 +16,8 @@ import json
 
 import pytest
 
-from codegraph.cli.commands_session import cmd_hook_checkpoint, cmd_hook_resume_header
-from codegraph.state.transcript_digest import digest_from_transcript
+from cgh.cli.commands_session import cmd_hook_checkpoint, cmd_hook_resume_header
+from cgh.state.transcript_digest import digest_from_transcript
 
 
 def _line(kind: str, content, **extra) -> str:
@@ -65,7 +65,7 @@ def transcript(tmp_path):
 
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".cgh").mkdir()
     return tmp_path
 
 
@@ -83,7 +83,7 @@ def test_digest_keeps_requests_edits_commands_and_the_last_answer(transcript):
 
 
 def test_session_end_records_the_transcript_digest(monkeypatch, root, transcript):
-    from codegraph.state.call_log import knowledge_list
+    from cgh.state.call_log import knowledge_list
 
     payload = {
         "hook_event_name": "SessionEnd",

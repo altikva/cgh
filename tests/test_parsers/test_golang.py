@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from codegraph.parsers.golang import GoParser
+from cgh.parsers.golang import GoParser
 
 
 @pytest.fixture

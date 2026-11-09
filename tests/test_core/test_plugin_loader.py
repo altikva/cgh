@@ -20,8 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import codegraph.plugins as plugins
-from codegraph.plugin_api import API_VERSION
+import cgh.plugins as plugins
+from cgh.plugin_api import API_VERSION
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def clean_registry(monkeypatch):
     plugins._reset_for_tests()
     yield
     plugins._reset_for_tests()
-    import codegraph.parsers as parsers
+    import cgh.parsers as parsers
 
     parsers._REGISTRY.pop(".zzztest", None)
     parsers._INSTANCES.pop(".zzztest", None)
@@ -56,7 +56,7 @@ def _install(monkeypatch, *entry_points) -> None:
 class TestSurfaces:
     def test_parser_registration_reaches_the_registry(self, monkeypatch):
         def register(api):
-            from codegraph.parsers.base import BaseParser, FileIndex
+            from cgh.parsers.base import BaseParser, FileIndex
 
             @api.register_parser(".zzztest")
             class ZzzParser(BaseParser):
@@ -73,7 +73,7 @@ class TestSurfaces:
 
         assert records[0].status == "active"
         assert "parsers" in records[0].surfaces
-        from codegraph.parsers import get_parser, get_supported_extensions
+        from cgh.parsers import get_parser, get_supported_extensions
 
         assert ".zzztest" in get_supported_extensions()
         assert get_parser(".zzztest") is not None
@@ -165,7 +165,7 @@ class TestFailureIsolation:
             api.register_cli(lambda sub: sub.add_parser("zzz-half"))
             api.register_scanner(SimpleNamespace(name="half", deferred=False))
             api.register_extension("zzz.ns", object())
-            from codegraph.guard import sync_static_rules  # noqa: F401
+            from cgh.guard import sync_static_rules  # noqa: F401
 
         def good(api):
             api.register_cli(lambda sub: sub.add_parser("zzz-good"))
@@ -185,7 +185,7 @@ class TestFailureIsolation:
 
     def test_import_of_removed_core_name_marks_broken(self, monkeypatch):
         def load():
-            from codegraph.plugin_api import a_name_core_removed  # noqa: F401
+            from cgh.plugin_api import a_name_core_removed  # noqa: F401
 
         _install(monkeypatch, _entry_point("old", load))
         records = plugins.load_plugins()
@@ -249,7 +249,7 @@ class TestFailureIsolation:
 
 class TestConfigGating:
     def _repo(self, tmp_path: Path, body: str) -> Path:
-        cg = tmp_path / ".codegraph"
+        cg = tmp_path / ".cgh"
         cg.mkdir()
         (cg / "config.toml").write_text(body, encoding="utf-8")
         return tmp_path
@@ -441,9 +441,9 @@ class TestFirstPartyMinimums:
         assert "ZZZ_OLD_DOCS_IMPORTED" not in __import__("os").environ
         assert capsys.readouterr().err.count("cgh-docs is no longer needed") == 1
 
-        from codegraph.parsers import get_parser
+        from cgh.parsers import get_parser
 
-        assert type(get_parser(".docx")).__module__ == "codegraph.parsers.documents"
+        assert type(get_parser(".docx")).__module__ == "cgh.parsers.documents"
 
     def test_current_and_third_party_distributions_load(self, fake_site, monkeypatch):
         _fake_distribution(fake_site, "cgh-pii", "0.4.0", "pii", "zzz_current_pii")
@@ -462,7 +462,7 @@ class TestFirstPartyMinimums:
     def test_cgh_plugins_reports_the_stale_plugin(self, fake_site, monkeypatch, capsys):
         import json
 
-        from codegraph.cli.commands_plugins import cmd_plugins
+        from cgh.cli.commands_plugins import cmd_plugins
 
         _fake_distribution(fake_site, "cgh-pii", "0.3.1", "pii", "zzz_stale_pii")
         _discovered_only(monkeypatch, "pii")
@@ -474,7 +474,7 @@ class TestFirstPartyMinimums:
         assert "needs >= 0.4.0" in row["reason"]
 
     def test_doctor_lists_the_stale_plugin(self, fake_site, monkeypatch, tmp_path):
-        from codegraph.cli.commands_monitor import _too_old_plugin_reasons
+        from cgh.cli.commands_monitor import _too_old_plugin_reasons
 
         _fake_distribution(
             fake_site, "cgh-vision", "0.5.0", "vision", "zzz_stale_vision"
@@ -489,7 +489,7 @@ class TestFirstPartyMinimums:
 
         from rich.console import Console
 
-        import codegraph.cli.commands_plugins as cp
+        import cgh.cli.commands_plugins as cp
 
         buf = io.StringIO()
         monkeypatch.setattr(cp, "console", Console(file=buf, width=400))

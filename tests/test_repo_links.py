@@ -4,10 +4,10 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: Links to the project point at the altikva/cgh repository. The
-#              import name is codegraph, but no altikva/codegraph repository
-#              exists, so a link there is dead (seen in the HTML from cgh
-#              graph and in the generated config.toml).
+# Description: Links to the project point at the altikva/cgh repository. No
+#              altikva/codegraph repository exists (the old name), so a link
+#              there is dead; this guard keeps that name out of the docs and
+#              generated output (the HTML from cgh graph, the config.toml).
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 _DEAD = re.compile(r"github\.com[/:]altikva/codegraph\b", re.IGNORECASE)
-_SCANNED = ("codegraph", "docs", "packaging", "plugins", "scripts", ".claude-plugin")
+_SCANNED = ("cgh", "docs", "packaging", "plugins", "scripts", ".claude-plugin")
 _SUFFIXES = {".py", ".md", ".json", ".toml", ".js", ".sh", ".html", ".yml", ".yaml"}
 
 
@@ -48,7 +48,7 @@ def test_no_link_points_at_a_codegraph_repository():
 
 
 def test_generated_html_links_to_cgh():
-    from codegraph.viz import html
+    from cgh.viz import html
 
     source = Path(html.__file__).read_text(encoding="utf-8")
     assert 'href="https://github.com/altikva/cgh"' in source

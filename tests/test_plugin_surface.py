@@ -5,9 +5,9 @@
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: The plugin boundary ratchet: first-party plugins may
-#              import from codegraph.plugin_api (and the bare codegraph
+#              import from cgh.plugin_api (and the bare cgh
 #              package for introspection), nothing else. Anything new
-#              that reaches into codegraph internals fails here, which
+#              that reaches into cgh internals fails here, which
 #              is what keeps API_VERSION an honest promise. Also checks
 #              that every re-exported name actually resolves.
 
@@ -23,8 +23,10 @@ PLUGIN_SOURCES = [
     p for p in REPO.glob("plugins/*/cgh_*/**/*.py") if "/build/" not in str(p)
 ]
 
-_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+(codegraph[\w.]*)", re.MULTILINE)
-_ALLOWED = ("codegraph.plugin_api", "codegraph")
+_IMPORT_RE = re.compile(
+    r"^\s*(?:from|import)\s+(cgh(?:\.[\w.]+)?)(?![\w])", re.MULTILINE
+)
+_ALLOWED = ("cgh.plugin_api", "cgh")
 
 
 def test_plugins_import_only_the_supported_surface():
@@ -38,7 +40,7 @@ def test_plugins_import_only_the_supported_surface():
                 line = text[: match.start()].count("\n") + 1
                 violations.append(f"{src.relative_to(REPO)}:{line}: {module}")
     assert not violations, (
-        "plugins must import from codegraph.plugin_api only; promote the "
+        "plugins must import from cgh.plugin_api only; promote the "
         "surface there instead of reaching into internals:\n" + "\n".join(violations)
     )
 
@@ -54,7 +56,7 @@ def test_plugins_import_only_the_supported_surface():
         "activity_log",
         "knowledge_record",
         "load_config",
-        "find_codegraph_root",
+        "find_cgh_root",
         "git_hash_object",
         "quiet_subprocess_kwargs",
         "is_loopback_url",
@@ -71,6 +73,6 @@ def test_plugins_import_only_the_supported_surface():
     ],
 )
 def test_reexported_names_resolve(name):
-    import codegraph.plugin_api as api
+    import cgh.plugin_api as api
 
     assert getattr(api, name) is not None

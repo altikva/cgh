@@ -63,7 +63,7 @@ dependencies = [
     # Codex config.toml writer: comment-preserving TOML round-trip.
     "tomlkit>=0.12",
     "tree-sitter-hcl>=1.2",
-    # Office and pdf documents are read out of the box (codegraph/parsers/
+    # Office and pdf documents are read out of the box (cgh/parsers/
     # documents.py). python-docx and python-pptx pull lxml, a native wheel
     # published for every platform cgh supports, the binary targets included.
     # 6.0 caps how far one compressed pdf stream may inflate.
@@ -117,7 +117,7 @@ langs = [
 # wraps; we use it directly to do goto-definition on call sites instead of
 # spawning a full LSP subprocess. Kept out of core deps: the resolver imports
 # jedi lazily and the `precise_calls` config flag is off by default, so a base
-# install never depends on it. See codegraph/analysis/precise_calls.py.
+# install never depends on it. See cgh/analysis/precise_calls.py.
 lsp = ["jedi>=0.19"]
 
 [project.urls]
@@ -127,23 +127,23 @@ Issues = "https://github.com/altikva/cgh/issues"
 Changelog = "https://github.com/altikva/cgh/blob/main/CHANGELOG.md"
 
 [project.scripts]
-cgh = "codegraph.__main__:main"
+cgh = "cgh.__main__:main"
 
 [project.gui-scripts]
 # Same entry point, windowless launcher on Windows. Console apps
 # spawned by a windowless parent (the Claude Code hooks fire on
 # every tool call) each flash a conhost window; cghw.exe is built
 # from the GUI subsystem so it never does. No effect on POSIX.
-cghw = "codegraph.__main__:main"
+cghw = "cgh.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-# `cgh` is a thin entry shim so `python -m cgh` works; the real code lives in
-# `codegraph` (import name stays `codegraph`, like pillow / PIL).
-include = ["codegraph", "codegraph.*", "cgh"]
+# The package, import name, CLI and PyPI name are all `cgh`. `python -m cgh`
+# runs the CLI through cgh/__main__.py.
+include = ["cgh", "cgh.*"]
 
 [tool.setuptools.package-data]
-codegraph = [
+cgh = [
     "py.typed",
     # The interactive graph view's JS, inlined into the generated HTML.
     "viz/*.js",
@@ -204,14 +204,14 @@ ignore = [
 # The two adapters interpolate identifiers behind checked_identifier
 # (allow-list gate); the sidecar SQLite modules build clause lists from
 # constants. S608 cannot see the gate.
-"codegraph/core/db_duckdb.py" = ["S608"]
-"codegraph/core/db_sqlite.py" = ["S608"]
-"codegraph/core/fts.py" = ["S608"]
-"codegraph/state/*.py" = ["S608"]
-"codegraph/claude_state/*.py" = ["S608"]
+"cgh/core/db_duckdb.py" = ["S608"]
+"cgh/core/db_sqlite.py" = ["S608"]
+"cgh/core/fts.py" = ["S608"]
+"cgh/state/*.py" = ["S608"]
+"cgh/claude_state/*.py" = ["S608"]
 # Loopback-only HTTP (owner bridge, Ollama daemon), audited: no
 # user-controlled URLs.
-"codegraph/**" = ["S310"]
+"cgh/**" = ["S310"]
 "plugins/cgh-vision/**" = ["S310"]
 "plugins/cgh-codegen/**" = ["S310"]
 

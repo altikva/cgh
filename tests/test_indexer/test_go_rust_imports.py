@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from codegraph.imports.resolver import reset_for_tests, resolve_go, resolve_rust
+from cgh.imports.resolver import reset_for_tests, resolve_go, resolve_rust
 
 
 class TestResolveGo:

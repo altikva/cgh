@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import shutil
 
-from codegraph.cli.commands_init import _hook_launcher
+from cgh.cli.commands_init import _hook_launcher
 
 
 def test_posix_is_left_alone(monkeypatch):
@@ -37,5 +37,5 @@ def test_windows_without_the_launcher_keeps_the_console_one(monkeypatch):
 def test_python_module_invocation_is_untouched(monkeypatch):
     monkeypatch.setattr("os.name", "nt")
     monkeypatch.setattr(shutil, "which", lambda name: r"C:\tools\cghw.exe")
-    prefix = r"C:\python.exe -m codegraph"
+    prefix = r"C:\python.exe -m cgh"
     assert _hook_launcher(prefix) == prefix

@@ -16,12 +16,12 @@ import json
 
 import pytest
 
-import codegraph.server as _srv
-from codegraph.analysis.text_fallback import grep_term
-from codegraph.core.db import reset_connection
-from codegraph.indexer import index_file
-from codegraph.server.tools_meta import register as register_meta
-from codegraph.server.tools_query import register as register_query
+import cgh.server as _srv
+from cgh.analysis.text_fallback import grep_term
+from cgh.core.db import reset_connection
+from cgh.indexer import index_file
+from cgh.server.tools_meta import register as register_meta
+from cgh.server.tools_query import register as register_query
 
 _BODY = (
     "def parent_widget():\n"
@@ -46,7 +46,7 @@ class _FakeMcp:
 def repo(tmp_path):
     root = tmp_path / "repo"
     root.mkdir(parents=True, exist_ok=True)
-    (root / ".codegraph").mkdir()
+    (root / ".cgh").mkdir()
     (root / "lib.py").write_text(_BODY, encoding="utf-8")
     reset_connection()
     index_file(root / "lib.py", root)

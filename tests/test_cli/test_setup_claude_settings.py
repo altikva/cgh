@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cli import commands_init as ci
+from cgh.cli import commands_init as ci
 
 USER_TEXT = "⏱️  Déploiement lancé → run /deploy-status ✅"
 HAND_REINDEX = "cgh diff --since HEAD~1; cgh index"
@@ -133,9 +133,9 @@ def test_older_duplicate_next_to_a_hand_written_hook_is_dropped():
     "command",
     [
         "/Users/x/.local/bin/cgh index --root .",
-        "python -P -m codegraph index",
+        "python -P -m cgh index",
         '"C:/Program Files/cgh/cghw.exe" index',
-        "codegraph index && echo ok",
+        "cgh index && echo ok",
     ],
 )
 def test_reindex_command_forms_are_recognised(command):

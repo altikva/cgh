@@ -16,13 +16,13 @@ import json
 
 import pytest
 
-import codegraph.plugins as plugins
-from codegraph.integrations.base import (
+import cgh.plugins as plugins
+from cgh.integrations.base import (
     AgentIntegration,
     all_integrations,
     get_integration,
 )
-from codegraph.state import findings as store
+from cgh.state import findings as store
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +51,7 @@ class TestRegistry:
                 return []
 
             def guard_spec(self):
-                from codegraph.integrations.base import GuardSpec
+                from cgh.integrations.base import GuardSpec
 
                 return GuardSpec(level="advisory")
 
@@ -78,7 +78,7 @@ class TestRegistry:
         assert not any(tmp_path.iterdir())  # nothing written anywhere
 
     def test_claude_hook_specs_drop_the_guard(self):
-        from codegraph.cli.commands_init import _claude_hook_specs
+        from cgh.cli.commands_init import _claude_hook_specs
 
         commands = json.dumps(_claude_hook_specs("cgh"))
         assert "_hook_guard" not in commands and "cgh-guard" not in commands
@@ -86,7 +86,7 @@ class TestRegistry:
 
 class TestBobAdapter:
     def _bob(self):
-        from codegraph.integrations.base import BobIntegration
+        from cgh.integrations.base import BobIntegration
 
         return BobIntegration()
 
@@ -103,7 +103,7 @@ class TestBobAdapter:
         assert bob.detect(tmp_path) is True
 
     def test_install_copies_skills_verbatim(self, tmp_path, monkeypatch):
-        import codegraph.integrations.skill_installer as installer
+        import cgh.integrations.skill_installer as installer
 
         src = tmp_path / "bundled" / "cgh-usage"
         src.mkdir(parents=True)

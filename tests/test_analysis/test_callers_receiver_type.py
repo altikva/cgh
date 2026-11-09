@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis.callers import callers_of
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_repo
+from cgh.analysis.callers import callers_of
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_repo
 
 REPO = {
     "app/__init__.py": "",
@@ -301,7 +301,7 @@ def test_bare_name_lists_every_name_match(repo):
 
 
 def test_parser_types_only_unambiguous_locals(tmp_path):
-    from codegraph.parsers.python import PythonParser
+    from cgh.parsers.python import PythonParser
 
     path = tmp_path / "m.py"
     path.write_text(

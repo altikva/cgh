@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.parsers import get_parser_for_path
+from cgh.parsers import get_parser_for_path
 
 
 def _sections(tmp_path, name: str, body: str):
@@ -48,7 +48,7 @@ def test_config_keys_are_config(tmp_path, name, body):
 
 def test_kind_defaults_to_documentation(tmp_path):
     """An older parser that never sets the field keeps producing docs."""
-    from codegraph.parsers.base import SectionDef
+    from cgh.parsers.base import SectionDef
 
     section = SectionDef(
         id="x", title="t", level=1, file_path="f.md", start_line=1, end_line=2

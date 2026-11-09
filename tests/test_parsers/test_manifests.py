@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from codegraph.parsers.manifests import package_key, read_manifest
+from cgh.parsers.manifests import package_key, read_manifest
 
 
 def _write(path, text: str):

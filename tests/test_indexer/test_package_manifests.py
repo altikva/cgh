@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.analysis.packages import collect, packages_payload
-from codegraph.core.db import get_connection, reset_connection
-from codegraph.indexer import index_file, skipped_path_parts
+from cgh.analysis.packages import collect, packages_payload
+from cgh.core.db import get_connection, reset_connection
+from cgh.indexer import index_file, skipped_path_parts
 
 
 @pytest.fixture(params=["duckdb", "sqlite"])

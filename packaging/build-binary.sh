@@ -88,7 +88,7 @@ esac
 # analysis misses most of them: collect each declared runtime dependency whole.
 uv run --with pyinstaller ${UV_WITH[@]+"${UV_WITH[@]}"} pyinstaller --noconfirm --onefile $STRIP_FLAG --name cgh \
   --distpath "$OUT/dist" --workpath "$OUT/work" --specpath "$OUT" \
-  --collect-all codegraph --collect-all tree_sitter \
+  --collect-all cgh --collect-all tree_sitter \
   --collect-all tree_sitter_python --collect-all tree_sitter_typescript \
   --collect-all tree_sitter_go --collect-all tree_sitter_rust --collect-all tree_sitter_java \
   --collect-all tree_sitter_hcl \

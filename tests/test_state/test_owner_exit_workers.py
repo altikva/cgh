@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 
-from codegraph.state import ipc
+from cgh.state import ipc
 
 
 def test_exit_keeps_live_markers_and_drops_the_rest(tmp_path):

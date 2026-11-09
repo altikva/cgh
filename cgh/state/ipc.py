@@ -33,16 +33,27 @@ _CLIENT_HANDSHAKE_BUDGET = 30.0
 _OWNER_STARTUP_TIMEOUT = 20.0
 
 
+def _state(repo_root: str | Path) -> Path:
+    """The resolved per-repo state dir: ``.cgh/``, or a legacy ``.codegraph/``
+    until an init/index/serve renames it. Runtime markers (port, owner pid,
+    workers, logs) must sit beside the data so a proxy finds a live owner even
+    before the dir is renamed; a hardcoded ``.cgh/`` would split a legacy repo
+    between two directories and spawn a second owner against a held lock."""
+    from cgh.core.config import state_dir_for
+
+    return state_dir_for(repo_root)
+
+
 def port_file(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _PORT_FILE
+    return _state(repo_root) / _PORT_FILE
 
 
 def owner_pidfile(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _OWNER_PID_FILE
+    return _state(repo_root) / _OWNER_PID_FILE
 
 
 def workers_dir(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _WORKERS_DIR
+    return _state(repo_root) / _WORKERS_DIR
 
 
 def register_worker(repo_root: str | Path) -> Path:
@@ -222,7 +233,7 @@ def is_pid_alive(pid: int) -> bool:
 
 
 def owner_version_file(repo_root: str | Path) -> Path:
-    return Path(repo_root) / ".cgh" / _OWNER_VERSION_FILE
+    return _state(repo_root) / _OWNER_VERSION_FILE
 
 
 def installed_cgh_version() -> str | None:
@@ -387,7 +398,7 @@ def rotate_owner_log(repo_root: str | Path) -> None:
     """
     from cgh.core.config import load_config
 
-    log_path = Path(repo_root) / ".cgh" / "owner.log"
+    log_path = _state(repo_root) / "owner.log"
     if not log_path.exists():
         return
 
@@ -454,7 +465,7 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     Returns the port on success, None on timeout.
     """
     repo_root = Path(repo_root).resolve()
-    (repo_root / ".cgh").mkdir(parents=True, exist_ok=True)
+    _state(repo_root).mkdir(parents=True, exist_ok=True)
 
     # Reap a prior owner we spawned that has since died, so respawning does not
     # leave its predecessor lingering as a zombie in the process table.
@@ -504,7 +515,7 @@ def spawn_owner(repo_root: str | Path, watch: bool, reindex: bool) -> int | None
     # open per repo. CREATE_NO_WINDOW runs the owner with no console at all
     # while CREATE_NEW_PROCESS_GROUP still frees it from the parent's group,
     # and stdio is already redirected to owner.log, so no console is needed.
-    log_path = repo_root / ".cgh" / "owner.log"
+    log_path = _state(repo_root) / "owner.log"
     logf = open(log_path, "ab", buffering=0)  # noqa: SIM115  # lives for the daemon's lifetime
     popen_kwargs: dict = {
         "stdin": subprocess.DEVNULL,

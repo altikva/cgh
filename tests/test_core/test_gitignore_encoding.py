@@ -92,3 +92,34 @@ def test_a_symlinked_state_dir_is_refused(tmp_path):
     (tmp_path / ".cgh").symlink_to(elsewhere, target_is_directory=True)
     assert ensure_state_dir_ignored(tmp_path) is False
     assert not (elsewhere / ".gitignore").exists()  # nothing written through it
+
+
+def test_init_refuses_a_symlinked_state_dir(tmp_path):
+    import pytest
+
+    from cgh.errors import ConfigurationError
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / ".cgh").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(ConfigurationError):
+        init_project(tmp_path)
+    # No state (and no auth key) was written through the symlink.
+    assert not (elsewhere / "auth.key").exists()
+    assert not (elsewhere / "config.toml").exists()
+
+
+def test_save_auth_key_refuses_a_symlinked_key_file(tmp_path):
+    import pytest
+
+    from cgh.errors import ConfigurationError
+    from cgh.state.auth import save_auth_key
+
+    cg = tmp_path / ".cgh"
+    cg.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n", encoding="utf-8")
+    (cg / "auth.key").symlink_to(victim)
+    with pytest.raises(ConfigurationError):
+        save_auth_key(tmp_path)
+    assert victim.read_text(encoding="utf-8") == "precious\n"  # untouched

@@ -777,7 +777,12 @@ def init_project(root: Path) -> dict:
     # A repo indexed before the rename keeps its index: move .codegraph/ to
     # .cgh/ in place rather than re-indexing from scratch.
     migrate_state_dir(root)
-    cg_dir = root / CGH_DIR
+
+    # Fail closed before writing any state: a symlinked .cgh/ (a hostile repo
+    # could plant one) must not redirect cgh's writes outside the repo.
+    from cgh.state.auth import require_real_cgh_dir
+
+    cg_dir = require_real_cgh_dir(root)
     created = []
 
     if not cg_dir.exists():

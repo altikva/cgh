@@ -22,9 +22,24 @@ import os
 import secrets
 from pathlib import Path
 
+from cgh.errors import ConfigurationError
+
 AUTH_KEY_FILE = "auth.key"
 _CGH_DIR = ".cgh"
 _IGNORE_ALL = "*\n"
+
+
+def require_real_cgh_dir(repo_root: str | Path) -> Path:
+    """Return the ``.cgh/`` dir, refusing it when it is a symlink. A symlinked
+    state dir would let a hostile repo redirect cgh's writes (the auth key
+    included) outside the repo, so this is checked loudly before any state is
+    written, by both init and the auth-key writer."""
+    state = Path(repo_root) / _CGH_DIR
+    if state.is_symlink():
+        raise ConfigurationError(
+            f"{state} is a symlink; refusing to write cgh state through it"
+        )
+    return state
 
 
 def ensure_state_dir_ignored(repo_root: str | Path) -> bool:
@@ -83,11 +98,21 @@ def save_auth_key(repo_root: str | Path, key: str | None = None) -> str:
     if key is None:
         key = generate_auth_key()
 
-    key_path = get_auth_key_path(repo_root)
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_text(key + "\n", encoding="utf-8")
-    # Restrict permissions (owner read/write only)
-    key_path.chmod(0o600)
+    # Fail closed on a hostile layout before writing the secret: a symlinked
+    # .cgh/ or .cgh/auth.key must not redirect the write outside the repo.
+    state = require_real_cgh_dir(repo_root)
+    state.mkdir(parents=True, exist_ok=True)
+    key_path = state / AUTH_KEY_FILE
+    if key_path.is_symlink():
+        raise ConfigurationError(
+            f"{key_path} is a symlink; refusing to write the auth key through it"
+        )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(key_path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(key + "\n")
+    # Restrict permissions (owner read/write only), even if the file pre-existed.
+    os.chmod(key_path, 0o600)
 
     return key
 

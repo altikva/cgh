@@ -18,11 +18,66 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from pathlib import Path
 
+from cgh.errors import ConfigurationError
+
 AUTH_KEY_FILE = "auth.key"
 _CGH_DIR = ".cgh"
+_IGNORE_ALL = "*\n"
+
+
+def require_real_cgh_dir(repo_root: str | Path) -> Path:
+    """Return the ``.cgh/`` dir, refusing it when it is a symlink. A symlinked
+    state dir would let a hostile repo redirect cgh's writes (the auth key
+    included) outside the repo, so this is checked loudly before any state is
+    written, by both init and the auth-key writer."""
+    state = Path(repo_root) / _CGH_DIR
+    if state.is_symlink():
+        raise ConfigurationError(
+            f"{state} is a symlink; refusing to write cgh state through it"
+        )
+    return state
+
+
+def ensure_state_dir_ignored(repo_root: str | Path) -> bool:
+    """Keep the whole ``.cgh/`` state dir (the auth key included) out of
+    version control with a self-contained ``.cgh/.gitignore`` of exactly
+    ``*``.
+
+    The file lives inside cgh's own directory, so it protects the credential
+    whether or not a git repo exists yet, from any subdirectory, however git
+    is configured, and it never writes a diff into the repo's tracked
+    ``.gitignore`` (which would block tearing down an agent worktree). This is
+    the only protection the secret needs, so it does not depend on a git
+    command succeeding. Returns True when it (re)wrote the file.
+
+    Hardening: the content is rewritten to exactly ``*`` whenever it differs,
+    so a planted negation line (``!auth.key``) cannot leave the key tracked;
+    and the write refuses to follow a symlinked ``.cgh/`` or
+    ``.cgh/.gitignore`` (``O_NOFOLLOW``), so a planted symlink cannot redirect
+    it into an arbitrary file."""
+    state = Path(repo_root) / _CGH_DIR
+    ignore = state / ".gitignore"
+    try:
+        # A symlinked state dir or ignore file would redirect the write; refuse.
+        if state.is_symlink() or ignore.is_symlink():
+            return False
+        if (
+            ignore.is_file()
+            and ignore.read_text(encoding="utf-8", errors="replace") == _IGNORE_ALL
+        ):
+            return False  # already exactly `*`: no negation can coexist
+        state.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(ignore, flags, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(_IGNORE_ALL)
+        return True
+    except OSError:
+        return False
 
 
 def generate_auth_key() -> str:
@@ -43,11 +98,21 @@ def save_auth_key(repo_root: str | Path, key: str | None = None) -> str:
     if key is None:
         key = generate_auth_key()
 
-    key_path = get_auth_key_path(repo_root)
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_text(key + "\n", encoding="utf-8")
-    # Restrict permissions (owner read/write only)
-    key_path.chmod(0o600)
+    # Fail closed on a hostile layout before writing the secret: a symlinked
+    # .cgh/ or .cgh/auth.key must not redirect the write outside the repo.
+    state = require_real_cgh_dir(repo_root)
+    state.mkdir(parents=True, exist_ok=True)
+    key_path = state / AUTH_KEY_FILE
+    if key_path.is_symlink():
+        raise ConfigurationError(
+            f"{key_path} is a symlink; refusing to write the auth key through it"
+        )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(key_path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(key + "\n")
+    # Restrict permissions (owner read/write only), even if the file pre-existed.
+    os.chmod(key_path, 0o600)
 
     return key
 
@@ -70,19 +135,8 @@ def ensure_auth_key(repo_root: str | Path) -> str:
 
 def ensure_gitignore_has_auth_key(repo_root: str | Path) -> bool:
     """
-    Ensure .cgh/auth.key is in .gitignore.
-    Returns True if .gitignore was modified.
+    Keep .cgh/auth.key out of version control. The whole .cgh/ dir is ignored
+    by a self-contained .cgh/.gitignore (see ensure_state_dir_ignored), which
+    covers the auth key. Returns True if that file was written.
     """
-    gitignore = Path(repo_root) / ".gitignore"
-    pattern = f"{_CGH_DIR}/{AUTH_KEY_FILE}"
-
-    if gitignore.exists():
-        # Lenient decode: a non-UTF-8 .gitignore must not crash init (we
-        # only test for a substring here).
-        content = gitignore.read_text(encoding="utf-8", errors="replace")
-        if pattern in content:
-            return False
-        with open(gitignore, "a", encoding="utf-8") as f:
-            f.write(f"\n# cgh auth key (never commit)\n{pattern}\n")
-        return True
-    return False
+    return ensure_state_dir_ignored(repo_root)

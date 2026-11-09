@@ -777,7 +777,12 @@ def init_project(root: Path) -> dict:
     # A repo indexed before the rename keeps its index: move .codegraph/ to
     # .cgh/ in place rather than re-indexing from scratch.
     migrate_state_dir(root)
-    cg_dir = root / CGH_DIR
+
+    # Fail closed before writing any state: a symlinked .cgh/ (a hostile repo
+    # could plant one) must not redirect cgh's writes outside the repo.
+    from cgh.state.auth import require_real_cgh_dir
+
+    cg_dir = require_real_cgh_dir(root)
     created = []
 
     if not cg_dir.exists():
@@ -799,7 +804,7 @@ def init_project(root: Path) -> dict:
     # Generate auth key
     from cgh.state.auth import (
         ensure_auth_key,
-        ensure_gitignore_has_auth_key,
+        ensure_state_dir_ignored,
         get_auth_key_path,
     )
 
@@ -808,20 +813,13 @@ def init_project(root: Path) -> dict:
         ensure_auth_key(root)
         created.append(str(key_path))
 
-    # Add .cgh to .gitignore if not already there
-    gitignore = root / ".gitignore"
-    if gitignore.exists():
-        # A user/template .gitignore may not be UTF-8 (e.g. a CP1252 em dash
-        # in a header comment). We only scan for a substring, so decode
-        # leniently instead of crashing init on the encoding.
-        content = gitignore.read_text(encoding="utf-8", errors="replace")
-        if ".cgh" not in content:
-            with open(gitignore, "a", encoding="utf-8") as f:
-                f.write("\n# cgh index\n.cgh/\n")
-            created.append(".gitignore (updated)")
-
-    # Ensure auth.key is in .gitignore
-    ensure_gitignore_has_auth_key(root)
+    # Keep the whole .cgh/ dir (auth key included) out of version control with
+    # a self-contained .cgh/.gitignore of `*`, never the repo's tracked
+    # .gitignore: an init in a worktree must not leave an unrequested diff that
+    # blocks its teardown, and the secret must be protected with no dependency
+    # on a git command.
+    if ensure_state_dir_ignored(root):
+        created.append(str(cg_dir / ".gitignore"))
 
     return {
         "root": str(root),

@@ -1014,9 +1014,12 @@ def main() -> None:
     # way git finds its repo root via .git. This lets every command work from
     # a subdirectory of an initialized repo. init/setup create in the literal
     # directory, and _serve_owner / _reindex_hook get an explicit root from
-    # their spawner, so those opt out. The hint goes to stderr to keep stdout
-    # clean for --json output and piping.
-    _NO_ROOT_WALK = {"init", "setup", "_serve_owner", "_reindex_hook"}
+    # their spawner, so those opt out. `path` reports the state dir of the
+    # literal root a script asked about (what `cgh init` there would create),
+    # never a parent's or the global ~/.cgh, so a caller never writes into an
+    # unrelated directory. The hint goes to stderr to keep stdout clean for
+    # --json output and piping.
+    _NO_ROOT_WALK = {"init", "setup", "path", "_serve_owner", "_reindex_hook"}
     if args.cmd not in _NO_ROOT_WALK and getattr(args, "root", None):
         from cgh.core.config import find_cgh_root
 

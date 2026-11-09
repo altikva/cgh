@@ -100,3 +100,22 @@ def test_cmd_path_prints_the_resolved_state_dir(tmp_path, capsys):
     cmd_path(argparse.Namespace(root=str(tmp_path), state=True))
     out = capsys.readouterr().out.strip()
     assert out == str((tmp_path / ".codegraph").resolve())
+
+
+def test_cmd_path_does_not_walk_up_to_a_parent_state_dir(tmp_path):
+    # A parent has state, a child worktree does not: `cgh path` must report the
+    # child's own would-be .cgh/, never climb to the parent (or to ~/.cgh),
+    # so a script writing there never pollutes an unrelated directory.
+    import subprocess
+    import sys
+
+    (tmp_path / ".codegraph").mkdir()
+    child = tmp_path / "child"
+    child.mkdir()
+    out = subprocess.run(
+        [sys.executable, "-m", "cgh", "path", "--state", "--root", str(child)],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0
+    assert out.stdout.strip() == str((child / ".cgh").resolve())

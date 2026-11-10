@@ -8,6 +8,8 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-09
+
 ### Added
 - **`cgh path --state` prints the resolved state directory.** External scripts
   can read `$(cgh path --state)` instead of hardcoding `.cgh/` (or a legacy
@@ -15,20 +17,6 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   It reports the state dir of the literal `--root` (what `cgh init` there would
   create), never a parent's or the global `~/.cgh`, so a caller writing into it
   never touches an unrelated directory.
-
-### Changed
-- **The package, import name and state directory are all `cgh` now (breaking).**
-  The Python package and import path moved from `codegraph` to `cgh`, so
-  `import codegraph.X` becomes `import cgh.X`; the PyPI package and CLI were
-  already `cgh`. The per-repo state directory is `.cgh/` instead of
-  `.codegraph/`. A repo indexed before this keeps its index: the first
-  `cgh init`, `cgh index` or `cgh serve` renames `.codegraph/` to `.cgh/` in
-  place (skipped while an owner holds it), and until then cgh reads the old
-  directory. The MCP server name stays `cgh`; `cgh setup migrate` still
-  converts a config written under the older `codegraph` server name. Any code
-  that did `import codegraph` must switch to `import cgh`.
-
-### Added
 - **Tools are now scoped per client by default (`[tools] expose = "auto"`).**
   A client with tool search (Claude Code) sees every tool but keeps only the
   core set in each request's definitions and defers the rest, which stay
@@ -49,6 +37,23 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   measured benchmark found is the one that lifts recall on paraphrased
   queries. Also exposed as the MCP tool `semantic_search`, federated across
   subrepos; weighted hybrid fusion with the BM25 index comes next.
+
+### Changed
+- **The package, import name and state directory are all `cgh` now (breaking).**
+  The Python package and import path moved from `codegraph` to `cgh`, so
+  `import codegraph.X` becomes `import cgh.X`; the PyPI package and CLI were
+  already `cgh`. The per-repo state directory is `.cgh/` instead of
+  `.codegraph/`. A repo indexed before this keeps its index: the first
+  `cgh init`, `cgh index` or `cgh serve` renames `.codegraph/` to `.cgh/` in
+  place (skipped while an owner holds it), and until then cgh reads the old
+  directory. The MCP server name stays `cgh`; `cgh setup migrate` still
+  converts a config written under the older `codegraph` server name. Any code
+  that did `import codegraph` must switch to `import cgh`.
+- **First-party plugins require the renamed host (`cgh.plugin_api`).**
+  `cgh-bugreport` 0.2.0, `cgh-codegen` 0.2.0, `cgh-pii` 0.5.0 and `cgh-vision`
+  0.7.0 import `cgh.plugin_api` instead of `codegraph.plugin_api`, so they need
+  cgh 0.20.0 or newer; the `plugins` and `full` extras raise their floors to
+  match.
 
 ### Fixed
 - **`cgh init` ignores its state dir with a self-contained `.cgh/.gitignore`,
@@ -2945,7 +2950,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/altikva/cgh/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/altikva/cgh/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/altikva/cgh/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/altikva/cgh/compare/v0.17.1...v0.18.0

@@ -89,12 +89,15 @@ So cgh makes finding code cheaper and quicker, and with the full ticket setup a 
 
 ```bash
 pip install cgh                 # or: pipx install cgh / uv tool install cgh
-pip install "cgh[full]"         # plugins, extra language parsers, precise Python calls
+pip install "cgh[docs]"         # parse pdf, docx, xlsx and pptx
+pip install "cgh[full]"         # docs, plugins, extra language parsers, precise Python calls
 ```
 
-`cgh[plugins]` and `cgh[full]` bring cgh-codegen and cgh-bugreport. PDF,
-Word, Excel, PowerPoint and CSV parsing is built in (it used to be the
-cgh-docs plugin, which cgh now ignores if it is still installed).
+`cgh[plugins]` and `cgh[full]` bring cgh-codegen and cgh-bugreport. CSV
+parsing is built in; pdf, Word, Excel and PowerPoint parsing is opt-in with
+`cgh[docs]` (it pulls the Office and pdf readers and their native wheels,
+kept out of the core so a minimal install stays lean). Without the extra,
+those files are skipped with a one-line hint.
 cgh-pii (on-demand secret scanning, PII redaction) and cgh-vision (image
 understanding) install by name; see [docs/PLUGINS.md](docs/PLUGINS.md).
 

@@ -255,10 +255,6 @@ dependencies = [
     { name = "fastmcp" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openpyxl" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-    { name = "python-pptx" },
     { name = "pyyaml" },
     { name = "questionary" },
     { name = "rank-bm25" },
@@ -275,10 +271,20 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+docs = [
+    { name = "openpyxl" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+]
 full = [
     { name = "cgh-bugreport" },
     { name = "cgh-codegen" },
     { name = "jedi" },
+    { name = "openpyxl" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
     { name = "tree-sitter-c-sharp" },
     { name = "tree-sitter-ruby" },
 ]
@@ -299,7 +305,11 @@ plugins = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "openpyxl" },
+    { name = "pypdf" },
     { name = "pytest" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
 ]
 
 [package.metadata]
@@ -314,10 +324,14 @@ requires-dist = [
     { name = "jedi", marker = "extra == 'full'", specifier = ">=0.19" },
     { name = "jedi", marker = "extra == 'lsp'", specifier = ">=0.19" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pypdf", specifier = ">=6.0" },
-    { name = "python-docx", specifier = ">=1.1" },
-    { name = "python-pptx", specifier = ">=1.0" },
+    { name = "openpyxl", marker = "extra == 'docs'", specifier = ">=3.1" },
+    { name = "openpyxl", marker = "extra == 'full'", specifier = ">=3.1" },
+    { name = "pypdf", marker = "extra == 'docs'", specifier = ">=6.0" },
+    { name = "pypdf", marker = "extra == 'full'", specifier = ">=6.0" },
+    { name = "python-docx", marker = "extra == 'docs'", specifier = ">=1.1" },
+    { name = "python-docx", marker = "extra == 'full'", specifier = ">=1.1" },
+    { name = "python-pptx", marker = "extra == 'docs'", specifier = ">=1.0" },
+    { name = "python-pptx", marker = "extra == 'full'", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "questionary", specifier = ">=2.0" },
     { name = "rank-bm25", specifier = ">=0.2" },
@@ -336,10 +350,16 @@ requires-dist = [
     { name = "tree-sitter-typescript", specifier = ">=0.23" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["neural", "plugins", "full", "langs", "lsp"]
+provides-extras = ["neural", "docs", "plugins", "full", "langs", "lsp"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
+dev = [
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "pypdf", specifier = ">=6.0" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-pptx", specifier = ">=1.0" },
+]
 
 [[package]]
 name = "cgh-bugreport"

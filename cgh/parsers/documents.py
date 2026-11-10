@@ -91,7 +91,8 @@ def _missing_dependency(fmt: str, module: str, exc: BaseException) -> None:
         return
     _missing_logged.add(fmt)
     _log.warning(
-        "%s files skipped: %s is not importable in this install (%s)",
+        "%s files skipped: %s is not importable in this install; "
+        "run `pip install cgh[docs]` to parse documents (%s)",
         fmt,
         module,
         exc,

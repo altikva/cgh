@@ -8,6 +8,15 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Document parsing is an opt-in `cgh[docs]` extra, not a core dependency.**
+  `pip install cgh` no longer pulls `pypdf`, `python-docx`, `python-pptx` and
+  `openpyxl` (and the `lxml` and `pillow` native wheels they bring), so a
+  minimal or internet-facing host that never parses a document does not inherit
+  their weight or their CVE surface. Install `cgh[docs]` to parse pdf, docx,
+  xlsx and pptx; without it those files are skipped with a one-line hint and
+  the imports stay lazy, so the core never loads the readers.
+
 ## [0.20.0] - 2026-11-09
 
 ### Added

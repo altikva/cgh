@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cgh"
-version = "0.20.0"
+version = "0.20.1"
 description = "cgh, the context graph hub: the project memory of your coding agents, plus a code and document graph. Indexes your repo into an embedded graph DB (DuckDB by default, SQLite in the standalone binary) plus SQLite FTS, exposes 62 MCP tools to Claude Code, Codex, Cursor, Gemini and IBM Bob. Federates across sibling repos."
 readme = "README.md"
 authors = [{ name = "Joy Ndjama", email = "joy.ndjama@altikva.com" }]
@@ -63,14 +63,6 @@ dependencies = [
     # Codex config.toml writer: comment-preserving TOML round-trip.
     "tomlkit>=0.12",
     "tree-sitter-hcl>=1.2",
-    # Office and pdf documents are read out of the box (cgh/parsers/
-    # documents.py). python-docx and python-pptx pull lxml, a native wheel
-    # published for every platform cgh supports, the binary targets included.
-    # 6.0 caps how far one compressed pdf stream may inflate.
-    "pypdf>=6.0",
-    "python-docx>=1.1",
-    "openpyxl>=3.1",
-    "python-pptx>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -78,8 +70,21 @@ dependencies = [
 # ~90 MB model downloaded on first use). Kept out of the core and the
 # standalone binary; the lexical embedder is the always-available default.
 neural = ["fastembed>=0.4"]
-# The first-party plugins most installs want, in one go (the document
-# parsers that used to come as cgh-docs are part of the core now):
+# Office and pdf document parsing (cgh/parsers/documents.py reads
+# pdf/docx/xlsx/pptx). Kept out of the core because python-docx / python-pptx
+# pull lxml and pillow, heavy native wheels with a CVE history that a minimal
+# or internet-facing host (a plugin host that never parses a document) should
+# not inherit. Without this extra, documents are skipped with a one-line hint;
+# the imports are lazy, so the core never loads these packages.
+#   pip install "cgh[docs]"
+docs = [
+    # 6.0 caps how far one compressed pdf stream may inflate.
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
+]
+# The first-party plugins most installs want, in one go:
 #   pip install "cgh[plugins]"      or:  uv tool install "cgh[plugins]"
 # cgh-pii and cgh-vision stay installable by name (pip install cgh-pii);
 # they no longer scan at index unless [plugin.<name>] scan_on_index = true.
@@ -97,6 +102,10 @@ plugins = [
 full = [
     "cgh-bugreport>=0.2",
     "cgh-codegen>=0.2",
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
     "jedi>=0.19",
@@ -160,15 +169,14 @@ cgh = [
 # workflows so a release cannot be blocked by a linter release).
 dev = [
     "pytest>=8",
+    # The document parsers moved out of the core into the `docs` extra; keep
+    # them in the dev toolchain so the suite still exercises pdf/docx/xlsx/pptx
+    # parsing while the published core stays lean.
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
 ]
-
-# The 0.20.0 plugin versions are not on PyPI yet (this release publishes
-# them), so the raised >=0.2 floors are unresolvable from the index until
-# then. Point uv at the local plugin dirs so the lock resolves during the
-# release; REMOVE these entries and re-lock once the plugins have published.
-[tool.uv.sources]
-cgh-bugreport = { path = "plugins/cgh-bugreport" }
-cgh-codegen = { path = "plugins/cgh-codegen" }
 
 [tool.ruff]
 target-version = "py311"

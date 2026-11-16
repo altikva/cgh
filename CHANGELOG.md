@@ -16,7 +16,10 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   native reads were the bulk of the cgh misses on front-end files; a read via
   `read_lines` lands in the call log and counts toward cgh adoption instead of
   against it. The Read, Grep and Bash hooks now point at it, and it shares the
-  working-tree read path with `file_at_ref`.
+  working-tree read path with `file_at_ref`. It serves only files git tracks
+  (the set cgh indexes) and refuses `.git/`, the state dir, key material and
+  git-ignored or untracked paths, so an MCP client can never read a secret
+  through it.
 
 ## [0.20.1] - 2026-11-10
 

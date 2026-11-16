@@ -277,14 +277,58 @@ def read_at_ref(
 # that belongs on a sliced shell read, not on the bounded code read.
 _WORKING_FILE_CAP = 8 * 1024 * 1024
 
+# A bounded read is exposed over MCP, so it serves only files cgh would index:
+# a file git TRACKS in the repo. That allowlist is what keeps the tool off
+# every secret that merely sits inside the tree, since git does not track its
+# own .git/ directory, a git-ignored path (.env, local keys, build output) or
+# an untracked scratch file. On top of it, a tight denylist refuses key and
+# certificate material and well-known secret filenames even when one was
+# committed by mistake; the rules are narrow enough to leave ordinary source
+# alone (a module called secrets.py still reads).
+_BLOCKED_DIR_PARTS = frozenset({".git", ".cgh", ".codegraph"})
+_SECRET_NAMES = frozenset(
+    {
+        "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", ".pgpass",
+        ".npmrc", ".pypirc", ".htpasswd",
+    }
+)  # fmt: skip
+# Extensions that carry key, certificate or keystore material, never source.
+_SECRET_SUFFIXES = (
+    ".key", ".pem", ".p12", ".pfx", ".pkcs12", ".keystore", ".jks",
+    ".crt", ".cer", ".der", ".asc", ".gpg", ".ppk",
+)  # fmt: skip
+
+
+def _git_tracks(base: Path, resolved: Path) -> bool:
+    """True when git tracks ``resolved`` in the repo at ``base``. A git error,
+    or a path outside any repo, answers False, so an untracked or unknowable
+    file is refused rather than served (the probe fails closed)."""
+    try:
+        r = _run_git(base, ["ls-files", "--error-unmatch", "-z", "--", str(resolved)])
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+def _is_secret_name(name: str) -> bool:
+    """Whether a basename denotes key / certificate material or a known secret
+    file, refused even when git tracks it."""
+    low = name.lower()
+    if low in _SECRET_NAMES or ".env" in low:  # .env, .env.local, prod.env, ...
+        return True
+    return low.endswith(_SECRET_SUFFIXES)
+
 
 def read_working_file(root: Path, path: str) -> tuple[str, str]:
     """(repo-relative path, UTF-8 text) of a working-tree file under ``root``.
 
     ``path`` is absolute or relative to ``root``. The resolved path must stay
-    inside the repo: a path escaping it, a missing file, a directory, a binary
-    blob or a file past the size cap all raise RefError. Used by the bounded
-    working-tree read so it never leaves the indexed tree."""
+    inside the repo AND be tracked by git: a path escaping the repo, a missing
+    file, a directory, an untracked or git-ignored path, a file under .git/ or
+    the state dir, key / certificate material or a known secret filename, a
+    binary blob, or a file past the size cap all raise RefError. The git-tracked
+    allowlist is what keeps the bounded read from ever handing back a secret
+    that merely sits inside the tree."""
     if root is None:
         raise RefError("no repo root")
     base = Path(root).resolve()
@@ -303,6 +347,19 @@ def read_working_file(root: Path, path: str) -> tuple[str, str]:
         raise RefError(f"{path} is a directory, not a file")
     if not resolved.is_file():
         raise RefError(f"{path} does not exist")
+    rel_parts = resolved.relative_to(base).parts if resolved != base else ()
+    if any(part in _BLOCKED_DIR_PARTS for part in rel_parts) or _is_secret_name(
+        resolved.name
+    ):
+        raise RefError(
+            f"{path} is refused: it is under .git/ or the state dir, or it carries "
+            "key material. Use Read if you truly need it"
+        )
+    if not _git_tracks(base, resolved):
+        raise RefError(
+            f"{path} is not tracked by git, so cgh does not index it (it may be "
+            "git-ignored, untracked or a secret). Read it directly if you need it"
+        )
     try:
         size = resolved.stat().st_size
     except OSError as exc:

@@ -7,9 +7,13 @@
 # Description: pattern_search(repo=, ref=) and file_at_ref read a declared
 #              sibling repo (or this one) at a branch it does not have checked
 #              out, straight from git. Siblings come from the user's global
-#              config, the project's own .cgh/config.toml, or the subrepos
-#              the workspace federates. Undeclared repos, unknown refs,
-#              option-shaped refs and paths leaving the repo are refused.
+#              config, or, when the project config is local/untracked, from
+#              the project's own .cgh/config.toml and the subrepos it
+#              federates (each only if indexed locally and inside the
+#              workspace). Undeclared repos, a tracked project config, a
+#              sibling outside the workspace or without a local index,
+#              unknown refs, option-shaped refs and paths leaving the repo
+#              are all refused.
 
 from __future__ import annotations
 
@@ -280,17 +284,25 @@ def test_sibling_named_by_path_too(setup):
     assert refs.resolve_repo(proj, str(api)) == ("api", api)
 
 
-@pytest.mark.parametrize("tracked", [False, True])
-def test_a_project_config_grants_access(setup, tracked):
-    """A project's own .cgh/config.toml [cgh] siblings grants read access,
-    whatever its git status: declaring siblings per workspace is the point."""
-    proj, api, home, t = setup
-    (home / "config.toml").unlink()
-    (proj / ".cgh").mkdir()
-    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
-    if tracked:
+def _declare_project(proj: Path, api: Path, body: str, *, index=True, track=False):
+    """Give `proj` a project .cgh/config.toml with `body`, optionally index
+    `api` locally and/or commit the config to git."""
+    (proj / ".cgh").mkdir(exist_ok=True)
+    (proj / ".cgh" / "config.toml").write_text(body)
+    if index:
+        (api / ".cgh").mkdir(exist_ok=True)
+    if track:
         _git(proj, "add", "-f", ".cgh/config.toml")
         _git(proj, "commit", "-qm", "ship config")
+
+
+def test_project_sibling_in_an_untracked_config_grants_access(setup):
+    """A project's own .cgh/config.toml [cgh] siblings grants read access when
+    the config is local and untracked and the sibling is indexed: declaring
+    siblings per workspace is the point."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    _declare_project(proj, api, f'[cgh]\nsiblings = ["{api}"]\n')
     out = json.loads(
         t["pattern_search"]("class Association", repo="api", ref="develop")
     )
@@ -304,9 +316,8 @@ def test_project_relative_sibling_resolves_against_root(setup):
     root (unlike a global entry, which names a repo for every project)."""
     proj, api, home, t = setup
     (home / "config.toml").unlink()
-    (proj / ".cgh").mkdir()
     # api sits beside the project, so "../api" from the project root reaches it.
-    (proj / ".cgh" / "config.toml").write_text('[cgh]\nsiblings = ["../api"]\n')
+    _declare_project(proj, api, '[cgh]\nsiblings = ["../api"]\n')
     out = json.loads(t["file_at_ref"]("app/models.py", "develop", repo="api"))
     assert out["repo"] == "api"
     assert refs.sibling_repos(proj) == {"api": api}
@@ -318,14 +329,70 @@ def test_federated_subrepo_is_readable_at_a_ref(setup):
     case where pattern_search(repo=) used to say 'not a declared sibling'."""
     proj, api, home, t = setup
     (home / "config.toml").unlink()
-    (proj / ".cgh").mkdir()
-    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsubrepos = ["{api}"]\n')
+    _declare_project(proj, api, f'[cgh]\nsubrepos = ["{api}"]\n')
     out = json.loads(
         t["pattern_search"]("class Association", repo="api", ref="develop")
     )
     assert out["repo"] == "api"
     assert [g["file"] for g in out["files"]] == ["app/models.py"]
     assert refs.sibling_repos(proj) == {"api": api}
+
+
+def test_a_tracked_project_config_grants_no_access(setup):
+    """A git-tracked project config can ride in with a cloned/opened repo and
+    must not point cgh at other repos: its siblings are ignored (supply-chain
+    / IDOR escalation). .cgh/ is gitignored by default, so this is the only
+    way a project config is honoured."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    _declare_project(proj, api, f'[cgh]\nsiblings = ["{api}"]\n', track=True)
+    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
+    assert "not a declared sibling" in out["error"]
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_a_project_sibling_without_a_local_index_is_refused(setup):
+    """Read access requires the sibling to be indexed locally (the same
+    condition federation uses), so a config entry can never point at an
+    un-indexed arbitrary directory."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    _declare_project(proj, api, f'[cgh]\nsiblings = ["{api}"]\n', index=False)
+    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
+    assert "not a declared sibling" in out["error"]
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_a_project_sibling_outside_the_workspace_is_refused(tmp_path, monkeypatch):
+    """A resolved sibling path must stay inside the workspace (the project's
+    parent). A config pointing at a repo elsewhere (think ~/.ssh) is refused,
+    even indexed and untracked, while a legitimate sibling beside the project
+    is accepted."""
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    base = tmp_path.resolve()
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", base / "empty-home")
+
+    def _repo(path: Path) -> Path:
+        path.mkdir(parents=True)
+        (path / "f.txt").write_text("x\n")
+        _git(path, "init", "-q", "-b", "main")
+        _git(path, "add", "-A")
+        _git(path, "commit", "-qm", "init")
+        (path / ".cgh").mkdir()
+        return path
+
+    ws = base / "ws"
+    proj = _repo(ws / "proj")
+    good = _repo(ws / "good")  # a sibling inside the workspace
+    evil = _repo(base / "evil")  # a repo OUTSIDE the workspace (ws's parent)
+    (proj / ".cgh" / "config.toml").write_text(
+        f'[cgh]\nsiblings = ["{good}", "{evil}"]\n'
+    )
+    terraform._TOPLEVELS.clear()
+
+    resolved = refs.sibling_repos(proj)
+    assert resolved == {"good": good}  # evil dropped, good kept
 
 
 def test_relative_global_entry_is_ignored(setup):

@@ -15,10 +15,16 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   its sibling repos can read them at any branch without declaring them twice,
   instead of being told the repo "is not a declared sibling" and falling back
   to `git grep`.
-- **Siblings are declarable per workspace.** `[cgh] siblings` is now read from a
-  project's own `.cgh/config.toml` as well as the global `~/.cgh/config.toml`.
-  Project entries may be relative (resolved against the project root); global
-  entries stay absolute. No migration needed.
+- **Siblings are declarable per workspace, with guards.** `[cgh] siblings` is now
+  read from a project's own `.cgh/config.toml` as well as the global
+  `~/.cgh/config.toml`. Project entries may be relative (resolved against the
+  project root); global entries stay absolute. To keep a config that rides in
+  with an opened repo from pointing cgh at arbitrary paths (`~/.ssh`, an
+  unrelated repo), the project sources (its `siblings` and its federated
+  `subrepos`) are honoured only when the project config is local and untracked
+  by git, and each entry only when its repo is indexed locally and resolves
+  inside the workspace. The global config stays the trusted source. No
+  migration needed.
 
 ### Fixed
 - **The global config is read from a legacy `~/.codegraph/` when `~/.cgh/` is

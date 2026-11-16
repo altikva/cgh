@@ -395,6 +395,76 @@ def test_a_project_sibling_outside_the_workspace_is_refused(tmp_path, monkeypatc
     assert resolved == {"good": good}  # evil dropped, good kept
 
 
+def test_a_submodule_state_dir_is_not_trusted(setup):
+    """A .cgh/ that is a git submodule / nested repo belongs to another repo,
+    not local trust, so its config is ignored."""
+    proj, api, home, _t = setup
+    (home / "config.toml").unlink()
+    _declare_project(proj, api, f'[cgh]\nsiblings = ["{api}"]\n')
+    (proj / ".cgh" / ".git").write_text("gitdir: /elsewhere/.git/modules/cgh\n")
+    assert refs._project_config_trusted(proj) is False
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_a_symlinked_config_is_not_trusted(setup, tmp_path):
+    """A symlinked config.toml (or .cgh/) could redirect the trust decision
+    and the read outside the repo: refuse it."""
+    proj, api, home, _t = setup
+    (home / "config.toml").unlink()
+    (proj / ".cgh").mkdir()
+    (api / ".cgh").mkdir()
+    external = tmp_path / "external.toml"
+    external.write_text(f'[cgh]\nsiblings = ["{api}"]\n')
+    (proj / ".cgh" / "config.toml").symlink_to(external)
+    assert refs._project_config_trusted(proj) is False
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_a_non_git_project_is_not_trusted(tmp_path, monkeypatch):
+    """Fail closed: a project that is not a git work tree (git ls-files
+    returns 128) is distrusted, not assumed safe."""
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    base = tmp_path.resolve()
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", base / "empty-home")
+    proj = base / "proj"  # NOT a git repo
+    (proj / ".cgh").mkdir(parents=True)
+    api = base / "api"
+    (api / ".cgh").mkdir(parents=True)
+    _git(api, "init", "-q", "-b", "main")
+    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
+    terraform._TOPLEVELS.clear()
+    assert refs._project_config_trusted(proj) is False
+    assert refs.sibling_repos(proj) == {}
+
+
+def test_a_case_variant_tracked_config_is_caught(tmp_path, monkeypatch):
+    """A committed .CGH/config.toml must not slip past a .cgh read: the
+    tracked check matches case-insensitively. Needs a case-sensitive FS."""
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    base = tmp_path.resolve()
+    (base / "cf_probe").mkdir()
+    if (base / "CF_PROBE").exists():
+        pytest.skip("case-insensitive filesystem")
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", base / "empty-home")
+    proj = base / "proj"
+    api = base / "api"
+    (api / ".cgh").mkdir(parents=True)
+    proj.mkdir()
+    _git(proj, "init", "-q", "-b", "main")
+    _git(api, "init", "-q", "-b", "main")
+    # Attacker commits an upper-case .CGH/config.toml; cgh reads .cgh.
+    (proj / ".CGH").mkdir()
+    (proj / ".CGH" / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
+    _git(proj, "add", "-f", ".CGH/config.toml")
+    _git(proj, "commit", "-qm", "ship upper config")
+    (proj / ".cgh").mkdir()
+    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsiblings = ["{api}"]\n')
+    terraform._TOPLEVELS.clear()
+    assert refs._project_config_trusted(proj) is False
+
+
 def test_relative_global_entry_is_ignored(setup):
     """A relative entry in the GLOBAL config would name a different repo from
     every project, so it is dropped there."""

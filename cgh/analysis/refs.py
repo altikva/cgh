@@ -119,39 +119,79 @@ def _within(path: Path, boundary: Path) -> bool:
         return False
 
 
+def _refuse_project_config(root: Path, reason: str) -> bool:
+    """Log why a project config is not trusted and return False."""
+    _log.warning(
+        "ignoring [cgh] siblings/subrepos of %s (%s): a project config may "
+        "ride in with an opened repo, declare siblings in the global %s instead",
+        root,
+        reason,
+        _GLOBAL_WHERE,
+    )
+    return False
+
+
 def _project_config_trusted(root: Path) -> bool:
     """Whether a project's own .cgh/config.toml may grant repo read access.
 
-    Only a LOCAL, untracked config is trusted. .cgh/ is gitignored by
+    Only a LOCAL, untracked, real config is trusted. .cgh/ is gitignored by
     default, so an untracked config is the machine owner's; a tracked or
     committed one can ride in with a cloned or opened repo and point cgh at
     arbitrary paths (``~/.ssh``, another repo) to exfiltrate files, a
-    supply-chain / IDOR escalation. A tracked config's siblings/subrepos are
-    ignored with a warning; the global ~/.cgh/config.toml stays the trusted
-    source. A config that resolves outside the repo (a planted symlink) is
-    refused too."""
-    from cgh.core.config import CONFIG_FILE
+    supply-chain / IDOR escalation. The global ~/.cgh/config.toml stays the
+    trusted source. This check fails CLOSED: anything but a clean "untracked"
+    signal from git is distrusted. It refuses, specifically:
 
-    cfg = state_dir_for(root) / CONFIG_FILE
+    - a symlinked state dir or config.toml (a symlink can redirect the trust
+      decision, and the later read, outside the repo);
+    - a state dir that is a git submodule / nested repo (its contents are
+      another repo's, not local);
+    - a config (or anything else under .cgh/ or .codegraph/) that git tracks,
+      matched case-insensitively so a committed ``.CGH/config.toml`` cannot
+      slip past a ``.cgh`` lookup;
+    - any git error or a non-work-tree (returncode other than a positive
+      "untracked"): distrusted rather than assumed safe.
+    """
+    from cgh.core.config import CGH_DIR, CONFIG_FILE, LEGACY_CGH_DIR
+
+    state = state_dir_for(root)  # root/.cgh or legacy root/.codegraph
+    cfg = state / CONFIG_FILE
     if not cfg.exists():
         return False
+    # Test UNRESOLVED paths: a symlinked .cgh/ or config.toml must not grant
+    # trust (it could point the later read outside the repo).
+    if state.is_symlink() or cfg.is_symlink():
+        return _refuse_project_config(root, "symlinked .cgh/ or config.toml")
+    # And the real config must still sit inside the repo (a symlink higher up).
+    if not _within(cfg, root):
+        return _refuse_project_config(root, "config resolves outside the repo")
+    # A git submodule / nested repo at the state dir is not local trust.
+    if (state / ".git").exists():
+        return _refuse_project_config(root, "state dir is a git submodule")
+
+    # Is anything under .cgh/ or .codegraph/ tracked? Case-insensitive, so a
+    # committed .CGH/ cannot hide from a .cgh read; any match means tracked.
     try:
-        rel = cfg.resolve().relative_to(root)
-    except (ValueError, OSError):
-        return False
-    try:
-        proc = _run_git(root, ["ls-files", "--error-unmatch", str(rel)])
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if proc.returncode == 0:  # the config is tracked by git
-        _log.warning(
-            "ignoring [cgh] siblings/subrepos in %s: a git-tracked project "
-            "config does not grant access to other repos; declare them in the "
-            "global %s instead",
-            cfg,
-            _GLOBAL_WHERE,
+        proc = _run_git(
+            root,
+            [
+                "-c",
+                "core.ignorecase=true",
+                "ls-files",
+                "--",
+                f":(icase){CGH_DIR}",
+                f":(icase){LEGACY_CGH_DIR}",
+            ],
         )
-        return False
+    except (OSError, subprocess.SubprocessError):
+        return _refuse_project_config(root, "git ls-files failed")
+    # Fail closed: trust only a clean, positive "nothing tracked" (returncode
+    # 0 with empty output). A returncode of 128 (not a work tree) or any other
+    # error is distrusted, never assumed safe.
+    if proc.returncode != 0:
+        return _refuse_project_config(root, "not a git work tree or git error")
+    if proc.stdout.strip():
+        return _refuse_project_config(root, "config tracked by git")
     return True
 
 

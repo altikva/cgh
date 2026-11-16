@@ -21,10 +21,12 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   project root); global entries stay absolute. To keep a config that rides in
   with an opened repo from pointing cgh at arbitrary paths (`~/.ssh`, an
   unrelated repo), the project sources (its `siblings` and its federated
-  `subrepos`) are honoured only when the project config is local and untracked
-  by git, and each entry only when its repo is indexed locally and resolves
-  inside the workspace. The global config stays the trusted source. No
-  migration needed.
+  `subrepos`) are honoured only when the project config is trusted, and each
+  entry only when its repo is indexed locally and resolves inside the
+  workspace. The trust check fails closed: the project `.cgh/config.toml` must
+  be local, not a symlink, not inside a git submodule, and not tracked by git
+  (matched case-insensitively), in a real git work tree. The global config
+  stays the trusted source. No migration needed.
 
 ### Fixed
 - **The global config is read from a legacy `~/.codegraph/` when `~/.cgh/` is

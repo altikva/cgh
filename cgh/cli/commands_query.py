@@ -1627,6 +1627,66 @@ def cmd_outline(args: argparse.Namespace) -> None:
     console.print(tree)
 
 
+# ---------------------------------------------------------------------------
+# cmd_read
+# ---------------------------------------------------------------------------
+
+
+def cmd_read(args: argparse.Namespace) -> None:
+    """Print a bounded slice of a working-tree file: a line range or a symbol.
+
+    Local and owner-free (reads the file on disk); the CLI mirror of the
+    read_lines MCP tool, for the `sed -n`/`head` cases from a shell."""
+    from cgh.analysis.refs import (
+        RefError,
+        find_symbol,
+        outline_of,
+        read_working_file,
+        slice_lines,
+    )
+
+    root = os.path.abspath(args.root)
+    try:
+        rel, text = read_working_file(Path(root), args.file)
+        start, end = args.start or 0, args.end or 0
+        if args.symbol:
+            outline = outline_of(rel, text)
+            if outline is None:
+                raise RefError(
+                    f"cgh cannot parse {rel} for symbols: pass --start / --end"
+                )
+            found = find_symbol(outline, args.symbol)
+            if not found:
+                near = [
+                    e["name"]
+                    for e in outline
+                    if args.symbol.lower() in e["name"].lower()
+                ]
+                tip = f" Close names: {', '.join(near[:5])}." if near else ""
+                raise RefError(f"no symbol '{args.symbol}' in {rel}.{tip}")
+            start, end = found[0]["start_line"], found[0]["end_line"]
+        out = slice_lines(rel, text, start, end)
+    except RefError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise SystemExit(1) from None
+
+    if args.json:
+        print(json.dumps(out))
+        return
+
+    header = f"[bold cyan]{escape(out['path'])}[/bold cyan] "
+    header += (
+        f"[dim]L{out['start_line']}-{out['end_line']} of {out['total_lines']}[/dim]"
+    )
+    console.print(header)
+    for entry in out["lines"]:
+        console.print(f"[dim]{entry['line']:>6}[/dim]  {escape(entry['text'])}")
+    if out["truncated"]:
+        console.print(
+            f"[yellow]...truncated at 400 lines; next --start {out['end_line'] + 1}[/yellow]"
+        )
+
+
 def cmd_semantic(args: argparse.Namespace) -> None:
     """Semantic (vector) search over symbol names and docstrings: embed the
     query and rank symbols by cosine. Reads the FTS directly, so it works

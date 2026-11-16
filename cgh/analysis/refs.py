@@ -272,6 +272,57 @@ def read_at_ref(
     return slice_lines(rel, text, start_line, end_line)
 
 
+# A working-tree read loads the whole file to count lines and parse an
+# outline; past this it is almost always a log, a lockfile or a data blob
+# that belongs on a sliced shell read, not on the bounded code read.
+_WORKING_FILE_CAP = 8 * 1024 * 1024
+
+
+def read_working_file(root: Path, path: str) -> tuple[str, str]:
+    """(repo-relative path, UTF-8 text) of a working-tree file under ``root``.
+
+    ``path`` is absolute or relative to ``root``. The resolved path must stay
+    inside the repo: a path escaping it, a missing file, a directory, a binary
+    blob or a file past the size cap all raise RefError. Used by the bounded
+    working-tree read so it never leaves the indexed tree."""
+    if root is None:
+        raise RefError("no repo root")
+    base = Path(root).resolve()
+    p = Path(os.path.expanduser(path))
+    candidate = p if p.is_absolute() else base / p
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise RefError(f"cannot resolve {path}: {exc}") from exc
+    if resolved != base and not resolved.is_relative_to(base):
+        raise RefError(
+            f"{path} is outside the repo; use file_at_ref for a sibling repo, "
+            "or Read for a path cgh does not index"
+        )
+    if resolved.is_dir():
+        raise RefError(f"{path} is a directory, not a file")
+    if not resolved.is_file():
+        raise RefError(f"{path} does not exist")
+    try:
+        size = resolved.stat().st_size
+    except OSError as exc:
+        raise RefError(f"cannot stat {path}: {exc}") from exc
+    if size > _WORKING_FILE_CAP:
+        raise RefError(
+            f"{path} is {size} bytes, past the {_WORKING_FILE_CAP}-byte read cap; "
+            "read it in the shell or point a tool at the symbol you need"
+        )
+    try:
+        data = resolved.read_bytes()
+    except OSError as exc:
+        raise RefError(f"cannot read {path}: {exc}") from exc
+    if b"\x00" in data[:8192]:
+        raise RefError(f"{path} looks binary; read_lines serves text files")
+    text = data.decode("utf-8", errors="replace")
+    rel = str(resolved.relative_to(base)) if resolved != base else resolved.name
+    return rel, text
+
+
 # Formats whose parser reads a binary container: their text from git is not
 # what the parser expects, so no outline is attempted for them.
 _BINARY_DOC_EXTS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})

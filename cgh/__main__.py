@@ -87,6 +87,7 @@ from cgh.cli.commands_query import (
     cmd_lookup,
     cmd_outline,
     cmd_packages,
+    cmd_read,
     cmd_report,
     cmd_search,
     cmd_semantic,
@@ -598,6 +599,31 @@ def _register_inspect(sub) -> None:
     p.add_argument("file", help="Markdown file path")
     _add_root(p)
 
+    # --- read ---
+    p = sub.add_parser(
+        "read",
+        help="Print a bounded slice of a working-tree file (line range or --symbol)",
+    )
+    p.add_argument("file", help="File path (absolute or relative to the repo root)")
+    p.add_argument(
+        "start", nargs="?", type=int, default=0, help="First line, 1-based (default: 1)"
+    )
+    p.add_argument(
+        "end",
+        nargs="?",
+        type=int,
+        default=0,
+        help="Last line, inclusive (default: end)",
+    )
+    p.add_argument(
+        "--symbol",
+        "-S",
+        default="",
+        help="Read a function/class/method instead of a range",
+    )
+    p.add_argument("--json", action="store_true")
+    _add_root(p)
+
     # --- why ---
     p = sub.add_parser(
         "why",
@@ -1064,6 +1090,7 @@ def main() -> None:
         "callers": cmd_callers,
         "callees": cmd_callees,
         "outline": cmd_outline,
+        "read": cmd_read,
         "endpoints": cmd_endpoints,
         "packages": cmd_packages,
         "why": cmd_why,

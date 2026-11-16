@@ -55,6 +55,7 @@
     "plan-index",
     "plugins",
     "prs",
+    "read",
     "report",
     "reset",
     "search",
@@ -711,6 +712,21 @@
         ],
         "positionals": [
           "action"
+        ]
+      },
+      "read": {
+        "options": [
+          "--help",
+          "--json",
+          "--root",
+          "--symbol",
+          "-S",
+          "-h"
+        ],
+        "positionals": [
+          "file",
+          "start",
+          "end"
         ]
       },
       "report": {

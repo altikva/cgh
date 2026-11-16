@@ -6,9 +6,9 @@
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Description: pattern_search(repo=, ref=) and file_at_ref read a declared
 #              sibling repo (or this one) at a branch it does not have checked
-#              out, straight from git. Siblings are granted by the user's
-#              global config only: a project's own config, committed or not,
-#              never opens another repo. Undeclared repos, unknown refs,
+#              out, straight from git. Siblings come from the user's global
+#              config, the project's own .cgh/config.toml, or the subrepos
+#              the workspace federates. Undeclared repos, unknown refs,
 #              option-shaped refs and paths leaving the repo are refused.
 
 from __future__ import annotations
@@ -281,10 +281,9 @@ def test_sibling_named_by_path_too(setup):
 
 
 @pytest.mark.parametrize("tracked", [False, True])
-def test_a_project_config_never_grants_access(setup, tracked):
-    """Whatever its git status, a project's .cgh/config.toml can come
-    with a clone, a copied store or a seeded worktree: its siblings are
-    ignored, and the error says where they belong."""
+def test_a_project_config_grants_access(setup, tracked):
+    """A project's own .cgh/config.toml [cgh] siblings grants read access,
+    whatever its git status: declaring siblings per workspace is the point."""
     proj, api, home, t = setup
     (home / "config.toml").unlink()
     (proj / ".cgh").mkdir()
@@ -292,15 +291,46 @@ def test_a_project_config_never_grants_access(setup, tracked):
     if tracked:
         _git(proj, "add", "-f", ".cgh/config.toml")
         _git(proj, "commit", "-qm", "ship config")
-    out = json.loads(t["pattern_search"]("class", repo="api", ref="develop"))
-    assert "not a declared sibling" in out["error"]
-    assert "~/.cgh/config.toml" in out["error"]
-    assert "is ignored" in out["error"]
-    assert refs.sibling_repos() == {}
+    out = json.loads(
+        t["pattern_search"]("class Association", repo="api", ref="develop")
+    )
+    assert out["repo"] == "api"
+    assert [g["file"] for g in out["files"]] == ["app/models.py"]
+    assert refs.sibling_repos(proj) == {"api": api}
+
+
+def test_project_relative_sibling_resolves_against_root(setup):
+    """A project sibling may be relative; it resolves against the project
+    root (unlike a global entry, which names a repo for every project)."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    (proj / ".cgh").mkdir()
+    # api sits beside the project, so "../api" from the project root reaches it.
+    (proj / ".cgh" / "config.toml").write_text('[cgh]\nsiblings = ["../api"]\n')
+    out = json.loads(t["file_at_ref"]("app/models.py", "develop", repo="api"))
+    assert out["repo"] == "api"
+    assert refs.sibling_repos(proj) == {"api": api}
+
+
+def test_federated_subrepo_is_readable_at_a_ref(setup):
+    """The unification: a subrepo this workspace federates is readable at a
+    ref without being declared a sibling too. This is the coordination-folder
+    case where pattern_search(repo=) used to say 'not a declared sibling'."""
+    proj, api, home, t = setup
+    (home / "config.toml").unlink()
+    (proj / ".cgh").mkdir()
+    (proj / ".cgh" / "config.toml").write_text(f'[cgh]\nsubrepos = ["{api}"]\n')
+    out = json.loads(
+        t["pattern_search"]("class Association", repo="api", ref="develop")
+    )
+    assert out["repo"] == "api"
+    assert [g["file"] for g in out["files"]] == ["app/models.py"]
+    assert refs.sibling_repos(proj) == {"api": api}
 
 
 def test_relative_global_entry_is_ignored(setup):
-    """A relative entry would name a different repo from every project."""
+    """A relative entry in the GLOBAL config would name a different repo from
+    every project, so it is dropped there."""
     _proj, _api, home, _t = setup
     (home / "config.toml").write_text('[cgh]\nsiblings = ["../api"]\n')
     assert refs.sibling_repos() == {}

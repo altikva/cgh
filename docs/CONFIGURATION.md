@@ -153,7 +153,7 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 | `ignore_patterns` | `list[str]` | See defaults below | Glob patterns for files to skip |
 | `max_file_size_kb` | `int` | `500` | Max file size in KB |
 | `extra_dirs` | `list[str]` | `[]` | Extra directories to index (relative paths) |
-| `siblings` | `list[str]` | `[]` | Sibling git repos that `pattern_search(repo=, ref=)` and `file_at_ref` may read at any branch, straight from git (absolute or `~` paths; named by directory). Read-only, never fetched, nothing else reachable. **Global config only** (`~/.cgh/config.toml`): a project's `config.toml` can come with a cloned repo, so its `siblings` is ignored |
+| `siblings` | `list[str]` | `[]` | Sibling git repos that `pattern_search(repo=, ref=)` and `file_at_ref` may read at any branch, straight from git (named by directory). Read-only, never fetched, nothing else reachable. Declarable in the global `~/.cgh/config.toml` (absolute or `~` paths) **or** a project's own `.cgh/config.toml` (relative paths allowed, resolved against the project root). The `subrepos` this workspace federates are readable the same way without being listed here. |
 | `log_max_mb` | `int` | `5` | Rotate `owner.log` when it exceeds this size at owner spawn. `0` disables rotation. |
 | `log_backup_count` | `int` | `3` | How many `owner.log.N` backups to keep. `0` truncates without keeping backups. |
 | `subrepos` | `list[str]` | `[]` | Federated sub-projects with their own `.cgh/` index. Parent indexes only files outside these paths and federates read-only queries to them at runtime. Manage with `cgh federate add/remove/list/verify`. |

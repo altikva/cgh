@@ -70,6 +70,31 @@ def state_dir_for(project_root: str | Path) -> Path:
     return primary
 
 
+def global_state_dir() -> Path:
+    """The user's global cgh state dir to READ: ``~/.cgh/`` when it exists,
+    else a legacy ``~/.codegraph/`` when that exists, else ``~/.cgh/``. The
+    home-level mirror of ``state_dir_for``: a machine set up before the rename
+    keeps its global ``~/.codegraph/config.toml`` (siblings, options) readable
+    without moving the directory, which can hold gigabytes of old state. This
+    is a read-only fallback: nothing migrates or writes the legacy dir here.
+
+    The legacy dir is resolved as ``GLOBAL_DIR``'s sibling (not a hardcoded
+    home path) so a test that redirects ``GLOBAL_DIR`` stays isolated from any
+    real ``~/.codegraph/`` on the machine."""
+    if GLOBAL_DIR.exists():
+        return GLOBAL_DIR
+    legacy = GLOBAL_DIR.parent / LEGACY_CGH_DIR
+    if legacy.is_dir():
+        return legacy
+    return GLOBAL_DIR
+
+
+def global_config_path() -> Path:
+    """Path of the global ``config.toml`` to read, honouring the legacy
+    ``~/.codegraph/`` fallback. Writers keep using ``GLOBAL_DIR`` directly."""
+    return global_state_dir() / CONFIG_FILE
+
+
 def _owner_alive_in(state_dir: Path) -> bool:
     """True when a live owner holds the given state dir (its owner.pid names a
     running process). Keeps migrate_state_dir from renaming a dir with open DB
@@ -417,8 +442,8 @@ def load_config(project_root: str | Path | None = None) -> CghConfig:
     root = Path(project_root).resolve() if project_root else Path.cwd().resolve()
     config = CghConfig(project_root=root)
 
-    # Global config
-    global_data = _read_toml(GLOBAL_DIR / CONFIG_FILE)
+    # Global config (reads a legacy ~/.codegraph/ when ~/.cgh/ is absent)
+    global_data = _read_toml(global_config_path())
     _apply_toml(config, global_data)
 
     # Project config
@@ -607,10 +632,12 @@ max_file_size_kb = 500
 # `cgh add-dir add ../frontend` (kept here so it versions with the repo).
 # extra_dirs = ["../my-frontend"]
 # Sibling git repos an agent may read at any branch without a checkout
-# (pattern_search(repo=, ref=), file_at_ref) are declared in the user's
-# global ~/.cgh/config.toml only, as [cgh] siblings = ["~/code/
-# my-api"]: a project config can come with a cloned repo, so it cannot
-# grant access to other repos.
+# (pattern_search(repo=, ref=), file_at_ref). Declare them below, either
+# here at project level (relative paths allowed, resolved against the project
+# root) or in the user's global ~/.cgh/config.toml (absolute paths only). The
+# subrepos this workspace federates are already readable this way, no need to
+# list them twice.
+# siblings = ["../my-api"]
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1

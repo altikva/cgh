@@ -102,6 +102,50 @@ def test_cmd_path_prints_the_resolved_state_dir(tmp_path, capsys):
     assert out == str((tmp_path / ".codegraph").resolve())
 
 
+def test_global_state_dir_prefers_cgh_then_legacy_then_default(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(config, "GLOBAL_DIR", home / ".cgh")
+    # Nothing yet: the default (~/.cgh) is returned without reading anywhere.
+    assert config.global_state_dir() == home / ".cgh"
+    # Only a legacy ~/.codegraph: read it so historical global config survives.
+    (home / ".codegraph").mkdir()
+    assert config.global_state_dir() == home / ".codegraph"
+    assert config.global_config_path() == home / ".codegraph" / "config.toml"
+    # Both: the new one wins.
+    (home / ".cgh").mkdir()
+    assert config.global_state_dir() == home / ".cgh"
+
+
+def test_load_config_reads_siblings_from_legacy_global_dir(tmp_path, monkeypatch):
+    """A machine that only has ~/.codegraph/config.toml still has its global
+    options (here [cgh] siblings) read, without the dir being moved."""
+    home = tmp_path / "home"
+    (home / ".codegraph").mkdir(parents=True)
+    (home / ".codegraph" / "config.toml").write_text(
+        '[cgh]\nsiblings = ["/some/abs/repo"]\nmax_file_size_kb = 123\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "GLOBAL_DIR", home / ".cgh")
+
+    cfg = config.load_config(tmp_path)
+    assert cfg.max_file_size_kb == 123
+
+    from cgh.analysis import refs
+
+    assert refs.declared_global_siblings() == ["/some/abs/repo"]
+
+
+def test_global_legacy_fallback_is_isolated_from_the_real_home(tmp_path, monkeypatch):
+    """The legacy dir is GLOBAL_DIR's sibling, not a hardcoded ~/.codegraph,
+    so a redirected GLOBAL_DIR never reaches the machine's real home."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(config, "GLOBAL_DIR", home / ".cgh")
+    # No ~/.cgh and no sibling ~/.codegraph under this temp home.
+    assert config.global_state_dir() == home / ".cgh"
+
+
 def test_cmd_path_does_not_walk_up_to_a_parent_state_dir(tmp_path):
     # A parent has state, a child worktree does not: `cgh path` must report the
     # child's own would-be .cgh/, never climb to the parent (or to ~/.cgh),

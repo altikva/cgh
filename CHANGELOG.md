@@ -8,6 +8,25 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Changed
+- **Federation and siblings are one notion now.** `pattern_search(repo=, ref=)`
+  and `file_at_ref` resolve the subrepos a workspace federates, not only repos
+  listed under `[cgh] siblings`. A coordination checkout that already federates
+  its sibling repos can read them at any branch without declaring them twice,
+  instead of being told the repo "is not a declared sibling" and falling back
+  to `git grep`.
+- **Siblings are declarable per workspace.** `[cgh] siblings` is now read from a
+  project's own `.cgh/config.toml` as well as the global `~/.cgh/config.toml`.
+  Project entries may be relative (resolved against the project root); global
+  entries stay absolute. No migration needed.
+
+### Fixed
+- **The global config is read from a legacy `~/.codegraph/` when `~/.cgh/` is
+  absent**, the way a project already falls back to a legacy `.codegraph/`. A
+  machine set up before the rename keeps its global options and siblings
+  without the historical home directory being moved. Read-only fallback:
+  nothing relocates or writes the legacy directory.
+
 ## [0.20.1] - 2026-11-10
 
 ### Changed

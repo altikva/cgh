@@ -184,6 +184,26 @@ def test_read_lines_refuses_an_untracked_file(read_tool):
     assert "error" in out and "not tracked" in out["error"]
 
 
+def test_read_lines_tracked_name_with_glob_magic_reads(read_tool):
+    """A real filename holding glob metacharacters is matched literally, so a
+    tracked `a[b].py` still reads."""
+    read_lines, root = read_tool
+    _track(root, "a[b].py", "value = 42\n")
+    out = json.loads(read_lines("a[b].py"))
+    assert out["lines"][0]["text"] == "value = 42"
+
+
+def test_read_lines_untracked_glob_name_does_not_match_a_tracked_file(read_tool):
+    """The allowlist check must treat the path literally: an untracked file
+    whose name globs onto a tracked one (`a[1].py` -> `a1.py`) stays refused,
+    rather than being served because the pathspec matched a different file."""
+    read_lines, root = read_tool
+    _track(root, "a1.py", "SECRET = 'tracked-decoy'\n")
+    (root / "a[1].py").write_text("TOKEN = 'untracked-secret'\n")  # not git-added
+    out = json.loads(read_lines("a[1].py"))
+    assert "error" in out and "not tracked" in out["error"]
+
+
 def test_read_lines_refuses_under_dot_git(read_tool):
     read_lines, _ = read_tool
     out = json.loads(read_lines(".git/config"))

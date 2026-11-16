@@ -299,12 +299,17 @@ _SECRET_SUFFIXES = (
 )  # fmt: skip
 
 
-def _git_tracks(base: Path, resolved: Path) -> bool:
-    """True when git tracks ``resolved`` in the repo at ``base``. A git error,
-    or a path outside any repo, answers False, so an untracked or unknowable
-    file is refused rather than served (the probe fails closed)."""
+def _git_tracks(base: Path, rel_path: str) -> bool:
+    """True when git tracks the repo-relative ``rel_path`` in the repo at
+    ``base``. The pathspec carries ``:(literal)`` magic so a name holding a
+    glob metacharacter (``*``, ``?``, ``[...]``) matches itself only, never a
+    different tracked file, which would otherwise let an untracked path named
+    to match one through the allowlist. A git error, or a path outside any
+    repo, answers False, so an untracked or unknowable file is refused rather
+    than served (the probe fails closed)."""
+    pathspec = f":(literal){rel_path}"
     try:
-        r = _run_git(base, ["ls-files", "--error-unmatch", "-z", "--", str(resolved)])
+        r = _run_git(base, ["ls-files", "--error-unmatch", "-z", "--", pathspec])
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0
@@ -347,15 +352,15 @@ def read_working_file(root: Path, path: str) -> tuple[str, str]:
         raise RefError(f"{path} is a directory, not a file")
     if not resolved.is_file():
         raise RefError(f"{path} does not exist")
-    rel_parts = resolved.relative_to(base).parts if resolved != base else ()
-    if any(part in _BLOCKED_DIR_PARTS for part in rel_parts) or _is_secret_name(
+    rel = resolved.relative_to(base)
+    if any(part in _BLOCKED_DIR_PARTS for part in rel.parts) or _is_secret_name(
         resolved.name
     ):
         raise RefError(
             f"{path} is refused: it is under .git/ or the state dir, or it carries "
             "key material. Use Read if you truly need it"
         )
-    if not _git_tracks(base, resolved):
+    if not _git_tracks(base, rel.as_posix()):
         raise RefError(
             f"{path} is not tracked by git, so cgh does not index it (it may be "
             "git-ignored, untracked or a secret). Read it directly if you need it"
@@ -376,8 +381,7 @@ def read_working_file(root: Path, path: str) -> tuple[str, str]:
     if b"\x00" in data[:8192]:
         raise RefError(f"{path} looks binary; read_lines serves text files")
     text = data.decode("utf-8", errors="replace")
-    rel = str(resolved.relative_to(base)) if resolved != base else resolved.name
-    return rel, text
+    return str(rel), text
 
 
 # Formats whose parser reads a binary container: their text from git is not

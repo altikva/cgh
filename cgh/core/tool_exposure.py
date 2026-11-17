@@ -31,7 +31,7 @@ from typing import Any
 # (context_for_task), knowledge (knowledge_record, knowledge_search,
 # knowledge_list), session continuity (checkpoint, compact_session, resume;
 # the SessionStart hook tells agents to call them after /clear and compaction),
-# and freshness (scan_status, file_at_ref, tests_for). The index-mutating
+# and freshness (scan_status, file_at_ref, read_lines, tests_for). The index-mutating
 # tools (incremental_reindex, index_changed_files, indexed_files) are hook- and
 # status-driven, not agent-facing, so they stay deferred. Revisit as usage
 # data grows.
@@ -58,6 +58,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "resume",
         "scan_status",
         "file_at_ref",
+        "read_lines",
         "tests_for",
     }
 )

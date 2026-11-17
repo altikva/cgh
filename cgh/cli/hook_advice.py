@@ -386,8 +386,9 @@ def read_advice(target: Path) -> str | None:
     what = _human_size(size) + (f", {lines:,} lines" if lines is not None else "")
     return (
         f"[cgh hook] {name} ({what}) is not indexed by cgh, and a full Read "
-        "stays in every later request. Read a range with offset/limit, Grep "
-        "for a pattern, or `head -n 50` it."
+        "stays in every later request. Read a range with read_lines(path, "
+        "start_line, end_line) (served by cgh, counted as cgh), Grep for a "
+        "pattern, or `head -n 50` it."
     )
 
 
@@ -431,7 +432,7 @@ def ranges_advice(
     if not top:
         return None
     head = f"[cgh hook] {_short(target.name, _NAME_MAX)} ({_human_size(size)}): "
-    tail = ". Read a range with offset/limit."
+    tail = ". read_lines(path, start_line, end_line) serves one range, counted as cgh."
     if bare:
         head, tail = "Main parts: ", "."
 

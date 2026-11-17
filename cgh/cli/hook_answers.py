@@ -421,7 +421,8 @@ def format_outline(
         f"[cgh] Outline of {rel_path} {source}:\n"
         + "\n".join(lines)
         + (
-            "\nIf you need one part, Read it with offset/limit instead of the whole file."
+            f"\nIf you need one part, read it with read_lines('{rel_path}', "
+            "start_line, end_line) (counted as cgh) instead of the whole file."
             if tail
             else ""
         )
@@ -578,6 +579,7 @@ def full_read_reason(rel_path: str, size: int, plan: str) -> str:
     return (
         f"[cgh] Full Read of {rel_path} ({_human_size(size)}) answered with its "
         f"plan instead:\n{plan}\n"
-        "Re-read the part you need with offset/limit. If you need the whole "
-        "file, repeat the same Read and it goes through."
+        f"Read the part you need with read_lines('{rel_path}', start_line, "
+        "end_line) (counted as cgh). If you need the whole file, repeat the "
+        "same Read and it goes through."
     )

@@ -454,8 +454,8 @@ def test_full_read_of_large_indexed_file_is_denied_with_outline(
     reason = out["permissionDecisionReason"]
     assert "Full Read of app/billing.py" in reason
     assert "10-30  function  charge_card" in reason
-    assert "offset/limit" in reason
-    assert reason.count("offset/limit") == 1
+    assert "read_lines" in reason
+    assert reason.count("read_lines") == 1
 
 
 def test_full_read_of_large_unindexed_text_is_denied_with_anchors(
@@ -513,14 +513,14 @@ def test_answers_off_keeps_the_hint(monkeypatch, capsys, repo):
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "0")
     out = _read(monkeypatch, capsys, repo, _big_txt(repo))
     assert not _denied(out)
-    assert "offset/limit" in out.get("additionalContext", "")
+    assert "read_lines" in out.get("additionalContext", "")
 
 
 def test_no_session_id_is_not_denied(monkeypatch, capsys, repo):
     path = _big_txt(repo)
     payload = {"tool_input": {"file_path": str(path)}, "cwd": str(repo)}
     ctx = _run(monkeypatch, capsys, h.cmd_hook_precheck_read, payload)
-    assert "offset/limit" in ctx
+    assert "read_lines" in ctx
 
 
 def test_large_indexed_markdown_gets_its_section_ranges(monkeypatch, capsys, repo):

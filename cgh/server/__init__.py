@@ -16,6 +16,11 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+
+# ---------------------------------------------------------------------------
+# Module-level globals
+# ---------------------------------------------------------------------------
+import logging
 import os
 import sys
 import threading
@@ -26,32 +31,7 @@ from fastmcp import FastMCP
 
 from cgh.core.log import configure_background_logging
 from cgh.core.timing import emit as _emit_timing
-from cgh.core.utils import short_path
-
-# ---------------------------------------------------------------------------
-# Module-level globals
-# ---------------------------------------------------------------------------
-
-
-def _resolve_signals(*names: str) -> list:
-    """Return the signals from ``names`` that exist on this platform.
-
-    SIGHUP and other POSIX signals are absent on Windows. Referencing
-    ``signal.SIGHUP`` directly there raises AttributeError, which would
-    crash `cgh serve` on startup, so resolve by name and skip what is
-    missing.
-    """
-    import signal as _signal
-
-    found = []
-    for name in names:
-        sig = getattr(_signal, name, None)
-        if sig is not None:
-            found.append(sig)
-    return found
-
-
-import logging
+from cgh.core.utils import resolve_signals, short_path
 
 _log = logging.getLogger(__name__)
 
@@ -500,21 +480,16 @@ mcp.add_middleware(tool_exposure)
 
 
 def main() -> None:
+    """Thin wrapper over the lean proxy entry, kept for direct runs.
+
+    The proxy that every `cgh serve` launches is a stateless stdio<->HTTP
+    bridge; it must not pay for this module's FastMCP import graph (~1s),
+    which only the owner process uses. So the real entry lives in
+    ``cgh.state.serve.proxy_main``, which boots from the IPC primitives
+    alone, and `cgh serve` calls it directly. This wrapper stays only so a
+    direct ``python cgh/server/__init__.py`` run still works: it parses argv
+    and delegates.
     """
-    Proxy entrypoint: every `cgh serve` invocation acts as a stdio<->HTTP
-    bridge to a single shared "owner" backend. The first caller lazily
-    spawns the owner; subsequent callers reuse it.
-
-    This is what Claude Code launches per session. The owner holds the
-    graph DB write lock; proxies are stateless bridges with no DB access.
-    """
-    global _root
-
-    # First phase boundary: the gap from the caller's spawn of this process to
-    # here is the Python interpreter boot plus the proxy's own import cost, the
-    # part a native bridge would remove.
-    _emit_timing("proxy_enter")
-
     ap = argparse.ArgumentParser(description="cgh MCP server (proxy mode)")
     ap.add_argument("--root", default=os.getcwd(), help="Repo root (default: CWD)")
     ap.add_argument(
@@ -525,85 +500,9 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    _root = Path(args.root).resolve()
+    from cgh.state.serve import proxy_main
 
-    from cgh.state.ipc import (
-        installed_cgh_version,
-        is_owner_alive,
-        owner_version_current,
-        proxy_stdio_to_http,
-        read_owner_port,
-        read_owner_version,
-        register_worker,
-        spawn_owner,
-        stop_owner,
-        unregister_worker,
-    )
-
-    # Register this proxy as a worker BEFORE spawning the owner, so the
-    # owner's shutdown logic always sees at least one live worker.
-    register_worker(_root)
-
-    # Release the worker slot on any exit (normal, SIGTERM, SIGHUP).
-    import atexit as _atexit
-    import signal as _signal
-
-    _atexit.register(unregister_worker, _root)
-
-    def _graceful(signum, _frame):
-        unregister_worker(_root)
-        _signal.signal(signum, _signal.SIG_DFL)
-        os.kill(os.getpid(), signum)
-
-    for _sig in _resolve_signals("SIGTERM", "SIGHUP", "SIGINT"):
-        try:
-            _signal.signal(_sig, _graceful)
-        except (ValueError, OSError):
-            pass
-
-    configure_background_logging()
-
-    # Second boundary: the bridge setup (arg parse, ipc import, worker
-    # registration, logging) is done; owner discovery begins. Everything up to
-    # here is proxy overhead a native bridge removes.
-    _emit_timing("owner_discovery")
-
-    # Start (or reuse) the shared owner. A live owner is reused only when it
-    # is serving the installed version: one left running across a package
-    # upgrade holds stale code that can fail on a lazy import, so restart it
-    # rather than bridge to it.
-    if is_owner_alive(_root) and owner_version_current(_root):
-        port = read_owner_port(_root)
-        _log.info("attaching to existing owner on port %s", port)
-    else:
-        if is_owner_alive(_root):
-            _log.warning(
-                "owner is running cgh %s but %s is installed; restarting it "
-                "so calls run current code",
-                read_owner_version(_root),
-                installed_cgh_version(),
-            )
-            stop_owner(_root)
-        else:
-            _log.info("no owner running, launching one")
-        port = spawn_owner(_root, watch=args.watch, reindex=args.reindex)
-        if port is None:
-            _log.error("failed to start owner (see .cgh/owner.log)")
-            unregister_worker(_root)
-            sys.exit(1)
-        _log.info("owner up on port %s", port)
-
-    # Third boundary: the owner is up (spawned cold, or discovered warm) and
-    # the proxy is about to enter its stdin read loop. owner_discovery ->
-    # owner_ready is the engine startup; it is zero on the warm path.
-    _emit_timing("owner_ready")
-
-    # Act as the stdio <-> HTTP bridge for this Claude session. Pass watch
-    # so a mid-session owner death can be self-healed with the same
-    # posture the session started with.
-    _emit_timing("bridge_ready")
-    exit_code = proxy_stdio_to_http(port, repo_root=_root, watch=args.watch)
-    sys.exit(exit_code)
+    sys.exit(proxy_main(root=args.root, watch=args.watch, reindex=args.reindex))
 
 
 def _startup_index_needed(root, reindex: bool) -> bool:
@@ -962,7 +861,7 @@ def owner_main(
     def _signal_shutdown(signum, _frame):
         _shutdown(f"received {_sig.Signals(signum).name}")
 
-    for s in _resolve_signals("SIGTERM", "SIGINT"):
+    for s in resolve_signals("SIGTERM", "SIGINT"):
         try:
             _sig.signal(s, _signal_shutdown)
         except (ValueError, OSError):

@@ -15,6 +15,24 @@ import unicodedata
 from pathlib import Path
 
 
+def resolve_signals(*names: str) -> list:
+    """Return the signals from ``names`` that exist on this platform.
+
+    SIGHUP and other POSIX signals are absent on Windows. Referencing
+    ``signal.SIGHUP`` directly there raises AttributeError, which would
+    crash `cgh serve` on startup, so resolve by name and skip what is
+    missing.
+    """
+    import signal as _signal
+
+    found = []
+    for name in names:
+        sig = getattr(_signal, name, None)
+        if sig is not None:
+            found.append(sig)
+    return found
+
+
 def ensure_dir(path: Path, attempts: int = 5) -> None:
     """mkdir -p that tolerates network/WebDAV drives.
 

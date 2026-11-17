@@ -161,8 +161,28 @@ def test_old_schema_store_migrates_silently(tmp_path):
     entries = knowledge_list(repo_root=root)
     assert [e["title"] for e in entries] == ["old"]
     assert "provenance" not in entries[0]  # native entry keeps its old shape
-    cols = {r[1] for r in _get_conn(root).execute("PRAGMA table_info(knowledge)")}
+    conn = _get_conn(root)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge)")}
     assert {"source_worktree", "origin_id", "promoted_at", "superseded_by"} <= cols
+    # A new owner opening a pre-provenance store creates the L9 columns via the
+    # guarded ALTERs, and the row written before they existed reads back with
+    # namespace defaulted to 'repo' and the rest NULL ("unknown").
+    assert {
+        "namespace",
+        "origin_repo",
+        "ticket",
+        "author",
+        "symptom",
+        "symptom_norm",
+    } <= cols
+    row = conn.execute(
+        "SELECT namespace, origin_repo, ticket, author, symptom, symptom_norm "
+        "FROM knowledge WHERE title = 'old'"
+    ).fetchone()
+    assert row == ("repo", None, None, None, None, None)
+    # The FTS mirror carries the symptom column so later records index it.
+    fts_cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_fts)")}
+    assert "symptom" in fts_cols
 
 
 def test_promote_skips_digests_checkpoints_and_superseded(tmp_path):

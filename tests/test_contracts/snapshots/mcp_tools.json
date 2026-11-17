@@ -490,6 +490,10 @@
   },
   "knowledge_record": {
     "properties": {
+      "author": {
+        "default": "",
+        "type": "string"
+      },
       "body": {
         "type": "string"
       },
@@ -501,6 +505,14 @@
         "default": "note",
         "type": "string"
       },
+      "namespace": {
+        "default": "repo",
+        "type": "string"
+      },
+      "origin_repo": {
+        "default": "",
+        "type": "string"
+      },
       "session_id": {
         "default": "",
         "type": "string"
@@ -509,7 +521,15 @@
         "default": 0,
         "type": "integer"
       },
+      "symptom": {
+        "default": "",
+        "type": "string"
+      },
       "tags": {
+        "default": "",
+        "type": "string"
+      },
+      "ticket": {
         "default": "",
         "type": "string"
       },

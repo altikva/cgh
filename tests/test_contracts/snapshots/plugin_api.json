@@ -705,6 +705,36 @@
           "name": "origin_id"
         },
         {
+          "annotation": "str",
+          "default": "'repo'",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "namespace"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "origin_repo"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "ticket"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "author"
+        },
+        {
+          "annotation": "str",
+          "default": "''",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "symptom"
+        },
+        {
           "returns": "int"
         }
       ]

@@ -9,6 +9,15 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Provenance and namespace on knowledge entries.** A recorded learning now
+  carries where it came from (`origin_repo`, `ticket`, `author`) and the logical
+  scope it belongs to (`namespace`, defaulting to `repo`), so a note can later be
+  read and shared beyond the repo that wrote it without losing its origin. An
+  entry can also keep the error signature it diagnoses (`symptom`), stored in a
+  normalised form so a look-alike error recalls it. `knowledge_record` takes the
+  matching optional fields and fills `author` and `origin_repo` in when left
+  blank. Backward compatible: old rows read back as `namespace=repo`, and a call
+  that passes none of the new fields behaves exactly as before.
 - **`read_lines`, a bounded read counted as cgh (MCP tool + `cgh read`).**
   Reads a line range or a single symbol of a working-tree file server-side,
   so the common case (you already know the file and the range, after a lookup

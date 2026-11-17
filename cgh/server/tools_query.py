@@ -598,6 +598,81 @@ def register(mcp) -> None:
             payload["next_start_line"] = payload["end_line"] + 1
         return dumps_answer(payload)
 
+    @mcp.tool()
+    @_logged_tool
+    def read_lines(
+        path: str,
+        start_line: int = 0,
+        end_line: int = 0,
+        symbol: str = "",
+    ) -> str:
+        """
+        Read a bounded slice of a file in the CURRENT working tree, server-side.
+        This is cgh's canonical read: reach for it, not `sed -n`/`head`/`tail`
+        or a full Read, once you already know the file and the range you want
+        (the usual case after symbol_lookup, pattern_search or file_summary
+        hands you a file:line). Reading the whole file costs far more tokens
+        than the lines you need.
+
+        Pass a line range, a ``symbol``, or neither:
+          - ``start_line`` / ``end_line``: 1-based, inclusive (end_line 0 = to
+            the end of the file), capped at 400 lines per call.
+          - ``symbol``: a function, class or method (``Class.method``) defined
+            in the file; its exact line range is served without your counting
+            lines. A ``start_line`` inside it reads on from there (the next page
+            of a long one), an ``end_line`` inside it stops there.
+          - neither: a file up to about 4 KB comes back whole; a larger one
+            comes back as an ``outline`` (its symbols with line ranges) or, for
+            a language cgh does not parse, ``head`` (its first lines). Then call
+            again with a range or a symbol.
+
+        Args:
+          path:       absolute, or relative to the repo root. Must resolve
+                      inside the indexed repo; for another branch or a sibling
+                      repo use file_at_ref, for a path cgh does not index use Read.
+          start_line: first line, 1-based (0 = not set)
+          end_line:   last line, inclusive (0 = to the end)
+          symbol:     a definition in the file, read in place of a line range
+
+        Returns {path, total_lines, start_line, end_line, truncated, lines:
+        [{line, text}]}, plus {symbol, kind} when a symbol was read, or {error}
+        for a missing path, a bad range or an unknown symbol. The answer also
+        stops at about 10 KB: then ``truncated`` is true and ``next_start_line``
+        says where to resume. Binary blobs and files past 8 MB are refused: read
+        those in the shell.
+        """
+        from cgh.analysis.refs import RefError, read_working_file, slice_lines
+        from cgh.server._budget import cap_answer, dumps_answer
+
+        try:
+            rel, text = read_working_file(_srv._root, path)
+            head: dict = {"path": rel}
+            if symbol:
+                start_line, end_line, extra = _symbol_range(
+                    rel, text, symbol, start_line, end_line
+                )
+                head.update(extra)
+            elif not start_line and not end_line:
+                if len(text.encode("utf-8")) > _AT_REF_WHOLE_BYTES:
+                    return _outline_answer(head, rel, text)
+            out = slice_lines(rel, text, start_line, end_line)
+        except RefError as exc:
+            return dumps_answer({"path": path, "error": str(exc)})
+        payload = {**head, **out}
+        if cap_answer(
+            payload,
+            ["lines"],
+            "Lines cut to fit the answer: call again with start_line = "
+            "next_start_line, or ask for a narrower line range.",
+        ):
+            payload.pop("dropped", None)
+            if payload["lines"]:
+                payload["end_line"] = payload["lines"][-1]["line"]
+            payload["next_start_line"] = payload["end_line"] + 1
+        elif payload.get("truncated"):
+            payload["next_start_line"] = payload["end_line"] + 1
+        return dumps_answer(payload)
+
     def _retry_children_via_fts(results, warnings, retry, to_row):
         """Re-answer children whose graph DB was unreachable from their FTS.
 

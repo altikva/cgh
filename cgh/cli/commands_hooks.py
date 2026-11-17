@@ -250,8 +250,9 @@ def _shell_search_hint(command: str) -> str | None:
             if sources:
                 return (
                     f"[cgh hook] `{prog}` to read {sources[0]}. Prefer "
-                    "symbol_lookup(name) for the exact line range, then Read with "
-                    "offset/limit (or file_summary for an outline)."
+                    f"read_lines('{sources[0]}', start_line, end_line) (or "
+                    "read_lines(path, symbol=<name>) for one definition): it serves "
+                    "the slice server-side and counts as cgh, not a native read."
                 )
     return None
 
@@ -879,8 +880,10 @@ def cmd_hook_precheck_read(args: argparse.Namespace) -> None:
         f"[cgh hook] '{rel_path}' is indexed by cgh{just_now} ({symbol_count} symbols). "
         "Before a full Read, consider:\n"
         f"{hint}"
-        "Then Read with offset/limit on the range you actually need. "
-        "If you really want the whole file, ignore this and proceed."
+        f"  - read_lines('{rel_path}', start_line, end_line)   one range, "
+        "counted as cgh (or symbol=<name>)\n"
+        "Read the range you actually need with read_lines rather than a native "
+        "slice. If you really want the whole file, ignore this and proceed."
     )
 
 

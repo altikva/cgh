@@ -443,6 +443,118 @@ def read_at_ref(
     return slice_lines(rel, text, start_line, end_line)
 
 
+# A working-tree read loads the whole file to count lines and parse an
+# outline; past this it is almost always a log, a lockfile or a data blob
+# that belongs on a sliced shell read, not on the bounded code read.
+_WORKING_FILE_CAP = 8 * 1024 * 1024
+
+# A bounded read is exposed over MCP, so it serves only files cgh would index:
+# a file git TRACKS in the repo. That allowlist is what keeps the tool off
+# every secret that merely sits inside the tree, since git does not track its
+# own .git/ directory, a git-ignored path (.env, local keys, build output) or
+# an untracked scratch file. On top of it, a tight denylist refuses key and
+# certificate material and well-known secret filenames even when one was
+# committed by mistake; the rules are narrow enough to leave ordinary source
+# alone (a module called secrets.py still reads).
+_BLOCKED_DIR_PARTS = frozenset({".git", ".cgh", ".codegraph"})
+_SECRET_NAMES = frozenset(
+    {
+        "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", ".pgpass",
+        ".npmrc", ".pypirc", ".htpasswd",
+    }
+)  # fmt: skip
+# Extensions that carry key, certificate or keystore material, never source.
+_SECRET_SUFFIXES = (
+    ".key", ".pem", ".p12", ".pfx", ".pkcs12", ".keystore", ".jks",
+    ".crt", ".cer", ".der", ".asc", ".gpg", ".ppk",
+)  # fmt: skip
+
+
+def _git_tracks(base: Path, rel_path: str) -> bool:
+    """True when git tracks the repo-relative ``rel_path`` in the repo at
+    ``base``. The pathspec carries ``:(literal)`` magic so a name holding a
+    glob metacharacter (``*``, ``?``, ``[...]``) matches itself only, never a
+    different tracked file, which would otherwise let an untracked path named
+    to match one through the allowlist. A git error, or a path outside any
+    repo, answers False, so an untracked or unknowable file is refused rather
+    than served (the probe fails closed)."""
+    pathspec = f":(literal){rel_path}"
+    try:
+        r = _run_git(base, ["ls-files", "--error-unmatch", "-z", "--", pathspec])
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+def _is_secret_name(name: str) -> bool:
+    """Whether a basename denotes key / certificate material or a known secret
+    file, refused even when git tracks it."""
+    low = name.lower()
+    if low in _SECRET_NAMES or ".env" in low:  # .env, .env.local, prod.env, ...
+        return True
+    return low.endswith(_SECRET_SUFFIXES)
+
+
+def read_working_file(root: Path, path: str) -> tuple[str, str]:
+    """(repo-relative path, UTF-8 text) of a working-tree file under ``root``.
+
+    ``path`` is absolute or relative to ``root``. The resolved path must stay
+    inside the repo AND be tracked by git: a path escaping the repo, a missing
+    file, a directory, an untracked or git-ignored path, a file under .git/ or
+    the state dir, key / certificate material or a known secret filename, a
+    binary blob, or a file past the size cap all raise RefError. The git-tracked
+    allowlist is what keeps the bounded read from ever handing back a secret
+    that merely sits inside the tree."""
+    if root is None:
+        raise RefError("no repo root")
+    base = Path(root).resolve()
+    p = Path(os.path.expanduser(path))
+    candidate = p if p.is_absolute() else base / p
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise RefError(f"cannot resolve {path}: {exc}") from exc
+    if resolved != base and not resolved.is_relative_to(base):
+        raise RefError(
+            f"{path} is outside the repo; use file_at_ref for a sibling repo, "
+            "or Read for a path cgh does not index"
+        )
+    if resolved.is_dir():
+        raise RefError(f"{path} is a directory, not a file")
+    if not resolved.is_file():
+        raise RefError(f"{path} does not exist")
+    rel = resolved.relative_to(base)
+    if any(part in _BLOCKED_DIR_PARTS for part in rel.parts) or _is_secret_name(
+        resolved.name
+    ):
+        raise RefError(
+            f"{path} is refused: it is under .git/ or the state dir, or it carries "
+            "key material. Use Read if you truly need it"
+        )
+    if not _git_tracks(base, rel.as_posix()):
+        raise RefError(
+            f"{path} is not tracked by git, so cgh does not index it (it may be "
+            "git-ignored, untracked or a secret). Read it directly if you need it"
+        )
+    try:
+        size = resolved.stat().st_size
+    except OSError as exc:
+        raise RefError(f"cannot stat {path}: {exc}") from exc
+    if size > _WORKING_FILE_CAP:
+        raise RefError(
+            f"{path} is {size} bytes, past the {_WORKING_FILE_CAP}-byte read cap; "
+            "read it in the shell or point a tool at the symbol you need"
+        )
+    try:
+        data = resolved.read_bytes()
+    except OSError as exc:
+        raise RefError(f"cannot read {path}: {exc}") from exc
+    if b"\x00" in data[:8192]:
+        raise RefError(f"{path} looks binary; read_lines serves text files")
+    text = data.decode("utf-8", errors="replace")
+    return str(rel), text
+
+
 # Formats whose parser reads a binary container: their text from git is not
 # what the parser expects, so no outline is attempted for them.
 _BINARY_DOC_EXTS = frozenset({".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"})

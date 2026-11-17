@@ -8,6 +8,19 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **`read_lines`, a bounded read counted as cgh (MCP tool + `cgh read`).**
+  Reads a line range or a single symbol of a working-tree file server-side,
+  so the common case (you already know the file and the range, after a lookup
+  or a search) no longer falls back to `sed -n` / `head` / a full Read. Those
+  native reads were the bulk of the cgh misses on front-end files; a read via
+  `read_lines` lands in the call log and counts toward cgh adoption instead of
+  against it. The Read, Grep and Bash hooks now point at it, and it shares the
+  working-tree read path with `file_at_ref`. It serves only files git tracks
+  (the set cgh indexes) and refuses `.git/`, the state dir, key material and
+  git-ignored or untracked paths, so an MCP client can never read a secret
+  through it.
+
 ### Changed
 - **Federation and siblings are one notion now.** `pattern_search(repo=, ref=)`
   and `file_at_ref` resolve the subrepos a workspace federates, not only repos

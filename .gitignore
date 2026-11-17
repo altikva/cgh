@@ -44,3 +44,6 @@ internal/
 downloads/
 dist-binary/
 /.bob/
+
+# Public benchmark clones (fetched + indexed on demand, never committed)
+.bench-cache/

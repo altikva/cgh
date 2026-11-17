@@ -21,11 +21,16 @@ from bench._util import CACHE_DIR, BenchError, repo_checkout, repos_config
 
 _TIMEOUT = 600
 
+# Hooks off for every git op: a global core.hooksPath post-checkout that
+# backgrounds `cgh _reindex_hook` would otherwise reindex the clone and grab
+# its graph lock behind the harness's back.
+_NO_HOOKS = ["-c", "core.hooksPath=/dev/null"]
+
 
 def _git(*args: str, cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
-    cmd = ["git", *args]
+    cmd = ["git", *_NO_HOOKS, *args]
     if cwd is not None:
-        cmd = ["git", "-C", str(cwd), *args]
+        cmd = ["git", "-C", str(cwd), *_NO_HOOKS, *args]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=_TIMEOUT)
 
 

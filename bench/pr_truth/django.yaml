@@ -1,0 +1,79 @@
+repo: django/django
+pinned_sha: 102c3c327d4974a58883b47a68f8d85da0be3648
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 22143
+  merged_at: '2026-11-17T08:04:13Z'
+  merge_sha: 102c3c327d4974a58883b47a68f8d85da0be3648
+  parent_sha: d3954c981368eb4439be63f2f165d400f33bcd70
+  seed: tests/sessions_tests/tests.py
+  truth:
+  - django/contrib/sessions/backends/file.py
+- number: 22279
+  merged_at: '2026-11-16T16:15:24Z'
+  merge_sha: d3954c981368eb4439be63f2f165d400f33bcd70
+  parent_sha: 29b7829d6a6ff553feabc99688504a61aa00de3f
+  seed: tests/gis_tests/test_geoforms.py
+  truth:
+  - django/contrib/gis/gdal/geojson.py
+- number: 22208
+  merged_at: '2026-11-16T16:13:58Z'
+  merge_sha: 29b7829d6a6ff553feabc99688504a61aa00de3f
+  parent_sha: 03158f2189346e35831586dfd0381e37eacb685d
+  seed: tests/admin_inlines/tests.py
+  truth:
+  - django/contrib/admin/helpers.py
+- number: 22244
+  merged_at: '2026-11-13T16:46:15Z'
+  merge_sha: c57c20ff4e8b98b21fa85029614f36c933830790
+  parent_sha: a868478f9e1c02e1b7ecbc06f1f5393d41ab1e9d
+  seed: tests/serializers/test_jsonl.py
+  truth:
+  - django/core/serializers/jsonl.py
+- number: 22280
+  merged_at: '2026-11-13T12:59:34Z'
+  merge_sha: b6c9fda92318089b7cae8e4e74eb597af5fd0a2d
+  parent_sha: 60cecbf8c842122eb96628dadb22258dea1360f5
+  seed: tests/gis_tests/gdal_tests/test_raster.py
+  truth:
+  - tests/gis_tests/gdal_tests/test_driver.py
+  - tests/gis_tests/rasterapp/test_rasterfield.py
+- number: 22235
+  merged_at: '2026-11-13T08:01:56Z'
+  merge_sha: 6c8143cf012e562dd713d91490853d7909a83a5f
+  parent_sha: 2c64002f0df87e66411d16dcceb1c7e5e6e22157
+  seed: tests/admin_widgets/tests.py
+  truth:
+  - tests/admin_widgets/widgetadmin.py
+- number: 22255
+  merged_at: '2026-11-12T11:01:57Z'
+  merge_sha: a0f2e29e0a98ee14aa808ebe38ec5fb79c8af71f
+  parent_sha: 2d89a635128e1fe91fb01ebd6ec2672ab1f2dd0a
+  seed: django/core/management/commands/createcachetable.py
+  truth:
+  - tests/cache/tests.py
+- number: 22250
+  merged_at: '2026-11-12T08:53:38Z'
+  merge_sha: 5d6d1f051e0930537b8eda9760d05441d4279594
+  parent_sha: 9600da0b98b98b00e310c66b964f259ad5932daa
+  seed: tests/invalid_models_tests/test_models.py
+  truth:
+  - django/db/models/base.py
+- number: 21534
+  merged_at: '2026-11-10T10:16:09Z'
+  merge_sha: 3f079b9d84a52bf0b04f5ede7125c898fa2a0bcf
+  parent_sha: 2d50268e63b2ea6faeb69b8d39f36c6b5b57c645
+  seed: tests/template_tests/syntax_tests/test_firstof.py
+  truth:
+  - django/template/defaulttags.py
+- number: 21857
+  merged_at: '2026-11-06T22:17:53Z'
+  merge_sha: a1f2b45ce5a327f42437bdb620a817839d0bd067
+  parent_sha: d9d05f104e3187bd42b4bc288234ef1523a2cc73
+  seed: tests/forms_tests/widget_tests/test_textarea.py
+  truth:
+  - django/forms/widgets.py

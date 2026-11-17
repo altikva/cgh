@@ -1,0 +1,93 @@
+repo: vuejs/core
+pinned_sha: 2e2f7c6bef54a85a3ce8db768b11c5562385b65d
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 16287
+  merged_at: '2026-11-17T01:02:12Z'
+  merge_sha: 2e2f7c6bef54a85a3ce8db768b11c5562385b65d
+  parent_sha: f897fa3478ad3e1ba2060933d09af2ba854faebb
+  seed: packages/compiler-sfc/__tests__/compileScript/resolveType.spec.ts
+  truth:
+  - packages/compiler-sfc/src/script/resolveType.ts
+- number: 16253
+  merged_at: '2026-11-13T05:56:28Z'
+  merge_sha: cbd95955a5362b44060908f6e28ad447c3031b8a
+  parent_sha: 21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9
+  seed: packages/compiler-sfc/__tests__/compileScript/resolveType.spec.ts
+  truth:
+  - packages/compiler-sfc/__tests__/compileScript/defineModel.spec.ts
+  - packages/compiler-sfc/__tests__/compileScript/defineProps.spec.ts
+  - packages/compiler-sfc/src/script/resolveType.ts
+- number: 16152
+  merged_at: '2026-11-13T01:07:22Z'
+  merge_sha: 21738b527bac4a91eef9cbdfc2cc5ac1f3dbdec9
+  parent_sha: aec1e052e65b36abea659d553042511917dde211
+  seed: packages/compiler-sfc/__tests__/compileTemplate.spec.ts
+  truth:
+  - packages/compiler-sfc/__tests__/compileScript.spec.ts
+  - packages/compiler-sfc/src/compileTemplate.ts
+- number: 16245
+  merged_at: '2026-11-13T00:57:23Z'
+  merge_sha: aec1e052e65b36abea659d553042511917dde211
+  parent_sha: 6782586546cfe580ef7b5c18d692199d52f13e77
+  seed: packages/runtime-core/__tests__/hydration.spec.ts
+  truth:
+  - packages/compiler-ssr/__tests__/ssrInjectCssVars.spec.ts
+  - packages/compiler-ssr/src/transforms/ssrInjectCssVars.ts
+  - packages/runtime-core/src/hydration.ts
+  - packages/server-renderer/__tests__/ssrTeleport.spec.ts
+- number: 16251
+  merged_at: '2026-11-13T00:29:34Z'
+  merge_sha: 6782586546cfe580ef7b5c18d692199d52f13e77
+  parent_sha: e5a217390d1b3be17a76253bbc32f06df2d9b1a7
+  seed: packages/shared/__tests__/looseEqual.spec.ts
+  truth:
+  - packages/runtime-core/__tests__/rendererComponent.spec.ts
+  - packages/runtime-dom/__tests__/directives/vModel.spec.ts
+  - packages/shared/src/looseEqual.ts
+- number: 16244
+  merged_at: '2026-11-12T08:31:34Z'
+  merge_sha: 7c8a0f704f6eb762e86bbbcc4af5548e6c7532d2
+  parent_sha: b5b2310d88002424af5f404e75e0ca8fc59047bc
+  seed: packages/runtime-core/__tests__/hydration.spec.ts
+  truth:
+  - packages/compiler-ssr/__tests__/ssrInjectCssVars.spec.ts
+  - packages/compiler-ssr/src/transforms/ssrInjectCssVars.ts
+  - packages/runtime-core/src/hydration.ts
+- number: 16239
+  merged_at: '2026-11-12T07:42:16Z'
+  merge_sha: b5b2310d88002424af5f404e75e0ca8fc59047bc
+  parent_sha: 7ef6817112bb420ef47a7252821b37caae016ac9
+  seed: packages/runtime-dom/__tests__/helpers/useCssVars.spec.ts
+  truth:
+  - packages/runtime-core/src/component.ts
+  - packages/runtime-core/src/components/Teleport.ts
+  - packages/runtime-dom/src/helpers/useCssVars.ts
+- number: 16225
+  merged_at: '2026-11-11T01:59:03Z'
+  merge_sha: 7ef6817112bb420ef47a7252821b37caae016ac9
+  parent_sha: 19dd3aa7bf1c9639ed8e4c80b306387ab575763a
+  seed: packages/compiler-ssr/__tests__/ssrElement.spec.ts
+  truth:
+  - packages/server-renderer/__tests__/ssrRenderAttrs.spec.ts
+  - packages/shared/src/domAttrConfig.ts
+- number: 16132
+  merged_at: '2026-11-05T07:40:51Z'
+  merge_sha: 79b80b7a4b986f3e2ba4ec5bf73d345907a4fe59
+  parent_sha: 1dc8cdf9362ff20345bea6f456a0341e1506b577
+  seed: packages/runtime-core/__tests__/components/Suspense.spec.ts
+  truth:
+  - packages/runtime-core/src/apiAsyncComponent.ts
+  - packages/runtime-core/src/components/KeepAlive.ts
+- number: 16012
+  merged_at: '2026-11-05T06:49:56Z'
+  merge_sha: 34fbeb16fc0029f39d29db94f3f783eddad7a9a6
+  parent_sha: 16124033bb800f3c0baa6557770eb781cb95a419
+  seed: packages/shared/src/general.ts
+  truth:
+  - packages/reactivity/src/baseHandlers.ts
+  - packages/runtime-core/src/component.ts

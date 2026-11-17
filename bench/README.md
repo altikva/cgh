@@ -75,6 +75,7 @@ the harness only clones, checks out, and parses them through cgh's indexer.
 
 ## Scope
 
-Phase 1 validates tiers 1 and 2 on `pallets/flask` and `psf/requests`. It does
-not run the full repo set and does not implement tier 3 (a live two-arm LLM
-comparison).
+Tiers 1 and 2 run over the full multi-language repo set (Python, JavaScript,
+TypeScript, Go, Rust); `repos.yaml` names them and their language. Results are
+published by language in `BENCHMARK.md`, weak languages included. Tier 3 (a live
+two-arm LLM comparison) is a separate task and is not implemented here.

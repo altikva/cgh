@@ -1,0 +1,65 @@
+# Fixed tier-1 questions for vuejs/core at the pinned SHA (TypeScript).
+# The announced weak spot: cgh's TS cross-package call/import resolution is
+# the least accurate of the set. Locate questions mostly resolve; the weakness
+# shows in tier 2 impact. Published, not buried. See questions/flask.yaml.
+questions:
+  - id: vue-locate-reactive
+    kind: locate
+    cmd: lookup
+    arg: reactive
+    grep_pattern: reactive
+    word: false
+    expect: packages/reactivity/src/reactive.ts
+  - id: vue-locate-ref
+    kind: locate
+    cmd: lookup
+    arg: ref
+    grep_pattern: ref
+    expect: packages/reactivity/src/ref.ts
+  - id: vue-locate-computed
+    kind: locate
+    cmd: lookup
+    arg: computed
+    grep_pattern: computed
+    word: false
+    expect: packages/reactivity/src/computed.ts
+  - id: vue-locate-effect
+    kind: locate
+    cmd: lookup
+    arg: effect
+    grep_pattern: effect
+    word: false
+    expect: packages/reactivity/src/effect.ts
+  - id: vue-locate-definecomponent
+    kind: locate
+    cmd: lookup
+    arg: defineComponent
+    grep_pattern: defineComponent
+    expect: packages/runtime-core/src/apiDefineComponent.ts
+  - id: vue-locate-watch
+    kind: locate
+    cmd: lookup
+    arg: watch
+    grep_pattern: watch
+    word: false
+    expect: packages/reactivity/src/watch.ts
+  - id: vue-callers-trigger
+    kind: callers
+    cmd: callers
+    arg: trigger
+    grep_pattern: trigger
+    word: false
+    expect: packages/reactivity/src/dep.ts
+  - id: vue-fts-reactive-effect
+    kind: fts
+    cmd: search
+    arg: track reactive dependency effect
+    grep_pattern: ReactiveEffect
+    expect: packages/reactivity/src/effect.ts
+  - id: vue-fts-template-ast
+    kind: fts
+    cmd: search
+    arg: parse template into ast nodes
+    grep_pattern: template
+    word: false
+    expect: packages/compiler-sfc/src/template/resolveTemplateAST.ts

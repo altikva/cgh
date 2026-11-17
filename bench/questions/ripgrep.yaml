@@ -1,0 +1,52 @@
+# Fixed tier-1 questions for BurntSushi/ripgrep at the pinned SHA (Rust).
+# See questions/flask.yaml for the field contract.
+questions:
+  - id: ripgrep-locate-run
+    kind: locate
+    cmd: lookup
+    arg: run
+    grep_pattern: run
+    expect: crates/core/main.rs
+  - id: ripgrep-locate-printer
+    kind: locate
+    cmd: lookup
+    arg: Printer
+    grep_pattern: Printer
+    expect: crates/core/search.rs
+  - id: ripgrep-locate-searcher
+    kind: locate
+    cmd: lookup
+    arg: Searcher
+    grep_pattern: Searcher
+    expect: crates/searcher/src/searcher/mod.rs
+  - id: ripgrep-locate-searchworker
+    kind: locate
+    cmd: lookup
+    arg: SearchWorker
+    grep_pattern: SearchWorker
+    expect: crates/core/search.rs
+  - id: ripgrep-locate-globmatcher
+    kind: locate
+    cmd: lookup
+    arg: GlobMatcher
+    grep_pattern: GlobMatcher
+    expect: crates/globset/src/glob.rs
+  - id: ripgrep-callers-run
+    kind: callers
+    cmd: callers
+    arg: run
+    grep_pattern: run
+    expect: crates/core/main.rs
+  - id: ripgrep-fts-glob-matcher
+    kind: fts
+    cmd: search
+    arg: glob ignore matcher rules
+    grep_pattern: glob
+    word: false
+    expect: crates/globset/src/glob.rs
+  - id: ripgrep-fts-searcher
+    kind: fts
+    cmd: search
+    arg: search buffer line by line sink
+    grep_pattern: Searcher
+    expect: crates/searcher/src/searcher/mod.rs

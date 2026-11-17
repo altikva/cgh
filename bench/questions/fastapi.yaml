@@ -1,0 +1,51 @@
+# Fixed tier-1 questions for fastapi/fastapi at the pinned SHA (Python).
+# See questions/flask.yaml for the field contract.
+questions:
+  - id: fastapi-locate-fastapi
+    kind: locate
+    cmd: lookup
+    arg: FastAPI
+    grep_pattern: FastAPI
+    expect: fastapi/applications.py
+  - id: fastapi-locate-apirouter
+    kind: locate
+    cmd: lookup
+    arg: APIRouter
+    grep_pattern: APIRouter
+    expect: fastapi/routing.py
+  - id: fastapi-locate-depends
+    kind: locate
+    cmd: lookup
+    arg: Depends
+    grep_pattern: Depends
+    expect: fastapi/param_functions.py
+  - id: fastapi-locate-httpexception
+    kind: locate
+    cmd: lookup
+    arg: HTTPException
+    grep_pattern: HTTPException
+    expect: fastapi/exceptions.py
+  - id: fastapi-locate-jsonable-encoder
+    kind: locate
+    cmd: lookup
+    arg: jsonable_encoder
+    grep_pattern: jsonable_encoder
+    expect: fastapi/encoders.py
+  - id: fastapi-callers-get-openapi
+    kind: callers
+    cmd: callers
+    arg: get_openapi
+    grep_pattern: get_openapi
+    expect: fastapi/applications.py
+  - id: fastapi-callers-solve-dependencies
+    kind: callers
+    cmd: callers
+    arg: solve_dependencies
+    grep_pattern: solve_dependencies
+    expect: fastapi/routing.py
+  - id: fastapi-fts-solve-dependencies
+    kind: fts
+    cmd: search
+    arg: solve dependencies for request params
+    grep_pattern: solve_dependencies
+    expect: fastapi/dependencies/utils.py

@@ -1,0 +1,59 @@
+# Fixed tier-1 questions for django/django at the pinned SHA (Python, large).
+# The large corpus is the point: the context gain over grep grows with repo
+# size. See questions/flask.yaml for the field contract.
+questions:
+  - id: django-locate-queryset
+    kind: locate
+    cmd: lookup
+    arg: QuerySet
+    grep_pattern: QuerySet
+    expect: django/db/models/query.py
+  - id: django-locate-manager
+    kind: locate
+    cmd: lookup
+    arg: Manager
+    grep_pattern: Manager
+    expect: django/db/models/manager.py
+  - id: django-locate-httpresponse
+    kind: locate
+    cmd: lookup
+    arg: HttpResponse
+    grep_pattern: HttpResponse
+    expect: django/http/response.py
+  - id: django-locate-get-object-or-404
+    kind: locate
+    cmd: lookup
+    arg: get_object_or_404
+    grep_pattern: get_object_or_404
+    expect: django/shortcuts.py
+  - id: django-locate-urlresolver
+    kind: locate
+    cmd: lookup
+    arg: URLResolver
+    grep_pattern: URLResolver
+    expect: django/urls/resolvers.py
+  - id: django-locate-basecommand
+    kind: locate
+    cmd: lookup
+    arg: BaseCommand
+    grep_pattern: BaseCommand
+    expect: django/core/management/base.py
+  - id: django-callers-get-object-or-404
+    kind: callers
+    cmd: callers
+    arg: get_object_or_404
+    grep_pattern: get_object_or_404
+    expect: django/contrib/flatpages/views.py
+  - id: django-fts-compile-sql
+    kind: fts
+    cmd: search
+    arg: compile sql query from queryset
+    grep_pattern: QuerySet
+    word: false
+    expect: django/db/models/sql/query.py
+  - id: django-fts-model-field-column
+    kind: fts
+    cmd: search
+    arg: model field database column definition
+    grep_pattern: column_sql
+    expect: django/db/backends/base/schema.py

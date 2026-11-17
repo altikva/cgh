@@ -1,0 +1,88 @@
+repo: gin-gonic/gin
+pinned_sha: 0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 4852
+  merged_at: '2026-10-10T04:18:55Z'
+  merge_sha: ea9fab99e01d55a5e4f8daacc0d11ccffaee0a15
+  parent_sha: e8f24969d59611428b03d02424b8f4bb55a1ef91
+  seed: routes_test.go
+  truth:
+  - tree.go
+- number: 4878
+  merged_at: '2026-10-10T04:16:17Z'
+  merge_sha: e8f24969d59611428b03d02424b8f4bb55a1ef91
+  parent_sha: 43fe48e8a0f44af783116cdb010725e6bb50255f
+  seed: routergroup_test.go
+  truth:
+  - routergroup.go
+  - routes_test.go
+- number: 4854
+  merged_at: '2026-09-25T06:01:38Z'
+  merge_sha: 1bd0ecf2d3e08da37efa270bb7be20c1eddb0d68
+  parent_sha: 3b08cd7235bd5ad2f055aa9e38135f111f6c5926
+  seed: context_test.go
+  truth:
+  - context.go
+- number: 4819
+  merged_at: '2026-09-19T13:11:33Z'
+  merge_sha: 3b08cd7235bd5ad2f055aa9e38135f111f6c5926
+  parent_sha: d8f2d588d7573b3438cfc95b7a47f9ec8966273c
+  seed: routes_test.go
+  truth:
+  - tree.go
+- number: 4800
+  merged_at: '2026-09-19T06:41:53Z'
+  merge_sha: d8f2d588d7573b3438cfc95b7a47f9ec8966273c
+  parent_sha: 8ad9f9cbeab45887327608f393bb614187e06099
+  seed: gin.go
+  truth:
+  - gin_test.go
+- number: 4806
+  merged_at: '2026-09-19T06:20:37Z'
+  merge_sha: b1f77cf536154f67e3332fc5d0965b891be86606
+  parent_sha: 05b14df992a31fe8ff567338bb6c934f1aa3872f
+  seed: routes_test.go
+  truth:
+  - ginS/gins.go
+  - ginS/gins_test.go
+  - routergroup.go
+  - routergroup_test.go
+- number: 4814
+  merged_at: '2026-09-19T06:10:49Z'
+  merge_sha: e318c6add8f947ba3c0db15f782517a9bb6bedc2
+  parent_sha: 3329b63aa7c0b107dd6d72a74add233fe11485d8
+  seed: routes_test.go
+  truth:
+  - gin_integration_test.go
+  - render/render_test.go
+  - response_writer_test.go
+  - tree.go
+  - utils.go
+- number: 4805
+  merged_at: '2026-09-16T15:01:53Z'
+  merge_sha: 5c6a15f8f9566612076bd209e623861bf92a6283
+  parent_sha: bc141b4dbf90d5bb5028fc68afe48782402bb2d4
+  seed: context_test.go
+  truth:
+  - context.go
+  - render/html.go
+  - render/render_test.go
+- number: 4797
+  merged_at: '2026-09-16T13:26:35Z'
+  merge_sha: b52df1fe77734c691acc1fce21647fe0ca955201
+  parent_sha: 2a1a14ff37a26ca6a76763ecc33727c23d9284e9
+  seed: routergroup.go
+  truth:
+  - utils.go
+- number: 4830
+  merged_at: '2026-09-16T13:24:34Z'
+  merge_sha: 2a1a14ff37a26ca6a76763ecc33727c23d9284e9
+  parent_sha: dcaa4296d111981ffb31ac3eba90bb63e1eb5ab9
+  seed: gin_test.go
+  truth:
+  - routergroup.go

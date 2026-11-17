@@ -1,8 +1,12 @@
 # Pinned benchmark corpus. Real commit SHAs captured with
-#   git ls-remote https://github.com/pallets/flask refs/heads/main
-#   git ls-remote https://github.com/psf/requests refs/heads/main
-# on 2026-11-17. fetch.py verifies HEAD == sha and refuses to run on a
-# drifted checkout, so the numbers always describe these exact trees.
+#   git ls-remote --symref https://github.com/<owner>/<repo> HEAD
+# (the default branch tip) on 2026-11-17. fetch.py verifies HEAD == sha and
+# refuses to run on a drifted checkout, so the numbers always describe these
+# exact trees.
+#
+# Results are published BY LANGUAGE (see BENCHMARK.md): a weak language is
+# measured and shown, never hidden. `base` is the repo's default branch, used
+# by the mechanical PR selection.
 #
 # tokenizer names the tiktoken encoding used for every token count. It is
 # not Claude's tokenizer, so ratios are relative, never a billable figure.
@@ -12,6 +16,40 @@ repos:
   flask:
     url: https://github.com/pallets/flask
     sha: 49943b5a94413a530761350f04e896f76e8d620e
+    language: python
+    base: main
   requests:
     url: https://github.com/psf/requests
     sha: 3c7baaa05ab4aa49cc819ce3a819d260de19c157
+    language: python
+    base: main
+  fastapi:
+    url: https://github.com/fastapi/fastapi
+    sha: b2831196bfee3eb9ce303a3c6440f2a104832954
+    language: python
+    base: master
+  django:
+    url: https://github.com/django/django
+    sha: 102c3c327d4974a58883b47a68f8d85da0be3648
+    language: python
+    base: main
+  express:
+    url: https://github.com/expressjs/express
+    sha: 43fca52d28a422c8be48fd489cbd4f2d6152bab6
+    language: javascript
+    base: master
+  vue-core:
+    url: https://github.com/vuejs/core
+    sha: 2e2f7c6bef54a85a3ce8db768b11c5562385b65d
+    language: typescript
+    base: main
+  gin:
+    url: https://github.com/gin-gonic/gin
+    sha: 0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646
+    language: go
+    base: master
+  ripgrep:
+    url: https://github.com/BurntSushi/ripgrep
+    sha: 178cc027e283fd965cb72d0a7395b219eada170c
+    language: rust
+    base: master

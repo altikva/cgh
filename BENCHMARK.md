@@ -74,12 +74,20 @@ The `tight` column is where the honesty lives: on a rare-keyword concept query a
 approach it. That is the weakest case for cgh and it is published alongside the
 rest.
 
-## Tier 2: impact precision/recall (deterministic, no LLM)
+## Tier 2: impact recall (deterministic, no LLM)
 
 cgh's own `build_impact_report` predicts the blast radius of a single seed file
 over a read-only graph. The prediction (`impacted + tests_to_run`) is scored
 against the **co-change ground truth**: the other code files the merged PR
 actually touched. That ground truth is external to the graph.
+
+**Read this tier by recall, not F1.** `build_impact_report` predicts a safety
+superset on purpose: everything that transitively imports or calls the seed. So
+a seed in a central module flags dozens of files while a PR touched a handful,
+and precision is low by construction. That also makes F1 a poor summary here (it
+punishes the intended superset), so F1 stays in the tables but is not the
+headline. Recall is the metric that matters for a "what else should I look at"
+tool: did the prediction contain the files the PR actually went on to change?
 
 PRs are selected mechanically and committed as fixed numbers in
 `bench/pr_truth/<repo>.yaml` (merged into main, 2-8 changed code files all of
@@ -87,20 +95,31 @@ indexed languages, the 10 most recent before the pinned SHA that pass; seed =
 the modified file of highest churn, lexicographic tie-break; truth = the other
 changed code files). Nothing here is hand-picked to flatter cgh.
 
-| repo | PRs | micro P | micro R | micro F1 | macro P | macro R | macro F1 |
+All PRs (recall first):
+
+| repo | PRs | micro R | macro R | micro P | macro P | micro F1 | macro F1 |
 |---|---|---|---|---|---|---|---|
-| flask | 10 | 0.031 | 0.382 | 0.058 | 0.019 | 0.575 | 0.036 |
-| requests | 10 | 0.070 | 0.500 | 0.123 | 0.036 | 0.467 | 0.066 |
+| flask | 10 | 0.382 | 0.575 | 0.031 | 0.019 | 0.058 | 0.036 |
+| requests | 10 | 0.500 | 0.467 | 0.070 | 0.036 | 0.123 | 0.066 |
 
-Precision is low **by design**: `build_impact_report` predicts a safety
-superset (everything that transitively imports or calls the seed), so a seed in
-a central module flags dozens of files while a PR touched a handful. Recall is
-the number that matters for a "what else should I look at" tool, and it is high
-on seeds that have dependents. Seeds that are leaf or test files have no
-dependents, so the graph predicts little and both numbers collapse to zero;
-those PRs are kept in the set, not dropped.
+### Split by seed: does the graph have anything to predict?
 
-Per-PR detail:
+The highest-churn seed heuristic sometimes lands on a **leaf or test file**,
+which has no reverse imports or calls, so the graph predicts ~nothing and
+precision and recall are both zero. That is a **seed-selection artifact**, not a
+cgh quality result, so the all-PRs row above understates the meaningful case.
+The split below separates **seeds with dependents** (the graph can predict
+something) from the leaf/test seeds, without dropping any PR: the full per-PR
+table further down still carries every row, losses included.
+
+| repo | bucket | PRs | micro R | macro R | micro P | macro P | micro F1 | macro F1 |
+|---|---|---|---|---|---|---|---|---|
+| flask | seeds with dependents | 6 | 0.929 | 0.958 | 0.031 | 0.032 | 0.061 | 0.060 |
+| flask | leaf/test seeds (selection artifact) | 4 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| requests | seeds with dependents | 5 | 0.875 | 0.933 | 0.072 | 0.072 | 0.133 | 0.132 |
+| requests | leaf/test seeds (selection artifact) | 5 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+
+Full per-PR detail (every PR, nothing dropped):
 
 | repo | PR | seed | pred | truth | P | R | F1 | circular |
 |---|---|---|---|---|---|---|---|---|

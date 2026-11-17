@@ -58,11 +58,10 @@ def tier1_repo(name: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def tier2_repo(name: str) -> dict[str, Any] | None:
-    path = RESULTS_DIR / f"tier2_{name}.jsonl"
-    if not path.exists():
-        return None
-    rows = read_jsonl(path)
+def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Micro (pooled counts) and macro (mean of per-PR) P/R/F1 for a set of
+    PRs. Empty input yields NaN so an empty bucket reads as 'n/a', not 0."""
+    n = len(rows)
     tp = sum(r["tp"] for r in rows)
     pred = sum(r["pred_count"] for r in rows)
     truth = sum(r["truth_count"] for r in rows)
@@ -71,19 +70,39 @@ def tier2_repo(name: str) -> dict[str, Any] | None:
     micro_f1 = (
         2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
     )
-    macro_p = sum(r["precision"] for r in rows) / len(rows)
-    macro_r = sum(r["recall"] for r in rows) / len(rows)
-    macro_f1 = sum(r["f1"] for r in rows) / len(rows)
-    circ = [
-        r["recall_circular_sanity"]
-        for r in rows
-        if r["recall_circular_sanity"] is not None
-    ]
+    macro_p = (sum(r["precision"] for r in rows) / n) if n else float("nan")
+    macro_r = (sum(r["recall"] for r in rows) / n) if n else float("nan")
+    macro_f1 = (sum(r["f1"] for r in rows) / n) if n else float("nan")
+    return {
+        "n": n,
+        "micro": {
+            "precision": micro_p if n else float("nan"),
+            "recall": micro_r if n else float("nan"),
+            "f1": micro_f1 if n else float("nan"),
+        },
+        "macro": {"precision": macro_p, "recall": macro_r, "f1": macro_f1},
+    }
+
+
+def tier2_repo(name: str) -> dict[str, Any] | None:
+    path = RESULTS_DIR / f"tier2_{name}.jsonl"
+    if not path.exists():
+        return None
+    rows = read_jsonl(path)
+    # Bucket by whether the seed has graph dependents. A seed with reverse
+    # imports/calls gets a circular recall (1.0); a leaf or test seed has none
+    # (circular n/a), so the graph predicts ~nothing and P=R=0. Splitting the
+    # meaningful subset out is not dropping the losses: the full per-PR table
+    # keeps every row.
+    with_deps = [r for r in rows if r["recall_circular_sanity"] is not None]
+    leaf = [r for r in rows if r["recall_circular_sanity"] is None]
+    circ = [r["recall_circular_sanity"] for r in with_deps]
     return {
         "repo": name,
         "n_prs": len(rows),
-        "micro": {"precision": micro_p, "recall": micro_r, "f1": micro_f1},
-        "macro": {"precision": macro_p, "recall": macro_r, "f1": macro_f1},
+        "all": _aggregate(rows),
+        "with_deps": _aggregate(with_deps),
+        "leaf": _aggregate(leaf),
         "circular_n": len(circ),
         "circular_min": min(circ) if circ else float("nan"),
         "circular_mean": (sum(circ) / len(circ)) if circ else float("nan"),
@@ -132,17 +151,43 @@ def _tier1_detail(aggs: list[dict[str, Any]]) -> str:
 
 
 def _tier2_table(aggs: list[dict[str, Any]]) -> str:
+    """All-PRs aggregate, recall first. F1 stays in the table but is no longer
+    the lead statistic."""
     out = [
-        "| repo | PRs | micro P | micro R | micro F1 | macro P | macro R | macro F1 |",
+        "| repo | PRs | micro R | macro R | micro P | macro P | micro F1 | macro F1 |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for a in aggs:
-        mi, ma = a["micro"], a["macro"]
+        mi, ma = a["all"]["micro"], a["all"]["macro"]
         out.append(
-            f"| {a['repo']} | {a['n_prs']} | {_fmt(mi['precision'])} | "
-            f"{_fmt(mi['recall'])} | {_fmt(mi['f1'])} | {_fmt(ma['precision'])} | "
-            f"{_fmt(ma['recall'])} | {_fmt(ma['f1'])} |"
+            f"| {a['repo']} | {a['n_prs']} | {_fmt(mi['recall'])} | "
+            f"{_fmt(ma['recall'])} | {_fmt(mi['precision'])} | "
+            f"{_fmt(ma['precision'])} | {_fmt(mi['f1'])} | {_fmt(ma['f1'])} |"
         )
+    return "\n".join(out)
+
+
+def _tier2_split_table(aggs: list[dict[str, Any]]) -> str:
+    """Per repo, the all-PRs aggregate split into the two seed buckets, recall
+    first. The leaf/test bucket is a seed-selection artifact, labelled as such."""
+    out = [
+        "| repo | bucket | PRs | micro R | macro R | micro P | macro P | "
+        "micro F1 | macro F1 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    labels = [
+        ("with_deps", "seeds with dependents"),
+        ("leaf", "leaf/test seeds (selection artifact)"),
+    ]
+    for a in aggs:
+        for key, label in labels:
+            agg = a[key]
+            mi, ma = agg["micro"], agg["macro"]
+            out.append(
+                f"| {a['repo']} | {label} | {agg['n']} | {_fmt(mi['recall'])} | "
+                f"{_fmt(ma['recall'])} | {_fmt(mi['precision'])} | "
+                f"{_fmt(ma['precision'])} | {_fmt(mi['f1'])} | {_fmt(ma['f1'])} |"
+            )
     return "\n".join(out)
 
 
@@ -233,12 +278,20 @@ The `tight` column is where the honesty lives: on a rare-keyword concept query a
 approach it. That is the weakest case for cgh and it is published alongside the
 rest.
 
-## Tier 2: impact precision/recall (deterministic, no LLM)
+## Tier 2: impact recall (deterministic, no LLM)
 
 cgh's own `build_impact_report` predicts the blast radius of a single seed file
 over a read-only graph. The prediction (`impacted + tests_to_run`) is scored
 against the **co-change ground truth**: the other code files the merged PR
 actually touched. That ground truth is external to the graph.
+
+**Read this tier by recall, not F1.** `build_impact_report` predicts a safety
+superset on purpose: everything that transitively imports or calls the seed. So
+a seed in a central module flags dozens of files while a PR touched a handful,
+and precision is low by construction. That also makes F1 a poor summary here (it
+punishes the intended superset), so F1 stays in the tables but is not the
+headline. Recall is the metric that matters for a "what else should I look at"
+tool: did the prediction contain the files the PR actually went on to change?
 
 PRs are selected mechanically and committed as fixed numbers in
 `bench/pr_truth/<repo>.yaml` (merged into main, 2-8 changed code files all of
@@ -246,17 +299,23 @@ indexed languages, the 10 most recent before the pinned SHA that pass; seed =
 the modified file of highest churn, lexicographic tie-break; truth = the other
 changed code files). Nothing here is hand-picked to flatter cgh.
 
+All PRs (recall first):
+
 {_tier2_table(t2)}
 
-Precision is low **by design**: `build_impact_report` predicts a safety
-superset (everything that transitively imports or calls the seed), so a seed in
-a central module flags dozens of files while a PR touched a handful. Recall is
-the number that matters for a "what else should I look at" tool, and it is high
-on seeds that have dependents. Seeds that are leaf or test files have no
-dependents, so the graph predicts little and both numbers collapse to zero;
-those PRs are kept in the set, not dropped.
+### Split by seed: does the graph have anything to predict?
 
-Per-PR detail:
+The highest-churn seed heuristic sometimes lands on a **leaf or test file**,
+which has no reverse imports or calls, so the graph predicts ~nothing and
+precision and recall are both zero. That is a **seed-selection artifact**, not a
+cgh quality result, so the all-PRs row above understates the meaningful case.
+The split below separates **seeds with dependents** (the graph can predict
+something) from the leaf/test seeds, without dropping any PR: the full per-PR
+table further down still carries every row, losses included.
+
+{_tier2_split_table(t2)}
+
+Full per-PR detail (every PR, nothing dropped):
 
 {_tier2_detail(t2)}
 
@@ -309,8 +368,10 @@ def run_all() -> str:
         print("\n== Tier 1 ==")
         print(_tier1_table(t1))
     if t2:
-        print("\n== Tier 2 ==")
+        print("\n== Tier 2 (all PRs, recall first) ==")
         print(_tier2_table(t2))
+        print("\n== Tier 2 split by seed ==")
+        print(_tier2_split_table(t2))
         print("circular sanity:", _circular_line(t2))
 
     md = render_markdown(t1, t2)

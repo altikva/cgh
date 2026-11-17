@@ -162,36 +162,6 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_knowledge_session ON knowledge(session_id)
     """)
-    _conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-            title, body, tags, kind UNINDEXED,
-            content='knowledge', content_rowid='id'
-        )
-    """)
-    # Keep the external-content FTS in sync with the knowledge table even
-    # when callers bypass the helpers below. Without these triggers a raw
-    # DELETE leaves orphan rowids that surface as "missing row N from
-    # content table" once queried.
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
-            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
-                VALUES (new.id, new.title, new.body, new.tags, new.kind);
-        END
-    """)
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
-                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
-        END
-    """)
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
-                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
-            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
-                VALUES (new.id, new.title, new.body, new.tags, new.kind);
-        END
-    """)
     # Supersede links: an entry can replace an older one; superseded
     # entries stop appearing in searches, lists and resume bundles but
     # stay queryable by id. Guarded ALTER for databases created before
@@ -208,6 +178,16 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     # for databases created before the columns existed. source_worktree and
     # origin_id (the entry's id in the source store) make a re-run recognise
     # what it already carried, and let a revised entry replace its earlier copy.
+    #
+    # Provenance and namespace columns extend the same tolerant pattern:
+    # `namespace` is the logical scope a row belongs to and defaults to 'repo'
+    # (rows written before the column read back as 'repo'); origin_repo, ticket
+    # and author say where a learning came from; symptom holds a raw error
+    # signature and symptom_norm its normalised form, for signature-based recall.
+    # Rows from before these columns read back with the rest NULL ("unknown"),
+    # the same convention as the call_log origin/repo_root columns below. These
+    # ALTERs run before the FTS triggers because the triggers reference the new
+    # `symptom` column.
     for _col, _type in (
         ("scope", "TEXT"),
         ("source_branch", "TEXT"),
@@ -218,6 +198,12 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         ("promoted_at", "REAL"),
         ("source_worktree", "TEXT"),
         ("origin_id", "INTEGER"),
+        ("namespace", "TEXT NOT NULL DEFAULT 'repo'"),
+        ("origin_repo", "TEXT"),
+        ("ticket", "TEXT"),
+        ("author", "TEXT"),
+        ("symptom", "TEXT"),
+        ("symptom_norm", "TEXT"),
     ):
         try:
             _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
@@ -227,6 +213,57 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_knowledge_origin "
         "ON knowledge(origin_id, source_worktree)"
     )
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_namespace ON knowledge(namespace)"
+    )
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_symptom ON knowledge(symptom_norm)"
+    )
+    # FTS mirror of the knowledge table, with `symptom` indexed alongside the
+    # text columns. CREATE ... IF NOT EXISTS never alters an existing table, so a
+    # store built before symptom was indexed keeps a 4-column FTS: detect the
+    # missing column, drop it and let the rebuild below repopulate from content.
+    _fts_create = (
+        "CREATE VIRTUAL TABLE {name} USING fts5("
+        "title, body, tags, symptom, kind UNINDEXED, "
+        "content='knowledge', content_rowid='id')"
+    )
+    _conn.execute(_fts_create.format(name="IF NOT EXISTS knowledge_fts"))
+    _fts_cols = {r[1] for r in _conn.execute("PRAGMA table_info(knowledge_fts)")}
+    _fts_needs_rebuild = "symptom" not in _fts_cols
+    if _fts_needs_rebuild:
+        _conn.execute("DROP TABLE knowledge_fts")
+        _conn.execute(_fts_create.format(name="knowledge_fts"))
+    # Keep the external-content FTS in sync with the knowledge table even when
+    # callers bypass the helpers below. Without these triggers a raw DELETE
+    # leaves orphan rowids that surface as "missing row N from content table"
+    # once queried. Recreated (not IF NOT EXISTS) so they carry the current
+    # column set after a shape migration rather than the stale one.
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_ai")
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_ad")
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_au")
+    _conn.execute("""
+        CREATE TRIGGER knowledge_ai AFTER INSERT ON knowledge BEGIN
+            INSERT INTO knowledge_fts(rowid, title, body, tags, symptom, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.symptom, new.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER knowledge_ad AFTER DELETE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, symptom, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.symptom, old.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER knowledge_au AFTER UPDATE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, symptom, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.symptom, old.kind);
+            INSERT INTO knowledge_fts(rowid, title, body, tags, symptom, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.symptom, new.kind);
+        END
+    """)
+    if _fts_needs_rebuild:
+        _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
     # Outcomes: whether relying on an entry, or on a file, worked. A table of
     # its own (never a column on knowledge) so an older owner reading the same
     # store sees nothing new. entry_id is NULL for an outcome about files only;
@@ -383,6 +420,91 @@ _PROMOTABLE_KINDS = (
 )
 
 
+# Volatile fragments of an error line carry no signal for matching one symptom
+# to another: absolute paths, hex / uuid / sha blobs, bare numbers and
+# timestamps all differ from one run to the next. Normalisation replaces them
+# with placeholders so a diagnostic recorded against one occurrence is recalled
+# by a look-alike. Kept deliberately minimal; signature search over
+# symptom_norm is built on top of this later.
+_SYMPTOM_TS_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+_SYMPTOM_PATH_RE = re.compile(r"/(?:[\w.\-]+/)+[\w.\-]+")
+_SYMPTOM_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_SYMPTOM_HEX0X_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_SYMPTOM_HEX_RE = re.compile(r"\b[0-9a-fA-F]{7,}\b")
+_SYMPTOM_NUM_RE = re.compile(r"\b\d+\b")
+
+
+def normalize_symptom(text: str) -> str:
+    """Return a stable signature for an error line: timestamps, paths, hex / uuid
+    blobs and bare numbers replaced by placeholders (<ts>, <path>, <hex>, <n>)
+    and runs of whitespace collapsed. Minimal by design; "" for empty input."""
+    if not text:
+        return ""
+    out = _SYMPTOM_TS_RE.sub("<ts>", text)
+    out = _SYMPTOM_PATH_RE.sub("<path>", out)
+    out = _SYMPTOM_UUID_RE.sub("<hex>", out)
+    out = _SYMPTOM_HEX0X_RE.sub("<hex>", out)
+    # Only a run of hex digits that holds a letter is hex; an all-digit run is a
+    # number, left for the number pass so it reads as <n>, not <hex>.
+    out = _SYMPTOM_HEX_RE.sub(
+        lambda m: "<hex>" if re.search(r"[a-fA-F]", m.group()) else m.group(), out
+    )
+    out = _SYMPTOM_NUM_RE.sub("<n>", out)
+    return " ".join(out.split())
+
+
+def git_user_name(repo_root: str | Path | None = None) -> str:
+    """The name git would stamp on a commit here (`git config user.name`), or ""
+    when unset or git is unavailable. Fails closed, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "config", "user.name"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def repo_slug(repo_root: str | Path | None = None) -> str:
+    """A short name for the current repo: the origin remote's repository name
+    when set (`.../altikva/cgh.git` -> `cgh`), else the working tree's directory
+    name. Fails closed to the directory name, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            name = proc.stdout.strip().rstrip("/").rsplit("/", 1)[-1]
+            if name.endswith(".git"):
+                name = name[:-4]
+            if name:
+                return name
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path(root).name
+
+
 @_locked
 def knowledge_record(
     title: str,
@@ -402,6 +524,11 @@ def knowledge_record(
     promoted_at: float | None = None,
     source_worktree: str = "",
     origin_id: int | None = None,
+    namespace: str = "repo",
+    origin_repo: str = "",
+    ticket: str = "",
+    author: str = "",
+    symptom: str = "",
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -414,22 +541,35 @@ def knowledge_record(
     provenance when an entry is promoted from another checkout; origin_ts
     defaults to now for a native entry and preserves the source entry's
     timestamp on promotion.
+
+    namespace is the logical scope the row belongs to ('repo' by default).
+    origin_repo, ticket and author record where the learning came from and are
+    stored verbatim (the MCP layer fills author and origin_repo in when a caller
+    leaves them blank). symptom is a raw error signature; when given, its
+    normalised form is stored in symptom_norm for signature-based recall. All
+    five default to the entry's current behaviour, so an existing caller that
+    passes none of them is unaffected.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
     if scope not in ("repo", "branch"):
         scope = "repo"
+    if not namespace:
+        namespace = "repo"
     if isinstance(tags, list):
         tags = ",".join(t.strip() for t in tags if t and t.strip())
     if isinstance(file_refs, list):
         file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
+    symptom = symptom or ""
+    symptom_norm = normalize_symptom(symptom)
     conn = _get_conn(repo_root)
     now = time.time()
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
         "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
-        "promoted_at, source_worktree, origin_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "promoted_at, source_worktree, origin_id, namespace, origin_repo, ticket, "
+        "author, symptom, symptom_norm) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -447,6 +587,12 @@ def knowledge_record(
             promoted_at,
             source_worktree or None,
             origin_id,
+            namespace,
+            origin_repo or None,
+            ticket or None,
+            author or None,
+            symptom or None,
+            symptom_norm or None,
         ),
     )
     row_id = cur.lastrowid

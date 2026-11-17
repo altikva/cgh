@@ -132,6 +132,11 @@ def register(mcp) -> None:
         file_refs: str = "",
         session_id: str = "",
         supersedes: int = 0,
+        namespace: str = "repo",
+        ticket: str = "",
+        author: str = "",
+        origin_repo: str = "",
+        symptom: str = "",
     ) -> str:
         """
         Persist a distilled knowledge entry so future sessions can recall it.
@@ -151,8 +156,23 @@ def register(mcp) -> None:
         session_id: optional, stamps the entry with the current session.
         supersedes: optional id of an entry this one replaces; the old
               entry stops appearing in searches and bundles.
+        namespace: logical scope the entry belongs to; defaults to "repo".
+        ticket: issue or ticket the entry came from, e.g. "media#412".
+        author: who recorded it; filled in from git user.name when left blank.
+        origin_repo: the repo it came from; filled in from the current repo
+              when left blank.
+        symptom: a raw error line to remember this entry by; recorded as a
+              normalised signature so a look-alike error recalls it.
         """
+        from cgh.state.call_log import git_user_name, repo_slug
         from cgh.state.call_log import knowledge_record as _record
+
+        # Provenance the session need not think about: fill author and
+        # origin_repo server-side when the caller left them blank.
+        if not author:
+            author = git_user_name(_srv._root) or session_id
+        if not origin_repo:
+            origin_repo = repo_slug(_srv._root)
 
         entry_id = _record(
             title=title,
@@ -163,6 +183,11 @@ def register(mcp) -> None:
             session_id=session_id,
             repo_root=_srv._root,
             supersedes=supersedes,
+            namespace=namespace,
+            ticket=ticket,
+            author=author,
+            origin_repo=origin_repo,
+            symptom=symptom,
         )
         try:
             from cgh.state.activity import log as _log

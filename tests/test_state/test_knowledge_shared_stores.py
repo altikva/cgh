@@ -325,6 +325,51 @@ def test_shared_supersede_allowed_for_the_owning_repo(home):
     assert row[0] is not None  # the owning repo may retire its own note
 
 
+def test_shared_supersede_refused_when_caller_spoofs_origin_repo(home):
+    root_a = _repo(home, "repo-a")
+    root_b = _repo(home, "repo-b")
+    a_id = knowledge_record(
+        "shared decision", "body A", kind="decision",
+        repo_root=root_a, namespace="org-platform", origin_repo="repo-a",
+    )  # fmt: skip
+    # repo-b spoofs origin_repo="repo-a" to look like the owner; ownership is
+    # the server identity of the calling repo (repo-b), so it is still refused.
+    knowledge_record(
+        "my version", "body B", kind="decision",
+        repo_root=root_b, namespace="org-platform", origin_repo="repo-a",
+        supersedes=a_id,
+    )  # fmt: skip
+    sp = shared_store_path("org-platform")
+    row = (
+        _get_conn_at_path(sp)
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (a_id,))
+        .fetchone()
+    )
+    assert row[0] is None
+
+
+def test_shared_supersede_refused_when_target_has_no_owner(home):
+    root = _repo(home, "repo-a")
+    # A target with no owner (origin_repo stored NULL) is owned by nobody, so
+    # even the same repo cannot retire it through the shared supersede path.
+    ownerless = knowledge_record(
+        "shared decision", "old body", kind="decision",
+        repo_root=root, namespace="org-platform", origin_repo="",
+    )  # fmt: skip
+    knowledge_record(
+        "shared decision", "new body", kind="decision",
+        repo_root=root, namespace="org-platform", origin_repo="repo-a",
+        supersedes=ownerless,
+    )  # fmt: skip
+    sp = shared_store_path("org-platform")
+    row = (
+        _get_conn_at_path(sp)
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (ownerless,))
+        .fetchone()
+    )
+    assert row[0] is None
+
+
 def _get_conn_at_path(db_path):
     from cgh.state.call_log import _get_conn_at
 

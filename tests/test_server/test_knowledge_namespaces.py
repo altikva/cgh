@@ -184,3 +184,36 @@ def test_record_rejects_standing_instruction_in_shared_namespace(tools):
         namespace="org-platform",
     )
     assert "error" in json.loads(raw)
+
+
+# ---------------------------------------------------------------------------
+# Security: shared ids are namespaced and never address the repo store (IDOR)
+# ---------------------------------------------------------------------------
+
+
+def test_shared_hit_id_is_namespaced(tools):
+    t, _ = tools
+    t["knowledge_record"](
+        title="fleet convention", body="handlers return an envelope",
+        kind="decision", namespace="org-platform",
+    )  # fmt: skip
+    out = json.loads(t["knowledge_search"](query="handlers"))
+    shared = next(h for h in out["hits"] if h["title"] == "fleet convention")
+    # Not a bare int reusable against the repo store.
+    assert isinstance(shared["id"], str)
+    assert shared["id"].startswith("org-platform:")
+
+
+def test_entry_id_tools_reject_a_shared_id(tools):
+    t, _ = tools
+    t["knowledge_record"](
+        title="fleet convention", body="handlers return an envelope",
+        kind="decision", namespace="org-platform",
+    )  # fmt: skip
+    out = json.loads(t["knowledge_search"](query="handlers"))
+    shared_id = next(h["id"] for h in out["hits"] if h["title"] == "fleet convention")
+    assert "error" in json.loads(t["knowledge_list"](entry_id=shared_id))
+    assert "error" in json.loads(t["knowledge_forget"](entry_id=shared_id))
+    assert "error" in json.loads(
+        t["knowledge_outcome"](verdict="useful", entry_id=shared_id)
+    )

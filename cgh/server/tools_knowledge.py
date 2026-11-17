@@ -150,11 +150,36 @@ def _read_shared_namespaces(
         for row in knowledge_search_ro(
             shared_store_path(ns), query, kind=kind, limit=limit, with_provenance=True
         ):
+            # The raw row id belongs to the shared store and collides with repo
+            # ids. Present a namespaced, non-reusable id so it can never be fed
+            # back to a repo entry_id tool as if it addressed the repo store.
+            row["id"] = f"{ns}:{row['id']}"
             row["namespace"] = ns
             row["scope"] = ns
             row["untrusted"] = True
             rows.append(row)
     return rows
+
+
+def _repo_entry_id(value) -> int:
+    """Resolve an entry_id argument to a repo-store row id. A namespaced id
+    (``"<namespace>:<id>"``, how a shared-store hit is shown) is refused with a
+    clear message: entry_id tools act on the repo store only, never on a shared
+    store, so a shared id must never be treated as a repo id. Returns 0 for an
+    empty value; raises ValueError on a shared or malformed id."""
+    s = str(value).strip()
+    if not s or s == "0":
+        return 0
+    if ":" in s:
+        raise ValueError(
+            f"{s!r} is a shared-store id and is read-only here; entry_id tools "
+            "act on this repo's store only. Read shared entries with "
+            "knowledge_search or knowledge_list(namespace=...)."
+        )
+    try:
+        return int(s)
+    except ValueError:
+        raise ValueError(f"invalid entry_id: {value!r}") from None
 
 
 def _dedup_by_origin(hits: list[dict]) -> list[dict]:
@@ -449,7 +474,7 @@ def register(mcp) -> None:
         session_id: str = "",
         limit: int = 10,
         offset: int = 0,
-        entry_id: int = 0,
+        entry_id: str = "",
         namespace: str = "",
     ) -> str:
         """
@@ -486,14 +511,18 @@ def register(mcp) -> None:
         from cgh.state.call_log import knowledge_list as _list
         from cgh.state.knowledge_recall import LIST_DEFAULT_LIMIT, list_brief
 
-        if entry_id:
+        try:
+            eid = _repo_entry_id(entry_id)
+        except ValueError as exc:
+            return dumps_answer({"error": str(exc)})
+        if eid:
             from cgh.state.call_log import knowledge_get
 
-            entry = knowledge_get(entry_id, repo_root=_srv._root)
+            entry = knowledge_get(eid, repo_root=_srv._root)
             if entry is None:
-                return dumps_answer({"error": f"no knowledge entry with id {entry_id}"})
+                return dumps_answer({"error": f"no knowledge entry with id {eid}"})
             return dumps_answer(
-                {"entry_id": entry_id, "total": 1, "returned": 1, "has_more": False,
+                {"entry_id": eid, "total": 1, "returned": 1, "has_more": False,
                  "entries": json.loads(json.dumps([entry], default=str))}
             )  # fmt: skip
         ns = namespace.strip()
@@ -599,18 +628,27 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def knowledge_forget(entry_id: int) -> str:
-        """Delete a single knowledge entry by id (obtained from search/list)."""
+    def knowledge_forget(entry_id: str) -> str:
+        """Delete a single knowledge entry by id (obtained from search/list).
+
+        Acts on this repo's store only; a namespaced shared-store id is refused.
+        """
         from cgh.state.call_log import knowledge_forget as _forget
 
-        ok = _forget(entry_id=entry_id, repo_root=_srv._root)
-        return dumps_answer({"id": entry_id, "forgotten": ok})
+        try:
+            eid = _repo_entry_id(entry_id)
+        except ValueError as exc:
+            return dumps_answer({"error": str(exc)})
+        if not eid:
+            return dumps_answer({"error": "a positive entry_id is required"})
+        ok = _forget(entry_id=eid, repo_root=_srv._root)
+        return dumps_answer({"id": eid, "forgotten": ok})
 
     @mcp.tool()
     @_logged_tool
     def knowledge_outcome(
         verdict: str,
-        entry_id: int = 0,
+        entry_id: str = "",
         query: str = "",
         note: str = "",
         file_refs: str = "",
@@ -633,6 +671,9 @@ def register(mcp) -> None:
               covers ("this file was a dead end for task X"); may be the
               only target.
         note: one line on why, e.g. the task it was for.
+
+        An outcome is recorded against this repo's store only; a namespaced
+        shared-store id is refused.
         """
         from cgh.state.call_log import (
             knowledge_outcome_record,
@@ -640,7 +681,10 @@ def register(mcp) -> None:
         )
         from cgh.state.call_log import knowledge_search as _search
 
-        target = int(entry_id or 0)
+        try:
+            target = _repo_entry_id(entry_id)
+        except ValueError as exc:
+            return dumps_answer({"error": str(exc)})
         title = ""
         if not target and query.strip():
             # Plain relevance: the target must not depend on earlier verdicts.

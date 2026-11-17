@@ -706,15 +706,23 @@ def knowledge_record(
         allowed = True
         if shared:
             # In a shared store a write may only retire a row of the SAME
-            # namespace that this repo owns (its origin_repo), so one repo's
-            # session cannot overwrite another's shared note.
+            # namespace that this repo owns, so one repo's session cannot
+            # overwrite another's shared note. Ownership is the SERVER-derived
+            # identity of the calling repo (repo_slug of repo_root), never the
+            # caller-supplied origin_repo, which could be spoofed. A target with
+            # no owner (NULL or empty origin_repo) is owned by nobody and denied.
+            owner = repo_slug(repo_root)
             tgt = conn.execute(
                 "SELECT origin_repo, namespace FROM knowledge WHERE id = ?",
                 (int(supersedes),),
             ).fetchone()
-            allowed = bool(tgt) and tgt[1] == namespace and (
-                tgt[0] in (None, "", origin_repo or None)
-            )  # fmt: skip
+            allowed = (
+                bool(tgt)
+                and tgt[1] == namespace
+                and bool(tgt[0])
+                and bool(owner)
+                and tgt[0] == owner
+            )
         if allowed:
             conn.execute(
                 "UPDATE knowledge SET superseded_by = ? WHERE id = ?",

@@ -7,9 +7,11 @@
 # Description: Read a git repo at a named ref without checking it out:
 #              grep_at_ref (git grep on a commit), read_at_ref (one file,
 #              a line range) and outline_of (its symbols, parsed from the
-#              text at that commit). The repo is this project or one of the sibling
-#              repos declared under [cgh] siblings of the user's global
-#              ~/.cgh/config.toml; resolve_repo refuses anything else. Refs go through the same validation as pinned
+#              text at that commit). The repo is this project, a sibling
+#              declared under [cgh] siblings (the user's global
+#              ~/.cgh/config.toml or the project's own .cgh/config.toml), or
+#              a subrepo this workspace federates; resolve_repo refuses
+#              anything else. Refs go through the same validation as pinned
 #              Terraform module refs, and nothing ever reaches the network.
 
 from __future__ import annotations
@@ -52,7 +54,8 @@ class RefTarget:
     sha: str
 
 
-_WHERE = "~/.cgh/config.toml"
+_GLOBAL_WHERE = "~/.cgh/config.toml"
+_PROJECT_WHERE = "this project's .cgh/config.toml"
 
 
 def _siblings_from(path: Path) -> list[str]:
@@ -63,49 +66,223 @@ def _siblings_from(path: Path) -> list[str]:
     return [str(x) for x in raw] if isinstance(raw, list) else []
 
 
-def declared_siblings() -> list[str]:
-    """The sibling entries of the user's global config. Granting read access
-    to other repos is the machine owner's decision, so it lives outside
-    every repo: a project's own .cgh/config.toml can come with a
-    cloned repo, a copied store or a seeded worktree, and no check on it
-    (tracked or not, case, links) says reliably who wrote it."""
-    from cgh.core.config import CONFIG_FILE, GLOBAL_DIR
+def declared_global_siblings() -> list[str]:
+    """The [cgh] siblings entries of the user's global config
+    (~/.cgh/config.toml, with the legacy ~/.codegraph/ read fallback)."""
+    from cgh.core.config import global_config_path
 
-    return _siblings_from(GLOBAL_DIR / CONFIG_FILE)
+    return _siblings_from(global_config_path())
 
 
-def _project_declares_siblings(root: Path) -> bool:
+# Kept as the former public name (global siblings) for any external caller.
+declared_siblings = declared_global_siblings
+
+
+def declared_project_siblings(root: str | Path) -> list[str]:
+    """The [cgh] siblings entries of a project's own .cgh/config.toml."""
     from cgh.core.config import CONFIG_FILE
 
-    return bool(_siblings_from(state_dir_for(root) / CONFIG_FILE))
+    return _siblings_from(state_dir_for(Path(root)) / CONFIG_FILE)
 
 
-def sibling_repos() -> dict[str, Path]:
-    """{name: work tree} of the declared sibling git repos, named by their
-    directory. Entries must be absolute (or ~): a relative one would mean a
-    different repo for every project. A non-git entry is left out."""
+def _git_top(p: Path) -> Path | None:
+    """The git work tree holding ``p``, or None when it is not a git repo."""
+    try:
+        resolved = p.resolve()
+    except OSError:
+        return None
+    top = git_toplevel(str(resolved))
+    return Path(top) if top else None
+
+
+def _has_local_index(top: Path) -> bool:
+    """True when ``top`` carries its own cgh index (a .cgh/ or legacy
+    .codegraph/ dir). A project-declared repo is only readable when it is
+    indexed locally, the same condition federation already requires, so an
+    entry can never point at an arbitrary directory (``~/.ssh``), only at a
+    repo the machine owner has deliberately indexed."""
+    from cgh.core.config import CGH_DIR, LEGACY_CGH_DIR
+
+    return (top / CGH_DIR).is_dir() or (top / LEGACY_CGH_DIR).is_dir()
+
+
+def _within(path: Path, boundary: Path) -> bool:
+    """True when ``path`` sits inside ``boundary`` (inclusive), comparing
+    resolved paths so a /var vs /private/var symlink does not matter."""
+    try:
+        p, b = path.resolve(), boundary.resolve()
+    except OSError:
+        return False
+    try:
+        return p == b or p.is_relative_to(b)
+    except ValueError:
+        return False
+
+
+def _refuse_project_config(root: Path, reason: str) -> bool:
+    """Log why a project config is not trusted and return False."""
+    _log.warning(
+        "ignoring [cgh] siblings/subrepos of %s (%s): a project config may "
+        "ride in with an opened repo, declare siblings in the global %s instead",
+        root,
+        reason,
+        _GLOBAL_WHERE,
+    )
+    return False
+
+
+def _project_config_trusted(root: Path) -> bool:
+    """Whether a project's own .cgh/config.toml may grant repo read access.
+
+    Only a LOCAL, untracked, real config is trusted. .cgh/ is gitignored by
+    default, so an untracked config is the machine owner's; a tracked or
+    committed one can ride in with a cloned or opened repo and point cgh at
+    arbitrary paths (``~/.ssh``, another repo) to exfiltrate files, a
+    supply-chain / IDOR escalation. The global ~/.cgh/config.toml stays the
+    trusted source. This check fails CLOSED: anything but a clean "untracked"
+    signal from git is distrusted. It refuses, specifically:
+
+    - a symlinked state dir or config.toml (a symlink can redirect the trust
+      decision, and the later read, outside the repo);
+    - a state dir that is a git submodule / nested repo (its contents are
+      another repo's, not local);
+    - a config (or anything else under .cgh/ or .codegraph/) that git tracks,
+      matched case-insensitively so a committed ``.CGH/config.toml`` cannot
+      slip past a ``.cgh`` lookup;
+    - any git error or a non-work-tree (returncode other than a positive
+      "untracked"): distrusted rather than assumed safe.
+    """
+    from cgh.core.config import CGH_DIR, CONFIG_FILE, LEGACY_CGH_DIR
+
+    state = state_dir_for(root)  # root/.cgh or legacy root/.codegraph
+    cfg = state / CONFIG_FILE
+    if not cfg.exists():
+        return False
+    # Test UNRESOLVED paths: a symlinked .cgh/ or config.toml must not grant
+    # trust (it could point the later read outside the repo).
+    if state.is_symlink() or cfg.is_symlink():
+        return _refuse_project_config(root, "symlinked .cgh/ or config.toml")
+    # And the real config must still sit inside the repo (a symlink higher up).
+    if not _within(cfg, root):
+        return _refuse_project_config(root, "config resolves outside the repo")
+    # A git submodule / nested repo at the state dir is not local trust.
+    if (state / ".git").exists():
+        return _refuse_project_config(root, "state dir is a git submodule")
+
+    # Is anything under .cgh/ or .codegraph/ tracked? Case-insensitive, so a
+    # committed .CGH/ cannot hide from a .cgh read; any match means tracked.
+    try:
+        proc = _run_git(
+            root,
+            [
+                "-c",
+                "core.ignorecase=true",
+                "ls-files",
+                "--",
+                f":(icase){CGH_DIR}",
+                f":(icase){LEGACY_CGH_DIR}",
+            ],
+        )
+    except (OSError, subprocess.SubprocessError):
+        return _refuse_project_config(root, "git ls-files failed")
+    # Fail closed: trust only a clean, positive "nothing tracked" (returncode
+    # 0 with empty output). A returncode of 128 (not a work tree) or any other
+    # error is distrusted, never assumed safe.
+    if proc.returncode != 0:
+        return _refuse_project_config(root, "not a git work tree or git error")
+    if proc.stdout.strip():
+        return _refuse_project_config(root, "config tracked by git")
+    return True
+
+
+def sibling_repos(repo_root: str | Path | None = None) -> dict[str, Path]:
+    """{name: work tree} of the git repos a ref query may read, named by
+    their directory. Three sources are unified here:
+
+    - the user's global ~/.cgh/config.toml [cgh] siblings: the trusted
+      source, absolute entries only (a relative one would name a different
+      repo for every project). No extra condition.
+    - the project's own .cgh/config.toml [cgh] siblings (relative entries
+      resolved against the project root);
+    - the project's federated subrepos ([cgh] subrepos): a workspace that
+      federates a repo already reads its whole graph, so reading its files
+      at a ref adds no access. This is what lets a coordination checkout
+      see the repos it federates without declaring them twice.
+
+    The two PROJECT-level sources are guarded, because a project config can
+    arrive inside an opened repo: they are honoured only when the project
+    config is local and untracked (`_project_config_trusted`), and each entry
+    only when its repo is indexed locally (`_has_local_index`) and resolves
+    inside this workspace (`_within` the project's parent). This keeps the
+    managers' per-workspace federation working while refusing a config that
+    points cgh at ~/.ssh or an unrelated repo.
+
+    ``repo_root`` is this project's root; without it only the global
+    siblings are returned. A non-git entry is left out. On a name clash an
+    explicit sibling (global, then project) wins over a federated subrepo."""
     out: dict[str, Path] = {}
-    for raw in declared_siblings():
+
+    for raw in declared_global_siblings():
         p = Path(os.path.expanduser(raw))
         if not p.is_absolute():
-            _log.warning("ignoring relative sibling %r in %s", raw, _WHERE)
+            _log.warning("ignoring relative sibling %r in %s", raw, _GLOBAL_WHERE)
             continue
-        top = git_toplevel(str(p.resolve()))
-        if top:
-            out.setdefault(Path(top).name, Path(top))
+        top = _git_top(p)
+        if top is not None:
+            out.setdefault(top.name, top)
+
+    if repo_root is None:
+        return out
+
+    root = Path(repo_root).resolve()
+    if not _project_config_trusted(root):
+        return out
+
+    boundary = root.parent
+
+    def _add_guarded(p: Path, source: str) -> None:
+        top = _git_top(p)
+        if top is None or top == root:
+            return
+        if not _within(top, boundary):
+            _log.warning(
+                "ignoring %s %s: %s is outside this workspace (%s)",
+                source,
+                p,
+                top,
+                boundary,
+            )
+            return
+        if not _has_local_index(top):
+            _log.warning("ignoring %s %s: %s has no local .cgh/ index", source, p, top)
+            return
+        out.setdefault(top.name, top)
+
+    for raw in declared_project_siblings(root):
+        p = Path(os.path.expanduser(raw))
+        if not p.is_absolute():
+            p = root / p
+        _add_guarded(p, "project sibling")
+
+    # The unification: federated subrepos are readable at a ref too.
+    from cgh.analysis.federation import resolve_children
+
+    for child in resolve_children(root):
+        _add_guarded(child, "federated subrepo")
+
     return out
 
 
 def resolve_repo(repo_root: str | Path, repo: str) -> tuple[str, Path]:
     """(name, work tree) of the repo a ref query targets: this project for
-    "", else a declared sibling, by name or by path."""
+    "", else a declared sibling or a federated subrepo, by name or by path."""
     root = Path(repo_root).resolve()
     if not repo:
         top = git_toplevel(str(root))
         if not top:
             raise RefError(f"{root} is not a git repository")
         return "", Path(top)
-    siblings = sibling_repos()
+    siblings = sibling_repos(root)
     if repo in siblings:
         return repo, siblings[repo]
     try:
@@ -116,16 +293,10 @@ def resolve_repo(repo_root: str | Path, repo: str) -> tuple[str, Path]:
         if wanted == top:
             return name, top
     known = ", ".join(sorted(siblings)) or "none declared"
-    hint = (
-        " ([cgh] siblings in this project's .cgh/config.toml is "
-        "ignored: only the user's global config may grant access to other "
-        "repos)"
-        if _project_declares_siblings(root)
-        else ""
-    )
     raise RefError(
-        f"repo {repo!r} is not a declared sibling ({known}); add its absolute "
-        f"path under [cgh] siblings in {_WHERE}{hint}"
+        f"repo {repo!r} is not a declared sibling ({known}); declare it under "
+        f"[cgh] siblings in {_GLOBAL_WHERE} or {_PROJECT_WHERE}, or federate it "
+        f"as a subrepo of this workspace"
     )
 
 

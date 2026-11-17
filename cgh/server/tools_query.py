@@ -531,9 +531,10 @@ def register(mcp) -> None:
         """
         Read a file as it is at a branch, tag or commit, straight from git:
         no checkout, no index. Use it for code on another branch of this
-        repo, or in a sibling repo declared under [cgh] siblings of
-        ~/.cgh/config.toml (e.g. the API's origin/develop seen from a frontend worktree),
-        instead of `git show` in a shell.
+        repo, in a sibling repo declared under [cgh] siblings (the global
+        ~/.cgh/config.toml or this project's own .cgh/config.toml), or in a
+        subrepo this workspace federates (e.g. the API's origin/develop seen
+        from a coordination checkout), instead of `git show` in a shell.
 
         Args:
           path:       path inside the repo, as pattern_search(ref=...) returns
@@ -745,8 +746,9 @@ def register(mcp) -> None:
           regex:          treat pattern as regex (default True)
           case_sensitive: default False
           repo:           a sibling repo declared under [cgh] siblings
-                          of ~/.cgh/config.toml (by directory name),
-                          instead of this project
+                          (global or project config), or a subrepo this
+                          workspace federates (by directory name), instead
+                          of this project
           ref:            search the tree at this branch, tag or commit
                           (e.g. "origin/develop") straight from git, no
                           checkout needed; hit files are paths inside the

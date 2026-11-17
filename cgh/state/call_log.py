@@ -20,6 +20,11 @@ from pathlib import Path
 
 _DB_DIR = ".cgh"
 _LOG_FILE = "call_log.db"
+# Shared knowledge stores live outside any repo, under the global dir, one
+# directory per namespace holding a knowledge.db with the same schema as a
+# repo store (knowledge + FTS + outcomes), minus the call_log of tool traces.
+_SHARED_SUBDIR = "shared"
+_SHARED_FILE = "knowledge.db"
 
 # Who triggered a tool call. "agent": an MCP client through the stdio proxy.
 # "cli": a `cgh` command asking the owner over HTTP. "hook": the same, from a
@@ -89,6 +94,65 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         return _init_conn(repo_root)
 
 
+# A shared namespace becomes a path segment under ~/.cgh/shared/, so its name
+# is held to a strict allowlist: lower-case start, then word / dot / dash, no
+# separator, no leading dot, no "..". This is the first line of defence against
+# a name like "../../etc" escaping the shared root; shared_store_path then
+# resolves the final path and refuses anything outside the root as well.
+_VALID_SHARED_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def valid_shared_namespace(name: str) -> bool:
+    """Whether ``name`` is a safe shared-store name: matches the allowlist and
+    carries no path-traversal token. Fails closed on anything else."""
+    n = (name or "").strip()
+    return bool(_VALID_SHARED_NAME_RE.match(n)) and ".." not in n and "/" not in n
+
+
+def shared_store_path(name: str) -> Path:
+    """Path of a shared knowledge store: ``~/.cgh/shared/<name>/knowledge.db``.
+    GLOBAL_DIR is read at call time so a test that redirects it is honoured.
+
+    The name is validated against a strict allowlist and the resolved path is
+    verified to stay under ``~/.cgh/shared``; a traversal attempt raises
+    ValueError rather than touching a file outside the shared root."""
+    import cgh.core.config as _config
+
+    if not valid_shared_namespace(name):
+        raise ValueError(f"invalid shared namespace name: {name!r}")
+    root = (_config.GLOBAL_DIR / _SHARED_SUBDIR).resolve()
+    path = (root / name / _SHARED_FILE).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"shared namespace escapes the shared root: {name!r}")
+    return path
+
+
+def is_shared_namespace(namespace: str) -> bool:
+    """Whether a namespace lives in its own shared store rather than the local
+    repo store. ``repo``, ``branch`` and any ``ticket:<id>`` facet stay in the
+    repo store; every other non-empty name routes to a shared store. An invalid
+    name (fails the shared-name allowlist) is NOT treated as shared, so it can
+    never build a shared path."""
+    ns = (namespace or "").strip()
+    if not ns or ns in ("repo", "branch") or ns.startswith("ticket:"):
+        return False
+    return valid_shared_namespace(ns)
+
+
+def _get_conn_at(db_file: str | Path) -> sqlite3.Connection:
+    """Cached connection to an explicit knowledge DB file (a shared store),
+    built with the same schema as a repo store and keyed by its resolved path."""
+    key = str(Path(db_file).resolve())
+    conn = _conns.get(key)
+    if conn is not None:
+        return conn
+    with _LOG_LOCK:
+        conn = _conns.get(key)
+        if conn is not None:
+            return conn
+        return _init_conn(db_file=db_file)
+
+
 def reset_for_tests() -> None:
     # Close every cached connection. Test helper, mirrors findings.py.
     with _LOG_LOCK:
@@ -100,13 +164,22 @@ def reset_for_tests() -> None:
         _conns.clear()
 
 
-def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
-    key = _cache_key(repo_root)
-    root = Path(key)
-    db_dir = root / _DB_DIR
-    db_dir.mkdir(parents=True, exist_ok=True)
+def _init_conn(
+    repo_root: str | Path | None = None, *, db_file: str | Path | None = None
+) -> sqlite3.Connection:
+    # A shared store is addressed by its own db_file; a repo store by its root.
+    # Both get the identical schema below; the shared store simply never has its
+    # call_log of tool traces written to, only the knowledge tables.
+    if db_file is not None:
+        db_path = Path(db_file)
+        key = str(db_path.resolve())
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        key = _cache_key(repo_root)
+        db_path = Path(key) / _DB_DIR / _LOG_FILE
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _conn = sqlite3.connect(str(db_dir / _LOG_FILE), check_same_thread=False)
+    _conn = sqlite3.connect(str(db_path), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS call_log (
@@ -204,6 +277,11 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         ("author", "TEXT"),
         ("symptom", "TEXT"),
         ("symptom_norm", "TEXT"),
+        # Collision-resistant owner identity of the writing repo, set
+        # server-side for a shared-store write (never from caller input). It is
+        # the sole authority for a cross-repo supersede; NULL (a repo-store row,
+        # or a shared row written before this column) is owned by nobody.
+        ("owner", "TEXT"),
     ):
         try:
             _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
@@ -505,6 +583,79 @@ def repo_slug(repo_root: str | Path | None = None) -> str:
     return Path(root).name
 
 
+def _normalize_remote_url(url: str) -> str:
+    """A git remote URL reduced to a stable ``host/org/repo`` identity, with the
+    scheme, any user info, a port and a trailing ``.git`` stripped. Handles the
+    scp-like ``git@host:org/repo`` form too. Returns "" for empty input."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.endswith(".git"):
+        u = u[:-4]
+    # scp-like syntax has no scheme: [user@]host:path (the colon is not a port).
+    if "://" not in u and ":" in u.split("/", 1)[0] and "@" in u.split("/", 1)[0]:
+        userhost, _, path = u.partition(":")
+        host = userhost.split("@", 1)[-1]
+        return f"{host}/{path}".strip("/")
+    if "://" in u:
+        u = u.split("://", 1)[1]
+    if "@" in u.split("/", 1)[0]:
+        u = u.split("@", 1)[1]
+    host, _, path = u.partition("/")
+    host = host.split(":", 1)[0]  # drop a port
+    return f"{host}/{path}".strip("/") if path else host
+
+
+def _persisted_repo_uuid(repo_root: str | Path | None = None) -> str:
+    """A per-repo UUID persisted in the state dir (``.cgh/owner_id``), generated
+    once and reused. The fallback owner identity when a repo has no git remote;
+    stable and unique where a directory name is not. Fails closed, never
+    raises, returning a fresh UUID even if it cannot be written."""
+    import uuid
+
+    path = Path(_cache_key(repo_root)) / _DB_DIR / "owner_id"
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    value = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+    except OSError:
+        pass
+    return value
+
+
+def repo_owner_id(repo_root: str | Path | None = None) -> str:
+    """A collision-resistant owner identity for a repo: its normalised git
+    remote (``host/org/repo``) when one exists, else a UUID persisted in the
+    state dir. Used server-side as the sole authority for a shared-store
+    supersede, so two repos that merely share a directory name never pass for
+    each other. Fails closed, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0:
+            norm = _normalize_remote_url(proc.stdout)
+            if norm:
+                return norm
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return _persisted_repo_uuid(root)
+
+
 @_locked
 def knowledge_record(
     title: str,
@@ -562,20 +713,47 @@ def knowledge_record(
         scope = "repo"
     if not namespace:
         namespace = "repo"
+    ns_stripped = namespace.strip()
+    nonlocal_ns = (
+        bool(ns_stripped)
+        and ns_stripped not in ("repo", "branch")
+        and not ns_stripped.startswith("ticket:")
+    )
+    # A shared namespace must pass the strict name allowlist before it can
+    # become a path segment, and must not carry a durable-authority kind: a
+    # standing_instruction or glossary entry read by default across every
+    # subscribed repo would be cross-repo authority injection, so those kinds
+    # stay in the repo store.
+    if nonlocal_ns:
+        if not valid_shared_namespace(ns_stripped):
+            raise ValueError(f"invalid shared namespace name: {namespace!r}")
+        if kind in ("standing_instruction", "glossary"):
+            raise ValueError(
+                f"kind {kind!r} is not allowed in a shared namespace "
+                f"({ns_stripped!r}); it stays in the repo store"
+            )
     if isinstance(tags, list):
         tags = ",".join(t.strip() for t in tags if t and t.strip())
     if isinstance(file_refs, list):
         file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
     symptom = symptom or ""
     symptom_norm = normalize_symptom(symptom)
-    conn = _get_conn(repo_root)
+    # A shared namespace routes the write to its own store under the global
+    # dir, created on first write; everything else stays in the repo store.
+    shared = is_shared_namespace(namespace)
+    conn = (
+        _get_conn_at(shared_store_path(namespace)) if shared else _get_conn(repo_root)
+    )
+    # Owner authority is derived server-side and stored only for a shared write;
+    # the caller-supplied origin_repo is provenance, never authority.
+    owner = repo_owner_id(repo_root) if shared else None
     now = time.time()
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
         "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
         "promoted_at, source_worktree, origin_id, namespace, origin_repo, ticket, "
-        "author, symptom, symptom_norm) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "author, symptom, symptom_norm, owner) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -599,20 +777,45 @@ def knowledge_record(
             author or None,
             symptom or None,
             symptom_norm or None,
+            owner,
         ),
     )
     row_id = cur.lastrowid
     # FTS mirror is now maintained by the AFTER INSERT trigger.
     if supersedes and row_id:
-        conn.execute(
-            "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
-            (int(row_id), int(supersedes)),
-        )
+        allowed = True
+        if shared:
+            # In a shared store a write may only retire a row of the SAME
+            # namespace that this repo owns, so one repo's session cannot
+            # overwrite another's shared note. Authority is the SERVER-derived
+            # owner identity of the calling repo (collision-resistant: git
+            # remote, else a persisted UUID), never the caller-supplied
+            # origin_repo. A target with no owner (NULL, or a row written before
+            # the column existed) is owned by nobody and denied.
+            tgt = conn.execute(
+                "SELECT owner, namespace FROM knowledge WHERE id = ?",
+                (int(supersedes),),
+            ).fetchone()
+            allowed = (
+                bool(tgt)
+                and tgt[1] == namespace
+                and bool(tgt[0])
+                and bool(owner)
+                and tgt[0] == owner
+            )
+        if allowed:
+            conn.execute(
+                "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
+                (int(row_id), int(supersedes)),
+            )
     # Auto-retire the live notes this one strongly contradicts: same kind,
     # tag overlap, and either an explicit contradicts=<id> or a corrected
     # outcome already on the old note. Weak matches (tag overlap only) are
-    # left live; the MCP layer surfaces them as a suggestion instead.
-    if row_id:
+    # left live; the MCP layer surfaces them as a suggestion instead. Only in
+    # the repo store: the candidate scan reads the repo store, and a shared
+    # write must never auto-retire another repo's rows (it cannot verify
+    # ownership), so a shared namespace skips this entirely.
+    if row_id and not shared:
         for cand in supersede_candidates(
             repo_root,
             kind=kind,
@@ -958,6 +1161,7 @@ def knowledge_search(
     repo_root: str | Path | None = None,
     rank_outcomes: bool = True,
     recall: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """BM25 search over knowledge entries. Graceful LIKE fallback.
 
@@ -981,7 +1185,9 @@ def knowledge_search(
     # Default path: no outcomes to rank by and age decay off -> plain relevance,
     # byte-for-byte the behaviour before age decay existed.
     if not use_outcomes and recency_hl <= 0:
-        return _cap_weak(search(conn, query, kind, limit), limit, recall)
+        return _cap_weak(
+            search(conn, query, kind, limit, namespace=namespace), limit, recall
+        )
     from cgh.state.knowledge_outcomes import rank_factor, recency_factor
 
     now = time.time()
@@ -990,7 +1196,9 @@ def knowledge_search(
         entries, _files = _outcome_scores(conn, now, _half_life_days(repo_root))
     # Room for a well-rated or fresher entry just under the cut to move up.
     raw: list[float] = []
-    hits = search(conn, query, kind, max(limit * 3, limit + 10), raw)
+    hits = search(
+        conn, query, kind, max(limit * 3, limit + 10), raw, namespace=namespace
+    )
     # Rank on the unrounded relevance: on a small store BM25 scores are tiny
     # and round to zero, which would erase the outcome and recency factors.
     adjusted: list[float] = []
@@ -1034,7 +1242,11 @@ def _cap_weak(hits: list[dict], limit: int, recall: bool) -> list[dict]:
 
 
 def _fts_rows(
-    conn: sqlite3.Connection, expr: str, kind: str | None, limit: int
+    conn: sqlite3.Connection,
+    expr: str,
+    kind: str | None,
+    limit: int,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Live entries matching an FTS5 expression, best BM25 first."""
     sql = (
@@ -1046,6 +1258,9 @@ def _fts_rows(
     if kind:
         sql += "AND k.kind = ? "
         params.append(kind)
+    if namespace:
+        sql += "AND k.namespace = ? "
+        params.append(namespace)
     sql += "ORDER BY rank LIMIT ?"
     params.append(limit)
     try:
@@ -1055,7 +1270,9 @@ def _fts_rows(
     return [_knowledge_row_to_dict(row, score=-row[-1]) for row in rows]
 
 
-def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
+def _store_words(
+    conn: sqlite3.Connection, kind: str | None, namespace: str | None = None
+) -> set[str]:
     """Every folded word of the live entries, for close-spelling lookups."""
     from cgh.state.knowledge_recall import fold
 
@@ -1064,6 +1281,9 @@ def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
     if kind:
         sql += " AND kind = ?"
         params.append(kind)
+    if namespace:
+        sql += " AND namespace = ?"
+        params.append(namespace)
     out: set[str] = set()
     for title, body, tags in conn.execute(sql, params).fetchall():
         out.update(re.findall(r"[a-z0-9_]+", fold(f"{title} {tags} {body}")))
@@ -1076,6 +1296,7 @@ def _knowledge_recall(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Free-text search behind knowledge_search(recall=True). Caller holds
     the lock.
@@ -1092,20 +1313,24 @@ def _knowledge_recall(
     raw.clear()
     items = kr.concepts(query)
     pool = max(limit * 3, 30)
-    strict = _knowledge_search(conn, query, kind, limit) if query.strip() else []
+    strict = (
+        _knowledge_search(conn, query, kind, limit, namespace=namespace)
+        if query.strip()
+        else []
+    )
     strict_ids = {h["id"] for h in strict}
     candidates: dict[int, dict] = {h["id"]: h for h in strict}
     expr = kr.fts_expression(items)
     if expr:
-        for h in _fts_rows(conn, expr, kind, pool):
+        for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
             candidates.setdefault(h["id"], h)
     fuzzy = False
     if not candidates and items:
-        close = kr.close_words(items, _store_words(conn, kind))
+        close = kr.close_words(items, _store_words(conn, kind, namespace=namespace))
         if close:
             fuzzy = True
             expr = " OR ".join(f'"{w}"' for w in close)
-            for h in _fts_rows(conn, expr, kind, pool):
+            for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
                 candidates.setdefault(h["id"], h)
 
     graded: list[tuple[int, float, float, dict]] = []
@@ -1176,6 +1401,7 @@ def _knowledge_search(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """The plain relevance search behind knowledge_search. Caller holds the
     lock. raw_scores, when given, receives each hit's unrounded score."""
@@ -1191,6 +1417,9 @@ def _knowledge_search(
         if kind:
             sql += "AND k.kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND k.namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
         for row in conn.execute(sql, params).fetchall():
@@ -1206,6 +1435,9 @@ def _knowledge_search(
         if kind:
             sql += "AND kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY ts DESC LIMIT ?"
         params.append(limit)
         raw.clear()  # the FTS attempt may have filled part of it
@@ -1216,12 +1448,21 @@ def _knowledge_search(
 
 
 def knowledge_search_ro(
-    db_path: Path, query: str, kind: str | None = None, limit: int = 10
+    db_path: Path,
+    query: str,
+    kind: str | None = None,
+    limit: int = 10,
+    with_provenance: bool = False,
 ) -> list[dict]:
-    """Read-only knowledge search against an arbitrary call_log.db
-    (federated children). Fresh connection, LIKE-based on purpose:
-    robust against FTS schema drift in the child. Superseded entries
-    stay out, like everywhere else."""
+    """Read-only knowledge search against an arbitrary knowledge store (a
+    federated child's call_log.db, or a shared store's knowledge.db). Fresh
+    connection, LIKE-based on purpose: robust against FTS schema drift in the
+    store. An empty query matches every live entry, newest first, so the same
+    reader lists a store. Superseded entries stay out, like everywhere else.
+
+    With with_provenance, each hit also carries origin_repo, origin_id and
+    namespace when the store has those columns, for cross-store de-duplication;
+    a store predating them (an old child) silently reads back without."""
     if not db_path.exists():
         return []
     from cgh.core.utils import ro_sqlite_uri
@@ -1231,25 +1472,43 @@ def knowledge_search_ro(
     except sqlite3.Error:
         return []
     like = f"%{query}%"
-    sql = (
-        "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
-        "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
-    )
-    params: list = [like, like, like]
-    if kind:
-        sql += "AND kind = ? "
-        params.append(kind)
-    sql += "ORDER BY ts DESC LIMIT ?"
-    params.append(limit)
+    base = "id, kind, title, body, tags, file_refs, session_id, ts"
+    prov = ", origin_repo, origin_id, namespace"
+
+    def _run(cols: str) -> list:
+        sql = (
+            f"SELECT {cols} FROM knowledge WHERE superseded_by IS NULL "
+            "AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
+        )
+        params: list = [like, like, like]
+        if kind:
+            sql += "AND kind = ? "
+            params.append(kind)
+        sql += "ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        return conn.execute(sql, params).fetchall()
+
+    has_prov = with_provenance
     try:
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            rows = _run(base + prov) if with_provenance else _run(base)
+        except sqlite3.Error:
+            # A store without the provenance columns (an old child): retry bare.
+            rows = _run(base)
+            has_prov = False
     except sqlite3.Error:
         return []
     finally:
         conn.close()
-    return [
-        _knowledge_row_to_dict(row, score=1.0 / (i + 1)) for i, row in enumerate(rows)
-    ]
+    out: list[dict] = []
+    for i, row in enumerate(rows):
+        hit = _knowledge_row_to_dict(row[:8], score=1.0 / (i + 1))
+        if has_prov:
+            hit["origin_repo"] = row[8]
+            hit["origin_id"] = row[9]
+            hit["namespace"] = row[10]
+        out.append(hit)
+    return out
 
 
 @_locked
@@ -1279,10 +1538,11 @@ def knowledge_list(
     repo_root: str | Path | None = None,
     exclude_tag: str | None = None,
     rank_outcomes: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Browse knowledge entries. Filters: kind / tag (substring) / session /
-    exclude_tag (substring to omit). Pagination: limit + offset. Caller can
-    fetch limit+1 to detect has_more.
+    exclude_tag (substring to omit) / namespace (exact). Pagination: limit +
+    offset. Caller can fetch limit+1 to detect has_more.
 
     Newest first. With rank_outcomes, entries are tiered by outcome first
     (useful, then unrated or contested, then dead ends, then corrected) and
@@ -1309,6 +1569,9 @@ def knowledge_list(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     order = "ts DESC"
@@ -1343,6 +1606,7 @@ def knowledge_count(
     tag: str | None = None,
     session_id: str | None = None,
     repo_root: str | Path | None = None,
+    namespace: str | None = None,
 ) -> int:
     """Total matching entries, use alongside knowledge_list for pagination."""
     conn = _get_conn(repo_root)
@@ -1361,6 +1625,9 @@ def knowledge_count(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     return int(conn.execute(sql, params).fetchone()[0])

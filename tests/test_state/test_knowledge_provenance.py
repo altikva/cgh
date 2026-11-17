@@ -140,12 +140,14 @@ def test_record_defaults_leave_current_behaviour(tmp_path):
 def test_record_stores_explicit_provenance_and_normalises_symptom(tmp_path):
     reset_for_tests()
     root = _store(tmp_path, "prov")
+    # A ticket facet stays in the repo store (only a shared namespace routes
+    # out to ~/.cgh/shared/), so the provenance columns are read back locally.
     kid = knowledge_record(
         "docker preflight",
         "echo of the preflight, not a real missing docker",
         kind="gotcha",
         repo_root=root,
-        namespace="org-platform",
+        namespace="ticket:media#412",
         origin_repo="media-service",
         ticket="media#412",
         author="media-manager",
@@ -160,7 +162,7 @@ def test_record_stores_explicit_provenance_and_normalises_symptom(tmp_path):
         )
         .fetchone()
     )
-    assert row[0] == "org-platform"
+    assert row[0] == "ticket:media#412"
     assert row[1] == "media-service"
     assert row[2] == "media#412"
     assert row[3] == "media-manager"

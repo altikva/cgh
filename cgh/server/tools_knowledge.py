@@ -551,9 +551,10 @@ def register(mcp) -> None:
               hit tagged with its `namespace` and `scope`. Pass a shared name
               (e.g. "org-platform") to search only that store, or a local
               facet ("repo", "ticket:<id>") to search only this repo's.
-        scope: default already reads the subscribed shared stores. Pass "all"
-              to ALSO search federated subrepos' knowledge read-only; their
-              hits come back tagged with a `scope` field.
+        scope: legacy, and rarely needed. The default already reads the
+              subscribed shared stores; pass "all" only to ALSO fan out to
+              federated subrepos' knowledge read-only, each hit tagged with a
+              `scope` field naming the subrepo it came from.
         symptom: paste an error / log line to recall diagnoses posted for a
               look-alike error across the fleet, FALSE TRAILS INCLUDED (the
               normal search buries dead ends; this surfaces them). Each hit

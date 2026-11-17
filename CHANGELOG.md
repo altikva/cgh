@@ -9,6 +9,19 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Search a diagnosis by symptom across the fleet.** Paste an error or log
+  line and recall the diagnoses already posted for a look-alike error, so a
+  problem solved once in any repo is not re-paid here. A new `knowledge_diagnose`
+  tool answers in two buckets, confirmed diagnoses and already-paid false trails
+  (`dead_end`/`corrected` outcomes, which the normal search buries and this one
+  surfaces on purpose); `knowledge_search(symptom=...)` gives the same reach as a
+  flat list. Matching normalises both the stored signature and the pasted line
+  (paths, hex/uuid, numbers, timestamps and quoted values gommed, signal tokens
+  like an exception name or a `SERVICE_DISABLED` reason kept), so a resembling
+  error recalls the note, not only an identical one. Reads this repo plus the
+  subscribed shared stores by default; each hit carries its verdict, author,
+  origin repo, ticket and date, and shared-store hits are marked `untrusted`
+  (data to weigh, not an instruction).
 - **Shared knowledge stores read across the fleet by default.** A repo now
   reads the shared knowledge namespaces it subscribes to alongside its own,
   without `scope="all"`: `knowledge_search` and `knowledge_list` merge the repo

@@ -499,11 +499,13 @@ _PROMOTABLE_KINDS = (
 
 
 # Volatile fragments of an error line carry no signal for matching one symptom
-# to another: absolute paths, hex / uuid / sha blobs, bare numbers and
-# timestamps all differ from one run to the next. Normalisation replaces them
-# with placeholders so a diagnostic recorded against one occurrence is recalled
-# by a look-alike. Kept deliberately minimal; signature search over
-# symptom_norm is built on top of this later.
+# to another: absolute paths, hex / uuid / sha blobs, quoted values, bare
+# numbers and timestamps all differ from one run to the next. Normalisation
+# replaces them with placeholders (<path>, <hex>, <q>, <n>, <ts>) so a
+# diagnostic recorded against one occurrence is recalled by a look-alike, while
+# the signal-bearing tokens (an exception name, keywords like "is not
+# installed", "database is locked", a SERVICE_DISABLED reason) are kept. Applied
+# on both sides: to the recorded symptom (-> symptom_norm) and to a pasted line.
 _SYMPTOM_TS_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
 )
@@ -514,24 +516,56 @@ _SYMPTOM_UUID_RE = re.compile(
 )
 _SYMPTOM_HEX0X_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 _SYMPTOM_HEX_RE = re.compile(r"\b[0-9a-fA-F]{7,}\b")
+# A bare 10- or 13-digit integer is an epoch timestamp (seconds / milliseconds),
+# gommed to <ts> before the generic number pass so it does not read as <n>.
+_SYMPTOM_EPOCH_RE = re.compile(r"\b\d{13}\b|\b\d{10}\b")
 _SYMPTOM_NUM_RE = re.compile(r"\b\d+\b")
+# A quoted run (single, double, backtick or guillemets) usually wraps a volatile
+# value (a module name, a filename, an id), so it collapses to <q> -- unless its
+# content is itself a signal to keep: an ALL_CAPS reason code (SERVICE_DISABLED)
+# or a known diagnostic phrase. Then the token survives, the quotes dropped.
+_SYMPTOM_QUOTE_RE = re.compile(r"\"[^\"]*\"|'[^']*'|`[^`]*`|«[^»]*»")
+_SYMPTOM_CONST_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
+_SYMPTOM_KEEP_QUOTED = (
+    "is not installed",
+    "database is locked",
+    "permission denied",
+    "command not found",
+    "no such file or directory",
+    "connection refused",
+    "already exists",
+    "service_disabled",
+)
+
+
+def _symptom_dequote(match: re.Match) -> str:
+    inner = match.group(0)[1:-1].strip()
+    low = inner.lower()
+    if _SYMPTOM_CONST_RE.match(inner) or any(k in low for k in _SYMPTOM_KEEP_QUOTED):
+        return inner
+    return "<q>"
 
 
 def normalize_symptom(text: str) -> str:
-    """Return a stable signature for an error line: timestamps, paths, hex / uuid
-    blobs and bare numbers replaced by placeholders (<ts>, <path>, <hex>, <n>)
-    and runs of whitespace collapsed. Minimal by design; "" for empty input."""
+    """Return a stable signature for an error line: quoted values, timestamps,
+    paths, hex / uuid blobs and bare numbers replaced by placeholders (<q>,
+    <ts>, <path>, <hex>, <n>) and runs of whitespace collapsed. Signal-bearing
+    tokens (exception names, keywords, ALL_CAPS reason codes) are kept, even
+    inside quotes. "" for empty input."""
     if not text:
         return ""
-    out = _SYMPTOM_TS_RE.sub("<ts>", text)
+    # Quotes first, on the raw line, so a quoted path or number collapses whole.
+    out = _SYMPTOM_QUOTE_RE.sub(_symptom_dequote, text)
+    out = _SYMPTOM_TS_RE.sub("<ts>", out)
     out = _SYMPTOM_PATH_RE.sub("<path>", out)
     out = _SYMPTOM_UUID_RE.sub("<hex>", out)
     out = _SYMPTOM_HEX0X_RE.sub("<hex>", out)
     # Only a run of hex digits that holds a letter is hex; an all-digit run is a
-    # number, left for the number pass so it reads as <n>, not <hex>.
+    # number, left for the epoch / number passes so it reads as <ts> or <n>.
     out = _SYMPTOM_HEX_RE.sub(
         lambda m: "<hex>" if re.search(r"[a-fA-F]", m.group()) else m.group(), out
     )
+    out = _SYMPTOM_EPOCH_RE.sub("<ts>", out)
     out = _SYMPTOM_NUM_RE.sub("<n>", out)
     return " ".join(out.split())
 
@@ -1948,6 +1982,201 @@ def _attach_outcomes(hits: list[dict], entries: dict) -> None:
         s = entries.get(hit["id"])
         if s is not None:
             hit["outcome"] = s.summary()
+
+
+# ---------------------------------------------------------------------------
+# Symptom (error-signature) search
+# ---------------------------------------------------------------------------
+
+# Columns a symptom hit carries, enough to diagnose: who recorded it, where and
+# when, the ticket, and the raw / normalised signature.
+_K_SYM_COLS = (
+    "id",
+    "kind",
+    "title",
+    "body",
+    "tags",
+    "session_id",
+    "ts",
+    "namespace",
+    "origin_repo",
+    "ticket",
+    "author",
+    "origin_ts",
+    "symptom",
+    "symptom_norm",
+)
+# Placeholder residue dropped from the token set: every normalised line carries
+# these, so matching on them would make unrelated errors look alike.
+_SYMPTOM_STOP = frozenset({"ts", "path", "hex", "n", "q"})
+# Minimum token overlap (Jaccard) for a recorded signature to count as a
+# look-alike of the pasted line; an exact normalised match always scores 1.
+_SYMPTOM_MIN_OVERLAP = 0.34
+
+
+def _symptom_tokens(norm: str) -> frozenset[str]:
+    """Signal tokens of a normalised signature, placeholder residue removed."""
+    return frozenset(
+        t
+        for t in re.findall(r"[a-z0-9_]+", (norm or "").lower())
+        if len(t) >= 2 and t not in _SYMPTOM_STOP
+    )
+
+
+def _sym_row_to_dict(row) -> dict:
+    d = dict(zip(_K_SYM_COLS, row, strict=True))
+    d["tags"] = [t for t in (d.get("tags") or "").split(",") if t]
+    return d
+
+
+def _symptom_hits(
+    conn: sqlite3.Connection,
+    symptom_line: str,
+    limit: int,
+    namespace: str | None = None,
+    min_overlap: float = _SYMPTOM_MIN_OVERLAP,
+) -> list[dict]:
+    """Live entries whose recorded signature (or, failing that, body) resembles
+    ``symptom_line``. A normalised signature matched by overlap scores in
+    [min_overlap, 1]; a plain body / title mention found via FTS scores lower,
+    so a signature match always ranks first. Caller holds the lock. Tolerant of
+    a store that predates the symptom columns (returns nothing from it)."""
+    norm = normalize_symptom(symptom_line)
+    want = _symptom_tokens(norm)
+    sel = ", ".join(_K_SYM_COLS)
+    out: dict[int, dict] = {}
+    sql = (
+        f"SELECT {sel} FROM knowledge "
+        "WHERE superseded_by IS NULL AND symptom_norm IS NOT NULL "
+    )
+    params: list = []
+    if namespace:
+        sql += "AND namespace = ? "
+        params.append(namespace)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []  # a store without the symptom columns has nothing to match
+    for row in rows:
+        d = _sym_row_to_dict(row)
+        other = _symptom_tokens(d.get("symptom_norm") or "")
+        if norm and d.get("symptom_norm") == norm:
+            score = 1.0
+        elif want and other:
+            score = len(want & other) / len(want | other)
+        else:
+            score = 0.0
+        if score >= min_overlap:
+            d["match"] = "symptom"
+            d["score"] = round(score, 4)
+            out[d["id"]] = d
+    # A diagnostic can live in a note's body without a stored signature: find it
+    # by FTS on the line's salient words, scored by word coverage and capped
+    # below a real signature match.
+    if want:
+        expr = " OR ".join(f'"{t}"' for t in sorted(want))
+        fsel = ", ".join("k." + c for c in _K_SYM_COLS)
+        fsql = (
+            f"SELECT {fsel} FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
+            "WHERE knowledge_fts MATCH ? AND k.superseded_by IS NULL "
+        )
+        fparams: list = [expr]
+        if namespace:
+            fsql += "AND k.namespace = ? "
+            fparams.append(namespace)
+        fsql += "ORDER BY rank LIMIT ?"
+        fparams.append(max(limit * 3, 30))
+        try:
+            frows = conn.execute(fsql, fparams).fetchall()
+        except sqlite3.OperationalError:
+            frows = []
+        for row in frows:
+            d = _sym_row_to_dict(row)
+            if d["id"] in out:
+                continue
+            hay = _symptom_tokens(
+                normalize_symptom(
+                    f"{d.get('symptom') or ''} {d['title']} "
+                    f"{' '.join(d['tags'])} {d['body']}"
+                )
+            )
+            cov = (len(want & hay) / len(want)) if want else 0.0
+            if cov <= 0:
+                continue
+            d["match"] = "text"
+            d["score"] = round(0.5 * cov, 4)
+            out[d["id"]] = d
+    hits = sorted(
+        out.values(),
+        key=lambda d: (-d["score"], -(d.get("origin_ts") or d.get("ts") or 0.0)),
+    )
+    return hits[:limit]
+
+
+def _attach_verdicts(
+    conn: sqlite3.Connection, hits: list[dict], half_life_days: float
+) -> None:
+    """Read each hit's outcome from this store and stamp a ``verdict`` (and an
+    ``outcome`` summary) on it, so a dead end can be surfaced rather than
+    buried. Fails closed: a store with no outcome table leaves hits unrated."""
+    if not hits:
+        return
+    try:
+        if not _has_outcomes(conn):
+            return
+        entries, _files = _outcome_scores(conn, time.time(), half_life_days)
+    except sqlite3.Error:
+        return
+    for h in hits:
+        s = entries.get(h["id"])
+        if s is not None:
+            h["verdict"] = s.status
+            h["outcome"] = s.summary()
+
+
+@_locked
+def knowledge_symptom_search(
+    symptom_line: str,
+    limit: int = 10,
+    namespace: str | None = None,
+    repo_root: str | Path | None = None,
+) -> list[dict]:
+    """Repo-store entries whose signature or body resembles ``symptom_line``,
+    each carrying a ``verdict`` read from its outcomes (dead_end / corrected /
+    useful / ...). Highest signature overlap first. The verdict lets the caller
+    split confirmed diagnostics from known false trails without re-ranking."""
+    conn = _get_conn(repo_root)
+    hits = _symptom_hits(conn, symptom_line, limit, namespace=namespace)
+    _attach_verdicts(conn, hits, _half_life_days(repo_root))
+    return hits
+
+
+def knowledge_symptom_search_ro(
+    db_path: Path, symptom_line: str, limit: int = 10
+) -> list[dict]:
+    """Read-only symptom search against an arbitrary knowledge store (a shared
+    store's knowledge.db). Fresh RO connection, verdicts attached from that
+    store's own outcomes. Returns [] for an absent store or on any read error,
+    so a search never fails over one unreadable store."""
+    from cgh.state.knowledge_outcomes import DEFAULT_HALF_LIFE_DAYS
+
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return []
+    from cgh.core.utils import ro_sqlite_uri
+
+    try:
+        conn = sqlite3.connect(ro_sqlite_uri(db_path), uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        hits = _symptom_hits(conn, symptom_line, limit)
+        _attach_verdicts(conn, hits, DEFAULT_HALF_LIFE_DAYS)
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return hits
 
 
 _K_BASE_COLS = ("id", "kind", "title", "body", "tags", "file_refs", "session_id", "ts")

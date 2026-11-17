@@ -415,6 +415,24 @@
     },
     "required": []
   },
+  "knowledge_diagnose": {
+    "properties": {
+      "limit": {
+        "default": 8,
+        "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
+      "symptom": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "symptom"
+    ]
+  },
   "knowledge_forget": {
     "properties": {
       "entry_id": {
@@ -568,6 +586,10 @@
         "type": "string"
       },
       "scope": {
+        "default": "",
+        "type": "string"
+      },
+      "symptom": {
         "default": "",
         "type": "string"
       }

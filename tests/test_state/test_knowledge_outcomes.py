@@ -39,6 +39,7 @@ from cgh.state.knowledge_outcomes import (
     decay_weight,
     list_bucket,
     rank_factor,
+    recency_factor,
     score_outcomes,
 )
 
@@ -122,6 +123,33 @@ def test_rank_factor_and_bucket():
     assert 0.5 <= rank_factor(dead) < 1.0
     assert rank_factor(fixed) == 0.25
     assert [list_bucket(x) for x in (useful, None, dead, fixed)] == [0, 1, 2, 3]
+
+
+def test_recency_factor_off_by_default():
+    # A zero (or negative) half-life is off: every note weighs 1, so ranking
+    # is unchanged. This is the default, so the common path never decays.
+    assert recency_factor(0, 0) == 1.0
+    assert recency_factor(400 * DAY, 0) == 1.0
+    assert recency_factor(400 * DAY, -5) == 1.0
+
+
+def test_recency_factor_halves_every_half_life():
+    assert recency_factor(0, 30) == 1.0
+    assert recency_factor(30 * DAY, 30) == pytest.approx(0.5)
+    assert recency_factor(90 * DAY, 30) == pytest.approx(0.125)
+    assert recency_factor(-5 * DAY, 30) == 1.0  # clock skew counts as now
+
+
+def test_recency_factor_guard_rails():
+    # standing_instruction and glossary are durable conventions: never decay.
+    assert recency_factor(900 * DAY, 30, kind="standing_instruction") == 1.0
+    assert recency_factor(900 * DAY, 30, kind="glossary") == 1.0
+    # A note still rated useful or preferred is shielded, however old it is.
+    assert recency_factor(900 * DAY, 30, status="useful") == 1.0
+    assert recency_factor(900 * DAY, 30, status="preferred") == 1.0
+    # A plain note, or one gone cold, decays as usual.
+    assert recency_factor(30 * DAY, 30, kind="gotcha") == pytest.approx(0.5)
+    assert recency_factor(30 * DAY, 30, status="dead_end") == pytest.approx(0.5)
 
 
 # --- recording ----------------------------------------------------------------
@@ -315,6 +343,24 @@ def test_bad_half_life_keeps_default(store):
     assert load_config(store).knowledge_half_life_days == 30.0
 
 
+def test_recency_half_life_from_config(store):
+    # Off by default, and distinct from the outcome half-life.
+    assert load_config(store).knowledge_recency_half_life_days == 0.0
+    (store / ".cgh" / "config.toml").write_text(
+        "[cgh]\nknowledge_recency_half_life_days = 180\n", encoding="utf-8"
+    )
+    cfg = load_config(store)
+    assert cfg.knowledge_recency_half_life_days == 180.0
+    assert cfg.knowledge_half_life_days == 30.0  # the outcome decay is separate
+
+
+def test_bad_recency_half_life_keeps_default(store):
+    (store / ".cgh" / "config.toml").write_text(
+        '[cgh]\nknowledge_recency_half_life_days = "later"\n', encoding="utf-8"
+    )
+    assert load_config(store).knowledge_recency_half_life_days == 0.0
+
+
 # --- migration ----------------------------------------------------------------
 
 
@@ -399,6 +445,42 @@ def test_tool_reports_errors(store, tools):
     assert "error" in out
     out = json.loads(tools["knowledge_outcome"](verdict="nope", file_refs="a.py"))
     assert "verdict" in out["error"]
+
+
+def test_record_tool_reports_auto_supersede(store, tools):
+    old = knowledge_record(
+        "RO opens block",
+        "lock rule",
+        kind="gotcha",
+        tags="duckdb,lock,ro",
+        repo_root=store,
+    )
+    out = json.loads(
+        tools["knowledge_record"](
+            title="RO opens are fine",
+            body="en fait le lock ne bloque plus",
+            kind="gotcha",
+            tags="duckdb,lock,ro",
+            contradicts=old,
+        )
+    )
+    assert out["superseded"] == [old]
+    assert "note" in out and "suggest_supersedes" not in out
+
+
+def test_record_tool_suggests_tag_twin(store, tools):
+    old = knowledge_record(
+        "Alpha rule", "body", kind="gotcha", tags="alpha,beta,gamma", repo_root=store
+    )
+    out = json.loads(
+        tools["knowledge_record"](
+            title="Alpha rule v2", body="body", kind="gotcha", tags="alpha,beta,gamma"
+        )
+    )
+    # Tag overlap alone: a suggestion, never an auto-supersede.
+    assert "superseded" not in out
+    assert [c["id"] for c in out["suggest_supersedes"]] == [old]
+    assert "hint" in out
 
 
 def test_tool_search_and_list_show_outcome(store, tools):

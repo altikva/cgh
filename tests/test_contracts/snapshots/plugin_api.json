@@ -735,6 +735,12 @@
           "name": "symptom"
         },
         {
+          "annotation": "int",
+          "default": "0",
+          "kind": "POSITIONAL_OR_KEYWORD",
+          "name": "contradicts"
+        },
+        {
           "returns": "int"
         }
       ]

@@ -394,6 +394,13 @@ class CghConfig:
     # turns decay off.
     knowledge_half_life_days: float = 30.0
 
+    # Half-life, in days, of a knowledge note's own age: a note this old ranks
+    # half as high in search, on top of its outcome factor. Zero (the default)
+    # turns age decay off, so ranking is unchanged unless this is set. Distinct
+    # from the outcome half-life above; standing_instruction and glossary notes,
+    # and notes rated useful or preferred, never decay.
+    knowledge_recency_half_life_days: float = 0.0
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -509,6 +516,13 @@ def _apply_toml(config: CghConfig, data: dict) -> None:
         try:
             config.knowledge_half_life_days = max(
                 0.0, float(cg["knowledge_half_life_days"])
+            )
+        except (TypeError, ValueError):
+            pass  # a malformed value keeps the default rather than break loading
+    if "knowledge_recency_half_life_days" in cg:
+        try:
+            config.knowledge_recency_half_life_days = max(
+                0.0, float(cg["knowledge_recency_half_life_days"])
             )
         except (TypeError, ValueError):
             pass  # a malformed value keeps the default rather than break loading
@@ -655,6 +669,10 @@ max_file_size_kb = 500
 # Knowledge outcomes (knowledge_outcome) fade with age: a verdict this many
 # days old weighs half as much as a fresh one. 0 turns the decay off.
 # knowledge_half_life_days = 30
+# A knowledge note's own age can fade its search rank too, on top of its
+# outcome: a note this many days old ranks half as high. 0 (the default) is off.
+# standing_instruction and glossary notes, and notes rated useful, never decay.
+# knowledge_recency_half_life_days = 0
 
 [parsers]
 # Uncomment to restrict which parsers are active:

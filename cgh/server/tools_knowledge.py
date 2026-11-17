@@ -132,6 +132,7 @@ def register(mcp) -> None:
         file_refs: str = "",
         session_id: str = "",
         supersedes: int = 0,
+        contradicts: int = 0,
         namespace: str = "repo",
         ticket: str = "",
         author: str = "",
@@ -156,6 +157,9 @@ def register(mcp) -> None:
         session_id: optional, stamps the entry with the current session.
         supersedes: optional id of an entry this one replaces; the old
               entry stops appearing in searches and bundles.
+        contradicts: optional id of a live entry this note overturns. With tag
+              overlap it auto-supersedes that entry (reported as "superseded");
+              a tag-only look-alike is only suggested, never retired for you.
         namespace: logical scope the entry belongs to; defaults to "repo".
         ticket: issue or ticket the entry came from, e.g. "media#412".
         author: who recorded it; filled in from git user.name when left blank.
@@ -164,7 +168,12 @@ def register(mcp) -> None:
         symptom: a raw error line to remember this entry by; recorded as a
               normalised signature so a look-alike error recalls it.
         """
-        from cgh.state.call_log import git_user_name, repo_slug
+        from cgh.state.call_log import (
+            _VALID_KINDS,
+            git_user_name,
+            repo_slug,
+            supersede_candidates,
+        )
         from cgh.state.call_log import knowledge_record as _record
 
         # Provenance the session need not think about: fill author and
@@ -173,6 +182,18 @@ def register(mcp) -> None:
             author = git_user_name(_srv._root) or session_id
         if not origin_repo:
             origin_repo = repo_slug(_srv._root)
+
+        # Which live notes this one looks set to replace, read before the row
+        # exists. The strong half is auto-superseded by _record below; the weak
+        # half is only suggested so the agent decides.
+        cand = supersede_candidates(
+            _srv._root,
+            kind=kind if kind in _VALID_KINDS else "note",
+            tags=tags,
+            title=title,
+            body=body,
+            contradicts=contradicts,
+        )
 
         entry_id = _record(
             title=title,
@@ -183,6 +204,7 @@ def register(mcp) -> None:
             session_id=session_id,
             repo_root=_srv._root,
             supersedes=supersedes,
+            contradicts=contradicts,
             namespace=namespace,
             ticket=ticket,
             author=author,
@@ -199,7 +221,25 @@ def register(mcp) -> None:
             )
         except Exception:
             pass
-        return dumps_answer({"id": entry_id, "kind": kind, "title": title})
+        out: dict = {"id": entry_id, "kind": kind, "title": title}
+        superseded = [c["id"] for c in cand["strong"] if c["id"] != supersedes]
+        if superseded:
+            out["superseded"] = superseded
+            out["note"] = (
+                "Auto-retired "
+                + ", ".join(f"#{i}" for i in superseded)
+                + " (strong contradiction with tag overlap)."
+            )
+        if cand["weak"]:
+            out["suggest_supersedes"] = [
+                {"id": c["id"], "title": c["title"]} for c in cand["weak"]
+            ]
+            out["hint"] = (
+                "Looks like it replaces "
+                + ", ".join(f"#{c['id']}" for c in cand["weak"])
+                + "; to retire one, record again with supersedes=<id>."
+            )
+        return dumps_answer(out)
 
     @mcp.tool()
     @_logged_tool

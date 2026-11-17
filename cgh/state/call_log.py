@@ -529,6 +529,7 @@ def knowledge_record(
     ticket: str = "",
     author: str = "",
     symptom: str = "",
+    contradicts: int = 0,
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -549,6 +550,11 @@ def knowledge_record(
     normalised form is stored in symptom_norm for signature-based recall. All
     five default to the entry's current behaviour, so an existing caller that
     passes none of them is unaffected.
+
+    contradicts is the id of a live entry this note explicitly overturns. With
+    tag overlap it is a strong signal: the old entry is auto-superseded (the
+    ids returned via the module, see supersede_candidates). Weak matches (tag
+    overlap alone) are never retired here; the MCP layer only suggests them.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
@@ -602,6 +608,27 @@ def knowledge_record(
             "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
             (int(row_id), int(supersedes)),
         )
+    # Auto-retire the live notes this one strongly contradicts: same kind,
+    # tag overlap, and either an explicit contradicts=<id> or a corrected
+    # outcome already on the old note. Weak matches (tag overlap only) are
+    # left live; the MCP layer surfaces them as a suggestion instead.
+    if row_id:
+        for cand in supersede_candidates(
+            repo_root,
+            kind=kind,
+            tags=tags,
+            title=title or "",
+            body=body or "",
+            contradicts=contradicts,
+            exclude_id=int(row_id),
+        )["strong"]:
+            if cand["id"] == int(supersedes or 0):
+                continue
+            conn.execute(
+                "UPDATE knowledge SET superseded_by = ? "
+                "WHERE id = ? AND superseded_by IS NULL",
+                (int(row_id), cand["id"]),
+            )
     conn.commit()
     return int(row_id or 0)
 
@@ -609,6 +636,122 @@ def knowledge_record(
 # Tags that mark session state rather than knowledge: digests, checkpoints
 # (manual, compaction and auto) and IBM Bob's auto digests all carry one.
 _SESSION_STATE_TAGS = frozenset({"session-digest", "auto-checkpoint", "auto-digest"})
+
+
+# Auto-supersede detector. A new note can retire a live one it overturns, but
+# only on a strong, conservative signal (never by tag overlap alone).
+# Minimum Jaccard overlap of two notes' tag sets to read as the same subject.
+_SUPERSEDE_MIN_JACCARD = 0.6
+# Negation / reversal cues that mark a note as correcting an earlier one. A
+# soft signal on its own: it only raises a suggestion, never an auto-supersede.
+_CONTRADICTION_CUES = (
+    "ne marche pas",
+    "ne marche plus",
+    "ne fonctionne pas",
+    "ne fonctionne plus",
+    "en fait",
+    "faux",
+    "contrairement à",
+    "contrairement a",
+    "doesn't work",
+    "does not work",
+    "no longer",
+    "actually",
+    "contrary to",
+    "turns out",
+    "was wrong",
+)
+
+
+def _tag_set(tags: list[str] | str) -> set[str]:
+    """Lower-cased, de-duplicated tag tokens from a list or a comma/space
+    string."""
+    items = (
+        tags if isinstance(tags, list) else str(tags or "").replace(" ", ",").split(",")
+    )
+    return {t.strip().lower() for t in items if t and t.strip()}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _has_contradiction_cue(text: str) -> bool:
+    low = (text or "").lower()
+    return any(cue in low for cue in _CONTRADICTION_CUES)
+
+
+@_locked
+def supersede_candidates(
+    repo_root: str | Path | None = None,
+    *,
+    kind: str,
+    tags: list[str] | str = "",
+    title: str = "",
+    body: str = "",
+    contradicts: int = 0,
+    exclude_id: int = 0,
+) -> dict:
+    """Live notes a new entry looks set to replace, split into strong and weak.
+
+    A candidate shares the new note's ``kind`` and overlaps its tags
+    (Jaccard >= _SUPERSEDE_MIN_JACCARD), or is the explicit ``contradicts``
+    target. It is *strong* when the tag overlap holds **and** a hard signal
+    names it: an explicit ``contradicts=<id>`` or a ``corrected`` outcome
+    already on it. Those are what ``knowledge_record`` auto-supersedes. Tag
+    overlap alone, an explicit target below the overlap bar, or a negation cue
+    in the new text, is *weak*: a suggestion only.
+
+    Returns ``{"strong": [...], "weak": [...]}``; each item is
+    ``{id, title, jaccard, reason}``. Read-only, never mutates.
+    """
+    new_tags = _tag_set(tags)
+    if not new_tags and not contradicts:
+        return {"strong": [], "weak": []}
+    conn = _get_conn(repo_root)
+    cue = _has_contradiction_cue(f"{title}\n{body}")
+    corrected_ids = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT entry_id FROM knowledge_outcome "
+            "WHERE verdict = 'corrected' AND entry_id IS NOT NULL"
+        ).fetchall()
+    }
+    strong: list[dict] = []
+    weak: list[dict] = []
+    for row_id, row_title, row_tags in conn.execute(
+        "SELECT id, title, tags FROM knowledge "
+        "WHERE kind = ? AND superseded_by IS NULL",
+        (kind,),
+    ).fetchall():
+        row_id = int(row_id)
+        if exclude_id and row_id == exclude_id:
+            continue
+        if _tag_set(row_tags) & _SESSION_STATE_TAGS:
+            continue
+        jac = _jaccard(new_tags, _tag_set(row_tags))
+        explicit = bool(contradicts) and contradicts == row_id
+        corrected = row_id in corrected_ids
+        tag_match = jac >= _SUPERSEDE_MIN_JACCARD
+        if not tag_match and not explicit:
+            continue
+        item = {"id": row_id, "title": row_title or "", "jaccard": round(jac, 3)}
+        if tag_match and (explicit or corrected):
+            item["reason"] = "contradicts" if explicit else "corrected"
+            strong.append(item)
+            continue
+        reasons = []
+        if explicit:
+            reasons.append("contradicts flagged")
+        if tag_match:
+            reasons.append("tag overlap")
+        if cue:
+            reasons.append("negation cue")
+        item["reason"] = ", ".join(reasons) or "tag overlap"
+        weak.append(item)
+    return {"strong": strong, "weak": weak}
 
 
 def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
@@ -831,22 +974,48 @@ def knowledge_search(
     """
     conn = _get_conn(repo_root)
     search = _knowledge_recall if recall else _knowledge_search
-    if not (rank_outcomes and _has_outcomes(conn)):
+    use_outcomes = rank_outcomes and _has_outcomes(conn)
+    # Recency is a ranking factor, so rank_outcomes=False (an exact resolve of a
+    # query to one entry) opts out of it too, staying on pure relevance.
+    recency_hl = _recency_half_life_days(repo_root) if rank_outcomes else 0.0
+    # Default path: no outcomes to rank by and age decay off -> plain relevance,
+    # byte-for-byte the behaviour before age decay existed.
+    if not use_outcomes and recency_hl <= 0:
         return _cap_weak(search(conn, query, kind, limit), limit, recall)
-    from cgh.state.knowledge_outcomes import rank_factor
+    from cgh.state.knowledge_outcomes import rank_factor, recency_factor
 
-    entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
-    # Room for a well-rated entry just under the cut to move up.
+    now = time.time()
+    entries: dict = {}
+    if use_outcomes:
+        entries, _files = _outcome_scores(conn, now, _half_life_days(repo_root))
+    # Room for a well-rated or fresher entry just under the cut to move up.
     raw: list[float] = []
     hits = search(conn, query, kind, max(limit * 3, limit + 10), raw)
     # Rank on the unrounded relevance: on a small store BM25 scores are tiny
-    # and round to zero, which would erase the outcome factor.
-    adjusted = [
-        r * rank_factor(entries.get(h["id"])) for h, r in zip(hits, raw, strict=True)
-    ]
+    # and round to zero, which would erase the outcome and recency factors.
+    adjusted: list[float] = []
+    for h, r in zip(hits, raw, strict=True):
+        score = entries.get(h["id"])
+        factor = rank_factor(score)
+        if recency_hl > 0:
+            # origin_ts is preserved across promotion and equals ts for a
+            # native entry; it rides along only for promoted rows, so fall
+            # back to ts. standing_instruction, glossary and entries still
+            # rated useful/preferred are shielded from the age decay.
+            origin_ts = (
+                (h.get("provenance") or {}).get("origin_ts") or h.get("ts") or now
+            )
+            factor *= recency_factor(
+                now - origin_ts,
+                recency_hl,
+                kind=h.get("kind"),
+                status=score.status if score else None,
+            )
+        adjusted.append(r * factor)
     order = sorted(range(len(hits)), key=lambda i: -adjusted[i])  # stable on ties
     hits = [hits[i] | {"score": round(adjusted[i], 4)} for i in order[:limit]]
-    _attach_outcomes(hits, entries)
+    if use_outcomes:
+        _attach_outcomes(hits, entries)
     return _cap_weak(hits, limit, recall)
 
 
@@ -1266,6 +1435,20 @@ def _half_life_days(repo_root: str | Path | None) -> float:
         return float(load_config(repo_root).knowledge_half_life_days)
     except Exception:
         return DEFAULT_HALF_LIFE_DAYS
+
+
+def _recency_half_life_days(repo_root: str | Path | None) -> float:
+    """[cgh] knowledge_recency_half_life_days (a note's own age decay), or
+    0 (off) when the config cannot be read. Distinct from the outcome
+    half-life; scoring must never fail on a config problem."""
+    from cgh.state.knowledge_outcomes import DEFAULT_RECENCY_HALF_LIFE_DAYS
+
+    try:
+        from cgh.core.config import load_config
+
+        return float(load_config(repo_root).knowledge_recency_half_life_days)
+    except Exception:
+        return DEFAULT_RECENCY_HALF_LIFE_DAYS
 
 
 @_locked

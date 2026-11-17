@@ -18,6 +18,16 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   matching optional fields and fills `author` and `origin_repo` in when left
   blank. Backward compatible: old rows read back as `namespace=repo`, and a call
   that passes none of the new fields behaves exactly as before.
+- **Knowledge ranking fades old notes, and retires the ones it contradicts.**
+  Search can now weigh a note's own age, so stale notes stop ranking next to
+  fresh ones: `[cgh] knowledge_recency_half_life_days` halves a note's rank after
+  that many days, on top of its outcome factor. It is off by default (0), so
+  ranking is unchanged until set, and durable knowledge is spared either way:
+  `standing_instruction` and `glossary` notes, and notes still rated useful or
+  preferred, never decay. `knowledge_record` also detects when a new note
+  overturns a live one (same kind, overlapping tags): an explicit `contradicts`
+  id or a note already marked corrected auto-supersedes it, while a tag-only
+  look-alike is only suggested, never retired for you.
 - **`read_lines`, a bounded read counted as cgh (MCP tool + `cgh read`).**
   Reads a line range or a single symbol of a working-tree file server-side,
   so the common case (you already know the file and the range, after a lookup

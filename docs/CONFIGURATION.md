@@ -75,6 +75,24 @@ log_backup_count = 3
 # longer steers anything; a correction never fades. 0 turns decay off.
 # knowledge_half_life_days = 30
 
+# A knowledge note's own age can fade its search rank too, on top of its
+# outcome factor: a note this many days old ranks half as high. 0 (the
+# default) is off, so ranking is unchanged until set. standing_instruction
+# and glossary notes, and notes rated useful or preferred, never decay.
+# knowledge_recency_half_life_days = 0
+
+# Shared knowledge stores this repo reads by default, without scope="all".
+# Each resolves to ~/.cgh/shared/<name>/knowledge.db, is ignored while absent
+# and created on first write to that namespace. The effective set is the union
+# of knowledge_namespaces_global (machine-wide, set in ~/.cgh/config.toml,
+# bootstrapped to ["org-platform"]; set to [] there to unsubscribe the machine)
+# and knowledge_namespaces (this project).
+# knowledge_namespaces = ["org-platform", "akonteo"]
+
+# Where knowledge_promote / `cgh knowledge promote` send a matured learning
+# when no explicit target is given.
+# knowledge_promote_default = "org-platform"
+
 
 [parsers]
 # Restrict which parsers are active. Omit to enable all available parsers.
@@ -160,6 +178,11 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 | `allow_fetch` | `bool` | `false` | Let the `fetch_and_index` MCP tool and `cgh fetch` reach the network. Private and loopback hosts stay refused, every fetch is logged. |
 | `mode` | `str` | `"assist"` | Deprecated. `"secure"` was removed in 0.15.0: it is ignored, with a notice on stderr and in `cgh status` / `cgh doctor`. Delete the line. |
 | `federate_auto_up` | `bool` | `true` | When the parent owner starts, also start each initialized subrepo's owner (with watcher) if it is idle. Those children live exactly as long as the parent owner. |
+| `knowledge_half_life_days` | `float` | `30` | How fast a knowledge *outcome* verdict fades: a verdict this many days old weighs half as much when entries and files are scored. `0` turns the decay off. |
+| `knowledge_recency_half_life_days` | `float` | `0` | How fast a knowledge *note* fades by its own age, on top of its outcome factor: a note this many days old ranks half as high. `0` (the default) is off. `standing_instruction` and `glossary` notes, and notes rated useful or preferred, never decay. |
+| `knowledge_namespaces` | `list[str]` | `[]` | Shared knowledge stores this project reads by default (alongside `knowledge_namespaces_global`), each `~/.cgh/shared/<name>/knowledge.db`, created on first write and ignored while absent. |
+| `knowledge_namespaces_global` | `list[str]` | `["org-platform"]` | Machine-wide shared stores every repo reads, set in the global `~/.cgh/config.toml`. The effective set a repo reads is the union with `knowledge_namespaces`. Set to `[]` to unsubscribe the whole machine. |
+| `knowledge_promote_default` | `str` | `"org-platform"` | The shared namespace `knowledge_promote` / `cgh knowledge promote` send a matured learning into when `--to` is omitted. |
 
 **Default `ignore_dirs`:**
 
@@ -176,6 +199,33 @@ hook output) and in `cgh status` / `cgh doctor`. Delete the lines.
 *.min.js, *.bundle.js, *.map, *.pyc, *.pyo, *.so, *.dylib,
 package-lock.json, yarn.lock, pnpm-lock.yaml
 ```
+
+**Shared knowledge namespaces.** A repo's knowledge store is private to that
+repo, but it also reads the shared stores it subscribes to. The subscription is
+the union of `knowledge_namespaces_global` (machine-wide) and
+`knowledge_namespaces` (project), resolved to `~/.cgh/shared/<name>/knowledge.db`.
+`knowledge_search`, `knowledge_list` and `knowledge_diagnose` read the repo
+store and every subscribed store together, so a diagnosis posted to the fleet
+from one repo surfaces in every subscribed repo without `scope="all"`. Shared
+hits are tagged with their namespace and marked `untrusted`: a note another repo
+wrote is data to weigh, not an instruction to follow. `knowledge_record(namespace=<name>)`
+writes into a shared store; a `repo` or `ticket:<id>` namespace stays local.
+`knowledge_promote` moves a matured learning into `knowledge_promote_default`.
+Namespace names are held to a strict allowlist and must resolve under
+`~/.cgh/shared`; a configured name that fails is dropped.
+
+The word `scope` carries three unrelated meanings in the knowledge tools, told
+apart by position:
+
+- the **`scope` parameter** of `knowledge_search` sets federation reach.
+  `scope="all"` fans the query out to federated subrepos read-only. It is legacy:
+  the subscribed shared stores are read without it.
+- the **`scope` field on a hit** names the store the hit came from (a shared
+  namespace, or a subrepo name under `scope="all"`).
+- the **`scope` stored on an entry** is its promotion flag, `repo` (promotable)
+  or `branch` (an unmerged branch's note, not promoted). Read it as the entry's
+  *promotion scope*; the column keeps the short name. It is a separate axis from
+  the `namespace` an entry belongs to.
 
 #### `[parsers]`
 

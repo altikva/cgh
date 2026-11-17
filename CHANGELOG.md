@@ -84,6 +84,17 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   git-ignored or untracked paths, so an MCP client can never read a secret
   through it.
 
+### Documentation
+- **The knowledge tools and their config are documented, and the three senses
+  of `scope` pulled apart.** `MCP_TOOLS.md` now lists `knowledge_promote` and
+  `knowledge_diagnose` and the new `namespace`/`symptom`/provenance parameters;
+  `CONFIGURATION.md` documents `knowledge_namespaces`, `knowledge_namespaces_global`,
+  `knowledge_promote_default` and `knowledge_recency_half_life_days`. `scope` is
+  spelled out as three unrelated things: the `knowledge_search` parameter
+  (`"all"` is legacy, the shared stores read by default), the tag naming the
+  store a hit came from, and an entry's promotion flag (`repo`/`branch`), read
+  as its promotion scope without renaming the column.
+
 ### Changed
 - **Federation and siblings are one notion now.** `pattern_search(repo=, ref=)`
   and `file_at_ref` resolve the subrepos a workspace federates, not only repos

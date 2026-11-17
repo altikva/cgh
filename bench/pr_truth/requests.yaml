@@ -1,0 +1,82 @@
+repo: psf/requests
+pinned_sha: 3c7baaa05ab4aa49cc819ce3a819d260de19c157
+selection:
+  n: 10
+  rule: merged into main, 2-8 changed code files all of indexed languages, N most
+    recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 7505
+  merged_at: '2026-06-09T15:45:59Z'
+  merge_sha: 6f66281a1d6326b1b9c4ac09ca30de0fc4e6ef43
+  parent_sha: 6f205ff422bccd5e4c4fc0b64c5f3e7df5181db6
+  seed: tests/test_requests.py
+  truth:
+  - src/requests/_types.py
+  - src/requests/models.py
+- number: 7502
+  merged_at: '2026-06-08T20:52:51Z'
+  merge_sha: 6f205ff422bccd5e4c4fc0b64c5f3e7df5181db6
+  parent_sha: 661970d171d9c3e12e4c789c4768db647d8c4da0
+  seed: tests/test_requests.py
+  truth:
+  - src/requests/models.py
+- number: 7496
+  merged_at: '2026-06-04T17:20:34Z'
+  merge_sha: e50e5945294f79ee9ab4ec69de24d14f9b26a7ae
+  parent_sha: 3be097d450ee4ca8a2f9c1a3a58eb61ed19936b0
+  seed: src/requests/__init__.py
+  truth:
+  - src/requests/compat.py
+  - src/requests/help.py
+  - src/requests/models.py
+- number: 7441
+  merged_at: '2026-05-14T16:16:26Z'
+  merge_sha: 84d10f0be83e8f6aeca8a05230c52216431c4d0b
+  parent_sha: b7b549b54571d03950b16afd2d01bc6ff0348224
+  seed: src/requests/models.py
+  truth:
+  - src/requests/_types.py
+- number: 7431
+  merged_at: '2026-05-13T19:16:50Z'
+  merge_sha: e511bc72777a94c45d004e010c597925092e1efe
+  parent_sha: 5691f596134c2feb121e595c77a0178921fcce61
+  seed: src/requests/_types.py
+  truth:
+  - src/requests/models.py
+  - src/requests/sessions.py
+- number: 7433
+  merged_at: '2026-05-12T17:51:02Z'
+  merge_sha: 6404f345e562d962abe6700a1c357ec1e7e18232
+  parent_sha: 0b401c76b6e80a4eecf3c690085b2553f6e261ca
+  seed: tests/test_requests.py
+  truth:
+  - src/requests/models.py
+- number: 7427
+  merged_at: '2026-05-11T19:24:21Z'
+  merge_sha: a4f9a5999bdb9bf2d6e7c8aa973b28cacb17134f
+  parent_sha: 3816cfa1abd42dca21b9e837f26c59b246016aaf
+  seed: tests/test_utils.py
+  truth:
+  - src/requests/utils.py
+- number: 7426
+  merged_at: '2026-05-11T17:33:18Z'
+  merge_sha: 3816cfa1abd42dca21b9e837f26c59b246016aaf
+  parent_sha: b684dcb9bbf3aa557d1238e72062c4a29737dd1c
+  seed: src/requests/_types.py
+  truth:
+  - src/requests/utils.py
+- number: 7425
+  merged_at: '2026-05-11T16:14:13Z'
+  merge_sha: b684dcb9bbf3aa557d1238e72062c4a29737dd1c
+  parent_sha: dc9dbdfb3434c6e58d48fd102f93e5342308817e
+  seed: src/requests/_types.py
+  truth:
+  - src/requests/sessions.py
+- number: 7315
+  merged_at: '2026-05-10T21:41:25Z'
+  merge_sha: fd628095d7b9ddbf3e987d8a4bf0e6062768916f
+  parent_sha: e8d2c015eecda8273612dd4562425e00cd164ba5
+  seed: tests/test_adapters.py
+  truth:
+  - src/requests/adapters.py

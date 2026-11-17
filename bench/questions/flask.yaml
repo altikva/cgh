@@ -1,0 +1,71 @@
+# Fixed tier-1 questions for pallets/flask at the pinned SHA.
+#
+# Each question is answered two ways and the token cost compared:
+#   - cgh:  the stdout of the named cgh CLI call (lookup/callers are compact
+#           text; search emits --json). This is what a cgh-equipped agent
+#           reads to answer.
+#   - grep: the corpus a cgh-less agent would read, found with a fixed-string
+#           git grep for `grep_pattern` over tracked files. Published two ways,
+#           naive (whole hit files) and tight (+/-40 lines).
+#
+# `expect` is a repo-relative path substring that MUST appear in the cgh
+# answer for it to count as correct; the ratio is aggregated over correct
+# answers only. `word: false` makes the grep a substring match (used for the
+# broad keyword an agent would try on a concept question).
+questions:
+  - id: flask-locate-flask
+    kind: locate
+    cmd: lookup
+    arg: Flask
+    grep_pattern: Flask
+    expect: src/flask/app.py
+  - id: flask-locate-blueprint
+    kind: locate
+    cmd: lookup
+    arg: Blueprint
+    grep_pattern: Blueprint
+    expect: src/flask/blueprints.py
+  - id: flask-locate-send-file
+    kind: locate
+    cmd: lookup
+    arg: send_file
+    grep_pattern: send_file
+    expect: src/flask/helpers.py
+  - id: flask-locate-jsonify
+    kind: locate
+    cmd: lookup
+    arg: jsonify
+    grep_pattern: jsonify
+    expect: src/flask/json/__init__.py
+  - id: flask-locate-config
+    kind: locate
+    cmd: lookup
+    arg: Config
+    grep_pattern: Config
+    expect: src/flask/config.py
+  - id: flask-callers-url-for
+    kind: callers
+    cmd: callers
+    arg: url_for
+    grep_pattern: url_for
+    expect: src/flask/helpers.py
+  - id: flask-callers-get-flashed-messages
+    kind: callers
+    cmd: callers
+    arg: get_flashed_messages
+    grep_pattern: get_flashed_messages
+    expect: tests/test_basic.py
+  - id: flask-fts-session-serializer
+    kind: fts
+    cmd: search
+    arg: secure cookie session serializer
+    grep_pattern: serializer
+    word: false
+    expect: src/flask/sessions.py
+  - id: flask-fts-send-attachment
+    kind: fts
+    cmd: search
+    arg: send file attachment download name
+    grep_pattern: attachment
+    word: false
+    expect: src/flask/helpers.py

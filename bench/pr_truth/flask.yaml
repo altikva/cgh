@@ -1,0 +1,102 @@
+repo: pallets/flask
+pinned_sha: 49943b5a94413a530761350f04e896f76e8d620e
+selection:
+  n: 10
+  rule: merged into main, 2-8 changed code files all of indexed languages, N most
+    recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 6168
+  merged_at: '2026-10-07T13:56:06Z'
+  merge_sha: 728c5e440af704a786384159184f695cf04ecbe7
+  parent_sha: d73fa1cdcbd8b1465c151db8924ba58b1dd14e35
+  seed: tests/test_appctx.py
+  truth:
+  - src/flask/cli.py
+  - src/flask/helpers.py
+  - src/flask/sessions.py
+  - tests/test_basic.py
+  - tests/test_config.py
+  - tests/test_json_tag.py
+- number: 6133
+  merged_at: '2026-08-11T20:19:14Z'
+  merge_sha: d8eaaba824655046958d1a97f11780de460c3271
+  parent_sha: 3596b1ab61cea85edb8970e83ff61daa073facf8
+  seed: src/flask/sansio/scaffold.py
+  truth:
+  - tests/test_basic.py
+- number: 6096
+  merged_at: '2026-08-11T19:48:41Z'
+  merge_sha: 05e9c6bd630ecf4ec0ec884b1fc7901663737bc7
+  parent_sha: 514fc6b3e8402e4c646d5284e97a4f0ab50a7c4b
+  seed: tests/test_testing.py
+  truth:
+  - src/flask/app.py
+  - src/flask/testing.py
+  - tests/test_basic.py
+- number: 5928
+  merged_at: '2026-02-20T04:00:34Z'
+  merge_sha: c34d6e81fd8e405e6d4178bf24b364918811ef17
+  parent_sha: 7b0088693ece1bd3a9238a6fdf56ed8df7a4d43b
+  seed: tests/test_helpers.py
+  truth:
+  - src/flask/app.py
+  - src/flask/ctx.py
+  - src/flask/helpers.py
+  - tests/test_appctx.py
+  - tests/test_basic.py
+  - tests/test_blueprints.py
+  - tests/test_testing.py
+- number: 5917
+  merged_at: '2026-02-12T21:07:51Z'
+  merge_sha: 12e95c93b488725f80753f34b2e0d24838ca4646
+  parent_sha: d3b78fd18a8d9e224cb9ef58a23cec9b1ffc9ce9
+  seed: tests/test_basic.py
+  truth:
+  - src/flask/sansio/app.py
+  - tests/test_blueprints.py
+  - tests/test_cli.py
+  - tests/test_views.py
+- number: 5899
+  merged_at: '2026-01-25T03:53:12Z'
+  merge_sha: 4b8bde97d4fa3486e18dce21c3c5f75570d50164
+  parent_sha: 0292047b22c82921dcf165322d93a0b988328c2e
+  seed: src/flask/app.py
+  truth:
+  - src/flask/sansio/app.py
+- number: 5898
+  merged_at: '2026-01-25T01:18:35Z'
+  merge_sha: 809d5a8869d4ffe8656680b2438b10f7c8845613
+  parent_sha: eb58d862cc4a8f31a369b6e9ad1724e9e642f13f
+  seed: src/flask/helpers.py
+  truth:
+  - src/flask/sansio/app.py
+- number: 5818
+  merged_at: '2025-11-17T16:49:53Z'
+  merge_sha: 70d04b5a2620705011e65f79ccfd52caa86f5d6a
+  parent_sha: 88a65bb374e87a18816a780dbd4ae69d307aa85c
+  seed: src/flask/app.py
+  truth:
+  - src/flask/ctx.py
+  - src/flask/templating.py
+  - tests/test_reqctx.py
+  - tests/test_subclassing.py
+- number: 5736
+  merged_at: '2025-08-19T19:36:01Z'
+  merge_sha: ed1c9e953e2d67c0994e32e6c8d878291e36d4f7
+  parent_sha: 85c5d93cbd049c4bd0679c36fd1ddcae8c37b642
+  seed: src/flask/sansio/blueprints.py
+  truth:
+  - src/flask/sansio/app.py
+  - tests/test_blueprints.py
+  - tests/test_templating.py
+- number: 5731
+  merged_at: '2025-05-13T15:35:41Z'
+  merge_sha: a5f9742398c9429ef84ac8a57b0f3eb418394d9e
+  parent_sha: e7e53807766ef1470bce546716a675ded4b08597
+  seed: src/flask/typing.py
+  truth:
+  - src/flask/cli.py
+  - src/flask/json/provider.py
+  - src/flask/sansio/app.py
+  - tests/test_cli.py

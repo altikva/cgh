@@ -303,16 +303,33 @@ def _weak_spot_callout(t1: list[dict[str, Any]], t2: list[dict[str, Any]]) -> st
         rows_dep = [r for r in rows_all if r["recall_circular_sanity"] is not None]
         r_all = _aggregate(rows_all)["micro"]["recall"]
         r_dep = _aggregate(rows_dep)["micro"]["recall"] if rows_dep else float("nan")
-        note = ""
-        if lang == "typescript":
-            note = (
-                " — the announced weak spot. cgh locates TS symbols well (tier 1 "
-                "above), but its cross-package TS import and call resolution is the "
-                "least accurate of the set, so tier-2 recall is the lowest here. "
-                "Much of the all-PRs figure is also a seed-selection artifact: the "
-                "monorepo's largest-churn files are often `__tests__` specs with no "
-                "dependents."
-            )
+        notes = {
+            "typescript": (
+                " This is the announced weak spot. cgh locates TS symbols well "
+                "(tier 1 above), but its cross-package TS import and call "
+                "resolution is the least accurate of the set, so tier-2 recall is "
+                "near the bottom. Much of the all-PRs figure is also a "
+                "seed-selection artifact: the monorepo's largest-churn files are "
+                "usually `__tests__` specs with no resolved dependents, so 9 of 10 "
+                "seeds land in the leaf bucket; the one source seed that had "
+                "dependents scored recall 1.0."
+            ),
+            "javascript": (
+                " This is the weakest language here. cgh resolves almost no JS "
+                "import/call dependents for this repo, so the impact report "
+                "predicts nothing and recall is 0 on every PR. A real weak spot, "
+                "not a seed artifact."
+            ),
+            "go": (
+                " The Go import graph is sparse here: cgh builds few reverse-import "
+                "edges, so the circular/dependents bucket is empty even for source "
+                "seeds (they are not leaf/test files, the import graph just does "
+                "not resolve them). Call-edge prediction still recovers some "
+                "recall."
+            ),
+            "rust": " This is the strongest impact language in this set.",
+        }
+        note = notes.get(lang, "")
         lines.append(
             f"- **{lang}**: tier-2 recall {_fmt(r_all, 2)} over all PRs, "
             f"{_fmt(r_dep, 2)} over seeds with dependents ({len(rows_dep)} of "
@@ -420,13 +437,21 @@ All PRs, per repo (recall first):
 
 ### Split by seed: does the graph have anything to predict?
 
-The highest-churn seed heuristic sometimes lands on a **leaf or test file**,
-which has no reverse imports or calls, so the graph predicts ~nothing and
-precision and recall are both zero. That is a **seed-selection artifact**, not a
-cgh quality result, so the all-PRs row above understates the meaningful case.
-The split below separates **seeds with dependents** (the graph can predict
-something) from the leaf/test seeds, without dropping any PR: the full per-PR
-table further down still carries every row, losses included.
+The bucket boundary is the **circular/dependents** flag: a seed is "with
+dependents" when cgh's reverse-import walk from it is non-empty. The
+highest-churn seed heuristic often lands on a **leaf or test file** with no
+reverse imports, so the graph predicts ~nothing and recall is zero; that is a
+**seed-selection artifact**, not a cgh quality result, and the all-PRs row above
+understates the meaningful case. The split below separates the two without
+dropping any PR; the full per-PR table further down still carries every row,
+losses included.
+
+One caveat to read with it: the boundary is reverse-**import** edges only. For
+languages where cgh resolves few of those (Go and JavaScript here), even genuine
+source seeds fall in the leaf bucket, so that bucket is not purely leaf/test for
+those repos. The all-PRs recall still counts their call-edge predictions (Go
+reaches 0.15 that way), and the per-language table's `deps PRs` column shows
+where the import graph is sparse.
 
 {_tier2_split_table(t2)}
 

@@ -75,6 +75,13 @@ CODE_EXTS = INDEXED_EXTS | {
 
 DEFAULT_N = 10
 
+# Run every git op with hooks off. A machine may install a global
+# core.hooksPath whose post-checkout backgrounds `cgh _reindex_hook`; that
+# would grab the clone's graph write lock and race the read-only open the
+# impact report needs, which fails intermittently on large repos. This is
+# environment isolation, not product behaviour.
+_NO_HOOKS = ["-c", "core.hooksPath=/dev/null"]
+
 
 # ---------------------------------------------------------------------------
 # git plumbing over a clone
@@ -83,7 +90,7 @@ DEFAULT_N = 10
 
 def _git(clone: Path, *args: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", str(clone), *args],
+        ["git", "-C", str(clone), *_NO_HOOKS, *args],
         capture_output=True,
         text=True,
         timeout=_TIMEOUT,
@@ -256,7 +263,15 @@ def _impact_clone(name: str) -> Path:
     clone = primary.parent / f"{name}.impact"
     if not (clone / ".git").is_dir():
         subprocess.run(
-            ["git", "clone", "--local", "--no-hardlinks", str(primary), str(clone)],
+            [
+                "git",
+                *_NO_HOOKS,
+                "clone",
+                "--local",
+                "--no-hardlinks",
+                str(primary),
+                str(clone),
+            ],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,

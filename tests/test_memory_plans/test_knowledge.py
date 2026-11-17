@@ -112,3 +112,174 @@ class TestForget:
         from cgh.state.call_log import knowledge_forget
 
         assert knowledge_forget(9999) is False
+
+
+def _age_entry(store, entry_id: int, days: float) -> None:
+    """Push a knowledge row's own timestamps back, so recency decay sees it as
+    old without touching any outcome verdict's freshness."""
+    import time
+
+    import cgh.state.call_log as cl
+
+    conn = cl._get_conn(store)
+    old = time.time() - days * 86400.0
+    conn.execute(
+        "UPDATE knowledge SET ts = ?, origin_ts = ? WHERE id = ?",
+        (old, old, entry_id),
+    )
+    conn.commit()
+
+
+def _superseded_by(store, entry_id: int):
+    import cgh.state.call_log as cl
+
+    row = (
+        cl._get_conn(store)
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (entry_id,))
+        .fetchone()
+    )
+    return row[0] if row else None
+
+
+class TestRecencyDecay:
+    def test_off_by_default_keeps_old_notes(self, _fresh_call_log):
+        # No config: age decay is off, so an old note is not demoted for age.
+        from cgh.state.call_log import knowledge_record, knowledge_search
+
+        old = knowledge_record("Old", "overflow glitch", kind="gotcha", tags="overflow")
+        _age_entry(_fresh_call_log, old, 300)
+        knowledge_record("New", "overflow glitch", kind="gotcha", tags="overflow")
+        hits = knowledge_search("overflow glitch")
+        assert {h["title"] for h in hits} == {"Old", "New"}
+        # Equal relevance, decay off: the first-recorded (old) one is not sunk.
+        assert hits[0]["title"] == "Old"
+
+    def test_enabled_sinks_old_notes(self, _fresh_call_log):
+        store = _fresh_call_log
+        (store / ".cgh" / "config.toml").write_text(
+            "[cgh]\nknowledge_recency_half_life_days = 15\n", encoding="utf-8"
+        )
+        from cgh.state.call_log import knowledge_record, knowledge_search
+
+        old = knowledge_record("Old", "overflow glitch", kind="gotcha", tags="overflow")
+        _age_entry(store, old, 150)  # ten half-lives: all but buried
+        knowledge_record("New", "overflow glitch", kind="gotcha", tags="overflow")
+        hits = knowledge_search("overflow glitch", repo_root=store)
+        assert hits[0]["title"] == "New"
+        assert "Old" in {h["title"] for h in hits}
+
+    def test_spares_standing_instruction_and_glossary(self, _fresh_call_log):
+        store = _fresh_call_log
+        (store / ".cgh" / "config.toml").write_text(
+            "[cgh]\nknowledge_recency_half_life_days = 10\n", encoding="utf-8"
+        )
+        from cgh.state.call_log import knowledge_record, knowledge_search
+
+        si = knowledge_record(
+            "Rule", "overflow rule", kind="standing_instruction", tags="overflow"
+        )
+        gl = knowledge_record("Term", "overflow rule", kind="glossary", tags="overflow")
+        gt = knowledge_record("Bug", "overflow rule", kind="gotcha", tags="overflow")
+        for eid in (si, gl, gt):
+            _age_entry(store, eid, 120)  # all equally old
+        hits = knowledge_search("overflow rule", repo_root=store)
+        titles = [h["title"] for h in hits]
+        # The durable conventions keep their rank; the aged gotcha sinks last.
+        assert titles.index("Bug") == len(titles) - 1
+        assert set(titles[:2]) == {"Rule", "Term"}
+
+    def test_spares_notes_still_rated_useful(self, _fresh_call_log):
+        store = _fresh_call_log
+        (store / ".cgh" / "config.toml").write_text(
+            "[cgh]\nknowledge_recency_half_life_days = 10\n", encoding="utf-8"
+        )
+        from cgh.state.call_log import (
+            knowledge_outcome_record,
+            knowledge_record,
+            knowledge_search,
+        )
+
+        good = knowledge_record(
+            "Proven", "overflow fix", kind="gotcha", tags="overflow"
+        )
+        knowledge_outcome_record("useful", entry_id=good, repo_root=store)
+        cold = knowledge_record("Stale", "overflow fix", kind="gotcha", tags="overflow")
+        # Age both notes, but leave the fresh useful verdict on `good` untouched.
+        _age_entry(store, good, 120)
+        _age_entry(store, cold, 120)
+        hits = knowledge_search("overflow fix", repo_root=store)
+        assert hits[0]["title"] == "Proven"
+
+
+class TestAutoSupersede:
+    def test_explicit_contradicts_with_tags_auto_supersedes(self, _fresh_call_log):
+        store = _fresh_call_log
+        from cgh.state.call_log import knowledge_record, knowledge_search
+
+        old = knowledge_record(
+            "RO opens block", "old lock rule", kind="gotcha", tags="duckdb,lock,ro"
+        )
+        new = knowledge_record(
+            "RO opens are fine now",
+            "en fait, le lock ne bloque plus",
+            kind="gotcha",
+            tags="duckdb,lock,ro",
+            contradicts=old,
+        )
+        assert _superseded_by(store, old) == new
+        # A superseded note drops out of search.
+        assert old not in {h["id"] for h in knowledge_search("lock", repo_root=store)}
+
+    def test_corrected_outcome_with_tags_auto_supersedes(self, _fresh_call_log):
+        store = _fresh_call_log
+        from cgh.state.call_log import knowledge_outcome_record, knowledge_record
+
+        old = knowledge_record(
+            "Retry on 500", "retry webhooks", kind="gotcha", tags="webhook,retry"
+        )
+        knowledge_outcome_record("corrected", entry_id=old, repo_root=store)
+        new = knowledge_record(
+            "Do not retry",
+            "retry webhooks differently",
+            kind="gotcha",
+            tags="webhook,retry",
+        )
+        assert _superseded_by(store, old) == new
+
+    def test_tags_only_is_a_suggestion_not_auto(self, _fresh_call_log):
+        store = _fresh_call_log
+        from cgh.state.call_log import knowledge_record, supersede_candidates
+
+        old = knowledge_record(
+            "Alpha rule", "body", kind="gotcha", tags="alpha,beta,gamma"
+        )
+        cand = supersede_candidates(
+            store, kind="gotcha", tags="alpha,beta,gamma", title="New", body="body"
+        )
+        assert cand["strong"] == []
+        assert [c["id"] for c in cand["weak"]] == [old]
+        # Recording a tag-twin without an explicit signal leaves the old live.
+        knowledge_record(
+            "Alpha rule v2", "body", kind="gotcha", tags="alpha,beta,gamma"
+        )
+        assert _superseded_by(store, old) is None
+
+    def test_low_tag_overlap_is_no_candidate(self, _fresh_call_log):
+        store = _fresh_call_log
+        from cgh.state.call_log import knowledge_record, supersede_candidates
+
+        knowledge_record(
+            "Alpha", "b", kind="gotcha", tags="alpha,beta,gamma,delta,epsilon"
+        )
+        cand = supersede_candidates(store, kind="gotcha", tags="alpha,zeta", title="x")
+        assert cand["strong"] == [] and cand["weak"] == []
+
+    def test_different_kind_is_not_a_candidate(self, _fresh_call_log):
+        store = _fresh_call_log
+        from cgh.state.call_log import knowledge_record, supersede_candidates
+
+        knowledge_record("Deco", "b", kind="decision", tags="duckdb,lock,ro")
+        cand = supersede_candidates(
+            store, kind="gotcha", tags="duckdb,lock,ro", title="x"
+        )
+        assert cand["strong"] == [] and cand["weak"] == []

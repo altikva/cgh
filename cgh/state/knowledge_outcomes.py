@@ -26,6 +26,18 @@ VERDICTS = ("useful", "dead_end", "corrected")
 # [cgh] knowledge_half_life_days in config.toml.
 DEFAULT_HALF_LIFE_DAYS = 30.0
 
+# Days after which a note's own age halves its search rank. 0 turns the age
+# decay off, which is the default: ranking is unchanged unless [cgh]
+# knowledge_recency_half_life_days is set. Separate from the verdict half-life.
+DEFAULT_RECENCY_HALF_LIFE_DAYS = 0.0
+
+# Kinds that never fade with age: durable conventions, not time-bound facts.
+RECENCY_EXEMPT_KINDS = frozenset({"standing_instruction", "glossary"})
+# Outcome statuses that shield a note from age decay. A convention people keep
+# confirming stays near the top however old it is, so it is not buried just for
+# being old.
+RECENCY_EXEMPT_STATUS = frozenset({"preferred", "useful"})
+
 # Below this total weight (three half-lives for a single verdict) the verdicts
 # are too old to steer anything and the target reads as "faded". A correction
 # never fades: the entry was wrong, however long ago that was found.
@@ -151,6 +163,30 @@ def rank_factor(score: OutcomeScore | None) -> float:
     if score.status == "corrected":
         return 0.25
     return 1.0 + 0.5 * math.tanh(score.score)
+
+
+def recency_factor(
+    age_seconds: float,
+    half_life_days: float,
+    kind: str | None = None,
+    status: str | None = None,
+) -> float:
+    """Age-decay multiplier on a note's own search rank, apart from its outcome
+    verdicts. ``age_seconds`` is measured against the note's own timestamp
+    (origin_ts, preserved across promotion). A half-life of zero or less turns
+    it off (every note weighs 1), so ranking is unchanged by default.
+
+    Two guard-rails keep durable knowledge near the top: a standing_instruction
+    or glossary note never decays, and a note whose outcome reads preferred or
+    useful is shielded too, so a convention people keep confirming is not buried
+    for being old."""
+    if half_life_days <= 0:
+        return 1.0
+    if kind in RECENCY_EXEMPT_KINDS:
+        return 1.0
+    if status in RECENCY_EXEMPT_STATUS:
+        return 1.0
+    return decay_weight(age_seconds, half_life_days)
 
 
 def list_bucket(score: OutcomeScore | None) -> int:

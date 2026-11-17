@@ -497,6 +497,10 @@
       "body": {
         "type": "string"
       },
+      "contradicts": {
+        "default": 0,
+        "type": "integer"
+      },
       "file_refs": {
         "default": "",
         "type": "string"

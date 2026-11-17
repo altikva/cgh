@@ -25,6 +25,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 from cgh.core.log import configure_background_logging
+from cgh.core.timing import emit as _emit_timing
 from cgh.core.utils import short_path
 
 # ---------------------------------------------------------------------------
@@ -509,6 +510,11 @@ def main() -> None:
     """
     global _root
 
+    # First phase boundary: the gap from the caller's spawn of this process to
+    # here is the Python interpreter boot plus the proxy's own import cost, the
+    # part a native bridge would remove.
+    _emit_timing("proxy_enter")
+
     ap = argparse.ArgumentParser(description="cgh MCP server (proxy mode)")
     ap.add_argument("--root", default=os.getcwd(), help="Repo root (default: CWD)")
     ap.add_argument(
@@ -557,6 +563,11 @@ def main() -> None:
 
     configure_background_logging()
 
+    # Second boundary: the bridge setup (arg parse, ipc import, worker
+    # registration, logging) is done; owner discovery begins. Everything up to
+    # here is proxy overhead a native bridge removes.
+    _emit_timing("owner_discovery")
+
     # Start (or reuse) the shared owner. A live owner is reused only when it
     # is serving the installed version: one left running across a package
     # upgrade holds stale code that can fail on a lazy import, so restart it
@@ -582,9 +593,15 @@ def main() -> None:
             sys.exit(1)
         _log.info("owner up on port %s", port)
 
+    # Third boundary: the owner is up (spawned cold, or discovered warm) and
+    # the proxy is about to enter its stdin read loop. owner_discovery ->
+    # owner_ready is the engine startup; it is zero on the warm path.
+    _emit_timing("owner_ready")
+
     # Act as the stdio <-> HTTP bridge for this Claude session. Pass watch
     # so a mid-session owner death can be self-healed with the same
     # posture the session started with.
+    _emit_timing("bridge_ready")
     exit_code = proxy_stdio_to_http(port, repo_root=_root, watch=args.watch)
     sys.exit(exit_code)
 
@@ -636,6 +653,10 @@ def owner_main(
     Code never launches this directly.
     """
     global _root
+
+    # Engine entry: the gap from the proxy's spawn to here is the owner's own
+    # Python interpreter boot plus import of the full server module.
+    _emit_timing("owner_enter")
 
     _root = Path(root or os.getcwd()).resolve()
     # Pin the process to its own repo. Per-repo state (call_log, findings, fts)
@@ -706,6 +727,10 @@ def owner_main(
         except Exception as exc:
             # Unrecorded means the middleware lists every tool.
             _log.warning("[tools] exposure not applied: %s", exc)
+
+    # Engine boundary: auth + plugin registration done. The index runs in a
+    # background thread below, so it does not count against time-to-listen.
+    _emit_timing("owner_plugins_loaded")
 
     # Reindex + watcher (if requested)
     if _startup_index_needed(_root, reindex):
@@ -948,6 +973,10 @@ def owner_main(
     # BaseHTTPMiddleware is an ASGIApp factory, we can wrap with a Middleware
     # class from starlette.
     from starlette.middleware import Middleware
+
+    # Final engine boundary: handing off to uvicorn. The loopback socket starts
+    # accepting a few ms after this, which is when the proxy's owner_ready fires.
+    _emit_timing("owner_listening")
 
     mcp.run(
         transport="http",

@@ -26,6 +26,7 @@ from cgh.state.call_log import (
     knowledge_search_ro,
     reset_for_tests,
     shared_store_path,
+    valid_shared_namespace,
 )
 
 
@@ -96,7 +97,9 @@ def test_ticket_namespace_stays_in_the_repo_store(home):
         repo_root=root, namespace="ticket:x",
     )  # fmt: skip
     assert _get_conn(root).execute("SELECT count(*) FROM knowledge").fetchone()[0] == 1
-    assert not shared_store_path("ticket:x").exists()
+    # A ticket facet is never a shared store: it has no path under shared/.
+    assert not is_shared_namespace("ticket:x")
+    assert not (home / "home" / ".cgh" / "shared").exists()
 
 
 def test_shared_store_created_on_first_write_only(home):
@@ -205,3 +208,124 @@ def test_unsubscribe_via_empty_global(home):
 
     cfg = load_config(_repo(home))
     assert cfg.resolved_knowledge_namespaces() == []
+
+
+# ---------------------------------------------------------------------------
+# Security: name validation + path containment (F1 / F3)
+# ---------------------------------------------------------------------------
+
+
+def test_valid_shared_namespace_allowlist():
+    assert valid_shared_namespace("org-platform")
+    assert valid_shared_namespace("akonteo")
+    assert valid_shared_namespace("team.1_x")
+    # Traversal and separators are rejected.
+    assert not valid_shared_namespace("../../etc")
+    assert not valid_shared_namespace("a/b")
+    assert not valid_shared_namespace("a\\b")
+    assert not valid_shared_namespace(".hidden")
+    assert not valid_shared_namespace("UPPER")
+    assert not valid_shared_namespace("")
+
+
+@pytest.mark.parametrize("bad", ["../../etc", "a/b", "..", ".x", "x" * 65])
+def test_shared_store_path_refuses_traversal(home, bad):
+    with pytest.raises(ValueError):
+        shared_store_path(bad)
+
+
+def test_traversing_namespace_is_not_shared_and_never_builds_a_path(home):
+    # A traversal attempt is not classed as shared, so a write stays local and
+    # no file is created outside the shared root.
+    assert not is_shared_namespace("../../etc")
+
+
+def test_record_rejects_an_invalid_shared_namespace(home):
+    root = _repo(home)
+    with pytest.raises(ValueError):
+        knowledge_record("x", "y", kind="note", repo_root=root, namespace="a/b")
+
+
+def test_config_drops_unsafe_namespace_names(home):
+    global_dir = home / "home" / ".cgh"
+    global_dir.mkdir(parents=True)
+    (global_dir / "config.toml").write_text(
+        '[cgh]\nknowledge_namespaces_global = ["org-platform", "../../etc", "a/b"]\n',
+        encoding="utf-8",
+    )
+    from cgh.core.config import load_config
+
+    cfg = load_config(_repo(home))
+    # The unsafe names are silently dropped; the valid one survives.
+    assert cfg.resolved_knowledge_namespaces() == ["org-platform"]
+
+
+# ---------------------------------------------------------------------------
+# Security: durable-authority kinds may not be shared (F4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["standing_instruction", "glossary"])
+def test_shared_store_refuses_durable_authority_kinds(home, kind):
+    root = _repo(home)
+    with pytest.raises(ValueError):
+        knowledge_record(
+            "rule", "body", kind=kind, repo_root=root, namespace="org-platform"
+        )
+    # A standing_instruction stays recordable in the repo store.
+    kid = knowledge_record("rule", "body", kind=kind, repo_root=root)
+    assert kid > 0
+
+
+# ---------------------------------------------------------------------------
+# Security: a shared write may not retire another repo's row (F2)
+# ---------------------------------------------------------------------------
+
+
+def test_shared_supersede_is_refused_across_repos(home):
+    root_a = _repo(home, "repo-a")
+    root_b = _repo(home, "repo-b")
+    # repo-a owns a shared note.
+    a_id = knowledge_record(
+        "shared decision", "body A", kind="decision",
+        repo_root=root_a, namespace="org-platform", origin_repo="repo-a",
+    )  # fmt: skip
+    # repo-b tries to supersede repo-a's note in the same shared store.
+    knowledge_record(
+        "my version", "body B", kind="decision",
+        repo_root=root_b, namespace="org-platform", origin_repo="repo-b",
+        supersedes=a_id,
+    )  # fmt: skip
+    sp = shared_store_path("org-platform")
+    row = (
+        _get_conn_at_path(sp)
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (a_id,))
+        .fetchone()
+    )
+    assert row[0] is None  # repo-a's note was NOT retired by repo-b
+
+
+def test_shared_supersede_allowed_for_the_owning_repo(home):
+    root = _repo(home, "repo-a")
+    first = knowledge_record(
+        "shared decision", "old body", kind="decision",
+        repo_root=root, namespace="org-platform", origin_repo="repo-a",
+    )  # fmt: skip
+    knowledge_record(
+        "shared decision", "new body", kind="decision",
+        repo_root=root, namespace="org-platform", origin_repo="repo-a",
+        supersedes=first,
+    )  # fmt: skip
+    sp = shared_store_path("org-platform")
+    row = (
+        _get_conn_at_path(sp)
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (first,))
+        .fetchone()
+    )
+    assert row[0] is not None  # the owning repo may retire its own note
+
+
+def _get_conn_at_path(db_path):
+    from cgh.state.call_log import _get_conn_at
+
+    return _get_conn_at(db_path)

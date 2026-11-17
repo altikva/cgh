@@ -22,7 +22,14 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   namespace stays in the repo store. Both tools gain a `namespace=` filter to
   read a single store or facet. So a diagnosis posted to the fleet from one repo
   is visible from every subscribed repo without asking, and duplicates that a
-  promotion left in two stores collapse by origin.
+  promotion left in two stores collapse by origin. A shared store is a
+  cross-repo trust surface, so it is fenced: namespace names are held to a
+  strict allowlist and the resolved path must stay under `~/.cgh/shared`
+  (configured names that fail are dropped); a shared write may retire only a
+  note its own repo owns; `standing_instruction` and `glossary` cannot be
+  written to a shared store (they would read as cross-repo authority); and every
+  shared hit is tagged `untrusted` so it is weighed as data, not followed as an
+  instruction.
 - **Provenance and namespace on knowledge entries.** A recorded learning now
   carries where it came from (`origin_repo`, `ticket`, `author`) and the logical
   scope it belongs to (`namespace`, defaulting to `repo`), so a note can later be

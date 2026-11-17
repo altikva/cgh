@@ -140,3 +140,47 @@ def test_dedup_leaves_rows_without_an_origin_key_untouched():
     b = {"id": 2, "title": "b", "origin_repo": "r"}  # no origin_id
     out = _dedup_by_origin([a, b])
     assert out == [a, b]
+
+
+# ---------------------------------------------------------------------------
+# Security: shared hits are marked untrusted (F4)
+# ---------------------------------------------------------------------------
+
+
+def test_shared_search_hits_are_marked_untrusted(tools):
+    t, _ = tools
+    t["knowledge_record"](
+        title="fleet convention", body="handlers return an envelope",
+        kind="decision", namespace="org-platform",
+    )  # fmt: skip
+    t["knowledge_record"](
+        title="repo note", body="local handlers return an envelope", kind="decision"
+    )
+    out = json.loads(t["knowledge_search"](query="handlers"))
+    shared = next(h for h in out["hits"] if h["title"] == "fleet convention")
+    assert shared["untrusted"] is True
+    # A local repo hit carries no untrusted marker.
+    local = next(h for h in out["hits"] if h["title"] == "repo note")
+    assert "untrusted" not in local
+
+
+def test_shared_list_entries_are_marked_untrusted(tools):
+    t, _ = tools
+    t["knowledge_record"](
+        title="fleet convention", body="shared body",
+        kind="decision", namespace="org-platform",
+    )  # fmt: skip
+    out = json.loads(t["knowledge_list"]())
+    shared = next(e for e in out["entries"] if e["title"] == "fleet convention")
+    assert shared["untrusted"] is True
+
+
+def test_record_rejects_standing_instruction_in_shared_namespace(tools):
+    t, _ = tools
+    raw = t["knowledge_record"](
+        title="always do X",
+        body="rule",
+        kind="standing_instruction",
+        namespace="org-platform",
+    )
+    assert "error" in json.loads(raw)

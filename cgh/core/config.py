@@ -446,11 +446,16 @@ class CghConfig:
     def resolved_knowledge_namespaces(self) -> list[str]:
         """The shared knowledge stores this repo reads by default: the
         machine-wide fleet plus this repo's own subscriptions, de-duplicated
-        with order preserved (global first). Blank names are dropped."""
+        with order preserved (global first). A blank or unsafe name (one that
+        fails the shared-store allowlist, e.g. a path-traversal attempt in the
+        config) is dropped silently, so a configured namespace can never build
+        a path outside ~/.cgh/shared."""
+        from cgh.state.call_log import valid_shared_namespace
+
         out: list[str] = []
         for ns in (*self.knowledge_namespaces_global, *self.knowledge_namespaces):
             ns = (ns or "").strip()
-            if ns and ns not in out:
+            if ns and ns not in out and valid_shared_namespace(ns):
                 out.append(ns)
         return out
 

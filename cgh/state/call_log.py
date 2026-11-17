@@ -94,20 +94,49 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         return _init_conn(repo_root)
 
 
+# A shared namespace becomes a path segment under ~/.cgh/shared/, so its name
+# is held to a strict allowlist: lower-case start, then word / dot / dash, no
+# separator, no leading dot, no "..". This is the first line of defence against
+# a name like "../../etc" escaping the shared root; shared_store_path then
+# resolves the final path and refuses anything outside the root as well.
+_VALID_SHARED_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def valid_shared_namespace(name: str) -> bool:
+    """Whether ``name`` is a safe shared-store name: matches the allowlist and
+    carries no path-traversal token. Fails closed on anything else."""
+    n = (name or "").strip()
+    return bool(_VALID_SHARED_NAME_RE.match(n)) and ".." not in n and "/" not in n
+
+
 def shared_store_path(name: str) -> Path:
     """Path of a shared knowledge store: ``~/.cgh/shared/<name>/knowledge.db``.
-    GLOBAL_DIR is read at call time so a test that redirects it is honoured."""
+    GLOBAL_DIR is read at call time so a test that redirects it is honoured.
+
+    The name is validated against a strict allowlist and the resolved path is
+    verified to stay under ``~/.cgh/shared``; a traversal attempt raises
+    ValueError rather than touching a file outside the shared root."""
     import cgh.core.config as _config
 
-    return _config.GLOBAL_DIR / _SHARED_SUBDIR / name / _SHARED_FILE
+    if not valid_shared_namespace(name):
+        raise ValueError(f"invalid shared namespace name: {name!r}")
+    root = (_config.GLOBAL_DIR / _SHARED_SUBDIR).resolve()
+    path = (root / name / _SHARED_FILE).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"shared namespace escapes the shared root: {name!r}")
+    return path
 
 
 def is_shared_namespace(namespace: str) -> bool:
     """Whether a namespace lives in its own shared store rather than the local
     repo store. ``repo``, ``branch`` and any ``ticket:<id>`` facet stay in the
-    repo store; every other non-empty name routes to a shared store."""
+    repo store; every other non-empty name routes to a shared store. An invalid
+    name (fails the shared-name allowlist) is NOT treated as shared, so it can
+    never build a shared path."""
     ns = (namespace or "").strip()
-    return bool(ns) and ns not in ("repo", "branch") and not ns.startswith("ticket:")
+    if not ns or ns in ("repo", "branch") or ns.startswith("ticket:"):
+        return False
+    return valid_shared_namespace(ns)
 
 
 def _get_conn_at(db_file: str | Path) -> sqlite3.Connection:
@@ -606,6 +635,25 @@ def knowledge_record(
         scope = "repo"
     if not namespace:
         namespace = "repo"
+    ns_stripped = namespace.strip()
+    nonlocal_ns = (
+        bool(ns_stripped)
+        and ns_stripped not in ("repo", "branch")
+        and not ns_stripped.startswith("ticket:")
+    )
+    # A shared namespace must pass the strict name allowlist before it can
+    # become a path segment, and must not carry a durable-authority kind: a
+    # standing_instruction or glossary entry read by default across every
+    # subscribed repo would be cross-repo authority injection, so those kinds
+    # stay in the repo store.
+    if nonlocal_ns:
+        if not valid_shared_namespace(ns_stripped):
+            raise ValueError(f"invalid shared namespace name: {namespace!r}")
+        if kind in ("standing_instruction", "glossary"):
+            raise ValueError(
+                f"kind {kind!r} is not allowed in a shared namespace "
+                f"({ns_stripped!r}); it stays in the repo store"
+            )
     if isinstance(tags, list):
         tags = ",".join(t.strip() for t in tags if t and t.strip())
     if isinstance(file_refs, list):
@@ -652,17 +700,34 @@ def knowledge_record(
         ),
     )
     row_id = cur.lastrowid
+    shared = is_shared_namespace(namespace)
     # FTS mirror is now maintained by the AFTER INSERT trigger.
     if supersedes and row_id:
-        conn.execute(
-            "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
-            (int(row_id), int(supersedes)),
-        )
+        allowed = True
+        if shared:
+            # In a shared store a write may only retire a row of the SAME
+            # namespace that this repo owns (its origin_repo), so one repo's
+            # session cannot overwrite another's shared note.
+            tgt = conn.execute(
+                "SELECT origin_repo, namespace FROM knowledge WHERE id = ?",
+                (int(supersedes),),
+            ).fetchone()
+            allowed = bool(tgt) and tgt[1] == namespace and (
+                tgt[0] in (None, "", origin_repo or None)
+            )  # fmt: skip
+        if allowed:
+            conn.execute(
+                "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
+                (int(row_id), int(supersedes)),
+            )
     # Auto-retire the live notes this one strongly contradicts: same kind,
     # tag overlap, and either an explicit contradicts=<id> or a corrected
     # outcome already on the old note. Weak matches (tag overlap only) are
-    # left live; the MCP layer surfaces them as a suggestion instead.
-    if row_id:
+    # left live; the MCP layer surfaces them as a suggestion instead. Only in
+    # the repo store: the candidate scan reads the repo store, and a shared
+    # write must never auto-retire another repo's rows (it cannot verify
+    # ownership), so a shared namespace skips this entirely.
+    if row_id and not shared:
         for cand in supersede_candidates(
             repo_root,
             kind=kind,

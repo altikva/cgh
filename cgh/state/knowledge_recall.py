@@ -345,6 +345,8 @@ def shape_hits(hits: list[dict]) -> bool:
             brief["namespace"] = h["namespace"]
         if h.get("local_copy"):
             brief["local_copy"] = True
+        if h.get("untrusted"):
+            brief["untrusted"] = True
         h.clear()
         h.update(brief)
     return clipped_any

@@ -133,16 +133,26 @@ def _read_shared_namespaces(
     names: list[str], query: str, kind: str | None, limit: int
 ) -> list[dict]:
     """Read each named shared store read-only (an empty query lists it), tagging
-    every hit with the store it came from. A store absent on disk is skipped."""
-    from cgh.state.call_log import knowledge_search_ro, shared_store_path
+    every hit with the store it came from and marking it untrusted: a shared
+    hit was written by another repo or session, so it is data for the model to
+    weigh, never an instruction to follow. A store absent on disk, or a name
+    that fails the shared-store allowlist, is skipped."""
+    from cgh.state.call_log import (
+        knowledge_search_ro,
+        shared_store_path,
+        valid_shared_namespace,
+    )
 
     rows: list[dict] = []
     for ns in names:
+        if not valid_shared_namespace(ns):
+            continue
         for row in knowledge_search_ro(
             shared_store_path(ns), query, kind=kind, limit=limit, with_provenance=True
         ):
             row["namespace"] = ns
             row["scope"] = ns
+            row["untrusted"] = True
             rows.append(row)
     return rows
 
@@ -229,6 +239,7 @@ def register(mcp) -> None:
         from cgh.state.call_log import (
             _VALID_KINDS,
             git_user_name,
+            is_shared_namespace,
             repo_slug,
             supersede_candidates,
         )
@@ -243,32 +254,42 @@ def register(mcp) -> None:
 
         # Which live notes this one looks set to replace, read before the row
         # exists. The strong half is auto-superseded by _record below; the weak
-        # half is only suggested so the agent decides.
-        cand = supersede_candidates(
-            _srv._root,
-            kind=kind if kind in _VALID_KINDS else "note",
-            tags=tags,
-            title=title,
-            body=body,
-            contradicts=contradicts,
-        )
+        # half is only suggested so the agent decides. A shared-namespace write
+        # never auto-retires across repos, and the candidate scan reads the repo
+        # store, so it does not apply to a shared write.
+        if is_shared_namespace(namespace):
+            cand = {"strong": [], "weak": []}
+        else:
+            cand = supersede_candidates(
+                _srv._root,
+                kind=kind if kind in _VALID_KINDS else "note",
+                tags=tags,
+                title=title,
+                body=body,
+                contradicts=contradicts,
+            )
 
-        entry_id = _record(
-            title=title,
-            body=body,
-            kind=kind,
-            tags=tags,
-            file_refs=file_refs,
-            session_id=session_id,
-            repo_root=_srv._root,
-            supersedes=supersedes,
-            contradicts=contradicts,
-            namespace=namespace,
-            ticket=ticket,
-            author=author,
-            origin_repo=origin_repo,
-            symptom=symptom,
-        )
+        try:
+            entry_id = _record(
+                title=title,
+                body=body,
+                kind=kind,
+                tags=tags,
+                file_refs=file_refs,
+                session_id=session_id,
+                repo_root=_srv._root,
+                supersedes=supersedes,
+                contradicts=contradicts,
+                namespace=namespace,
+                ticket=ticket,
+                author=author,
+                origin_repo=origin_repo,
+                symptom=symptom,
+            )
+        except ValueError as exc:
+            # A rejected shared-namespace write (bad name, or a durable-authority
+            # kind that may not be shared): report it, do not write.
+            return dumps_answer({"error": str(exc)})
         try:
             from cgh.state.activity import log as _log
 
@@ -518,6 +539,7 @@ def register(mcp) -> None:
                 brief = list_brief(r)
                 brief["namespace"] = r.get("namespace")
                 brief["scope"] = r.get("scope")
+                brief["untrusted"] = True
                 brief_entries.append(brief)
             total += len(shared_rows)
         payload = {

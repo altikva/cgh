@@ -414,6 +414,11 @@ class CghConfig:
         default_factory=lambda: ["org-platform"]
     )
 
+    # Where `cgh knowledge promote` / knowledge_promote send a matured learning
+    # when no explicit target is given: the shared namespace it lands in, read
+    # across the fleet. Defaults to the broadest conventional store.
+    knowledge_promote_default: str = "org-platform"
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -563,6 +568,12 @@ def _apply_toml(config: CghConfig, data: dict) -> None:
         config.knowledge_namespaces_global = [
             str(n) for n in cg["knowledge_namespaces_global"]
         ]
+    if "knowledge_promote_default" in cg and isinstance(
+        cg["knowledge_promote_default"], str
+    ):
+        default_ns = cg["knowledge_promote_default"].strip()
+        if default_ns:
+            config.knowledge_promote_default = default_ns
 
     terraform = data.get("terraform", {})
     sources = terraform.get("module_sources") if isinstance(terraform, dict) else None

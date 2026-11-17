@@ -991,6 +991,13 @@ def supersede_candidates(
     return {"strong": strong, "weak": weak}
 
 
+def _retirable(tid: int, owned: set[int] | None) -> bool:
+    """Whether a promote run may supersede target row ``tid``: always in a
+    checkout (``owned`` is None), and only rows this repo owns in a shared
+    store."""
+    return owned is None or tid in owned
+
+
 def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
     """Map each entry id to the ids it replaced, directly or through a chain."""
     direct: dict[int, list[int]] = {}
@@ -1015,26 +1022,41 @@ def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
 @_locked
 def promote_knowledge(
     from_root: str | Path,
-    to_root: str | Path,
+    to_root: str | Path | None = None,
     *,
+    to_namespace: str = "",
     since_ts: float = 0.0,
     kinds: list[str] | None = None,
+    only_ids: list[int] | None = None,
+    tags_any: list[str] | None = None,
     include_plain_notes: bool = True,
     source_branch: str = "",
     source_commit: str = "",
     source_pr: str = "",
     source_session: str = "",
     source_worktree: str = "",
+    origin_repo: str = "",
     dry_run: bool = False,
 ) -> dict:
-    """Copy durable learnings from one store into another, the case being a
-    per-ticket worktree promoted into its main checkout at merge.
+    """Copy durable learnings from a repo store into another store, deduplicated
+    and with provenance preserved.
+
+    Two targets. ``to_root`` carries them into a second checkout, the case being
+    a per-ticket worktree promoted into its main checkout at merge. ``to_namespace``
+    carries them instead into a shared store (``~/.cgh/shared/<name>/knowledge.db``)
+    read across the fleet by default: this is the native ``knowledge promote``,
+    the matured decision moving ticket -> repo -> org. Exactly one is used; a
+    shared namespace must pass the shared-store allowlist.
 
     Carried: live (not superseded), ``scope='repo'`` entries (a NULL scope from
     before the column existed counts as repo) of the wanted kinds. Session
     digests and checkpoints never move. ``kinds`` replaces the default set
     outright; without it the durable kinds move, plus plain notes unless
-    ``include_plain_notes`` is False.
+    ``include_plain_notes`` is False. ``only_ids`` restricts to those source
+    entry ids; ``tags_any`` to entries carrying at least one of those tags.
+    A shared target refuses ``standing_instruction`` and ``glossary`` (durable
+    cross-repo authority stays in the repo store); those entries are reported
+    under ``refused_shared_kind`` and never written.
 
     Per entry, in order:
 
@@ -1048,42 +1070,76 @@ def promote_knowledge(
     - otherwise: inserted.
 
     Every inserted row carries provenance (branch, commit, PR, session,
-    worktree, origin id, origin timestamp, promoted_at). ``dry_run`` computes
-    the same outcome and writes nothing. Returns counts plus one line per
-    considered entry under ``entries``.
+    worktree, origin id, origin timestamp, promoted_at, plus origin_repo, and
+    the source entry's own ticket, author and symptom). In a shared store the
+    row is stamped with this repo's server-derived owner, and a supersede only
+    retires a row this repo already owns there, never another repo's. ``dry_run``
+    computes the same outcome and writes nothing. Returns counts plus one line
+    per considered entry under ``entries``.
     """
+    shared = bool(to_namespace)
+    if shared:
+        if not is_shared_namespace(to_namespace):
+            raise ValueError(
+                f"{to_namespace!r} is not a shared namespace; promote targets a "
+                f"shared store (org-platform or a named fleet) or a checkout root"
+            )
+    elif to_root is None:
+        raise ValueError("promote_knowledge needs a target: to_root or to_namespace")
+
     if kinds:
         wanted = set(kinds)
     else:
         wanted = set(_PROMOTABLE_KINDS) | ({"note"} if include_plain_notes else set())
+    only = {int(i) for i in only_ids} if only_ids is not None else None
+    tagwanted = (
+        {t.strip().lower() for t in tags_any if t and t.strip()}
+        if tags_any is not None
+        else None
+    )
     worktree = source_worktree or str(Path(from_root).resolve())
+    origin_repo = origin_repo or repo_slug(from_root)
 
     src = _get_conn(from_root)
     cols = (
-        "id, title, body, kind, tags, file_refs, session_id, ts, scope, superseded_by"
+        "id, title, body, kind, tags, file_refs, session_id, ts, scope, "
+        "superseded_by, ticket, author, symptom"
     )
     all_rows = src.execute(f"SELECT {cols} FROM knowledge ORDER BY ts ASC").fetchall()
     by_id = {r[0]: r for r in all_rows}
     chains = _supersede_chain(src)
 
-    tgt = _get_conn(to_root)
+    # Target store: the shared store file for a namespace, else the checkout.
+    # A shared write is attributed to this repo's collision-resistant owner.
+    owner = repo_owner_id(from_root) if shared else None
+    tgt = (
+        _get_conn_at(shared_store_path(to_namespace)) if shared else _get_conn(to_root)
+    )
     # Every target row, superseded ones included: a re-run must not resurrect
-    # an entry the target has since replaced.
+    # an entry the target has since replaced. owned_targets is the subset this
+    # repo may retire in a shared store (None = a checkout, where all apply).
     content_rows: dict[tuple, list[tuple[int, bool]]] = {}
     origin_rows: dict[int, list[tuple[int, bool]]] = {}
-    for tid, kind, title, body, sup, oid, wt, br in tgt.execute(
+    owned_targets: set[int] | None = set() if shared else None
+    for tid, kind, title, body, sup, oid, wt, br, row_owner, row_ns in tgt.execute(
         "SELECT id, kind, title, body, superseded_by, origin_id, source_worktree, "
-        "source_branch FROM knowledge"
+        "source_branch, owner, namespace FROM knowledge"
     ).fetchall():
         content_rows.setdefault((kind, title, body), []).append((tid, sup is None))
-        if oid is not None and wt == worktree and (br or "") == source_branch:
+        own = owned_targets is None or (
+            bool(owner) and row_owner == owner and row_ns == to_namespace
+        )
+        if own and owned_targets is not None:
+            owned_targets.add(int(tid))
+        if oid is not None and wt == worktree and (br or "") == source_branch and own:
             origin_rows.setdefault(int(oid), []).append((tid, sup is None))
 
-    copied = superseded = skipped = considered = 0
+    copied = superseded = skipped = considered = refused = 0
     entries: list[dict] = []
     next_fake_id = -1  # dry-run stand-in ids, never written
     for row in all_rows:
-        sid, title, body, kind, tags, file_refs, sess, ts, scope, sup = row
+        (sid, title, body, kind, tags, file_refs, sess, ts, scope, sup,
+         ticket, author, symptom) = row  # fmt: skip
         if sup is not None:
             continue
         tagset = {t.strip() for t in (tags or "").split(",") if t.strip()}
@@ -1093,27 +1149,39 @@ def promote_knowledge(
             continue
         if kind not in wanted:
             continue
+        if only is not None and sid not in only:
+            continue
+        if tagwanted is not None and not ({t.lower() for t in tagset} & tagwanted):
+            continue
         if (ts or 0.0) < since_ts:
             continue
+        line = {"source_id": sid, "kind": kind, "title": title}
+
+        # A shared store never takes a durable cross-repo-authority kind.
+        if shared and kind in ("standing_instruction", "glossary"):
+            refused += 1
+            entries.append({**line, "action": "refused_shared_kind"})
+            continue
+
         considered += 1
         content = (kind, title, body)
-        line = {"source_id": sid, "kind": kind, "title": title}
 
         if content in content_rows:
             skipped += 1
             entries.append({**line, "action": "duplicate"})
             continue
 
-        # Live target copies of the entries this one replaced.
+        # Live target copies of the entries this one replaced (only rows this
+        # repo owns, in a shared store).
         replaces: list[int] = []
         for old_id in chains.get(sid, []):
             for tid, live in origin_rows.get(old_id, []):
-                if live and tid not in replaces:
+                if live and tid not in replaces and _retirable(tid, owned_targets):
                     replaces.append(tid)
             old = by_id.get(old_id)
             if old is not None:
                 for tid, live in content_rows.get((old[3], old[1], old[2]), []):
-                    if live and tid not in replaces:
+                    if live and tid not in replaces and _retirable(tid, owned_targets):
                         replaces.append(tid)
 
         if dry_run:
@@ -1126,7 +1194,7 @@ def promote_knowledge(
                 kind=kind,
                 tags=tags or "",
                 file_refs=file_refs or "",
-                repo_root=to_root,
+                repo_root=from_root if shared else to_root,
                 scope="repo",
                 source_branch=source_branch,
                 source_commit=source_commit,
@@ -1136,6 +1204,11 @@ def promote_knowledge(
                 promoted_at=time.time(),
                 source_worktree=worktree,
                 origin_id=sid,
+                namespace=to_namespace if shared else "repo",
+                origin_repo=origin_repo,
+                ticket=ticket or "",
+                author=author or "",
+                symptom=symptom or "",
             )
             if replaces:
                 tgt.executemany(
@@ -1151,6 +1224,9 @@ def promote_knowledge(
                 view[:] = [(rid, live and rid not in gone) for rid, live in view]
         content_rows.setdefault(content, []).append((new_id, True))
         origin_rows.setdefault(sid, []).append((new_id, True))
+        # A row this repo just wrote to the shared store is ours to retire too.
+        if owned_targets is not None and new_id > 0:
+            owned_targets.add(new_id)
 
         if replaces:
             superseded += 1
@@ -1165,7 +1241,7 @@ def promote_knowledge(
     if dry_run:
         for e in entries:
             e.pop("target_id", None)
-    return {
+    result = {
         "promoted": copied + superseded,
         "copied": copied,
         "superseded": superseded,
@@ -1174,6 +1250,10 @@ def promote_knowledge(
         "dry_run": dry_run,
         "entries": entries,
     }
+    if shared:
+        result["target_namespace"] = to_namespace
+        result["refused_shared_kind"] = refused
+    return result
 
 
 def knowledge_export(repo_root: str | Path | None = None) -> list[dict]:

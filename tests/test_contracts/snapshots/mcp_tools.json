@@ -510,6 +510,31 @@
       "verdict"
     ]
   },
+  "knowledge_promote": {
+    "properties": {
+      "dry_run": {
+        "default": false,
+        "type": "boolean"
+      },
+      "entry_id": {
+        "default": "",
+        "type": "string"
+      },
+      "since": {
+        "default": "",
+        "type": "string"
+      },
+      "tags": {
+        "default": "",
+        "type": "string"
+      },
+      "to": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "knowledge_record": {
     "properties": {
       "author": {

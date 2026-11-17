@@ -211,6 +211,49 @@ def _dedup_by_origin(hits: list[dict]) -> list[dict]:
     return out
 
 
+def _git_head(root) -> tuple[str, str]:
+    """Best-effort (branch, short commit) at ``root`` for promote provenance;
+    empty strings on any failure, never raises."""
+    import subprocess
+
+    def _read(*args: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    if root is None:
+        return "", ""
+    return _read("rev-parse", "--abbrev-ref", "HEAD"), _read(
+        "rev-parse", "--short", "HEAD"
+    )
+
+
+def _parse_since(value: str) -> float:
+    """A --since value as an epoch float: a bare number, or an ISO date/time
+    (UTC when it carries no zone). 0.0 for empty or unparseable input."""
+    value = (value or "").strip()
+    if not value:
+        return 0.0
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        from cgh.state.knowledge_transfer import parse_time
+
+        return float(parse_time(value))
+    except Exception:
+        return 0.0
+
+
 def _mark_shared(rows: list[dict], ns: str) -> list[dict]:
     """Namespace a shared store's hits and mark them untrusted: a shared id is
     non-reusable, and a shared diagnosis is data to weigh, not an instruction."""
@@ -1004,3 +1047,81 @@ def register(mcp) -> None:
                 "title": title or f"Session digest {session_id}",
             }
         )
+
+    @mcp.tool()
+    @_logged_tool
+    def knowledge_promote(
+        entry_id: str = "",
+        since: str = "",
+        tags: str = "",
+        to: str = "",
+        dry_run: bool = False,
+    ) -> str:
+        """
+        Promote matured learnings from this repo's store into a shared store
+        read across the fleet by default, so a decision taken here is visible
+        from every subscribed repo without scope="all". The ticket -> repo ->
+        org step: promote once the learning has settled, not a draft.
+
+        Selection (combine freely; empty = the durable kinds plus plain notes):
+          entry_id: comma-separated source entry ids to promote, e.g. "12,15".
+          since: only entries at or after this time (epoch, or an ISO date).
+          tags: comma-separated; keep entries carrying at least one of them.
+
+        to: the shared namespace to promote into; defaults to this repo's
+            configured knowledge_promote_default ("org-platform" otherwise).
+        dry_run: report what would move and write nothing.
+
+        Each promoted row keeps its origin (repo, ticket, author, timestamp,
+        branch/commit/PR) and is attributed to this repo's owner in the shared
+        store; a re-run is idempotent. standing_instruction and glossary entries
+        are never shared and are reported under refused_shared_kind.
+        """
+        from cgh.state.call_log import promote_knowledge, repo_slug
+
+        root = _srv._root
+        if root is None:
+            return dumps_answer({"error": "no repo is open"})
+
+        target = (to or "").strip()
+        if not target:
+            try:
+                from cgh.core.config import load_config
+
+                target = load_config(root).knowledge_promote_default
+            except Exception:
+                target = "org-platform"
+            target = target or "org-platform"
+
+        id_tokens = (entry_id or "").replace(" ", ",").split(",")
+        ids = [int(x) for x in id_tokens if x.strip().isdigit()]
+        tag_list = [
+            t.strip() for t in (tags or "").replace(" ", ",").split(",") if t.strip()
+        ]
+        branch, commit = _git_head(root)
+
+        try:
+            result = promote_knowledge(
+                root,
+                to_namespace=target,
+                since_ts=_parse_since(since),
+                only_ids=ids or None,
+                tags_any=tag_list or None,
+                source_branch=branch,
+                source_commit=commit,
+                origin_repo=repo_slug(root),
+                dry_run=bool(dry_run),
+            )
+        except ValueError as exc:
+            return dumps_answer({"error": str(exc)})
+        try:
+            from cgh.state.activity import log as _log
+
+            _log(
+                root,
+                "knowledge_promote",
+                f"to={target} promoted={result.get('promoted')} dry_run={dry_run}",
+            )
+        except Exception:
+            pass
+        return dumps_answer(result)

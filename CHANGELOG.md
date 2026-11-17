@@ -43,6 +43,16 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   written to a shared store (they would read as cross-repo authority); and every
   shared hit is tagged `untrusted` so it is weighed as data, not followed as an
   instruction.
+- **Native `knowledge promote` into a shared store.** `knowledge_promote` (MCP)
+  and `cgh knowledge promote` now carry matured learnings from a repo into a
+  shared fleet namespace (`--to`, defaulting to `[cgh] knowledge_promote_default`,
+  itself `org-platform`), the ticket -> repo -> org step that replaces the
+  hand-rolled promote scripts. Select with `entry_id`/`--since`/`--tags`, preview
+  with `dry_run`; each promoted row keeps its full origin (repo, ticket, author,
+  symptom, branch, commit, timestamp) and is stamped with the promoting repo's
+  owner, so a re-run is idempotent and a supersede only retires a row that repo
+  already owns. `standing_instruction` and `glossary` are never shared. `--to`
+  with a path still promotes a worktree into its main checkout as before.
 - **Provenance and namespace on knowledge entries.** A recorded learning now
   carries where it came from (`origin_repo`, `ticket`, `author`) and the logical
   scope it belongs to (`namespace`, defaulting to `repo`), so a note can later be

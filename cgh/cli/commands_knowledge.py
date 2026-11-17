@@ -4,15 +4,18 @@
 # __copyright__ = "Copyright 2026 ALTIKVA."
 # __licence__ = "Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
 # -#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Description: `cgh knowledge promote`: carry durable learnings from a per-ticket
-#              worktree's store into its main checkout at merge, so a torn-down
-#              worktree does not take its knowledge with it. Only repo-scoped
-#              real learnings move (session digests and auto-checkpoints never
-#              do), deduplicated on exact title+body against the target, with
-#              origin timestamp and provenance (branch, commit, PR, session)
-#              preserved. A revised entry supersedes its earlier copy; --archive
-#              dumps the whole source store first. Wraps
-#              call_log.promote_knowledge.
+# Description: `cgh knowledge promote`: carry matured learnings from this repo's
+#              store into a shared store read across the fleet (the default
+#              target, a namespace under ~/.cgh/shared), or into a main checkout
+#              at merge when --to names a path (the worktree->main case, so a
+#              torn-down worktree does not take its knowledge with it). Only
+#              repo-scoped real learnings move (session digests and
+#              auto-checkpoints never do), deduplicated on exact title+body
+#              against the target, with origin timestamp and provenance (repo,
+#              ticket, author, branch, commit, PR, session) preserved. A shared
+#              target refuses standing_instruction/glossary. A revised entry
+#              supersedes its earlier copy; --archive dumps the whole source
+#              store first. Wraps call_log.promote_knowledge.
 #              `cgh knowledge outcome` records whether relying on an entry or
 #              a file worked (useful, dead_end, corrected); `cgh knowledge
 #              outcomes` shows the derived standing of rated entries and files.
@@ -41,20 +44,31 @@ def register_knowledge_parser(sub) -> None:
     ksub = kp.add_subparsers(dest="knowledge_cmd")
     pr = ksub.add_parser(
         "promote",
-        help="Promote a worktree's learnings into its main checkout at merge",
+        help="Promote matured learnings into a shared store (or a main checkout)",
     )
     pr.add_argument(
         "--from",
         dest="from_",
         default=".",
-        help="Source worktree root (default: the current directory)",
+        help="Source repo/worktree root (default: the current directory)",
     )
-    pr.add_argument("--to", dest="to", required=True, help="Target checkout root")
+    pr.add_argument(
+        "--to",
+        dest="to",
+        default="",
+        help="Target: a shared namespace read across the fleet (default: the "
+        "repo's knowledge_promote_default, else org-platform), or a checkout "
+        "path for a worktree->main promotion",
+    )
     pr.add_argument(
         "--since",
-        type=float,
-        default=0.0,
-        help="Only entries with ts >= this epoch value (default: all)",
+        default="",
+        help="Only entries at or after this time (epoch or ISO date; default: all)",
+    )
+    pr.add_argument(
+        "--tags",
+        default="",
+        help="Comma-separated; promote only entries carrying at least one of them",
     )
     pr.add_argument(
         "--kinds",
@@ -418,53 +432,106 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
         return
     if sub != "promote":
         console.print(
-            "[yellow]Usage:[/yellow] cgh knowledge promote --to <checkout> | "
+            "[yellow]Usage:[/yellow] cgh knowledge promote [--to <namespace|checkout>] "
+            "[--since T] [--tags ...] [--dry-run] | "
             "outcome <verdict> [--id N | --query Q] [--file F] | outcomes | "
             "export [--before-commit REV] [--exclude-tag GLOB] | import [FILE]"
         )
         raise SystemExit(2)
 
-    from cgh.state.call_log import promote_knowledge
+    from cgh.state.call_log import is_shared_namespace, promote_knowledge, repo_slug
 
     as_json = bool(getattr(args, "json", False))
     from_root = Path(os.path.abspath(args.from_)).resolve()
-    to_root = Path(os.path.abspath(args.to)).resolve()
     if not (state_dir_for(from_root) / "call_log.db").exists():
         _fail(f"No knowledge store under {from_root}", as_json)
-    if not (state_dir_for(to_root)).exists():
-        _fail(f"No .cgh store under {to_root}", as_json)
-    if from_root == to_root:
-        _fail("--from and --to are the same checkout", as_json)
 
+    since_ts = 0.0
+    since_val = str(getattr(args, "since", "") or "").strip()
+    if since_val:
+        from cgh.state.knowledge_transfer import KnowledgeTransferError, parse_time
+
+        try:
+            since_ts = parse_time(since_val)
+        except KnowledgeTransferError as exc:
+            _fail(f"--since: {exc}", as_json)
+    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()] or None
+    tags_val = str(getattr(args, "tags", "") or "")
+    tag_list = [t.strip() for t in tags_val.split(",") if t.strip()] or None
     branch = args.branch or _git(from_root, "rev-parse", "--abbrev-ref", "HEAD")
     commit = args.commit or _git(from_root, "rev-parse", "--short", "HEAD")
-    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()] or None
+
+    # A --to that names a filesystem path promotes into that checkout (the
+    # worktree->main case); anything else is a shared namespace, the default.
+    to_arg = (args.to or "").strip()
+    sep_hit = os.sep in to_arg or bool(os.altsep and os.altsep in to_arg)
+    is_checkout = bool(to_arg) and (sep_hit or Path(to_arg).is_dir())
 
     archived: dict | None = None
     if getattr(args, "archive", ""):
         path, n = _archive(from_root, Path(os.path.abspath(args.archive)), branch)
         archived = {"path": str(path), "rows": n}
 
-    result = promote_knowledge(
-        from_root,
-        to_root,
-        since_ts=args.since,
-        kinds=kinds,
-        include_plain_notes=not args.no_notes,
-        source_branch=branch,
-        source_commit=commit,
-        source_pr=args.pr,
-        source_session=args.session,
-        source_worktree=str(from_root),
-        dry_run=bool(getattr(args, "dry_run", False)),
-    )
+    if is_checkout:
+        to_root = Path(os.path.abspath(to_arg)).resolve()
+        if not (state_dir_for(to_root)).exists():
+            _fail(f"No .cgh store under {to_root}", as_json)
+        if from_root == to_root:
+            _fail("--from and --to are the same checkout", as_json)
+        result = promote_knowledge(
+            from_root,
+            to_root,
+            since_ts=since_ts,
+            kinds=kinds,
+            tags_any=tag_list,
+            include_plain_notes=not args.no_notes,
+            source_branch=branch,
+            source_commit=commit,
+            source_pr=args.pr,
+            source_session=args.session,
+            source_worktree=str(from_root),
+            origin_repo=repo_slug(from_root),
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
+        target_label = to_root.name
+        target_key: dict = {"to": str(to_root)}
+    else:
+        from cgh.core.config import load_config
+
+        namespace = to_arg
+        if not namespace:
+            try:
+                namespace = load_config(from_root).knowledge_promote_default
+            except Exception:
+                namespace = "org-platform"
+            namespace = namespace or "org-platform"
+        if not is_shared_namespace(namespace):
+            _fail(f"{namespace!r} is not a valid shared namespace", as_json)
+        result = promote_knowledge(
+            from_root,
+            to_namespace=namespace,
+            since_ts=since_ts,
+            kinds=kinds,
+            tags_any=tag_list,
+            include_plain_notes=not args.no_notes,
+            source_branch=branch,
+            source_commit=commit,
+            source_pr=args.pr,
+            source_session=args.session,
+            source_worktree=str(from_root),
+            origin_repo=repo_slug(from_root),
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
+        target_label = namespace
+        target_key = {"to_namespace": namespace}
+
     if as_json:
         print(
             json.dumps(
                 {
                     **result,
                     "from": str(from_root),
-                    "to": str(to_root),
+                    **target_key,
                     "branch": branch,
                     "commit": commit,
                     "pr": args.pr or None,
@@ -479,10 +546,16 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
     if archived:
         console.print(f"Archived {archived['rows']} row(s) to {archived['path']}")
     verb = "Would promote" if result["dry_run"] else "Promoted"
-    console.print(
-        f"[green]{verb}[/green] {result['promoted']} entr(y/ies) into {to_root.name} "
+    line = (
+        f"[green]{verb}[/green] {result['promoted']} entr(y/ies) into {target_label} "
         f"from {branch or from_root.name}: {result['copied']} new, "
         f"{result['superseded']} superseding an earlier copy, "
         f"{result['skipped_duplicate']} already present "
         f"({result['considered']} considered)."
     )
+    if result.get("refused_shared_kind"):
+        line += (
+            f" {result['refused_shared_kind']} standing_instruction/glossary "
+            f"not shared."
+        )
+    console.print(line)

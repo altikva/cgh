@@ -439,6 +439,10 @@
         "default": 10,
         "type": "integer"
       },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
       "offset": {
         "default": 0,
         "type": "integer"
@@ -555,6 +559,10 @@
       "limit": {
         "default": 5,
         "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
       },
       "query": {
         "type": "string"

@@ -118,6 +118,64 @@ def _fit_list_answer(payload: dict, target: int = LIST_TARGET_BYTES) -> int:
     return dropped
 
 
+def _resolved_namespaces(root) -> list[str]:
+    """Shared stores this repo reads by default; empty on any config error so a
+    search never fails over configuration."""
+    try:
+        from cgh.core.config import load_config
+
+        return load_config(root).resolved_knowledge_namespaces()
+    except Exception:
+        return []
+
+
+def _read_shared_namespaces(
+    names: list[str], query: str, kind: str | None, limit: int
+) -> list[dict]:
+    """Read each named shared store read-only (an empty query lists it), tagging
+    every hit with the store it came from. A store absent on disk is skipped."""
+    from cgh.state.call_log import knowledge_search_ro, shared_store_path
+
+    rows: list[dict] = []
+    for ns in names:
+        for row in knowledge_search_ro(
+            shared_store_path(ns), query, kind=kind, limit=limit, with_provenance=True
+        ):
+            row["namespace"] = ns
+            row["scope"] = ns
+            rows.append(row)
+    return rows
+
+
+def _dedup_by_origin(hits: list[dict]) -> list[dict]:
+    """Collapse hits sharing a (origin_repo, origin_id) provenance key, keeping
+    the one of highest scope (a shared store over the repo) and flagging it with
+    ``local_copy`` when a lower-scope duplicate was dropped. A hit without that
+    key passes through untouched."""
+    out: list[dict] = []
+    seen: dict[tuple, int] = {}
+    for h in hits:
+        oid = h.get("origin_id")
+        orepo = h.get("origin_repo")
+        if not orepo or oid in (None, "", 0):
+            out.append(h)
+            continue
+        key = (str(orepo), oid)
+        if key not in seen:
+            seen[key] = len(out)
+            out.append(h)
+            continue
+        incumbent = out[seen[key]]
+        inc_shared = bool(incumbent.get("scope"))
+        new_shared = bool(h.get("scope"))
+        if new_shared and not inc_shared:
+            h["local_copy"] = True
+            out[seen[key]] = h
+        elif not (new_shared and inc_shared):
+            incumbent["local_copy"] = True
+    return out
+
+
 def register(mcp) -> None:
     import cgh.server as _srv
     from cgh.server import _logged_tool
@@ -244,7 +302,7 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def knowledge_search(
-        query: str, kind: str = "", limit: int = 5, scope: str = ""
+        query: str, kind: str = "", limit: int = 5, scope: str = "", namespace: str = ""
     ) -> str:
         """
         Search the NOTES saved by agents and people in earlier sessions
@@ -256,10 +314,14 @@ def register(mcp) -> None:
 
         kind: optional filter, pattern/decision/gotcha/style/glossary/
               note/standing_instruction
-        scope: default searches THIS repo only. Pass "all" to also
-              search federated subrepos' knowledge read-only; their hits
-              come back tagged with a `scope` field. Never on by
-              default: cross-repo learnings load only when asked.
+        namespace: by default this repo's store AND the shared stores it is
+              subscribed to (the "fleet") are searched together, each shared
+              hit tagged with its `namespace` and `scope`. Pass a shared name
+              (e.g. "org-platform") to search only that store, or a local
+              facet ("repo", "ticket:<id>") to search only this repo's.
+        scope: default already reads the subscribed shared stores. Pass "all"
+              to ALSO search federated subrepos' knowledge read-only; their
+              hits come back tagged with a `scope` field.
 
         Ranking follows recorded outcomes (knowledge_outcome): entries
         that proved useful rank up, dead ends and corrected entries rank
@@ -278,31 +340,61 @@ def register(mcp) -> None:
         of the body. Read any entry whole with knowledge_list(entry_id=<id>).
         """
         from cgh.state import knowledge_recall as _kr
+        from cgh.state.call_log import is_shared_namespace, record_recall_outcome
         from cgh.state.call_log import knowledge_search as _search
-        from cgh.state.call_log import record_recall_outcome
 
-        hits = _search(
-            query, kind=kind or None, limit=limit, repo_root=_srv._root, recall=True
-        )
-        if scope == "all" and _srv._root is not None:
-            from cgh.analysis.federation import resolve_children
-            from cgh.state.call_log import knowledge_search_ro
+        root = _srv._root
+        items = _kr.concepts(query)
 
-            items = _kr.concepts(query)
-            for child in resolve_children(_srv._root):
-                for row in knowledge_search_ro(
-                    state_dir_for(child) / "call_log.db",
-                    query,
-                    kind=kind or None,
-                    limit=limit,
-                ):
-                    row["scope"] = child.name
-                    head = f"{row['title']} {' '.join(row['tags'])}"
-                    row["confidence"] = (
-                        _kr.confidence(*_kr.coverage(items, head, row["body"]))
-                        or "high"
+        def _grade(row: dict) -> dict:
+            head = f"{row['title']} {' '.join(row['tags'])}"
+            row["confidence"] = (
+                _kr.confidence(*_kr.coverage(items, head, row["body"])) or "high"
+            )
+            return row
+
+        ns = namespace.strip()
+        if ns and is_shared_namespace(ns):
+            # A single shared store, by explicit namespace.
+            hits = [
+                _grade(r)
+                for r in _read_shared_namespaces([ns], query, kind or None, limit)
+            ]
+        elif ns:
+            # A local facet (repo / ticket:<id>): this repo's store only.
+            hits = _search(
+                query,
+                kind=kind or None,
+                limit=limit,
+                repo_root=root,
+                recall=True,
+                namespace=ns,
+            )
+        else:
+            hits = _search(
+                query, kind=kind or None, limit=limit, repo_root=root, recall=True
+            )
+            if root is not None:
+                hits.extend(
+                    _grade(r)
+                    for r in _read_shared_namespaces(
+                        _resolved_namespaces(root), query, kind or None, limit
                     )
-                    hits.append(row)
+                )
+            if scope == "all" and root is not None:
+                from cgh.analysis.federation import resolve_children
+                from cgh.state.call_log import knowledge_search_ro
+
+                for child in resolve_children(root):
+                    for row in knowledge_search_ro(
+                        state_dir_for(child) / "call_log.db",
+                        query,
+                        kind=kind or None,
+                        limit=limit,
+                    ):
+                        row["scope"] = child.name
+                        hits.append(_grade(row))
+            hits = _dedup_by_origin(hits)
         grades = [h.get("confidence") for h in hits]
         best = next((g for g in _kr.CONFIDENCE_ORDER if g in grades), None)
         payload: dict = {
@@ -337,6 +429,7 @@ def register(mcp) -> None:
         limit: int = 10,
         offset: int = 0,
         entry_id: int = 0,
+        namespace: str = "",
     ) -> str:
         """
         Browse the notes saved in earlier sessions (not the code), newest
@@ -350,6 +443,12 @@ def register(mcp) -> None:
         `provenance` included (for instance a brief from here or from
         knowledge_search); the other filters are then ignored.
 
+        namespace: by default this repo's notes AND the shared stores it is
+              subscribed to (the "fleet") are listed together, each shared
+              brief tagged with its `namespace` and `scope`. Pass a shared
+              name (e.g. "org-platform") to list only that store, or a local
+              facet ("repo", "ticket:<id>") to list only this repo's.
+
         Pagination: pass `offset` to page through results. Response includes
         `total`, `returned`, `has_more`, and `next_offset` so the caller can
         follow up without counting locally. At the default limit the answer
@@ -362,7 +461,7 @@ def register(mcp) -> None:
         first inside each tier.
         """
         from cgh.server._budget import TOOL_CAPS, cap_answer, dumps_answer
-        from cgh.state.call_log import knowledge_count
+        from cgh.state.call_log import is_shared_namespace, knowledge_count
         from cgh.state.call_log import knowledge_list as _list
         from cgh.state.knowledge_recall import LIST_DEFAULT_LIMIT, list_brief
 
@@ -376,39 +475,65 @@ def register(mcp) -> None:
                 {"entry_id": entry_id, "total": 1, "returned": 1, "has_more": False,
                  "entries": json.loads(json.dumps([entry], default=str))}
             )  # fmt: skip
-        entries = _list(
-            kind=kind or None,
-            tag=tag or None,
-            session_id=session_id or None,
-            limit=limit,
-            offset=offset,
-            repo_root=_srv._root,
-            rank_outcomes=True,
-        )
-        total = knowledge_count(
-            kind=kind or None,
-            tag=tag or None,
-            session_id=session_id or None,
-            repo_root=_srv._root,
-        )
+        ns = namespace.strip()
+        shared_only = bool(ns) and is_shared_namespace(ns)
+        local_ns = ns if (ns and not shared_only) else None
+        if shared_only:
+            entries = []
+            total = 0
+        else:
+            entries = _list(
+                kind=kind or None,
+                tag=tag or None,
+                session_id=session_id or None,
+                limit=limit,
+                offset=offset,
+                repo_root=_srv._root,
+                rank_outcomes=True,
+                namespace=local_ns,
+            )
+            total = knowledge_count(
+                kind=kind or None,
+                tag=tag or None,
+                session_id=session_id or None,
+                repo_root=_srv._root,
+                namespace=local_ns,
+            )
         # Fewer than a full page back means the list is exhausted, whatever a
         # (now-aligned) count says, so require a full page AND more counted.
         has_more = len(entries) == limit and (offset + len(entries)) < total
+        brief_entries = [list_brief(e) for e in entries]
+        # Shared stores: the single one asked for, or (by default) every
+        # subscribed store on the first page, each brief tagged with its store.
+        shared_names: list[str] = []
+        if shared_only:
+            shared_names = [ns]
+        elif not ns and offset == 0 and _srv._root is not None:
+            shared_names = _resolved_namespaces(_srv._root)
+        if shared_names:
+            shared_rows = _dedup_by_origin(
+                _read_shared_namespaces(shared_names, "", kind or None, limit)
+            )
+            for r in shared_rows:
+                brief = list_brief(r)
+                brief["namespace"] = r.get("namespace")
+                brief["scope"] = r.get("scope")
+                brief_entries.append(brief)
+            total += len(shared_rows)
         payload = {
             "kind": kind or None,
             "tag": tag or None,
             "session_id": session_id or None,
+            "namespace": ns or None,
             "total": total,
             "offset": offset,
             "limit": limit,
-            "returned": len(entries),
+            "returned": len(brief_entries),
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
-            "entries": json.loads(
-                json.dumps([list_brief(e) for e in entries], default=str)
-            ),
+            "entries": json.loads(json.dumps(brief_entries, default=str)),
         }
-        if entries:
+        if entries or brief_entries:
             payload["read_more"] = (
                 "knowledge_list(entry_id=<id>) returns one entry whole."
             )

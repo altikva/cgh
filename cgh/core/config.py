@@ -401,6 +401,19 @@ class CghConfig:
     # and notes rated useful or preferred, never decay.
     knowledge_recency_half_life_days: float = 0.0
 
+    # Shared knowledge stores this repo reads by default, without scope="all",
+    # resolved under ~/.cgh/shared/<name>/knowledge.db. knowledge_namespaces is
+    # the project-level subscription; knowledge_namespaces_global is the
+    # machine-wide default (the "fleet"), set in the global ~/.cgh/config.toml
+    # and bootstrapped to ["org-platform"]. The effective set a repo reads is
+    # their union (resolved_knowledge_namespaces). A store absent on disk is
+    # ignored; it is created on first write to that namespace. Set the global
+    # list to [] to unsubscribe the whole machine.
+    knowledge_namespaces: list[str] = field(default_factory=list)
+    knowledge_namespaces_global: list[str] = field(
+        default_factory=lambda: ["org-platform"]
+    )
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -429,6 +442,17 @@ class CghConfig:
     @property
     def is_initialized(self) -> bool:
         return self.cgh_dir.exists()
+
+    def resolved_knowledge_namespaces(self) -> list[str]:
+        """The shared knowledge stores this repo reads by default: the
+        machine-wide fleet plus this repo's own subscriptions, de-duplicated
+        with order preserved (global first). Blank names are dropped."""
+        out: list[str] = []
+        for ns in (*self.knowledge_namespaces_global, *self.knowledge_namespaces):
+            ns = (ns or "").strip()
+            if ns and ns not in out:
+                out.append(ns)
+        return out
 
 
 def _read_toml(path: Path) -> dict:
@@ -526,6 +550,14 @@ def _apply_toml(config: CghConfig, data: dict) -> None:
             )
         except (TypeError, ValueError):
             pass  # a malformed value keeps the default rather than break loading
+    if "knowledge_namespaces" in cg and isinstance(cg["knowledge_namespaces"], list):
+        config.knowledge_namespaces = [str(n) for n in cg["knowledge_namespaces"]]
+    if "knowledge_namespaces_global" in cg and isinstance(
+        cg["knowledge_namespaces_global"], list
+    ):
+        config.knowledge_namespaces_global = [
+            str(n) for n in cg["knowledge_namespaces_global"]
+        ]
 
     terraform = data.get("terraform", {})
     sources = terraform.get("module_sources") if isinstance(terraform, dict) else None
@@ -673,6 +705,12 @@ max_file_size_kb = 500
 # outcome: a note this many days old ranks half as high. 0 (the default) is off.
 # standing_instruction and glossary notes, and notes rated useful, never decay.
 # knowledge_recency_half_life_days = 0
+# Shared knowledge stores this repo reads by default, without scope="all".
+# Each resolves to ~/.cgh/shared/<name>/knowledge.db, is ignored while absent
+# and created on first write to that namespace. The machine-wide default lives
+# in the global ~/.cgh/config.toml as knowledge_namespaces_global (bootstrapped
+# to ["org-platform"]); set it to [] there to unsubscribe the whole machine.
+# knowledge_namespaces = ["org-platform", "akonteo"]
 
 [parsers]
 # Uncomment to restrict which parsers are active:

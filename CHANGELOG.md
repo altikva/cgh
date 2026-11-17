@@ -9,6 +9,20 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 ## [Unreleased]
 
 ### Added
+- **Shared knowledge stores read across the fleet by default.** A repo now
+  reads the shared knowledge namespaces it subscribes to alongside its own,
+  without `scope="all"`: `knowledge_search` and `knowledge_list` merge the repo
+  store with each subscribed store (`~/.cgh/shared/<name>/knowledge.db`, same
+  schema as a repo store, created on first write and ignored while absent), and
+  tag every shared hit with its `namespace` and `scope`. Subscription is
+  declarative, the union of `[cgh] knowledge_namespaces_global` (the machine's
+  global config, bootstrapped to `["org-platform"]`, set to `[]` to opt out) and
+  `[cgh] knowledge_namespaces` (the project). `knowledge_record(namespace=<name>)`
+  routes the write to the matching shared store; a `repo` or `ticket:<id>`
+  namespace stays in the repo store. Both tools gain a `namespace=` filter to
+  read a single store or facet. So a diagnosis posted to the fleet from one repo
+  is visible from every subscribed repo without asking, and duplicates that a
+  promotion left in two stores collapse by origin.
 - **Provenance and namespace on knowledge entries.** A recorded learning now
   carries where it came from (`origin_repo`, `ticket`, `author`) and the logical
   scope it belongs to (`namespace`, defaulting to `repo`), so a note can later be

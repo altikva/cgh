@@ -20,6 +20,11 @@ from pathlib import Path
 
 _DB_DIR = ".cgh"
 _LOG_FILE = "call_log.db"
+# Shared knowledge stores live outside any repo, under the global dir, one
+# directory per namespace holding a knowledge.db with the same schema as a
+# repo store (knowledge + FTS + outcomes), minus the call_log of tool traces.
+_SHARED_SUBDIR = "shared"
+_SHARED_FILE = "knowledge.db"
 
 # Who triggered a tool call. "agent": an MCP client through the stdio proxy.
 # "cli": a `cgh` command asking the owner over HTTP. "hook": the same, from a
@@ -89,6 +94,36 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         return _init_conn(repo_root)
 
 
+def shared_store_path(name: str) -> Path:
+    """Path of a shared knowledge store: ``~/.cgh/shared/<name>/knowledge.db``.
+    GLOBAL_DIR is read at call time so a test that redirects it is honoured."""
+    import cgh.core.config as _config
+
+    return _config.GLOBAL_DIR / _SHARED_SUBDIR / name / _SHARED_FILE
+
+
+def is_shared_namespace(namespace: str) -> bool:
+    """Whether a namespace lives in its own shared store rather than the local
+    repo store. ``repo``, ``branch`` and any ``ticket:<id>`` facet stay in the
+    repo store; every other non-empty name routes to a shared store."""
+    ns = (namespace or "").strip()
+    return bool(ns) and ns not in ("repo", "branch") and not ns.startswith("ticket:")
+
+
+def _get_conn_at(db_file: str | Path) -> sqlite3.Connection:
+    """Cached connection to an explicit knowledge DB file (a shared store),
+    built with the same schema as a repo store and keyed by its resolved path."""
+    key = str(Path(db_file).resolve())
+    conn = _conns.get(key)
+    if conn is not None:
+        return conn
+    with _LOG_LOCK:
+        conn = _conns.get(key)
+        if conn is not None:
+            return conn
+        return _init_conn(db_file=db_file)
+
+
 def reset_for_tests() -> None:
     # Close every cached connection. Test helper, mirrors findings.py.
     with _LOG_LOCK:
@@ -100,13 +135,22 @@ def reset_for_tests() -> None:
         _conns.clear()
 
 
-def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
-    key = _cache_key(repo_root)
-    root = Path(key)
-    db_dir = root / _DB_DIR
-    db_dir.mkdir(parents=True, exist_ok=True)
+def _init_conn(
+    repo_root: str | Path | None = None, *, db_file: str | Path | None = None
+) -> sqlite3.Connection:
+    # A shared store is addressed by its own db_file; a repo store by its root.
+    # Both get the identical schema below; the shared store simply never has its
+    # call_log of tool traces written to, only the knowledge tables.
+    if db_file is not None:
+        db_path = Path(db_file)
+        key = str(db_path.resolve())
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        key = _cache_key(repo_root)
+        db_path = Path(key) / _DB_DIR / _LOG_FILE
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _conn = sqlite3.connect(str(db_dir / _LOG_FILE), check_same_thread=False)
+    _conn = sqlite3.connect(str(db_path), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS call_log (
@@ -568,7 +612,13 @@ def knowledge_record(
         file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
     symptom = symptom or ""
     symptom_norm = normalize_symptom(symptom)
-    conn = _get_conn(repo_root)
+    # A shared namespace routes the write to its own store under the global
+    # dir, created on first write; everything else stays in the repo store.
+    conn = (
+        _get_conn_at(shared_store_path(namespace))
+        if is_shared_namespace(namespace)
+        else _get_conn(repo_root)
+    )
     now = time.time()
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
@@ -958,6 +1008,7 @@ def knowledge_search(
     repo_root: str | Path | None = None,
     rank_outcomes: bool = True,
     recall: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """BM25 search over knowledge entries. Graceful LIKE fallback.
 
@@ -981,7 +1032,9 @@ def knowledge_search(
     # Default path: no outcomes to rank by and age decay off -> plain relevance,
     # byte-for-byte the behaviour before age decay existed.
     if not use_outcomes and recency_hl <= 0:
-        return _cap_weak(search(conn, query, kind, limit), limit, recall)
+        return _cap_weak(
+            search(conn, query, kind, limit, namespace=namespace), limit, recall
+        )
     from cgh.state.knowledge_outcomes import rank_factor, recency_factor
 
     now = time.time()
@@ -990,7 +1043,9 @@ def knowledge_search(
         entries, _files = _outcome_scores(conn, now, _half_life_days(repo_root))
     # Room for a well-rated or fresher entry just under the cut to move up.
     raw: list[float] = []
-    hits = search(conn, query, kind, max(limit * 3, limit + 10), raw)
+    hits = search(
+        conn, query, kind, max(limit * 3, limit + 10), raw, namespace=namespace
+    )
     # Rank on the unrounded relevance: on a small store BM25 scores are tiny
     # and round to zero, which would erase the outcome and recency factors.
     adjusted: list[float] = []
@@ -1034,7 +1089,11 @@ def _cap_weak(hits: list[dict], limit: int, recall: bool) -> list[dict]:
 
 
 def _fts_rows(
-    conn: sqlite3.Connection, expr: str, kind: str | None, limit: int
+    conn: sqlite3.Connection,
+    expr: str,
+    kind: str | None,
+    limit: int,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Live entries matching an FTS5 expression, best BM25 first."""
     sql = (
@@ -1046,6 +1105,9 @@ def _fts_rows(
     if kind:
         sql += "AND k.kind = ? "
         params.append(kind)
+    if namespace:
+        sql += "AND k.namespace = ? "
+        params.append(namespace)
     sql += "ORDER BY rank LIMIT ?"
     params.append(limit)
     try:
@@ -1055,7 +1117,9 @@ def _fts_rows(
     return [_knowledge_row_to_dict(row, score=-row[-1]) for row in rows]
 
 
-def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
+def _store_words(
+    conn: sqlite3.Connection, kind: str | None, namespace: str | None = None
+) -> set[str]:
     """Every folded word of the live entries, for close-spelling lookups."""
     from cgh.state.knowledge_recall import fold
 
@@ -1064,6 +1128,9 @@ def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
     if kind:
         sql += " AND kind = ?"
         params.append(kind)
+    if namespace:
+        sql += " AND namespace = ?"
+        params.append(namespace)
     out: set[str] = set()
     for title, body, tags in conn.execute(sql, params).fetchall():
         out.update(re.findall(r"[a-z0-9_]+", fold(f"{title} {tags} {body}")))
@@ -1076,6 +1143,7 @@ def _knowledge_recall(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Free-text search behind knowledge_search(recall=True). Caller holds
     the lock.
@@ -1092,20 +1160,24 @@ def _knowledge_recall(
     raw.clear()
     items = kr.concepts(query)
     pool = max(limit * 3, 30)
-    strict = _knowledge_search(conn, query, kind, limit) if query.strip() else []
+    strict = (
+        _knowledge_search(conn, query, kind, limit, namespace=namespace)
+        if query.strip()
+        else []
+    )
     strict_ids = {h["id"] for h in strict}
     candidates: dict[int, dict] = {h["id"]: h for h in strict}
     expr = kr.fts_expression(items)
     if expr:
-        for h in _fts_rows(conn, expr, kind, pool):
+        for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
             candidates.setdefault(h["id"], h)
     fuzzy = False
     if not candidates and items:
-        close = kr.close_words(items, _store_words(conn, kind))
+        close = kr.close_words(items, _store_words(conn, kind, namespace=namespace))
         if close:
             fuzzy = True
             expr = " OR ".join(f'"{w}"' for w in close)
-            for h in _fts_rows(conn, expr, kind, pool):
+            for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
                 candidates.setdefault(h["id"], h)
 
     graded: list[tuple[int, float, float, dict]] = []
@@ -1176,6 +1248,7 @@ def _knowledge_search(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """The plain relevance search behind knowledge_search. Caller holds the
     lock. raw_scores, when given, receives each hit's unrounded score."""
@@ -1191,6 +1264,9 @@ def _knowledge_search(
         if kind:
             sql += "AND k.kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND k.namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
         for row in conn.execute(sql, params).fetchall():
@@ -1206,6 +1282,9 @@ def _knowledge_search(
         if kind:
             sql += "AND kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY ts DESC LIMIT ?"
         params.append(limit)
         raw.clear()  # the FTS attempt may have filled part of it
@@ -1216,12 +1295,21 @@ def _knowledge_search(
 
 
 def knowledge_search_ro(
-    db_path: Path, query: str, kind: str | None = None, limit: int = 10
+    db_path: Path,
+    query: str,
+    kind: str | None = None,
+    limit: int = 10,
+    with_provenance: bool = False,
 ) -> list[dict]:
-    """Read-only knowledge search against an arbitrary call_log.db
-    (federated children). Fresh connection, LIKE-based on purpose:
-    robust against FTS schema drift in the child. Superseded entries
-    stay out, like everywhere else."""
+    """Read-only knowledge search against an arbitrary knowledge store (a
+    federated child's call_log.db, or a shared store's knowledge.db). Fresh
+    connection, LIKE-based on purpose: robust against FTS schema drift in the
+    store. An empty query matches every live entry, newest first, so the same
+    reader lists a store. Superseded entries stay out, like everywhere else.
+
+    With with_provenance, each hit also carries origin_repo, origin_id and
+    namespace when the store has those columns, for cross-store de-duplication;
+    a store predating them (an old child) silently reads back without."""
     if not db_path.exists():
         return []
     from cgh.core.utils import ro_sqlite_uri
@@ -1231,25 +1319,43 @@ def knowledge_search_ro(
     except sqlite3.Error:
         return []
     like = f"%{query}%"
-    sql = (
-        "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
-        "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
-    )
-    params: list = [like, like, like]
-    if kind:
-        sql += "AND kind = ? "
-        params.append(kind)
-    sql += "ORDER BY ts DESC LIMIT ?"
-    params.append(limit)
+    base = "id, kind, title, body, tags, file_refs, session_id, ts"
+    prov = ", origin_repo, origin_id, namespace"
+
+    def _run(cols: str) -> list:
+        sql = (
+            f"SELECT {cols} FROM knowledge WHERE superseded_by IS NULL "
+            "AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
+        )
+        params: list = [like, like, like]
+        if kind:
+            sql += "AND kind = ? "
+            params.append(kind)
+        sql += "ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        return conn.execute(sql, params).fetchall()
+
+    has_prov = with_provenance
     try:
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            rows = _run(base + prov) if with_provenance else _run(base)
+        except sqlite3.Error:
+            # A store without the provenance columns (an old child): retry bare.
+            rows = _run(base)
+            has_prov = False
     except sqlite3.Error:
         return []
     finally:
         conn.close()
-    return [
-        _knowledge_row_to_dict(row, score=1.0 / (i + 1)) for i, row in enumerate(rows)
-    ]
+    out: list[dict] = []
+    for i, row in enumerate(rows):
+        hit = _knowledge_row_to_dict(row[:8], score=1.0 / (i + 1))
+        if has_prov:
+            hit["origin_repo"] = row[8]
+            hit["origin_id"] = row[9]
+            hit["namespace"] = row[10]
+        out.append(hit)
+    return out
 
 
 @_locked
@@ -1279,10 +1385,11 @@ def knowledge_list(
     repo_root: str | Path | None = None,
     exclude_tag: str | None = None,
     rank_outcomes: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Browse knowledge entries. Filters: kind / tag (substring) / session /
-    exclude_tag (substring to omit). Pagination: limit + offset. Caller can
-    fetch limit+1 to detect has_more.
+    exclude_tag (substring to omit) / namespace (exact). Pagination: limit +
+    offset. Caller can fetch limit+1 to detect has_more.
 
     Newest first. With rank_outcomes, entries are tiered by outcome first
     (useful, then unrated or contested, then dead ends, then corrected) and
@@ -1309,6 +1416,9 @@ def knowledge_list(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     order = "ts DESC"
@@ -1343,6 +1453,7 @@ def knowledge_count(
     tag: str | None = None,
     session_id: str | None = None,
     repo_root: str | Path | None = None,
+    namespace: str | None = None,
 ) -> int:
     """Total matching entries, use alongside knowledge_list for pagination."""
     conn = _get_conn(repo_root)
@@ -1361,6 +1472,9 @@ def knowledge_count(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     return int(conn.execute(sql, params).fetchone()[0])

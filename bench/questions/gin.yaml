@@ -1,0 +1,52 @@
+# Fixed tier-1 questions for gin-gonic/gin at the pinned SHA (Go).
+# See questions/flask.yaml for the field contract.
+questions:
+  - id: gin-locate-new
+    kind: locate
+    cmd: lookup
+    arg: New
+    grep_pattern: New
+    expect: gin.go
+  - id: gin-locate-context
+    kind: locate
+    cmd: lookup
+    arg: Context
+    grep_pattern: Context
+    expect: context.go
+  - id: gin-locate-routergroup
+    kind: locate
+    cmd: lookup
+    arg: RouterGroup
+    grep_pattern: RouterGroup
+    expect: routergroup.go
+  - id: gin-locate-loggerwithconfig
+    kind: locate
+    cmd: lookup
+    arg: LoggerWithConfig
+    grep_pattern: LoggerWithConfig
+    expect: logger.go
+  - id: gin-locate-recovery
+    kind: locate
+    cmd: lookup
+    arg: Recovery
+    grep_pattern: Recovery
+    expect: recovery.go
+  - id: gin-callers-new
+    kind: callers
+    cmd: callers
+    arg: New
+    grep_pattern: New
+    expect: auth_test.go
+  - id: gin-fts-response-writer
+    kind: fts
+    cmd: search
+    arg: render json response writer
+    grep_pattern: ResponseWriter
+    expect: response_writer.go
+  - id: gin-fts-binding
+    kind: fts
+    cmd: search
+    arg: bind request body validation
+    grep_pattern: binding
+    word: false
+    expect: binding/json.go

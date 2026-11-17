@@ -1,0 +1,90 @@
+repo: fastapi/fastapi
+pinned_sha: b2831196bfee3eb9ce303a3c6440f2a104832954
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 16779
+  merged_at: '2026-11-17T18:11:09Z'
+  merge_sha: 2d64371a2b1a57dc70bcb52b720a313de900b243
+  parent_sha: a1b3be01aadc61c67edc09eed4f6cc1fcc3d3b8f
+  seed: fastapi/dependencies/utils.py
+  truth:
+  - tests/test_parameter_extraction.py
+- number: 16746
+  merged_at: '2026-11-14T16:29:23Z'
+  merge_sha: fc07dde8803e36431be12224c12940ee9fb489b3
+  parent_sha: 5758a9c8347d911444dca97a55b708cc4a8de4f8
+  seed: fastapi/param_functions.py
+  truth:
+  - fastapi/concurrency.py
+  - fastapi/dependencies/models.py
+  - fastapi/dependencies/utils.py
+  - fastapi/params.py
+  - tests/test_dependency_concurrency.py
+- number: 16739
+  merged_at: '2026-11-13T17:22:01Z'
+  merge_sha: 5f4f9c197654e22c39456bd9c3928069d54c0c41
+  parent_sha: 7030191986461b9e5192d29489a05f15f7f79707
+  seed: fastapi/concurrency.py
+  truth:
+  - fastapi/dependencies/utils.py
+  - tests/test_async_dependency_cleanup.py
+- number: 16734
+  merged_at: '2026-11-11T22:11:07Z'
+  merge_sha: eb2f4926de7c9f79f5d2f8a7823742737ca2a978
+  parent_sha: e1144f6954eb8dd8c306f8dd2f5f0a14bbeb2cfd
+  seed: fastapi/concurrency.py
+  truth:
+  - tests/test_concurrency.py
+- number: 16728
+  merged_at: '2026-11-10T13:46:17Z'
+  merge_sha: 60acfa1b73dab918aeec21ca49815c42dbf53bc7
+  parent_sha: ba5d72bae32807f0af203c45cff695f80fd0f26c
+  seed: fastapi/_compat/shared.py
+  truth:
+  - fastapi/_compat/v2.py
+- number: 16722
+  merged_at: '2026-11-09T14:47:09Z'
+  merge_sha: 3c6036d57fc97575403c0cd99c030c49c8fdf18f
+  parent_sha: d004cad7e162a76af6e93874dd5bf19e0953c941
+  seed: scripts/docs.py
+  truth:
+  - scripts/tests/test_remove_unused_docs_src.py
+- number: 16696
+  merged_at: '2026-11-07T15:09:46Z'
+  merge_sha: bc8b188201d2afee14ccfa6bab17bf103d4f9d44
+  parent_sha: 7f696db0ab333beea41d032212fbd9f205374bbb
+  seed: tests/test_prepare_release.py
+  truth:
+  - scripts/prepare_release.py
+- number: 16598
+  merged_at: '2026-10-22T19:02:06Z'
+  merge_sha: f90d0369380a539c673b1bbbbd86535b8cdee746
+  parent_sha: 80c8742d141e67beaf747343405c8facf999bc0c
+  seed: tests/test_forms_optional_unions.py
+  truth:
+  - fastapi/dependencies/utils.py
+- number: 16596
+  merged_at: '2026-10-22T18:15:00Z'
+  merge_sha: e42ac0a13459086f42d96eab13748303bcfa78e7
+  parent_sha: addd0778e996cf886972b8024113d79f8d0a3580
+  seed: fastapi/dependencies/utils.py
+  truth:
+  - docs_src/request_form_models/tutorial007_an_py310.py
+  - docs_src/request_form_models/tutorial007_py310.py
+  - tests/test_forms_multiple_unions.py
+  - tests/test_tutorial/test_request_form_models/test_tutorial007.py
+  - tests/test_union_form_normalization.py
+- number: 16586
+  merged_at: '2026-10-21T20:37:02Z'
+  merge_sha: 86274cc0acc9fc6d608e251c874105c94634bddf
+  parent_sha: 68cc4cbb2e0600841b0d6bdd1cc29038b54a00e6
+  seed: fastapi/dependencies/utils.py
+  truth:
+  - docs_src/request_form_models/tutorial006_an_py310.py
+  - docs_src/request_form_models/tutorial006_py310.py
+  - tests/test_forms_optional_unions.py
+  - tests/test_tutorial/test_request_form_models/test_tutorial006.py

@@ -141,7 +141,9 @@ def select_prs(name: str, n: int = DEFAULT_N) -> dict[str, Any]:
     """Pick the N most recent merged PRs before the pinned SHA that pass the
     mechanical filter, and write pr_truth/<name>.yaml."""
     cfg = repos_config()
-    pinned = cfg["repos"][name]["sha"]
+    spec = cfg["repos"][name]
+    pinned = spec["sha"]
+    base = spec.get("base", "main")
     clone = repo_checkout(name)
     owner_repo = _owner_repo(name)
 
@@ -155,7 +157,7 @@ def select_prs(name: str, n: int = DEFAULT_N) -> dict[str, Any]:
             "--state",
             "merged",
             "--base",
-            "main",
+            base,
             "--json",
             "number,mergedAt,mergeCommit",
             "--limit",
@@ -227,7 +229,7 @@ def select_prs(name: str, n: int = DEFAULT_N) -> dict[str, Any]:
         "selection": {
             "n": n,
             "rule": (
-                "merged into main, 2-8 changed code files all of indexed "
+                "merged into the default branch, 2-8 changed code files all of indexed "
                 "languages, N most recent before pinned_sha; seed = modified "
                 "file of highest churn (lexicographic tie-break); truth = the "
                 "other changed code files (co-change, external ground truth)."

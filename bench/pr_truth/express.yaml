@@ -1,0 +1,88 @@
+repo: expressjs/express
+pinned_sha: 43fca52d28a422c8be48fd489cbd4f2d6152bab6
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 7112
+  merged_at: '2026-10-23T21:21:08Z'
+  merge_sha: 1c6f1b0fe4000977b9a7b4f34097e4d527dd9824
+  parent_sha: 0dee2c52c7c873498f8ed7d8ee4ddd0a04d3ada8
+  seed: test/app.render.js
+  truth:
+  - test/app.listen.js
+  - test/req.is.js
+  - test/res.append.js
+  - test/res.jsonp.js
+  - test/res.render.js
+  - test/res.sendFile.js
+  - test/view.js
+- number: 7518
+  merged_at: '2026-10-09T16:24:39Z'
+  merge_sha: a419aa7350389a275ab45fde2e849ed1f02449ef
+  parent_sha: 6d2df035a95f3d1002be3e29997b7a4bfe976b5f
+  seed: test/express.static.js
+  truth:
+  - test/acceptance/downloads.js
+  - test/support/utils.js
+- number: 7494
+  merged_at: '2026-10-09T15:54:31Z'
+  merge_sha: 6d2df035a95f3d1002be3e29997b7a4bfe976b5f
+  parent_sha: cf6722bf89a86905281d9160b6482e08166b5ef0
+  seed: test/express.static.js
+  truth:
+  - test/acceptance/downloads.js
+  - test/support/utils.js
+- number: 7512
+  merged_at: '2026-10-09T11:53:55Z'
+  merge_sha: 8c2fcfcb7d37c9c2e89363b7b86a092768c3a8a3
+  parent_sha: 9efc29e280018dafc1f0617f3a3d28f4e463b7be
+  seed: lib/response.js
+  truth:
+  - lib/request.js
+- number: 7509
+  merged_at: '2026-10-06T21:19:39Z'
+  merge_sha: 9efc29e280018dafc1f0617f3a3d28f4e463b7be
+  parent_sha: 2717ae3cbf2bdc3f946d22ea6a4e0b5bd438b87b
+  seed: test/app.router.js
+  truth:
+  - lib/response.js
+- number: 7483
+  merged_at: '2026-10-06T18:57:45Z'
+  merge_sha: 9169cbe1127ed1f9bc4f80a70b82c412467dd156
+  parent_sha: 7ef98448f8b38099ab1ded55e458538ad47a51e7
+  seed: examples/mvc/controllers/user/index.js
+  truth:
+  - lib/response.js
+- number: 7459
+  merged_at: '2026-09-15T17:52:27Z'
+  merge_sha: 9a34acf03cb818ff3f8bc40e44176e277a25cbb9
+  parent_sha: 3ce6d0eb86e9d93529ff3191c6bb5db8ce6e72c8
+  seed: test/res.send.js
+  truth:
+  - lib/response.js
+- number: 7366
+  merged_at: '2026-07-12T18:22:01Z'
+  merge_sha: ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4
+  parent_sha: ba006766fb964571723138708eacaba0f55759cd
+  seed: test/req.fresh.js
+  truth:
+  - lib/request.js
+- number: 4893
+  merged_at: '2026-06-16T03:06:32Z'
+  merge_sha: 18e5985b8a9d5e8423db0a9121f22bdaecd5b120
+  parent_sha: 59e205a57a04fced6bb7b8ec0b5dec29461a9996
+  seed: test/res.send.js
+  truth:
+  - lib/response.js
+- number: 7233
+  merged_at: '2026-06-16T02:45:22Z'
+  merge_sha: 59e205a57a04fced6bb7b8ec0b5dec29461a9996
+  parent_sha: b3004cb8c825321279efa48d6ad115d91a6c1b83
+  seed: test/res.attachment.js
+  truth:
+  - lib/response.js
+  - test/acceptance/downloads.js
+  - test/res.download.js

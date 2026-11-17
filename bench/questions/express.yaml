@@ -1,0 +1,55 @@
+# Fixed tier-1 questions for expressjs/express at the pinned SHA (JavaScript).
+# See questions/flask.yaml for the field contract. Express leans on locate and
+# fts: cgh's JS call graph does not resolve these callers, which the one
+# callers question records honestly (it is published as a miss, not hidden).
+questions:
+  - id: express-locate-createapplication
+    kind: locate
+    cmd: lookup
+    arg: createApplication
+    grep_pattern: createApplication
+    expect: lib/express.js
+  - id: express-locate-view
+    kind: locate
+    cmd: lookup
+    arg: View
+    grep_pattern: View
+    expect: lib/view.js
+  - id: express-locate-sendfile
+    kind: locate
+    cmd: lookup
+    arg: sendfile
+    grep_pattern: sendfile
+    expect: lib/response.js
+  - id: express-locate-acceptparams
+    kind: locate
+    cmd: lookup
+    arg: acceptParams
+    grep_pattern: acceptParams
+    expect: lib/utils.js
+  - id: express-locate-stringify
+    kind: locate
+    cmd: lookup
+    arg: stringify
+    grep_pattern: stringify
+    expect: lib/response.js
+  - id: express-fts-etag
+    kind: fts
+    cmd: search
+    arg: etag cache response header generator
+    grep_pattern: etag
+    word: false
+    expect: lib/utils.js
+  - id: express-fts-view-engine
+    kind: fts
+    cmd: search
+    arg: view template engine lookup render
+    grep_pattern: render
+    word: false
+    expect: lib/view.js
+  - id: express-callers-createapplication
+    kind: callers
+    cmd: callers
+    arg: createApplication
+    grep_pattern: createApplication
+    expect: lib/express.js

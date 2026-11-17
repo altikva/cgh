@@ -277,6 +277,11 @@ def _init_conn(
         ("author", "TEXT"),
         ("symptom", "TEXT"),
         ("symptom_norm", "TEXT"),
+        # Collision-resistant owner identity of the writing repo, set
+        # server-side for a shared-store write (never from caller input). It is
+        # the sole authority for a cross-repo supersede; NULL (a repo-store row,
+        # or a shared row written before this column) is owned by nobody.
+        ("owner", "TEXT"),
     ):
         try:
             _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
@@ -578,6 +583,79 @@ def repo_slug(repo_root: str | Path | None = None) -> str:
     return Path(root).name
 
 
+def _normalize_remote_url(url: str) -> str:
+    """A git remote URL reduced to a stable ``host/org/repo`` identity, with the
+    scheme, any user info, a port and a trailing ``.git`` stripped. Handles the
+    scp-like ``git@host:org/repo`` form too. Returns "" for empty input."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.endswith(".git"):
+        u = u[:-4]
+    # scp-like syntax has no scheme: [user@]host:path (the colon is not a port).
+    if "://" not in u and ":" in u.split("/", 1)[0] and "@" in u.split("/", 1)[0]:
+        userhost, _, path = u.partition(":")
+        host = userhost.split("@", 1)[-1]
+        return f"{host}/{path}".strip("/")
+    if "://" in u:
+        u = u.split("://", 1)[1]
+    if "@" in u.split("/", 1)[0]:
+        u = u.split("@", 1)[1]
+    host, _, path = u.partition("/")
+    host = host.split(":", 1)[0]  # drop a port
+    return f"{host}/{path}".strip("/") if path else host
+
+
+def _persisted_repo_uuid(repo_root: str | Path | None = None) -> str:
+    """A per-repo UUID persisted in the state dir (``.cgh/owner_id``), generated
+    once and reused. The fallback owner identity when a repo has no git remote;
+    stable and unique where a directory name is not. Fails closed, never
+    raises, returning a fresh UUID even if it cannot be written."""
+    import uuid
+
+    path = Path(_cache_key(repo_root)) / _DB_DIR / "owner_id"
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    value = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+    except OSError:
+        pass
+    return value
+
+
+def repo_owner_id(repo_root: str | Path | None = None) -> str:
+    """A collision-resistant owner identity for a repo: its normalised git
+    remote (``host/org/repo``) when one exists, else a UUID persisted in the
+    state dir. Used server-side as the sole authority for a shared-store
+    supersede, so two repos that merely share a directory name never pass for
+    each other. Fails closed, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0:
+            norm = _normalize_remote_url(proc.stdout)
+            if norm:
+                return norm
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return _persisted_repo_uuid(root)
+
+
 @_locked
 def knowledge_record(
     title: str,
@@ -662,18 +740,20 @@ def knowledge_record(
     symptom_norm = normalize_symptom(symptom)
     # A shared namespace routes the write to its own store under the global
     # dir, created on first write; everything else stays in the repo store.
+    shared = is_shared_namespace(namespace)
     conn = (
-        _get_conn_at(shared_store_path(namespace))
-        if is_shared_namespace(namespace)
-        else _get_conn(repo_root)
+        _get_conn_at(shared_store_path(namespace)) if shared else _get_conn(repo_root)
     )
+    # Owner authority is derived server-side and stored only for a shared write;
+    # the caller-supplied origin_repo is provenance, never authority.
+    owner = repo_owner_id(repo_root) if shared else None
     now = time.time()
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
         "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
         "promoted_at, source_worktree, origin_id, namespace, origin_repo, ticket, "
-        "author, symptom, symptom_norm) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "author, symptom, symptom_norm, owner) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -697,23 +777,23 @@ def knowledge_record(
             author or None,
             symptom or None,
             symptom_norm or None,
+            owner,
         ),
     )
     row_id = cur.lastrowid
-    shared = is_shared_namespace(namespace)
     # FTS mirror is now maintained by the AFTER INSERT trigger.
     if supersedes and row_id:
         allowed = True
         if shared:
             # In a shared store a write may only retire a row of the SAME
             # namespace that this repo owns, so one repo's session cannot
-            # overwrite another's shared note. Ownership is the SERVER-derived
-            # identity of the calling repo (repo_slug of repo_root), never the
-            # caller-supplied origin_repo, which could be spoofed. A target with
-            # no owner (NULL or empty origin_repo) is owned by nobody and denied.
-            owner = repo_slug(repo_root)
+            # overwrite another's shared note. Authority is the SERVER-derived
+            # owner identity of the calling repo (collision-resistant: git
+            # remote, else a persisted UUID), never the caller-supplied
+            # origin_repo. A target with no owner (NULL, or a row written before
+            # the column existed) is owned by nobody and denied.
             tgt = conn.execute(
-                "SELECT origin_repo, namespace FROM knowledge WHERE id = ?",
+                "SELECT owner, namespace FROM knowledge WHERE id = ?",
                 (int(supersedes),),
             ).fetchone()
             allowed = (

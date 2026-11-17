@@ -19,11 +19,13 @@ import pytest
 
 from cgh.state.call_log import (
     _get_conn,
+    _normalize_remote_url,
     is_shared_namespace,
     knowledge_list,
     knowledge_record,
     knowledge_search,
     knowledge_search_ro,
+    repo_owner_id,
     reset_for_tests,
     shared_store_path,
     valid_shared_namespace,
@@ -350,24 +352,89 @@ def test_shared_supersede_refused_when_caller_spoofs_origin_repo(home):
 
 def test_shared_supersede_refused_when_target_has_no_owner(home):
     root = _repo(home, "repo-a")
-    # A target with no owner (origin_repo stored NULL) is owned by nobody, so
-    # even the same repo cannot retire it through the shared supersede path.
+    # Simulate a shared row written before the owner column existed: its owner
+    # reads back NULL, so it is owned by nobody and cannot be retired.
     ownerless = knowledge_record(
         "shared decision", "old body", kind="decision",
-        repo_root=root, namespace="org-platform", origin_repo="",
+        repo_root=root, namespace="org-platform",
     )  # fmt: skip
+    sp = shared_store_path("org-platform")
+    conn = _get_conn_at_path(sp)
+    conn.execute("UPDATE knowledge SET owner = NULL WHERE id = ?", (ownerless,))
+    conn.commit()
     knowledge_record(
         "shared decision", "new body", kind="decision",
-        repo_root=root, namespace="org-platform", origin_repo="repo-a",
-        supersedes=ownerless,
+        repo_root=root, namespace="org-platform", supersedes=ownerless,
+    )  # fmt: skip
+    row = conn.execute(
+        "SELECT superseded_by FROM knowledge WHERE id = ?", (ownerless,)
+    ).fetchone()
+    assert row[0] is None
+
+
+def test_slug_collision_does_not_allow_supersede(home):
+    # Two repos that share a directory name ("cgh") but are distinct repos get
+    # distinct owner identities (persisted UUIDs), so one cannot retire the
+    # other's shared note even though repo_slug would collide.
+    root_a = _repo(home / "a", "cgh")
+    root_b = _repo(home / "b", "cgh")
+    assert repo_owner_id(root_a) != repo_owner_id(root_b)
+    a_id = knowledge_record(
+        "shared decision", "body A", kind="decision",
+        repo_root=root_a, namespace="org-platform",
+    )  # fmt: skip
+    knowledge_record(
+        "my version", "body B", kind="decision",
+        repo_root=root_b, namespace="org-platform", supersedes=a_id,
     )  # fmt: skip
     sp = shared_store_path("org-platform")
     row = (
         _get_conn_at_path(sp)
-        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (ownerless,))
+        .execute("SELECT superseded_by FROM knowledge WHERE id = ?", (a_id,))
         .fetchone()
     )
     assert row[0] is None
+
+
+# ---------------------------------------------------------------------------
+# Owner identity derivation
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_remote_url_forms():
+    want = "github.com/altikva/cgh"
+    assert _normalize_remote_url("git@github.com:altikva/cgh.git") == want
+    assert _normalize_remote_url("https://github.com/altikva/cgh.git") == want
+    assert _normalize_remote_url("ssh://git@github.com/altikva/cgh.git") == want
+    assert _normalize_remote_url("https://github.com/altikva/cgh") == want
+    assert _normalize_remote_url("") == ""
+
+
+def test_owner_id_prefers_the_remote(home, tmp_path):
+    import os
+    import subprocess
+
+    root = home / "with-remote"
+    (root / ".cgh").mkdir(parents=True)
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+    }
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, env=env)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:altikva/cgh.git"],
+        cwd=root, check=True, capture_output=True, env=env,
+    )  # fmt: skip
+    assert repo_owner_id(root) == "github.com/altikva/cgh"
+
+
+def test_owner_id_falls_back_to_a_stable_uuid(home):
+    root = _repo(home, "no-remote")
+    first = repo_owner_id(root)
+    assert first and "/" not in first  # a UUID, not a host/org/repo
+    assert repo_owner_id(root) == first  # stable across calls (persisted)
+    assert (root / ".cgh" / "owner_id").exists()
 
 
 def _get_conn_at_path(db_path):

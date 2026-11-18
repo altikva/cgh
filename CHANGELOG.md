@@ -96,6 +96,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   as its promotion scope without renaming the column.
 
 ### Changed
+- **`cgh serve` starts without loading the MCP engine.** Each `cgh serve`
+  worker is a stateless stdio-to-HTTP bridge to the shared owner, yet it used
+  to import the whole FastMCP server and every tool module (about 1 s) that
+  only the owner runs. The proxy now boots from the IPC primitives alone,
+  through a lean entry (`cgh.state.serve.proxy_main`), cutting its import cost
+  by roughly a second per session; the owner still pays that cost once, in its
+  own process. No change to behaviour or configuration.
 - **Federation and siblings are one notion now.** `pattern_search(repo=, ref=)`
   and `file_at_ref` resolve the subrepos a workspace federates, not only repos
   listed under `[cgh] siblings`. A coordination checkout that already federates

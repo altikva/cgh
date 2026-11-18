@@ -20,23 +20,23 @@ from cgh.state.pidfile import process_alive
 
 class TestResolveSignals:
     def test_returns_existing_signals(self):
-        from cgh.server import _resolve_signals
+        from cgh.core.utils import resolve_signals
 
-        sigs = _resolve_signals("SIGTERM", "SIGINT")
+        sigs = resolve_signals("SIGTERM", "SIGINT")
         assert len(sigs) == 2
 
     def test_skips_missing_without_raising(self):
-        from cgh.server import _resolve_signals
+        from cgh.core.utils import resolve_signals
 
         # A name that exists nowhere must be skipped, never raise (this is
         # exactly how SIGHUP behaves on Windows).
-        sigs = _resolve_signals("SIGTERM", "SIG_DOES_NOT_EXIST")
+        sigs = resolve_signals("SIGTERM", "SIG_DOES_NOT_EXIST")
         assert len(sigs) == 1
 
     def test_all_missing_returns_empty(self):
-        from cgh.server import _resolve_signals
+        from cgh.core.utils import resolve_signals
 
-        assert _resolve_signals("NOPE_A", "NOPE_B") == []
+        assert resolve_signals("NOPE_A", "NOPE_B") == []
 
 
 class TestProcessAlive:

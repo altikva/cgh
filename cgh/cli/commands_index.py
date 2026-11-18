@@ -423,16 +423,13 @@ def cmd_serve(args: argparse.Namespace) -> None:
             console.print("[dim]No owner running.[/dim]")
         return
 
-    # Normal foreground serve (stdio proxy)
-    new_argv = ["cgh.server", "--root", root]
-    if args.watch:
-        new_argv.append("--watch")
-    if args.reindex:
-        new_argv.append("--reindex")
-    sys.argv = new_argv
-    from cgh.server import main
+    # Normal foreground serve (stdio proxy). Enter through the lean proxy
+    # module, which boots from the IPC primitives alone: importing cgh.server
+    # here would load FastMCP and every tool module (~1s) that the bridge
+    # never uses. The owner it spawns pays that cost once, in its own process.
+    from cgh.state.serve import proxy_main
 
-    main()
+    sys.exit(proxy_main(root=root, watch=args.watch, reindex=args.reindex))
 
 
 def cmd_stop(args: argparse.Namespace) -> None:

@@ -29,6 +29,10 @@ pip install cgh && cgh init && cgh serve
 
 ## Why cgh: the measured gains
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/altikva/cgh/main/assets/img/cgh-hero.svg" alt="cgh vs grep: 203x less context pulled for the same answer, from real benchmark data (flask, callers of url_for)" width="820">
+</p>
+
 cgh answers code questions from the graph, returning exact `file:line`, instead of the agent reading whole files or grepping. Two benchmarks measure what that buys, at two scales. Both compare cost only across runs that every arm got right, so a cheap wrong answer never reads as a saving.
 
 **Per code question: fewer turns, fewer tokens.** A two-arm benchmark asks the same navigation questions (where is X defined, who calls Y, what breaks if Z changes) twice against the same repo, once with cgh and once with Read/Grep only, over five runs of 5 to 8 tasks:

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300" role="img" aria-label="cgh vs grep: the question 'where is url_for called' costs 138 516 tokens without cgh and 681 tokens with cgh, 203 times less context pulled.">
+  <style>
+    :root {
+      --panel: #ffffff; --line: #dcdfe6; --surface2: #eceef2;
+      --ink: #1a1d24; --soft: #4a5160; --faint: #717888;
+      --accent: #0f7d74; --cost: #c0512a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --panel: #171b22; --line: #2a303b; --surface2: #20252f;
+        --ink: #e8ebf1; --soft: #aab2c2; --faint: #7b8395;
+        --accent: #3fb6a8; --cost: #e17a4f;
+      }
+    }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+    .disp { font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif; }
+    .kick { letter-spacing: 2px; }
+    text { fill: var(--ink); }
+  </style>
+
+  <rect x="1" y="1" width="878" height="298" rx="18" fill="var(--panel)" stroke="var(--line)"/>
+
+  <text class="mono kick" x="34" y="42" font-size="13" fill="var(--accent)">CGH · FIND_CALLERS</text>
+  <text class="disp" x="34" y="74" font-size="23" font-weight="600" fill="var(--ink)">Where is url_for called?</text>
+
+  <line x1="548" y1="96" x2="548" y2="266" stroke="var(--line)"/>
+
+  <text class="mono" x="34" y="120" font-size="13" fill="var(--cost)">WITHOUT CGH · GREP + READ</text>
+  <text class="mono" x="34" y="160" font-size="32" font-weight="600" fill="var(--cost)">138 516<tspan class="mono" font-size="14" font-weight="400" fill="var(--faint)" dx="8">tokens</tspan></text>
+  <rect x="34" y="176" width="480" height="11" rx="5.5" fill="var(--surface2)"/>
+  <rect x="34" y="176" width="480" height="11" rx="5.5" fill="var(--cost)">
+    <animate attributeName="width" values="480;480;0;480;480" keyTimes="0;0.55;0.6;0.9;1" dur="5s" calcMode="spline" keySplines="0 0 1 1;0.5 0 1 1;0.2 0.7 0.2 1;0 0 1 1" repeatCount="indefinite"/>
+  </rect>
+
+  <text class="mono" x="34" y="222" font-size="13" fill="var(--accent)">WITH CGH · FIND_CALLERS</text>
+  <text class="mono" x="34" y="262" font-size="32" font-weight="600" fill="var(--accent)">681<tspan class="mono" font-size="14" font-weight="400" fill="var(--faint)" dx="8">tokens</tspan></text>
+  <rect x="300" y="248" width="214" height="11" rx="5.5" fill="var(--surface2)"/>
+  <rect x="300" y="248" width="6" height="11" rx="5.5" fill="var(--accent)">
+    <animate attributeName="width" values="6;6;0;6;6" keyTimes="0;0.55;0.6;0.9;1" dur="5s" calcMode="spline" keySplines="0 0 1 1;0.5 0 1 1;0.2 0.7 0.2 1;0 0 1 1" repeatCount="indefinite"/>
+  </rect>
+
+  <g opacity="1">
+    <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.55;0.62;0.74;0.86;1" dur="5s" repeatCount="indefinite"/>
+    <text class="disp" x="690" y="172" font-size="78" font-weight="700" fill="var(--accent)" text-anchor="middle" letter-spacing="-2">203×</text>
+    <text class="mono" x="690" y="204" font-size="13" fill="var(--faint)" text-anchor="middle">less context pulled</text>
+    <text class="mono" x="690" y="224" font-size="13" fill="var(--faint)" text-anchor="middle">for the same answer</text>
+  </g>
+
+  <text class="mono" x="34" y="290" font-size="11" fill="var(--faint)">Real benchmark data · flask · callers · url_for · cl100k_base tokenizer</text>
+</svg>

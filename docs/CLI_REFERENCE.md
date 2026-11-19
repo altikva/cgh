@@ -439,6 +439,38 @@ cgh outline docs/ARCHITECTURE.md
 
 ---
 
+### `read`
+
+Print a bounded slice of a working-tree file, server-side: cgh's canonical
+read once you already know the file and the range (the usual case after a
+`lookup`, `search` or a `file:line`). Reach for it instead of `sed -n` /
+`head` / `tail` or opening the whole file.
+
+```
+cgh read <file> [START] [END] [--symbol NAME] [--json] [--root DIR]
+```
+
+Accepts relative or absolute paths; the file must resolve inside the repo.
+
+- **START / END**: 1-based, inclusive line range (END omitted or `0` = to the
+  end of the file), capped at 400 lines per call.
+- `--symbol`, `-S`: read a function, class or method (`Class.method`) defined
+  in the file, in place of a line range.
+- With neither a range nor a symbol: a small file comes back whole, a larger
+  one as its outline (symbols with line ranges), or `head` (first lines) for a
+  language cgh does not parse.
+- `--json`: `{path, total_lines, start_line, end_line, truncated, lines:
+  [{line, text}]}`, plus `{symbol, kind}` when a symbol was read.
+
+**Example:**
+
+```bash
+cgh read cgh/indexer.py 1 40
+cgh read cgh/server/tools_query.py --symbol read_lines
+```
+
+---
+
 ### `endpoints`
 
 List HTTP routes with their method, full path, handler and `file:line`. Same

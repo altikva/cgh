@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), cgh exposes 63 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 66 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -40,8 +40,9 @@ tests/test_server/test_wire_caps.py
 | `imports_of(file_path)` | List modules imported by a file; each row's `kind` is empty for a plain import, `reexport` for a JS / TS `export ... from` and `dynamic` for `import('./x')` |
 | `search_symbols(query, limit?, role?, layer?, kinds?, name_only?)` | Fuzzy search across all symbol types; optional `role` / `layer` filters, `kinds` (comma list, e.g. `function,class`) to limit the kinds, `name_only` to skip TF type and section body matches |
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
-| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[cgh] siblings` in `~/.cgh/config.toml` |
+| `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[cgh] siblings` (global or project config) or a subrepo this workspace federates |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
+| `read_lines(path, start_line?, end_line?, symbol?)` | cgh's canonical bounded read of a working-tree file, server-side, instead of Read or `sed`/`head`/`tail` once you know the file and range: a 1-based inclusive line range (`end_line` 0 = to the end, capped at 400 lines), or a `symbol` (function/class/`Class.method`) read in place of a range, or neither for a small file whole, a larger one as its `outline`, or `head` for a language cgh does not parse. Returns `{path, total_lines, start_line, end_line, truncated, lines: [{line, text}]}` with `next_start_line` to resume; `path` must resolve inside the indexed repo (use `file_at_ref` for another branch or sibling) |
 | `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |
 
@@ -129,12 +130,20 @@ queried name keeps the most certain one.
 
 | Tool | Description |
 |------|-------------|
-| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions |
-| `knowledge_search(query, kind?, limit?, scope?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes |
-| `knowledge_list(kind?, tag?, session_id?, limit?, offset?, entry_id?)` | Browse saved notes as briefs, 10 per page near 2.5 KB: useful entries first, corrected ones last, newest first inside each tier. `entry_id` reads one entry whole |
+| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?, contradicts?, namespace?, ticket?, author?, origin_repo?, symptom?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions. `namespace` picks the store (`repo` by default; a shared name routes the write to that fleet store, where `standing_instruction` and `glossary` are refused). `ticket`, `author` and `origin_repo` record where the learning came from (`author`/`origin_repo` fill in from git when blank); `symptom` stores an error signature so a look-alike error recalls the entry. `contradicts` an id auto-retires the old entry on tag overlap, and a strong supersede is auto-applied while a weak look-alike is only suggested |
+| `knowledge_search(query, kind?, limit?, scope?, namespace?, symptom?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes. Reads this repo's store AND the subscribed shared stores (the fleet) by default; shared hits are tagged with their `namespace` and `scope` and marked `untrusted`. `namespace` narrows to one store or local facet (`repo`, `ticket:<id>`). `symptom` recalls diagnoses for a look-alike error, false trails included. `scope="all"` is legacy: the shared stores are already read, so it only adds federated subrepos' knowledge |
+| `knowledge_diagnose(symptom, namespace?, limit?)` | Paste an error or log line and recall the diagnoses already posted for a look-alike error across the fleet, split into `confirmed` (diagnoses that held or are unrated, fix in the body) and `dead_ends` (false trails already paid for, kept on purpose). Each hit carries `verdict`, `author`, `origin_repo`, `ticket`, `date` and an `already_paid` line; shared-store hits are `untrusted`. The line is normalised before matching, so a resembling error recalls it |
+| `knowledge_promote(entry_id?, since?, tags?, to?, dry_run?)` | Promote matured learnings from this repo's store into a shared fleet store, so a decision taken here is visible from every subscribed repo without `scope="all"`. Select by `entry_id`/`since`/`tags` (empty = the durable kinds plus plain notes); `to` is the target namespace (defaults to `[cgh] knowledge_promote_default`, itself `org-platform`); `dry_run` reports without writing. Each promoted row keeps its origin and is idempotent on re-run; `standing_instruction` and `glossary` are never shared |
+| `knowledge_list(kind?, tag?, session_id?, limit?, offset?, entry_id?, namespace?)` | Browse saved notes as briefs, 10 per page near 2.5 KB: useful entries first, corrected ones last, newest first inside each tier. `entry_id` (a string) reads one entry whole. By default lists this repo's notes AND the subscribed shared stores, each shared brief tagged with its `namespace` and `scope` and marked `untrusted`; `namespace` narrows to one store or local facet |
 | `knowledge_outcome(verdict, entry_id?, query?, note?, file_refs?, corrected_by?, session_id?)` | Record whether relying on an entry, or on some files, worked: `useful`, `dead_end`, or `corrected` (the entry was wrong; `corrected_by` names the fix). Verdicts fade with a half-life (`[cgh] knowledge_half_life_days`, 30 by default) and give each entry and file a status: `preferred`, `useful`, `contested`, `dead_end`, `corrected` or `faded`. Search and list show it as an `outcome` summary, and `resume` carries the strongest recent dead ends under `known_dead_ends` |
 | `knowledge_terms(min_count?)` | Every tag with its count: the glossary of captured topics |
-| `knowledge_forget(entry_id)` | Delete one entry and its outcomes |
+| `knowledge_forget(entry_id)` | Delete one entry and its outcomes (this repo's store only; a namespaced shared-store id is refused) |
+
+**`scope` is three different things here, so read it by position:**
+
+- the **`scope` parameter** of `knowledge_search` selects federation reach. `scope="all"` fans the query out to federated subrepos read-only. It is legacy: the subscribed shared stores are read without it, so it is only for the subrepo case.
+- the **`scope` field on a hit** names the store it came from, the shared namespace or the subrepo name, so a result says where it was read.
+- the **`scope` stored on an entry** is its promotion flag, `repo` (promotable) or `branch` (an unmerged branch's note, not promoted). Read it as the entry's *promotion scope*; the physical column keeps the short name. The store an entry *belongs to* is its `namespace` (`repo`, `ticket:<id>`, or a shared name), a separate axis from this flag.
 
 ### Usage log
 

@@ -1,0 +1,59 @@
+# Fixed tier-1 questions for psf/requests at the pinned SHA.
+# See questions/flask.yaml for the field contract.
+questions:
+  - id: requests-locate-session
+    kind: locate
+    cmd: lookup
+    arg: Session
+    grep_pattern: Session
+    expect: src/requests/sessions.py
+  - id: requests-locate-httpadapter
+    kind: locate
+    cmd: lookup
+    arg: HTTPAdapter
+    grep_pattern: HTTPAdapter
+    expect: src/requests/adapters.py
+  - id: requests-locate-preparedrequest
+    kind: locate
+    cmd: lookup
+    arg: PreparedRequest
+    grep_pattern: PreparedRequest
+    expect: src/requests/models.py
+  - id: requests-locate-httpbasicauth
+    kind: locate
+    cmd: lookup
+    arg: HTTPBasicAuth
+    grep_pattern: HTTPBasicAuth
+    expect: src/requests/auth.py
+  - id: requests-locate-extract-cookies
+    kind: locate
+    cmd: lookup
+    arg: extract_cookies_to_jar
+    grep_pattern: extract_cookies_to_jar
+    expect: src/requests/cookies.py
+  - id: requests-callers-resolve-redirects
+    kind: callers
+    cmd: callers
+    arg: resolve_redirects
+    grep_pattern: resolve_redirects
+    expect: src/requests/sessions.py
+  - id: requests-callers-to-key-val-list
+    kind: callers
+    cmd: callers
+    arg: to_key_val_list
+    grep_pattern: to_key_val_list
+    expect: src/requests/models.py
+  - id: requests-fts-transport-adapter
+    kind: fts
+    cmd: search
+    arg: mount transport adapter retry connection pool
+    grep_pattern: adapter
+    word: false
+    expect: src/requests/adapters.py
+  - id: requests-fts-encode-multipart
+    kind: fts
+    cmd: search
+    arg: encode multipart form files body
+    grep_pattern: multipart
+    word: false
+    expect: src/requests/models.py

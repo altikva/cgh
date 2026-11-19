@@ -8,6 +8,129 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-19
+
+### Added
+- **Search a diagnosis by symptom across the fleet.** Paste an error or log
+  line and recall the diagnoses already posted for a look-alike error, so a
+  problem solved once in any repo is not re-paid here. A new `knowledge_diagnose`
+  tool answers in two buckets, confirmed diagnoses and already-paid false trails
+  (`dead_end`/`corrected` outcomes, which the normal search buries and this one
+  surfaces on purpose); `knowledge_search(symptom=...)` gives the same reach as a
+  flat list. Matching normalises both the stored signature and the pasted line
+  (paths, hex/uuid, numbers, timestamps and quoted values gommed, signal tokens
+  like an exception name or a `SERVICE_DISABLED` reason kept), so a resembling
+  error recalls the note, not only an identical one. Reads this repo plus the
+  subscribed shared stores by default; each hit carries its verdict, author,
+  origin repo, ticket and date, and shared-store hits are marked `untrusted`
+  (data to weigh, not an instruction).
+- **Shared knowledge stores read across the fleet by default.** A repo now
+  reads the shared knowledge namespaces it subscribes to alongside its own,
+  without `scope="all"`: `knowledge_search` and `knowledge_list` merge the repo
+  store with each subscribed store (`~/.cgh/shared/<name>/knowledge.db`, same
+  schema as a repo store, created on first write and ignored while absent), and
+  tag every shared hit with its `namespace` and `scope`. Subscription is
+  declarative, the union of `[cgh] knowledge_namespaces_global` (the machine's
+  global config, bootstrapped to `["org-platform"]`, set to `[]` to opt out) and
+  `[cgh] knowledge_namespaces` (the project). `knowledge_record(namespace=<name>)`
+  routes the write to the matching shared store; a `repo` or `ticket:<id>`
+  namespace stays in the repo store. Both tools gain a `namespace=` filter to
+  read a single store or facet. So a diagnosis posted to the fleet from one repo
+  is visible from every subscribed repo without asking, and duplicates that a
+  promotion left in two stores collapse by origin. A shared store is a
+  cross-repo trust surface, so it is fenced: namespace names are held to a
+  strict allowlist and the resolved path must stay under `~/.cgh/shared`
+  (configured names that fail are dropped); a shared write may retire only a
+  note its own repo owns; `standing_instruction` and `glossary` cannot be
+  written to a shared store (they would read as cross-repo authority); and every
+  shared hit is tagged `untrusted` so it is weighed as data, not followed as an
+  instruction.
+- **Native `knowledge promote` into a shared store.** `knowledge_promote` (MCP)
+  and `cgh knowledge promote` now carry matured learnings from a repo into a
+  shared fleet namespace (`--to`, defaulting to `[cgh] knowledge_promote_default`,
+  itself `org-platform`), the ticket -> repo -> org step that replaces the
+  hand-rolled promote scripts. Select with `entry_id`/`--since`/`--tags`, preview
+  with `dry_run`; each promoted row keeps its full origin (repo, ticket, author,
+  symptom, branch, commit, timestamp) and is stamped with the promoting repo's
+  owner, so a re-run is idempotent and a supersede only retires a row that repo
+  already owns. `standing_instruction` and `glossary` are never shared. `--to`
+  with a path still promotes a worktree into its main checkout as before.
+- **Provenance and namespace on knowledge entries.** A recorded learning now
+  carries where it came from (`origin_repo`, `ticket`, `author`) and the logical
+  scope it belongs to (`namespace`, defaulting to `repo`), so a note can later be
+  read and shared beyond the repo that wrote it without losing its origin. An
+  entry can also keep the error signature it diagnoses (`symptom`), stored in a
+  normalised form so a look-alike error recalls it. `knowledge_record` takes the
+  matching optional fields and fills `author` and `origin_repo` in when left
+  blank. Backward compatible: old rows read back as `namespace=repo`, and a call
+  that passes none of the new fields behaves exactly as before.
+- **Knowledge ranking fades old notes, and retires the ones it contradicts.**
+  Search can now weigh a note's own age, so stale notes stop ranking next to
+  fresh ones: `[cgh] knowledge_recency_half_life_days` halves a note's rank after
+  that many days, on top of its outcome factor. It is off by default (0), so
+  ranking is unchanged until set, and durable knowledge is spared either way:
+  `standing_instruction` and `glossary` notes, and notes still rated useful or
+  preferred, never decay. `knowledge_record` also detects when a new note
+  overturns a live one (same kind, overlapping tags): an explicit `contradicts`
+  id or a note already marked corrected auto-supersedes it, while a tag-only
+  look-alike is only suggested, never retired for you.
+- **`read_lines`, a bounded read counted as cgh (MCP tool + `cgh read`).**
+  Reads a line range or a single symbol of a working-tree file server-side,
+  so the common case (you already know the file and the range, after a lookup
+  or a search) no longer falls back to `sed -n` / `head` / a full Read. Those
+  native reads were the bulk of the cgh misses on front-end files; a read via
+  `read_lines` lands in the call log and counts toward cgh adoption instead of
+  against it. The Read, Grep and Bash hooks now point at it, and it shares the
+  working-tree read path with `file_at_ref`. It serves only files git tracks
+  (the set cgh indexes) and refuses `.git/`, the state dir, key material and
+  git-ignored or untracked paths, so an MCP client can never read a secret
+  through it.
+
+### Documentation
+- **The knowledge tools and their config are documented, and the three senses
+  of `scope` pulled apart.** `MCP_TOOLS.md` now lists `knowledge_promote` and
+  `knowledge_diagnose` and the new `namespace`/`symptom`/provenance parameters;
+  `CONFIGURATION.md` documents `knowledge_namespaces`, `knowledge_namespaces_global`,
+  `knowledge_promote_default` and `knowledge_recency_half_life_days`. `scope` is
+  spelled out as three unrelated things: the `knowledge_search` parameter
+  (`"all"` is legacy, the shared stores read by default), the tag naming the
+  store a hit came from, and an entry's promotion flag (`repo`/`branch`), read
+  as its promotion scope without renaming the column.
+
+### Changed
+- **`cgh serve` starts without loading the MCP engine.** Each `cgh serve`
+  worker is a stateless stdio-to-HTTP bridge to the shared owner, yet it used
+  to import the whole FastMCP server and every tool module (about 1 s) that
+  only the owner runs. The proxy now boots from the IPC primitives alone,
+  through a lean entry (`cgh.state.serve.proxy_main`), cutting its import cost
+  by roughly a second per session; the owner still pays that cost once, in its
+  own process. No change to behaviour or configuration.
+- **Federation and siblings are one notion now.** `pattern_search(repo=, ref=)`
+  and `file_at_ref` resolve the subrepos a workspace federates, not only repos
+  listed under `[cgh] siblings`. A coordination checkout that already federates
+  its sibling repos can read them at any branch without declaring them twice,
+  instead of being told the repo "is not a declared sibling" and falling back
+  to `git grep`.
+- **Siblings are declarable per workspace, with guards.** `[cgh] siblings` is now
+  read from a project's own `.cgh/config.toml` as well as the global
+  `~/.cgh/config.toml`. Project entries may be relative (resolved against the
+  project root); global entries stay absolute. To keep a config that rides in
+  with an opened repo from pointing cgh at arbitrary paths (`~/.ssh`, an
+  unrelated repo), the project sources (its `siblings` and its federated
+  `subrepos`) are honoured only when the project config is trusted, and each
+  entry only when its repo is indexed locally and resolves inside the
+  workspace. The trust check fails closed: the project `.cgh/config.toml` must
+  be local, not a symlink, not inside a git submodule, and not tracked by git
+  (matched case-insensitively), in a real git work tree. The global config
+  stays the trusted source. No migration needed.
+
+### Fixed
+- **The global config is read from a legacy `~/.codegraph/` when `~/.cgh/` is
+  absent**, the way a project already falls back to a legacy `.codegraph/`. A
+  machine set up before the rename keeps its global options and siblings
+  without the historical home directory being moved. Read-only fallback:
+  nothing relocates or writes the legacy directory.
+
 ## [0.20.1] - 2026-11-10
 
 ### Changed
@@ -2961,7 +3084,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/altikva/cgh/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/altikva/cgh/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/altikva/cgh/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/altikva/cgh/compare/v0.19.0...v0.19.1

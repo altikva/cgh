@@ -70,6 +70,31 @@ def state_dir_for(project_root: str | Path) -> Path:
     return primary
 
 
+def global_state_dir() -> Path:
+    """The user's global cgh state dir to READ: ``~/.cgh/`` when it exists,
+    else a legacy ``~/.codegraph/`` when that exists, else ``~/.cgh/``. The
+    home-level mirror of ``state_dir_for``: a machine set up before the rename
+    keeps its global ``~/.codegraph/config.toml`` (siblings, options) readable
+    without moving the directory, which can hold gigabytes of old state. This
+    is a read-only fallback: nothing migrates or writes the legacy dir here.
+
+    The legacy dir is resolved as ``GLOBAL_DIR``'s sibling (not a hardcoded
+    home path) so a test that redirects ``GLOBAL_DIR`` stays isolated from any
+    real ``~/.codegraph/`` on the machine."""
+    if GLOBAL_DIR.exists():
+        return GLOBAL_DIR
+    legacy = GLOBAL_DIR.parent / LEGACY_CGH_DIR
+    if legacy.is_dir():
+        return legacy
+    return GLOBAL_DIR
+
+
+def global_config_path() -> Path:
+    """Path of the global ``config.toml`` to read, honouring the legacy
+    ``~/.codegraph/`` fallback. Writers keep using ``GLOBAL_DIR`` directly."""
+    return global_state_dir() / CONFIG_FILE
+
+
 def _owner_alive_in(state_dir: Path) -> bool:
     """True when a live owner holds the given state dir (its owner.pid names a
     running process). Keeps migrate_state_dir from renaming a dir with open DB
@@ -369,6 +394,31 @@ class CghConfig:
     # turns decay off.
     knowledge_half_life_days: float = 30.0
 
+    # Half-life, in days, of a knowledge note's own age: a note this old ranks
+    # half as high in search, on top of its outcome factor. Zero (the default)
+    # turns age decay off, so ranking is unchanged unless this is set. Distinct
+    # from the outcome half-life above; standing_instruction and glossary notes,
+    # and notes rated useful or preferred, never decay.
+    knowledge_recency_half_life_days: float = 0.0
+
+    # Shared knowledge stores this repo reads by default, without scope="all",
+    # resolved under ~/.cgh/shared/<name>/knowledge.db. knowledge_namespaces is
+    # the project-level subscription; knowledge_namespaces_global is the
+    # machine-wide default (the "fleet"), set in the global ~/.cgh/config.toml
+    # and bootstrapped to ["org-platform"]. The effective set a repo reads is
+    # their union (resolved_knowledge_namespaces). A store absent on disk is
+    # ignored; it is created on first write to that namespace. Set the global
+    # list to [] to unsubscribe the whole machine.
+    knowledge_namespaces: list[str] = field(default_factory=list)
+    knowledge_namespaces_global: list[str] = field(
+        default_factory=lambda: ["org-platform"]
+    )
+
+    # Where `cgh knowledge promote` / knowledge_promote send a matured learning
+    # when no explicit target is given: the shared namespace it lands in, read
+    # across the fleet. Defaults to the broadest conventional store.
+    knowledge_promote_default: str = "org-platform"
+
     # Plugins (proposal 001). enabled = None means "no allowlist, load
     # everything installed that isn't in disabled". plugin_tables carries
     # each [plugin.<name>] TOML table verbatim for that plugin's PluginAPI.
@@ -398,6 +448,22 @@ class CghConfig:
     def is_initialized(self) -> bool:
         return self.cgh_dir.exists()
 
+    def resolved_knowledge_namespaces(self) -> list[str]:
+        """The shared knowledge stores this repo reads by default: the
+        machine-wide fleet plus this repo's own subscriptions, de-duplicated
+        with order preserved (global first). A blank or unsafe name (one that
+        fails the shared-store allowlist, e.g. a path-traversal attempt in the
+        config) is dropped silently, so a configured namespace can never build
+        a path outside ~/.cgh/shared."""
+        from cgh.state.call_log import valid_shared_namespace
+
+        out: list[str] = []
+        for ns in (*self.knowledge_namespaces_global, *self.knowledge_namespaces):
+            ns = (ns or "").strip()
+            if ns and ns not in out and valid_shared_namespace(ns):
+                out.append(ns)
+        return out
+
 
 def _read_toml(path: Path) -> dict:
     """Read a TOML file. Returns empty dict if missing or unreadable."""
@@ -417,8 +483,8 @@ def load_config(project_root: str | Path | None = None) -> CghConfig:
     root = Path(project_root).resolve() if project_root else Path.cwd().resolve()
     config = CghConfig(project_root=root)
 
-    # Global config
-    global_data = _read_toml(GLOBAL_DIR / CONFIG_FILE)
+    # Global config (reads a legacy ~/.codegraph/ when ~/.cgh/ is absent)
+    global_data = _read_toml(global_config_path())
     _apply_toml(config, global_data)
 
     # Project config
@@ -487,6 +553,27 @@ def _apply_toml(config: CghConfig, data: dict) -> None:
             )
         except (TypeError, ValueError):
             pass  # a malformed value keeps the default rather than break loading
+    if "knowledge_recency_half_life_days" in cg:
+        try:
+            config.knowledge_recency_half_life_days = max(
+                0.0, float(cg["knowledge_recency_half_life_days"])
+            )
+        except (TypeError, ValueError):
+            pass  # a malformed value keeps the default rather than break loading
+    if "knowledge_namespaces" in cg and isinstance(cg["knowledge_namespaces"], list):
+        config.knowledge_namespaces = [str(n) for n in cg["knowledge_namespaces"]]
+    if "knowledge_namespaces_global" in cg and isinstance(
+        cg["knowledge_namespaces_global"], list
+    ):
+        config.knowledge_namespaces_global = [
+            str(n) for n in cg["knowledge_namespaces_global"]
+        ]
+    if "knowledge_promote_default" in cg and isinstance(
+        cg["knowledge_promote_default"], str
+    ):
+        default_ns = cg["knowledge_promote_default"].strip()
+        if default_ns:
+            config.knowledge_promote_default = default_ns
 
     terraform = data.get("terraform", {})
     sources = terraform.get("module_sources") if isinstance(terraform, dict) else None
@@ -607,10 +694,12 @@ max_file_size_kb = 500
 # `cgh add-dir add ../frontend` (kept here so it versions with the repo).
 # extra_dirs = ["../my-frontend"]
 # Sibling git repos an agent may read at any branch without a checkout
-# (pattern_search(repo=, ref=), file_at_ref) are declared in the user's
-# global ~/.cgh/config.toml only, as [cgh] siblings = ["~/code/
-# my-api"]: a project config can come with a cloned repo, so it cannot
-# grant access to other repos.
+# (pattern_search(repo=, ref=), file_at_ref). Declare them below, either
+# here at project level (relative paths allowed, resolved against the project
+# root) or in the user's global ~/.cgh/config.toml (absolute paths only). The
+# subrepos this workspace federates are already readable this way, no need to
+# list them twice.
+# siblings = ["../my-api"]
 # Opt-in precise CALLS resolution for Python (requires `pip install cgh[lsp]`).
 # Off by default; uses jedi for goto-definition so cross-file call edges are
 # exact instead of name-matched. Env override: CGH_PRECISE_CALLS=1
@@ -628,6 +717,16 @@ max_file_size_kb = 500
 # Knowledge outcomes (knowledge_outcome) fade with age: a verdict this many
 # days old weighs half as much as a fresh one. 0 turns the decay off.
 # knowledge_half_life_days = 30
+# A knowledge note's own age can fade its search rank too, on top of its
+# outcome: a note this many days old ranks half as high. 0 (the default) is off.
+# standing_instruction and glossary notes, and notes rated useful, never decay.
+# knowledge_recency_half_life_days = 0
+# Shared knowledge stores this repo reads by default, without scope="all".
+# Each resolves to ~/.cgh/shared/<name>/knowledge.db, is ignored while absent
+# and created on first write to that namespace. The machine-wide default lives
+# in the global ~/.cgh/config.toml as knowledge_namespaces_global (bootstrapped
+# to ["org-platform"]); set it to [] there to unsubscribe the whole machine.
+# knowledge_namespaces = ["org-platform", "akonteo"]
 
 [parsers]
 # Uncomment to restrict which parsers are active:

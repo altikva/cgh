@@ -341,6 +341,12 @@ def shape_hits(hits: list[dict]) -> bool:
             brief["outcome"] = {"status": h["outcome"]["status"]}
         if "scope" in h:
             brief["scope"] = h["scope"]
+        if "namespace" in h:
+            brief["namespace"] = h["namespace"]
+        if h.get("local_copy"):
+            brief["local_copy"] = True
+        if h.get("untrusted"):
+            brief["untrusted"] = True
         h.clear()
         h.update(brief)
     return clipped_any

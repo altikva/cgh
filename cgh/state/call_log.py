@@ -20,6 +20,11 @@ from pathlib import Path
 
 _DB_DIR = ".cgh"
 _LOG_FILE = "call_log.db"
+# Shared knowledge stores live outside any repo, under the global dir, one
+# directory per namespace holding a knowledge.db with the same schema as a
+# repo store (knowledge + FTS + outcomes), minus the call_log of tool traces.
+_SHARED_SUBDIR = "shared"
+_SHARED_FILE = "knowledge.db"
 
 # Who triggered a tool call. "agent": an MCP client through the stdio proxy.
 # "cli": a `cgh` command asking the owner over HTTP. "hook": the same, from a
@@ -89,6 +94,65 @@ def _get_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         return _init_conn(repo_root)
 
 
+# A shared namespace becomes a path segment under ~/.cgh/shared/, so its name
+# is held to a strict allowlist: lower-case start, then word / dot / dash, no
+# separator, no leading dot, no "..". This is the first line of defence against
+# a name like "../../etc" escaping the shared root; shared_store_path then
+# resolves the final path and refuses anything outside the root as well.
+_VALID_SHARED_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def valid_shared_namespace(name: str) -> bool:
+    """Whether ``name`` is a safe shared-store name: matches the allowlist and
+    carries no path-traversal token. Fails closed on anything else."""
+    n = (name or "").strip()
+    return bool(_VALID_SHARED_NAME_RE.match(n)) and ".." not in n and "/" not in n
+
+
+def shared_store_path(name: str) -> Path:
+    """Path of a shared knowledge store: ``~/.cgh/shared/<name>/knowledge.db``.
+    GLOBAL_DIR is read at call time so a test that redirects it is honoured.
+
+    The name is validated against a strict allowlist and the resolved path is
+    verified to stay under ``~/.cgh/shared``; a traversal attempt raises
+    ValueError rather than touching a file outside the shared root."""
+    import cgh.core.config as _config
+
+    if not valid_shared_namespace(name):
+        raise ValueError(f"invalid shared namespace name: {name!r}")
+    root = (_config.GLOBAL_DIR / _SHARED_SUBDIR).resolve()
+    path = (root / name / _SHARED_FILE).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"shared namespace escapes the shared root: {name!r}")
+    return path
+
+
+def is_shared_namespace(namespace: str) -> bool:
+    """Whether a namespace lives in its own shared store rather than the local
+    repo store. ``repo``, ``branch`` and any ``ticket:<id>`` facet stay in the
+    repo store; every other non-empty name routes to a shared store. An invalid
+    name (fails the shared-name allowlist) is NOT treated as shared, so it can
+    never build a shared path."""
+    ns = (namespace or "").strip()
+    if not ns or ns in ("repo", "branch") or ns.startswith("ticket:"):
+        return False
+    return valid_shared_namespace(ns)
+
+
+def _get_conn_at(db_file: str | Path) -> sqlite3.Connection:
+    """Cached connection to an explicit knowledge DB file (a shared store),
+    built with the same schema as a repo store and keyed by its resolved path."""
+    key = str(Path(db_file).resolve())
+    conn = _conns.get(key)
+    if conn is not None:
+        return conn
+    with _LOG_LOCK:
+        conn = _conns.get(key)
+        if conn is not None:
+            return conn
+        return _init_conn(db_file=db_file)
+
+
 def reset_for_tests() -> None:
     # Close every cached connection. Test helper, mirrors findings.py.
     with _LOG_LOCK:
@@ -100,13 +164,22 @@ def reset_for_tests() -> None:
         _conns.clear()
 
 
-def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
-    key = _cache_key(repo_root)
-    root = Path(key)
-    db_dir = root / _DB_DIR
-    db_dir.mkdir(parents=True, exist_ok=True)
+def _init_conn(
+    repo_root: str | Path | None = None, *, db_file: str | Path | None = None
+) -> sqlite3.Connection:
+    # A shared store is addressed by its own db_file; a repo store by its root.
+    # Both get the identical schema below; the shared store simply never has its
+    # call_log of tool traces written to, only the knowledge tables.
+    if db_file is not None:
+        db_path = Path(db_file)
+        key = str(db_path.resolve())
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        key = _cache_key(repo_root)
+        db_path = Path(key) / _DB_DIR / _LOG_FILE
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _conn = sqlite3.connect(str(db_dir / _LOG_FILE), check_same_thread=False)
+    _conn = sqlite3.connect(str(db_path), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS call_log (
@@ -162,36 +235,6 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     _conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_knowledge_session ON knowledge(session_id)
     """)
-    _conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-            title, body, tags, kind UNINDEXED,
-            content='knowledge', content_rowid='id'
-        )
-    """)
-    # Keep the external-content FTS in sync with the knowledge table even
-    # when callers bypass the helpers below. Without these triggers a raw
-    # DELETE leaves orphan rowids that surface as "missing row N from
-    # content table" once queried.
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
-            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
-                VALUES (new.id, new.title, new.body, new.tags, new.kind);
-        END
-    """)
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
-                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
-        END
-    """)
-    _conn.execute("""
-        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
-            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, kind)
-                VALUES('delete', old.id, old.title, old.body, old.tags, old.kind);
-            INSERT INTO knowledge_fts(rowid, title, body, tags, kind)
-                VALUES (new.id, new.title, new.body, new.tags, new.kind);
-        END
-    """)
     # Supersede links: an entry can replace an older one; superseded
     # entries stop appearing in searches, lists and resume bundles but
     # stay queryable by id. Guarded ALTER for databases created before
@@ -208,6 +251,16 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
     # for databases created before the columns existed. source_worktree and
     # origin_id (the entry's id in the source store) make a re-run recognise
     # what it already carried, and let a revised entry replace its earlier copy.
+    #
+    # Provenance and namespace columns extend the same tolerant pattern:
+    # `namespace` is the logical scope a row belongs to and defaults to 'repo'
+    # (rows written before the column read back as 'repo'); origin_repo, ticket
+    # and author say where a learning came from; symptom holds a raw error
+    # signature and symptom_norm its normalised form, for signature-based recall.
+    # Rows from before these columns read back with the rest NULL ("unknown"),
+    # the same convention as the call_log origin/repo_root columns below. These
+    # ALTERs run before the FTS triggers because the triggers reference the new
+    # `symptom` column.
     for _col, _type in (
         ("scope", "TEXT"),
         ("source_branch", "TEXT"),
@@ -218,6 +271,17 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         ("promoted_at", "REAL"),
         ("source_worktree", "TEXT"),
         ("origin_id", "INTEGER"),
+        ("namespace", "TEXT NOT NULL DEFAULT 'repo'"),
+        ("origin_repo", "TEXT"),
+        ("ticket", "TEXT"),
+        ("author", "TEXT"),
+        ("symptom", "TEXT"),
+        ("symptom_norm", "TEXT"),
+        # Collision-resistant owner identity of the writing repo, set
+        # server-side for a shared-store write (never from caller input). It is
+        # the sole authority for a cross-repo supersede; NULL (a repo-store row,
+        # or a shared row written before this column) is owned by nobody.
+        ("owner", "TEXT"),
     ):
         try:
             _conn.execute(f"ALTER TABLE knowledge ADD COLUMN {_col} {_type}")
@@ -227,6 +291,57 @@ def _init_conn(repo_root: str | Path | None = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_knowledge_origin "
         "ON knowledge(origin_id, source_worktree)"
     )
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_namespace ON knowledge(namespace)"
+    )
+    _conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_symptom ON knowledge(symptom_norm)"
+    )
+    # FTS mirror of the knowledge table, with `symptom` indexed alongside the
+    # text columns. CREATE ... IF NOT EXISTS never alters an existing table, so a
+    # store built before symptom was indexed keeps a 4-column FTS: detect the
+    # missing column, drop it and let the rebuild below repopulate from content.
+    _fts_create = (
+        "CREATE VIRTUAL TABLE {name} USING fts5("
+        "title, body, tags, symptom, kind UNINDEXED, "
+        "content='knowledge', content_rowid='id')"
+    )
+    _conn.execute(_fts_create.format(name="IF NOT EXISTS knowledge_fts"))
+    _fts_cols = {r[1] for r in _conn.execute("PRAGMA table_info(knowledge_fts)")}
+    _fts_needs_rebuild = "symptom" not in _fts_cols
+    if _fts_needs_rebuild:
+        _conn.execute("DROP TABLE knowledge_fts")
+        _conn.execute(_fts_create.format(name="knowledge_fts"))
+    # Keep the external-content FTS in sync with the knowledge table even when
+    # callers bypass the helpers below. Without these triggers a raw DELETE
+    # leaves orphan rowids that surface as "missing row N from content table"
+    # once queried. Recreated (not IF NOT EXISTS) so they carry the current
+    # column set after a shape migration rather than the stale one.
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_ai")
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_ad")
+    _conn.execute("DROP TRIGGER IF EXISTS knowledge_au")
+    _conn.execute("""
+        CREATE TRIGGER knowledge_ai AFTER INSERT ON knowledge BEGIN
+            INSERT INTO knowledge_fts(rowid, title, body, tags, symptom, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.symptom, new.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER knowledge_ad AFTER DELETE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, symptom, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.symptom, old.kind);
+        END
+    """)
+    _conn.execute("""
+        CREATE TRIGGER knowledge_au AFTER UPDATE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body, tags, symptom, kind)
+                VALUES('delete', old.id, old.title, old.body, old.tags, old.symptom, old.kind);
+            INSERT INTO knowledge_fts(rowid, title, body, tags, symptom, kind)
+                VALUES (new.id, new.title, new.body, new.tags, new.symptom, new.kind);
+        END
+    """)
+    if _fts_needs_rebuild:
+        _conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
     # Outcomes: whether relying on an entry, or on a file, worked. A table of
     # its own (never a column on knowledge) so an older owner reading the same
     # store sees nothing new. entry_id is NULL for an outcome about files only;
@@ -383,6 +498,198 @@ _PROMOTABLE_KINDS = (
 )
 
 
+# Volatile fragments of an error line carry no signal for matching one symptom
+# to another: absolute paths, hex / uuid / sha blobs, quoted values, bare
+# numbers and timestamps all differ from one run to the next. Normalisation
+# replaces them with placeholders (<path>, <hex>, <q>, <n>, <ts>) so a
+# diagnostic recorded against one occurrence is recalled by a look-alike, while
+# the signal-bearing tokens (an exception name, keywords like "is not
+# installed", "database is locked", a SERVICE_DISABLED reason) are kept. Applied
+# on both sides: to the recorded symptom (-> symptom_norm) and to a pasted line.
+_SYMPTOM_TS_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+_SYMPTOM_PATH_RE = re.compile(r"/(?:[\w.\-]+/)+[\w.\-]+")
+_SYMPTOM_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_SYMPTOM_HEX0X_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_SYMPTOM_HEX_RE = re.compile(r"\b[0-9a-fA-F]{7,}\b")
+# A bare 10- or 13-digit integer is an epoch timestamp (seconds / milliseconds),
+# gommed to <ts> before the generic number pass so it does not read as <n>.
+_SYMPTOM_EPOCH_RE = re.compile(r"\b\d{13}\b|\b\d{10}\b")
+_SYMPTOM_NUM_RE = re.compile(r"\b\d+\b")
+# A quoted run (single, double, backtick or guillemets) usually wraps a volatile
+# value (a module name, a filename, an id), so it collapses to <q> -- unless its
+# content is itself a signal to keep: an ALL_CAPS reason code (SERVICE_DISABLED)
+# or a known diagnostic phrase. Then the token survives, the quotes dropped.
+_SYMPTOM_QUOTE_RE = re.compile(r"\"[^\"]*\"|'[^']*'|`[^`]*`|«[^»]*»")
+_SYMPTOM_CONST_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
+_SYMPTOM_KEEP_QUOTED = (
+    "is not installed",
+    "database is locked",
+    "permission denied",
+    "command not found",
+    "no such file or directory",
+    "connection refused",
+    "already exists",
+    "service_disabled",
+)
+
+
+def _symptom_dequote(match: re.Match) -> str:
+    inner = match.group(0)[1:-1].strip()
+    low = inner.lower()
+    if _SYMPTOM_CONST_RE.match(inner) or any(k in low for k in _SYMPTOM_KEEP_QUOTED):
+        return inner
+    return "<q>"
+
+
+def normalize_symptom(text: str) -> str:
+    """Return a stable signature for an error line: quoted values, timestamps,
+    paths, hex / uuid blobs and bare numbers replaced by placeholders (<q>,
+    <ts>, <path>, <hex>, <n>) and runs of whitespace collapsed. Signal-bearing
+    tokens (exception names, keywords, ALL_CAPS reason codes) are kept, even
+    inside quotes. "" for empty input."""
+    if not text:
+        return ""
+    # Quotes first, on the raw line, so a quoted path or number collapses whole.
+    out = _SYMPTOM_QUOTE_RE.sub(_symptom_dequote, text)
+    out = _SYMPTOM_TS_RE.sub("<ts>", out)
+    out = _SYMPTOM_PATH_RE.sub("<path>", out)
+    out = _SYMPTOM_UUID_RE.sub("<hex>", out)
+    out = _SYMPTOM_HEX0X_RE.sub("<hex>", out)
+    # Only a run of hex digits that holds a letter is hex; an all-digit run is a
+    # number, left for the epoch / number passes so it reads as <ts> or <n>.
+    out = _SYMPTOM_HEX_RE.sub(
+        lambda m: "<hex>" if re.search(r"[a-fA-F]", m.group()) else m.group(), out
+    )
+    out = _SYMPTOM_EPOCH_RE.sub("<ts>", out)
+    out = _SYMPTOM_NUM_RE.sub("<n>", out)
+    return " ".join(out.split())
+
+
+def git_user_name(repo_root: str | Path | None = None) -> str:
+    """The name git would stamp on a commit here (`git config user.name`), or ""
+    when unset or git is unavailable. Fails closed, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "config", "user.name"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def repo_slug(repo_root: str | Path | None = None) -> str:
+    """A short name for the current repo: the origin remote's repository name
+    when set (`.../altikva/cgh.git` -> `cgh`), else the working tree's directory
+    name. Fails closed to the directory name, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            name = proc.stdout.strip().rstrip("/").rsplit("/", 1)[-1]
+            if name.endswith(".git"):
+                name = name[:-4]
+            if name:
+                return name
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path(root).name
+
+
+def _normalize_remote_url(url: str) -> str:
+    """A git remote URL reduced to a stable ``host/org/repo`` identity, with the
+    scheme, any user info, a port and a trailing ``.git`` stripped. Handles the
+    scp-like ``git@host:org/repo`` form too. Returns "" for empty input."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.endswith(".git"):
+        u = u[:-4]
+    # scp-like syntax has no scheme: [user@]host:path (the colon is not a port).
+    if "://" not in u and ":" in u.split("/", 1)[0] and "@" in u.split("/", 1)[0]:
+        userhost, _, path = u.partition(":")
+        host = userhost.split("@", 1)[-1]
+        return f"{host}/{path}".strip("/")
+    if "://" in u:
+        u = u.split("://", 1)[1]
+    if "@" in u.split("/", 1)[0]:
+        u = u.split("@", 1)[1]
+    host, _, path = u.partition("/")
+    host = host.split(":", 1)[0]  # drop a port
+    return f"{host}/{path}".strip("/") if path else host
+
+
+def _persisted_repo_uuid(repo_root: str | Path | None = None) -> str:
+    """A per-repo UUID persisted in the state dir (``.cgh/owner_id``), generated
+    once and reused. The fallback owner identity when a repo has no git remote;
+    stable and unique where a directory name is not. Fails closed, never
+    raises, returning a fresh UUID even if it cannot be written."""
+    import uuid
+
+    path = Path(_cache_key(repo_root)) / _DB_DIR / "owner_id"
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    value = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+    except OSError:
+        pass
+    return value
+
+
+def repo_owner_id(repo_root: str | Path | None = None) -> str:
+    """A collision-resistant owner identity for a repo: its normalised git
+    remote (``host/org/repo``) when one exists, else a UUID persisted in the
+    state dir. Used server-side as the sole authority for a shared-store
+    supersede, so two repos that merely share a directory name never pass for
+    each other. Fails closed, never raises."""
+    import subprocess
+
+    root = _cache_key(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0:
+            norm = _normalize_remote_url(proc.stdout)
+            if norm:
+                return norm
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return _persisted_repo_uuid(root)
+
+
 @_locked
 def knowledge_record(
     title: str,
@@ -402,6 +709,12 @@ def knowledge_record(
     promoted_at: float | None = None,
     source_worktree: str = "",
     origin_id: int | None = None,
+    namespace: str = "repo",
+    origin_repo: str = "",
+    ticket: str = "",
+    author: str = "",
+    symptom: str = "",
+    contradicts: int = 0,
 ) -> int:
     """
     Persist a distilled knowledge entry. Returns the row id.
@@ -414,22 +727,67 @@ def knowledge_record(
     provenance when an entry is promoted from another checkout; origin_ts
     defaults to now for a native entry and preserves the source entry's
     timestamp on promotion.
+
+    namespace is the logical scope the row belongs to ('repo' by default).
+    origin_repo, ticket and author record where the learning came from and are
+    stored verbatim (the MCP layer fills author and origin_repo in when a caller
+    leaves them blank). symptom is a raw error signature; when given, its
+    normalised form is stored in symptom_norm for signature-based recall. All
+    five default to the entry's current behaviour, so an existing caller that
+    passes none of them is unaffected.
+
+    contradicts is the id of a live entry this note explicitly overturns. With
+    tag overlap it is a strong signal: the old entry is auto-superseded (the
+    ids returned via the module, see supersede_candidates). Weak matches (tag
+    overlap alone) are never retired here; the MCP layer only suggests them.
     """
     if kind not in _VALID_KINDS:
         kind = "note"
     if scope not in ("repo", "branch"):
         scope = "repo"
+    if not namespace:
+        namespace = "repo"
+    ns_stripped = namespace.strip()
+    nonlocal_ns = (
+        bool(ns_stripped)
+        and ns_stripped not in ("repo", "branch")
+        and not ns_stripped.startswith("ticket:")
+    )
+    # A shared namespace must pass the strict name allowlist before it can
+    # become a path segment, and must not carry a durable-authority kind: a
+    # standing_instruction or glossary entry read by default across every
+    # subscribed repo would be cross-repo authority injection, so those kinds
+    # stay in the repo store.
+    if nonlocal_ns:
+        if not valid_shared_namespace(ns_stripped):
+            raise ValueError(f"invalid shared namespace name: {namespace!r}")
+        if kind in ("standing_instruction", "glossary"):
+            raise ValueError(
+                f"kind {kind!r} is not allowed in a shared namespace "
+                f"({ns_stripped!r}); it stays in the repo store"
+            )
     if isinstance(tags, list):
         tags = ",".join(t.strip() for t in tags if t and t.strip())
     if isinstance(file_refs, list):
         file_refs = ",".join(f.strip() for f in file_refs if f and f.strip())
-    conn = _get_conn(repo_root)
+    symptom = symptom or ""
+    symptom_norm = normalize_symptom(symptom)
+    # A shared namespace routes the write to its own store under the global
+    # dir, created on first write; everything else stays in the repo store.
+    shared = is_shared_namespace(namespace)
+    conn = (
+        _get_conn_at(shared_store_path(namespace)) if shared else _get_conn(repo_root)
+    )
+    # Owner authority is derived server-side and stored only for a shared write;
+    # the caller-supplied origin_repo is provenance, never authority.
+    owner = repo_owner_id(repo_root) if shared else None
     now = time.time()
     cur = conn.execute(
         "INSERT INTO knowledge(session_id, title, body, tags, kind, file_refs, ts, "
         "scope, source_branch, source_commit, source_pr, source_session, origin_ts, "
-        "promoted_at, source_worktree, origin_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "promoted_at, source_worktree, origin_id, namespace, origin_repo, ticket, "
+        "author, symptom, symptom_norm, owner) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             title or "",
@@ -447,15 +805,67 @@ def knowledge_record(
             promoted_at,
             source_worktree or None,
             origin_id,
+            namespace,
+            origin_repo or None,
+            ticket or None,
+            author or None,
+            symptom or None,
+            symptom_norm or None,
+            owner,
         ),
     )
     row_id = cur.lastrowid
     # FTS mirror is now maintained by the AFTER INSERT trigger.
     if supersedes and row_id:
-        conn.execute(
-            "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
-            (int(row_id), int(supersedes)),
-        )
+        allowed = True
+        if shared:
+            # In a shared store a write may only retire a row of the SAME
+            # namespace that this repo owns, so one repo's session cannot
+            # overwrite another's shared note. Authority is the SERVER-derived
+            # owner identity of the calling repo (collision-resistant: git
+            # remote, else a persisted UUID), never the caller-supplied
+            # origin_repo. A target with no owner (NULL, or a row written before
+            # the column existed) is owned by nobody and denied.
+            tgt = conn.execute(
+                "SELECT owner, namespace FROM knowledge WHERE id = ?",
+                (int(supersedes),),
+            ).fetchone()
+            allowed = (
+                bool(tgt)
+                and tgt[1] == namespace
+                and bool(tgt[0])
+                and bool(owner)
+                and tgt[0] == owner
+            )
+        if allowed:
+            conn.execute(
+                "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
+                (int(row_id), int(supersedes)),
+            )
+    # Auto-retire the live notes this one strongly contradicts: same kind,
+    # tag overlap, and either an explicit contradicts=<id> or a corrected
+    # outcome already on the old note. Weak matches (tag overlap only) are
+    # left live; the MCP layer surfaces them as a suggestion instead. Only in
+    # the repo store: the candidate scan reads the repo store, and a shared
+    # write must never auto-retire another repo's rows (it cannot verify
+    # ownership), so a shared namespace skips this entirely.
+    if row_id and not shared:
+        for cand in supersede_candidates(
+            repo_root,
+            kind=kind,
+            tags=tags,
+            title=title or "",
+            body=body or "",
+            contradicts=contradicts,
+            exclude_id=int(row_id),
+        )["strong"]:
+            if cand["id"] == int(supersedes or 0):
+                continue
+            conn.execute(
+                "UPDATE knowledge SET superseded_by = ? "
+                "WHERE id = ? AND superseded_by IS NULL",
+                (int(row_id), cand["id"]),
+            )
     conn.commit()
     return int(row_id or 0)
 
@@ -463,6 +873,129 @@ def knowledge_record(
 # Tags that mark session state rather than knowledge: digests, checkpoints
 # (manual, compaction and auto) and IBM Bob's auto digests all carry one.
 _SESSION_STATE_TAGS = frozenset({"session-digest", "auto-checkpoint", "auto-digest"})
+
+
+# Auto-supersede detector. A new note can retire a live one it overturns, but
+# only on a strong, conservative signal (never by tag overlap alone).
+# Minimum Jaccard overlap of two notes' tag sets to read as the same subject.
+_SUPERSEDE_MIN_JACCARD = 0.6
+# Negation / reversal cues that mark a note as correcting an earlier one. A
+# soft signal on its own: it only raises a suggestion, never an auto-supersede.
+_CONTRADICTION_CUES = (
+    "ne marche pas",
+    "ne marche plus",
+    "ne fonctionne pas",
+    "ne fonctionne plus",
+    "en fait",
+    "faux",
+    "contrairement à",
+    "contrairement a",
+    "doesn't work",
+    "does not work",
+    "no longer",
+    "actually",
+    "contrary to",
+    "turns out",
+    "was wrong",
+)
+
+
+def _tag_set(tags: list[str] | str) -> set[str]:
+    """Lower-cased, de-duplicated tag tokens from a list or a comma/space
+    string."""
+    items = (
+        tags if isinstance(tags, list) else str(tags or "").replace(" ", ",").split(",")
+    )
+    return {t.strip().lower() for t in items if t and t.strip()}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _has_contradiction_cue(text: str) -> bool:
+    low = (text or "").lower()
+    return any(cue in low for cue in _CONTRADICTION_CUES)
+
+
+@_locked
+def supersede_candidates(
+    repo_root: str | Path | None = None,
+    *,
+    kind: str,
+    tags: list[str] | str = "",
+    title: str = "",
+    body: str = "",
+    contradicts: int = 0,
+    exclude_id: int = 0,
+) -> dict:
+    """Live notes a new entry looks set to replace, split into strong and weak.
+
+    A candidate shares the new note's ``kind`` and overlaps its tags
+    (Jaccard >= _SUPERSEDE_MIN_JACCARD), or is the explicit ``contradicts``
+    target. It is *strong* when the tag overlap holds **and** a hard signal
+    names it: an explicit ``contradicts=<id>`` or a ``corrected`` outcome
+    already on it. Those are what ``knowledge_record`` auto-supersedes. Tag
+    overlap alone, an explicit target below the overlap bar, or a negation cue
+    in the new text, is *weak*: a suggestion only.
+
+    Returns ``{"strong": [...], "weak": [...]}``; each item is
+    ``{id, title, jaccard, reason}``. Read-only, never mutates.
+    """
+    new_tags = _tag_set(tags)
+    if not new_tags and not contradicts:
+        return {"strong": [], "weak": []}
+    conn = _get_conn(repo_root)
+    cue = _has_contradiction_cue(f"{title}\n{body}")
+    corrected_ids = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT entry_id FROM knowledge_outcome "
+            "WHERE verdict = 'corrected' AND entry_id IS NOT NULL"
+        ).fetchall()
+    }
+    strong: list[dict] = []
+    weak: list[dict] = []
+    for row_id, row_title, row_tags in conn.execute(
+        "SELECT id, title, tags FROM knowledge "
+        "WHERE kind = ? AND superseded_by IS NULL",
+        (kind,),
+    ).fetchall():
+        row_id = int(row_id)
+        if exclude_id and row_id == exclude_id:
+            continue
+        if _tag_set(row_tags) & _SESSION_STATE_TAGS:
+            continue
+        jac = _jaccard(new_tags, _tag_set(row_tags))
+        explicit = bool(contradicts) and contradicts == row_id
+        corrected = row_id in corrected_ids
+        tag_match = jac >= _SUPERSEDE_MIN_JACCARD
+        if not tag_match and not explicit:
+            continue
+        item = {"id": row_id, "title": row_title or "", "jaccard": round(jac, 3)}
+        if tag_match and (explicit or corrected):
+            item["reason"] = "contradicts" if explicit else "corrected"
+            strong.append(item)
+            continue
+        reasons = []
+        if explicit:
+            reasons.append("contradicts flagged")
+        if tag_match:
+            reasons.append("tag overlap")
+        if cue:
+            reasons.append("negation cue")
+        item["reason"] = ", ".join(reasons) or "tag overlap"
+        weak.append(item)
+    return {"strong": strong, "weak": weak}
+
+
+def _retirable(tid: int, owned: set[int] | None) -> bool:
+    """Whether a promote run may supersede target row ``tid``: always in a
+    checkout (``owned`` is None), and only rows this repo owns in a shared
+    store."""
+    return owned is None or tid in owned
 
 
 def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
@@ -489,26 +1022,41 @@ def _supersede_chain(src: sqlite3.Connection) -> dict[int, list[int]]:
 @_locked
 def promote_knowledge(
     from_root: str | Path,
-    to_root: str | Path,
+    to_root: str | Path | None = None,
     *,
+    to_namespace: str = "",
     since_ts: float = 0.0,
     kinds: list[str] | None = None,
+    only_ids: list[int] | None = None,
+    tags_any: list[str] | None = None,
     include_plain_notes: bool = True,
     source_branch: str = "",
     source_commit: str = "",
     source_pr: str = "",
     source_session: str = "",
     source_worktree: str = "",
+    origin_repo: str = "",
     dry_run: bool = False,
 ) -> dict:
-    """Copy durable learnings from one store into another, the case being a
-    per-ticket worktree promoted into its main checkout at merge.
+    """Copy durable learnings from a repo store into another store, deduplicated
+    and with provenance preserved.
+
+    Two targets. ``to_root`` carries them into a second checkout, the case being
+    a per-ticket worktree promoted into its main checkout at merge. ``to_namespace``
+    carries them instead into a shared store (``~/.cgh/shared/<name>/knowledge.db``)
+    read across the fleet by default: this is the native ``knowledge promote``,
+    the matured decision moving ticket -> repo -> org. Exactly one is used; a
+    shared namespace must pass the shared-store allowlist.
 
     Carried: live (not superseded), ``scope='repo'`` entries (a NULL scope from
     before the column existed counts as repo) of the wanted kinds. Session
     digests and checkpoints never move. ``kinds`` replaces the default set
     outright; without it the durable kinds move, plus plain notes unless
-    ``include_plain_notes`` is False.
+    ``include_plain_notes`` is False. ``only_ids`` restricts to those source
+    entry ids; ``tags_any`` to entries carrying at least one of those tags.
+    A shared target refuses ``standing_instruction`` and ``glossary`` (durable
+    cross-repo authority stays in the repo store); those entries are reported
+    under ``refused_shared_kind`` and never written.
 
     Per entry, in order:
 
@@ -522,42 +1070,76 @@ def promote_knowledge(
     - otherwise: inserted.
 
     Every inserted row carries provenance (branch, commit, PR, session,
-    worktree, origin id, origin timestamp, promoted_at). ``dry_run`` computes
-    the same outcome and writes nothing. Returns counts plus one line per
-    considered entry under ``entries``.
+    worktree, origin id, origin timestamp, promoted_at, plus origin_repo, and
+    the source entry's own ticket, author and symptom). In a shared store the
+    row is stamped with this repo's server-derived owner, and a supersede only
+    retires a row this repo already owns there, never another repo's. ``dry_run``
+    computes the same outcome and writes nothing. Returns counts plus one line
+    per considered entry under ``entries``.
     """
+    shared = bool(to_namespace)
+    if shared:
+        if not is_shared_namespace(to_namespace):
+            raise ValueError(
+                f"{to_namespace!r} is not a shared namespace; promote targets a "
+                f"shared store (org-platform or a named fleet) or a checkout root"
+            )
+    elif to_root is None:
+        raise ValueError("promote_knowledge needs a target: to_root or to_namespace")
+
     if kinds:
         wanted = set(kinds)
     else:
         wanted = set(_PROMOTABLE_KINDS) | ({"note"} if include_plain_notes else set())
+    only = {int(i) for i in only_ids} if only_ids is not None else None
+    tagwanted = (
+        {t.strip().lower() for t in tags_any if t and t.strip()}
+        if tags_any is not None
+        else None
+    )
     worktree = source_worktree or str(Path(from_root).resolve())
+    origin_repo = origin_repo or repo_slug(from_root)
 
     src = _get_conn(from_root)
     cols = (
-        "id, title, body, kind, tags, file_refs, session_id, ts, scope, superseded_by"
+        "id, title, body, kind, tags, file_refs, session_id, ts, scope, "
+        "superseded_by, ticket, author, symptom"
     )
     all_rows = src.execute(f"SELECT {cols} FROM knowledge ORDER BY ts ASC").fetchall()
     by_id = {r[0]: r for r in all_rows}
     chains = _supersede_chain(src)
 
-    tgt = _get_conn(to_root)
+    # Target store: the shared store file for a namespace, else the checkout.
+    # A shared write is attributed to this repo's collision-resistant owner.
+    owner = repo_owner_id(from_root) if shared else None
+    tgt = (
+        _get_conn_at(shared_store_path(to_namespace)) if shared else _get_conn(to_root)
+    )
     # Every target row, superseded ones included: a re-run must not resurrect
-    # an entry the target has since replaced.
+    # an entry the target has since replaced. owned_targets is the subset this
+    # repo may retire in a shared store (None = a checkout, where all apply).
     content_rows: dict[tuple, list[tuple[int, bool]]] = {}
     origin_rows: dict[int, list[tuple[int, bool]]] = {}
-    for tid, kind, title, body, sup, oid, wt, br in tgt.execute(
+    owned_targets: set[int] | None = set() if shared else None
+    for tid, kind, title, body, sup, oid, wt, br, row_owner, row_ns in tgt.execute(
         "SELECT id, kind, title, body, superseded_by, origin_id, source_worktree, "
-        "source_branch FROM knowledge"
+        "source_branch, owner, namespace FROM knowledge"
     ).fetchall():
         content_rows.setdefault((kind, title, body), []).append((tid, sup is None))
-        if oid is not None and wt == worktree and (br or "") == source_branch:
+        own = owned_targets is None or (
+            bool(owner) and row_owner == owner and row_ns == to_namespace
+        )
+        if own and owned_targets is not None:
+            owned_targets.add(int(tid))
+        if oid is not None and wt == worktree and (br or "") == source_branch and own:
             origin_rows.setdefault(int(oid), []).append((tid, sup is None))
 
-    copied = superseded = skipped = considered = 0
+    copied = superseded = skipped = considered = refused = 0
     entries: list[dict] = []
     next_fake_id = -1  # dry-run stand-in ids, never written
     for row in all_rows:
-        sid, title, body, kind, tags, file_refs, sess, ts, scope, sup = row
+        (sid, title, body, kind, tags, file_refs, sess, ts, scope, sup,
+         ticket, author, symptom) = row  # fmt: skip
         if sup is not None:
             continue
         tagset = {t.strip() for t in (tags or "").split(",") if t.strip()}
@@ -567,27 +1149,39 @@ def promote_knowledge(
             continue
         if kind not in wanted:
             continue
+        if only is not None and sid not in only:
+            continue
+        if tagwanted is not None and not ({t.lower() for t in tagset} & tagwanted):
+            continue
         if (ts or 0.0) < since_ts:
             continue
+        line = {"source_id": sid, "kind": kind, "title": title}
+
+        # A shared store never takes a durable cross-repo-authority kind.
+        if shared and kind in ("standing_instruction", "glossary"):
+            refused += 1
+            entries.append({**line, "action": "refused_shared_kind"})
+            continue
+
         considered += 1
         content = (kind, title, body)
-        line = {"source_id": sid, "kind": kind, "title": title}
 
         if content in content_rows:
             skipped += 1
             entries.append({**line, "action": "duplicate"})
             continue
 
-        # Live target copies of the entries this one replaced.
+        # Live target copies of the entries this one replaced (only rows this
+        # repo owns, in a shared store).
         replaces: list[int] = []
         for old_id in chains.get(sid, []):
             for tid, live in origin_rows.get(old_id, []):
-                if live and tid not in replaces:
+                if live and tid not in replaces and _retirable(tid, owned_targets):
                     replaces.append(tid)
             old = by_id.get(old_id)
             if old is not None:
                 for tid, live in content_rows.get((old[3], old[1], old[2]), []):
-                    if live and tid not in replaces:
+                    if live and tid not in replaces and _retirable(tid, owned_targets):
                         replaces.append(tid)
 
         if dry_run:
@@ -600,7 +1194,7 @@ def promote_knowledge(
                 kind=kind,
                 tags=tags or "",
                 file_refs=file_refs or "",
-                repo_root=to_root,
+                repo_root=from_root if shared else to_root,
                 scope="repo",
                 source_branch=source_branch,
                 source_commit=source_commit,
@@ -610,6 +1204,11 @@ def promote_knowledge(
                 promoted_at=time.time(),
                 source_worktree=worktree,
                 origin_id=sid,
+                namespace=to_namespace if shared else "repo",
+                origin_repo=origin_repo,
+                ticket=ticket or "",
+                author=author or "",
+                symptom=symptom or "",
             )
             if replaces:
                 tgt.executemany(
@@ -625,6 +1224,9 @@ def promote_knowledge(
                 view[:] = [(rid, live and rid not in gone) for rid, live in view]
         content_rows.setdefault(content, []).append((new_id, True))
         origin_rows.setdefault(sid, []).append((new_id, True))
+        # A row this repo just wrote to the shared store is ours to retire too.
+        if owned_targets is not None and new_id > 0:
+            owned_targets.add(new_id)
 
         if replaces:
             superseded += 1
@@ -639,7 +1241,7 @@ def promote_knowledge(
     if dry_run:
         for e in entries:
             e.pop("target_id", None)
-    return {
+    result = {
         "promoted": copied + superseded,
         "copied": copied,
         "superseded": superseded,
@@ -648,6 +1250,10 @@ def promote_knowledge(
         "dry_run": dry_run,
         "entries": entries,
     }
+    if shared:
+        result["target_namespace"] = to_namespace
+        result["refused_shared_kind"] = refused
+    return result
 
 
 def knowledge_export(repo_root: str | Path | None = None) -> list[dict]:
@@ -669,6 +1275,7 @@ def knowledge_search(
     repo_root: str | Path | None = None,
     rank_outcomes: bool = True,
     recall: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """BM25 search over knowledge entries. Graceful LIKE fallback.
 
@@ -685,22 +1292,52 @@ def knowledge_search(
     """
     conn = _get_conn(repo_root)
     search = _knowledge_recall if recall else _knowledge_search
-    if not (rank_outcomes and _has_outcomes(conn)):
-        return _cap_weak(search(conn, query, kind, limit), limit, recall)
-    from cgh.state.knowledge_outcomes import rank_factor
+    use_outcomes = rank_outcomes and _has_outcomes(conn)
+    # Recency is a ranking factor, so rank_outcomes=False (an exact resolve of a
+    # query to one entry) opts out of it too, staying on pure relevance.
+    recency_hl = _recency_half_life_days(repo_root) if rank_outcomes else 0.0
+    # Default path: no outcomes to rank by and age decay off -> plain relevance,
+    # byte-for-byte the behaviour before age decay existed.
+    if not use_outcomes and recency_hl <= 0:
+        return _cap_weak(
+            search(conn, query, kind, limit, namespace=namespace), limit, recall
+        )
+    from cgh.state.knowledge_outcomes import rank_factor, recency_factor
 
-    entries, _files = _outcome_scores(conn, time.time(), _half_life_days(repo_root))
-    # Room for a well-rated entry just under the cut to move up.
+    now = time.time()
+    entries: dict = {}
+    if use_outcomes:
+        entries, _files = _outcome_scores(conn, now, _half_life_days(repo_root))
+    # Room for a well-rated or fresher entry just under the cut to move up.
     raw: list[float] = []
-    hits = search(conn, query, kind, max(limit * 3, limit + 10), raw)
+    hits = search(
+        conn, query, kind, max(limit * 3, limit + 10), raw, namespace=namespace
+    )
     # Rank on the unrounded relevance: on a small store BM25 scores are tiny
-    # and round to zero, which would erase the outcome factor.
-    adjusted = [
-        r * rank_factor(entries.get(h["id"])) for h, r in zip(hits, raw, strict=True)
-    ]
+    # and round to zero, which would erase the outcome and recency factors.
+    adjusted: list[float] = []
+    for h, r in zip(hits, raw, strict=True):
+        score = entries.get(h["id"])
+        factor = rank_factor(score)
+        if recency_hl > 0:
+            # origin_ts is preserved across promotion and equals ts for a
+            # native entry; it rides along only for promoted rows, so fall
+            # back to ts. standing_instruction, glossary and entries still
+            # rated useful/preferred are shielded from the age decay.
+            origin_ts = (
+                (h.get("provenance") or {}).get("origin_ts") or h.get("ts") or now
+            )
+            factor *= recency_factor(
+                now - origin_ts,
+                recency_hl,
+                kind=h.get("kind"),
+                status=score.status if score else None,
+            )
+        adjusted.append(r * factor)
     order = sorted(range(len(hits)), key=lambda i: -adjusted[i])  # stable on ties
     hits = [hits[i] | {"score": round(adjusted[i], 4)} for i in order[:limit]]
-    _attach_outcomes(hits, entries)
+    if use_outcomes:
+        _attach_outcomes(hits, entries)
     return _cap_weak(hits, limit, recall)
 
 
@@ -719,7 +1356,11 @@ def _cap_weak(hits: list[dict], limit: int, recall: bool) -> list[dict]:
 
 
 def _fts_rows(
-    conn: sqlite3.Connection, expr: str, kind: str | None, limit: int
+    conn: sqlite3.Connection,
+    expr: str,
+    kind: str | None,
+    limit: int,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Live entries matching an FTS5 expression, best BM25 first."""
     sql = (
@@ -731,6 +1372,9 @@ def _fts_rows(
     if kind:
         sql += "AND k.kind = ? "
         params.append(kind)
+    if namespace:
+        sql += "AND k.namespace = ? "
+        params.append(namespace)
     sql += "ORDER BY rank LIMIT ?"
     params.append(limit)
     try:
@@ -740,7 +1384,9 @@ def _fts_rows(
     return [_knowledge_row_to_dict(row, score=-row[-1]) for row in rows]
 
 
-def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
+def _store_words(
+    conn: sqlite3.Connection, kind: str | None, namespace: str | None = None
+) -> set[str]:
     """Every folded word of the live entries, for close-spelling lookups."""
     from cgh.state.knowledge_recall import fold
 
@@ -749,6 +1395,9 @@ def _store_words(conn: sqlite3.Connection, kind: str | None) -> set[str]:
     if kind:
         sql += " AND kind = ?"
         params.append(kind)
+    if namespace:
+        sql += " AND namespace = ?"
+        params.append(namespace)
     out: set[str] = set()
     for title, body, tags in conn.execute(sql, params).fetchall():
         out.update(re.findall(r"[a-z0-9_]+", fold(f"{title} {tags} {body}")))
@@ -761,6 +1410,7 @@ def _knowledge_recall(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Free-text search behind knowledge_search(recall=True). Caller holds
     the lock.
@@ -777,20 +1427,24 @@ def _knowledge_recall(
     raw.clear()
     items = kr.concepts(query)
     pool = max(limit * 3, 30)
-    strict = _knowledge_search(conn, query, kind, limit) if query.strip() else []
+    strict = (
+        _knowledge_search(conn, query, kind, limit, namespace=namespace)
+        if query.strip()
+        else []
+    )
     strict_ids = {h["id"] for h in strict}
     candidates: dict[int, dict] = {h["id"]: h for h in strict}
     expr = kr.fts_expression(items)
     if expr:
-        for h in _fts_rows(conn, expr, kind, pool):
+        for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
             candidates.setdefault(h["id"], h)
     fuzzy = False
     if not candidates and items:
-        close = kr.close_words(items, _store_words(conn, kind))
+        close = kr.close_words(items, _store_words(conn, kind, namespace=namespace))
         if close:
             fuzzy = True
             expr = " OR ".join(f'"{w}"' for w in close)
-            for h in _fts_rows(conn, expr, kind, pool):
+            for h in _fts_rows(conn, expr, kind, pool, namespace=namespace):
                 candidates.setdefault(h["id"], h)
 
     graded: list[tuple[int, float, float, dict]] = []
@@ -861,6 +1515,7 @@ def _knowledge_search(
     kind: str | None,
     limit: int,
     raw_scores: list[float] | None = None,
+    namespace: str | None = None,
 ) -> list[dict]:
     """The plain relevance search behind knowledge_search. Caller holds the
     lock. raw_scores, when given, receives each hit's unrounded score."""
@@ -876,6 +1531,9 @@ def _knowledge_search(
         if kind:
             sql += "AND k.kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND k.namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY rank LIMIT ?"
         params.append(limit)
         for row in conn.execute(sql, params).fetchall():
@@ -891,6 +1549,9 @@ def _knowledge_search(
         if kind:
             sql += "AND kind = ? "
             params.append(kind)
+        if namespace:
+            sql += "AND namespace = ? "
+            params.append(namespace)
         sql += "ORDER BY ts DESC LIMIT ?"
         params.append(limit)
         raw.clear()  # the FTS attempt may have filled part of it
@@ -901,12 +1562,21 @@ def _knowledge_search(
 
 
 def knowledge_search_ro(
-    db_path: Path, query: str, kind: str | None = None, limit: int = 10
+    db_path: Path,
+    query: str,
+    kind: str | None = None,
+    limit: int = 10,
+    with_provenance: bool = False,
 ) -> list[dict]:
-    """Read-only knowledge search against an arbitrary call_log.db
-    (federated children). Fresh connection, LIKE-based on purpose:
-    robust against FTS schema drift in the child. Superseded entries
-    stay out, like everywhere else."""
+    """Read-only knowledge search against an arbitrary knowledge store (a
+    federated child's call_log.db, or a shared store's knowledge.db). Fresh
+    connection, LIKE-based on purpose: robust against FTS schema drift in the
+    store. An empty query matches every live entry, newest first, so the same
+    reader lists a store. Superseded entries stay out, like everywhere else.
+
+    With with_provenance, each hit also carries origin_repo, origin_id and
+    namespace when the store has those columns, for cross-store de-duplication;
+    a store predating them (an old child) silently reads back without."""
     if not db_path.exists():
         return []
     from cgh.core.utils import ro_sqlite_uri
@@ -916,25 +1586,43 @@ def knowledge_search_ro(
     except sqlite3.Error:
         return []
     like = f"%{query}%"
-    sql = (
-        "SELECT id, kind, title, body, tags, file_refs, session_id, ts FROM knowledge "
-        "WHERE superseded_by IS NULL AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
-    )
-    params: list = [like, like, like]
-    if kind:
-        sql += "AND kind = ? "
-        params.append(kind)
-    sql += "ORDER BY ts DESC LIMIT ?"
-    params.append(limit)
+    base = "id, kind, title, body, tags, file_refs, session_id, ts"
+    prov = ", origin_repo, origin_id, namespace"
+
+    def _run(cols: str) -> list:
+        sql = (
+            f"SELECT {cols} FROM knowledge WHERE superseded_by IS NULL "
+            "AND (title LIKE ? OR body LIKE ? OR tags LIKE ?) "
+        )
+        params: list = [like, like, like]
+        if kind:
+            sql += "AND kind = ? "
+            params.append(kind)
+        sql += "ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        return conn.execute(sql, params).fetchall()
+
+    has_prov = with_provenance
     try:
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            rows = _run(base + prov) if with_provenance else _run(base)
+        except sqlite3.Error:
+            # A store without the provenance columns (an old child): retry bare.
+            rows = _run(base)
+            has_prov = False
     except sqlite3.Error:
         return []
     finally:
         conn.close()
-    return [
-        _knowledge_row_to_dict(row, score=1.0 / (i + 1)) for i, row in enumerate(rows)
-    ]
+    out: list[dict] = []
+    for i, row in enumerate(rows):
+        hit = _knowledge_row_to_dict(row[:8], score=1.0 / (i + 1))
+        if has_prov:
+            hit["origin_repo"] = row[8]
+            hit["origin_id"] = row[9]
+            hit["namespace"] = row[10]
+        out.append(hit)
+    return out
 
 
 @_locked
@@ -964,10 +1652,11 @@ def knowledge_list(
     repo_root: str | Path | None = None,
     exclude_tag: str | None = None,
     rank_outcomes: bool = False,
+    namespace: str | None = None,
 ) -> list[dict]:
     """Browse knowledge entries. Filters: kind / tag (substring) / session /
-    exclude_tag (substring to omit). Pagination: limit + offset. Caller can
-    fetch limit+1 to detect has_more.
+    exclude_tag (substring to omit) / namespace (exact). Pagination: limit +
+    offset. Caller can fetch limit+1 to detect has_more.
 
     Newest first. With rank_outcomes, entries are tiered by outcome first
     (useful, then unrated or contested, then dead ends, then corrected) and
@@ -994,6 +1683,9 @@ def knowledge_list(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     order = "ts DESC"
@@ -1028,6 +1720,7 @@ def knowledge_count(
     tag: str | None = None,
     session_id: str | None = None,
     repo_root: str | Path | None = None,
+    namespace: str | None = None,
 ) -> int:
     """Total matching entries, use alongside knowledge_list for pagination."""
     conn = _get_conn(repo_root)
@@ -1046,6 +1739,9 @@ def knowledge_count(
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
+    if namespace:
+        where.append("namespace = ?")
+        params.append(namespace)
     if where:
         sql += " WHERE " + " AND ".join(where)
     return int(conn.execute(sql, params).fetchone()[0])
@@ -1120,6 +1816,20 @@ def _half_life_days(repo_root: str | Path | None) -> float:
         return float(load_config(repo_root).knowledge_half_life_days)
     except Exception:
         return DEFAULT_HALF_LIFE_DAYS
+
+
+def _recency_half_life_days(repo_root: str | Path | None) -> float:
+    """[cgh] knowledge_recency_half_life_days (a note's own age decay), or
+    0 (off) when the config cannot be read. Distinct from the outcome
+    half-life; scoring must never fail on a config problem."""
+    from cgh.state.knowledge_outcomes import DEFAULT_RECENCY_HALF_LIFE_DAYS
+
+    try:
+        from cgh.core.config import load_config
+
+        return float(load_config(repo_root).knowledge_recency_half_life_days)
+    except Exception:
+        return DEFAULT_RECENCY_HALF_LIFE_DAYS
 
 
 @_locked
@@ -1272,6 +1982,201 @@ def _attach_outcomes(hits: list[dict], entries: dict) -> None:
         s = entries.get(hit["id"])
         if s is not None:
             hit["outcome"] = s.summary()
+
+
+# ---------------------------------------------------------------------------
+# Symptom (error-signature) search
+# ---------------------------------------------------------------------------
+
+# Columns a symptom hit carries, enough to diagnose: who recorded it, where and
+# when, the ticket, and the raw / normalised signature.
+_K_SYM_COLS = (
+    "id",
+    "kind",
+    "title",
+    "body",
+    "tags",
+    "session_id",
+    "ts",
+    "namespace",
+    "origin_repo",
+    "ticket",
+    "author",
+    "origin_ts",
+    "symptom",
+    "symptom_norm",
+)
+# Placeholder residue dropped from the token set: every normalised line carries
+# these, so matching on them would make unrelated errors look alike.
+_SYMPTOM_STOP = frozenset({"ts", "path", "hex", "n", "q"})
+# Minimum token overlap (Jaccard) for a recorded signature to count as a
+# look-alike of the pasted line; an exact normalised match always scores 1.
+_SYMPTOM_MIN_OVERLAP = 0.34
+
+
+def _symptom_tokens(norm: str) -> frozenset[str]:
+    """Signal tokens of a normalised signature, placeholder residue removed."""
+    return frozenset(
+        t
+        for t in re.findall(r"[a-z0-9_]+", (norm or "").lower())
+        if len(t) >= 2 and t not in _SYMPTOM_STOP
+    )
+
+
+def _sym_row_to_dict(row) -> dict:
+    d = dict(zip(_K_SYM_COLS, row, strict=True))
+    d["tags"] = [t for t in (d.get("tags") or "").split(",") if t]
+    return d
+
+
+def _symptom_hits(
+    conn: sqlite3.Connection,
+    symptom_line: str,
+    limit: int,
+    namespace: str | None = None,
+    min_overlap: float = _SYMPTOM_MIN_OVERLAP,
+) -> list[dict]:
+    """Live entries whose recorded signature (or, failing that, body) resembles
+    ``symptom_line``. A normalised signature matched by overlap scores in
+    [min_overlap, 1]; a plain body / title mention found via FTS scores lower,
+    so a signature match always ranks first. Caller holds the lock. Tolerant of
+    a store that predates the symptom columns (returns nothing from it)."""
+    norm = normalize_symptom(symptom_line)
+    want = _symptom_tokens(norm)
+    sel = ", ".join(_K_SYM_COLS)
+    out: dict[int, dict] = {}
+    sql = (
+        f"SELECT {sel} FROM knowledge "
+        "WHERE superseded_by IS NULL AND symptom_norm IS NOT NULL "
+    )
+    params: list = []
+    if namespace:
+        sql += "AND namespace = ? "
+        params.append(namespace)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []  # a store without the symptom columns has nothing to match
+    for row in rows:
+        d = _sym_row_to_dict(row)
+        other = _symptom_tokens(d.get("symptom_norm") or "")
+        if norm and d.get("symptom_norm") == norm:
+            score = 1.0
+        elif want and other:
+            score = len(want & other) / len(want | other)
+        else:
+            score = 0.0
+        if score >= min_overlap:
+            d["match"] = "symptom"
+            d["score"] = round(score, 4)
+            out[d["id"]] = d
+    # A diagnostic can live in a note's body without a stored signature: find it
+    # by FTS on the line's salient words, scored by word coverage and capped
+    # below a real signature match.
+    if want:
+        expr = " OR ".join(f'"{t}"' for t in sorted(want))
+        fsel = ", ".join("k." + c for c in _K_SYM_COLS)
+        fsql = (
+            f"SELECT {fsel} FROM knowledge_fts f JOIN knowledge k ON k.id = f.rowid "
+            "WHERE knowledge_fts MATCH ? AND k.superseded_by IS NULL "
+        )
+        fparams: list = [expr]
+        if namespace:
+            fsql += "AND k.namespace = ? "
+            fparams.append(namespace)
+        fsql += "ORDER BY rank LIMIT ?"
+        fparams.append(max(limit * 3, 30))
+        try:
+            frows = conn.execute(fsql, fparams).fetchall()
+        except sqlite3.OperationalError:
+            frows = []
+        for row in frows:
+            d = _sym_row_to_dict(row)
+            if d["id"] in out:
+                continue
+            hay = _symptom_tokens(
+                normalize_symptom(
+                    f"{d.get('symptom') or ''} {d['title']} "
+                    f"{' '.join(d['tags'])} {d['body']}"
+                )
+            )
+            cov = (len(want & hay) / len(want)) if want else 0.0
+            if cov <= 0:
+                continue
+            d["match"] = "text"
+            d["score"] = round(0.5 * cov, 4)
+            out[d["id"]] = d
+    hits = sorted(
+        out.values(),
+        key=lambda d: (-d["score"], -(d.get("origin_ts") or d.get("ts") or 0.0)),
+    )
+    return hits[:limit]
+
+
+def _attach_verdicts(
+    conn: sqlite3.Connection, hits: list[dict], half_life_days: float
+) -> None:
+    """Read each hit's outcome from this store and stamp a ``verdict`` (and an
+    ``outcome`` summary) on it, so a dead end can be surfaced rather than
+    buried. Fails closed: a store with no outcome table leaves hits unrated."""
+    if not hits:
+        return
+    try:
+        if not _has_outcomes(conn):
+            return
+        entries, _files = _outcome_scores(conn, time.time(), half_life_days)
+    except sqlite3.Error:
+        return
+    for h in hits:
+        s = entries.get(h["id"])
+        if s is not None:
+            h["verdict"] = s.status
+            h["outcome"] = s.summary()
+
+
+@_locked
+def knowledge_symptom_search(
+    symptom_line: str,
+    limit: int = 10,
+    namespace: str | None = None,
+    repo_root: str | Path | None = None,
+) -> list[dict]:
+    """Repo-store entries whose signature or body resembles ``symptom_line``,
+    each carrying a ``verdict`` read from its outcomes (dead_end / corrected /
+    useful / ...). Highest signature overlap first. The verdict lets the caller
+    split confirmed diagnostics from known false trails without re-ranking."""
+    conn = _get_conn(repo_root)
+    hits = _symptom_hits(conn, symptom_line, limit, namespace=namespace)
+    _attach_verdicts(conn, hits, _half_life_days(repo_root))
+    return hits
+
+
+def knowledge_symptom_search_ro(
+    db_path: Path, symptom_line: str, limit: int = 10
+) -> list[dict]:
+    """Read-only symptom search against an arbitrary knowledge store (a shared
+    store's knowledge.db). Fresh RO connection, verdicts attached from that
+    store's own outcomes. Returns [] for an absent store or on any read error,
+    so a search never fails over one unreadable store."""
+    from cgh.state.knowledge_outcomes import DEFAULT_HALF_LIFE_DAYS
+
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return []
+    from cgh.core.utils import ro_sqlite_uri
+
+    try:
+        conn = sqlite3.connect(ro_sqlite_uri(db_path), uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        hits = _symptom_hits(conn, symptom_line, limit)
+        _attach_verdicts(conn, hits, DEFAULT_HALF_LIFE_DAYS)
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return hits
 
 
 _K_BASE_COLS = ("id", "kind", "title", "body", "tags", "file_refs", "session_id", "ts")

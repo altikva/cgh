@@ -415,10 +415,28 @@
     },
     "required": []
   },
+  "knowledge_diagnose": {
+    "properties": {
+      "limit": {
+        "default": 8,
+        "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
+      "symptom": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "symptom"
+    ]
+  },
   "knowledge_forget": {
     "properties": {
       "entry_id": {
-        "type": "integer"
+        "type": "string"
       }
     },
     "required": [
@@ -428,8 +446,8 @@
   "knowledge_list": {
     "properties": {
       "entry_id": {
-        "default": 0,
-        "type": "integer"
+        "default": "",
+        "type": "string"
       },
       "kind": {
         "default": "",
@@ -438,6 +456,10 @@
       "limit": {
         "default": 10,
         "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
       },
       "offset": {
         "default": 0,
@@ -461,8 +483,8 @@
         "type": "integer"
       },
       "entry_id": {
-        "default": 0,
-        "type": "integer"
+        "default": "",
+        "type": "string"
       },
       "file_refs": {
         "default": "",
@@ -488,10 +510,43 @@
       "verdict"
     ]
   },
+  "knowledge_promote": {
+    "properties": {
+      "dry_run": {
+        "default": false,
+        "type": "boolean"
+      },
+      "entry_id": {
+        "default": "",
+        "type": "string"
+      },
+      "since": {
+        "default": "",
+        "type": "string"
+      },
+      "tags": {
+        "default": "",
+        "type": "string"
+      },
+      "to": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": []
+  },
   "knowledge_record": {
     "properties": {
+      "author": {
+        "default": "",
+        "type": "string"
+      },
       "body": {
         "type": "string"
+      },
+      "contradicts": {
+        "default": 0,
+        "type": "integer"
       },
       "file_refs": {
         "default": "",
@@ -499,6 +554,14 @@
       },
       "kind": {
         "default": "note",
+        "type": "string"
+      },
+      "namespace": {
+        "default": "repo",
+        "type": "string"
+      },
+      "origin_repo": {
+        "default": "",
         "type": "string"
       },
       "session_id": {
@@ -509,7 +572,15 @@
         "default": 0,
         "type": "integer"
       },
+      "symptom": {
+        "default": "",
+        "type": "string"
+      },
       "tags": {
+        "default": "",
+        "type": "string"
+      },
+      "ticket": {
         "default": "",
         "type": "string"
       },
@@ -532,10 +603,18 @@
         "default": 5,
         "type": "integer"
       },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
       "query": {
         "type": "string"
       },
       "scope": {
+        "default": "",
+        "type": "string"
+      },
+      "symptom": {
         "default": "",
         "type": "string"
       }
@@ -721,6 +800,28 @@
       }
     },
     "required": []
+  },
+  "read_lines": {
+    "properties": {
+      "end_line": {
+        "default": 0,
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "start_line": {
+        "default": 0,
+        "type": "integer"
+      },
+      "symbol": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ]
   },
   "resume": {
     "properties": {

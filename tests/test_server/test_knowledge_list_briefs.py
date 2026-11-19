@@ -44,6 +44,9 @@ class _FakeMcp:
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     reset_for_tests()
+    # Isolate the global dir so the default fleet read (subscribed shared
+    # stores) can never reach the machine's real ~/.cgh/shared during tests.
+    monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home" / ".cgh")
     (tmp_path / ".cgh").mkdir()
     monkeypatch.setattr(_srv, "_root", tmp_path)
     yield tmp_path

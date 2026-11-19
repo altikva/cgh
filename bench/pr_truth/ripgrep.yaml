@@ -1,0 +1,91 @@
+repo: BurntSushi/ripgrep
+pinned_sha: 178cc027e283fd965cb72d0a7395b219eada170c
+selection:
+  n: 10
+  rule: merged into the default branch, 2-8 changed code files all of indexed languages,
+    N most recent before pinned_sha; seed = modified file of highest churn (lexicographic
+    tie-break); truth = the other changed code files (co-change, external ground truth).
+prs:
+- number: 3561
+  merged_at: '2026-10-27T18:13:02Z'
+  merge_sha: d19650f4fca84c0f65f4ec024b16200bf3d41c33
+  parent_sha: 9d07a922605313dc47b78b802c7b0616fd76d409
+  seed: crates/globset/src/lib.rs
+  truth:
+  - crates/globset/src/glob.rs
+- number: 3560
+  merged_at: '2026-10-27T17:30:40Z'
+  merge_sha: 9d07a922605313dc47b78b802c7b0616fd76d409
+  parent_sha: 6892bc2b7efe5909cbbeec8f757ed2c4c76b1d30
+  seed: crates/ignore/src/dir.rs
+  truth:
+  - crates/ignore/src/incremental.rs
+- number: 3564
+  merged_at: '2026-10-23T15:32:52Z'
+  merge_sha: 7155f6408d370e699795dc75e954635abfaf08a6
+  parent_sha: 4c2362d359d9913c7a5e391ccd79cb4da22bc89b
+  seed: crates/ignore/src/pathutil.rs
+  truth:
+  - crates/ignore/src/walk.rs
+- number: 3502
+  merged_at: '2026-08-04T13:46:54Z'
+  merge_sha: 020687a77d13146923333f0beb274eeabd54a270
+  parent_sha: 7525479a9576f1ca4c2d04339d78e47ff5ae9b05
+  seed: crates/ignore/src/types.rs
+  truth:
+  - crates/ignore/src/gitignore.rs
+- number: 3482
+  merged_at: '2026-07-20T11:52:43Z'
+  merge_sha: d958105d412b6a1ad014cb0e5832a9b029fa4977
+  parent_sha: 227381db0ee83dfa4341f1e27ff9617c0f5ad992
+  seed: crates/core/flags/defs.rs
+  truth:
+  - crates/core/flags/doc/help.rs
+  - crates/core/flags/doc/man.rs
+  - crates/core/flags/lowargs.rs
+  - crates/core/flags/mod.rs
+  - crates/core/main.rs
+- number: 3472
+  merged_at: '2026-07-17T13:10:33Z'
+  merge_sha: b621e65b4fc8a50b55576b07526f21c5d051ad71
+  parent_sha: c55818fd32d68cf742aea67bce86529f198bc985
+  seed: crates/ignore/src/walk.rs
+  truth:
+  - crates/ignore/src/dir.rs
+  - crates/ignore/src/incremental.rs
+  - crates/ignore/src/lib.rs
+- number: 3468
+  merged_at: '2026-07-09T17:49:32Z'
+  merge_sha: 241b87b3377136659ef0f57948b8e0739e9a691b
+  parent_sha: b6849daee84a67b42b0844b2f6a91e47c24705b1
+  seed: crates/ignore/src/gitignore.rs
+  truth:
+  - tests/regression.rs
+  - tests/util.rs
+- number: 3467
+  merged_at: '2026-07-08T12:26:02Z'
+  merge_sha: b009b5b84b5bc92f18462f5c9fe1bad94551ceb0
+  parent_sha: e5f627fc16766194ced7bf498b03b78823f97716
+  seed: crates/core/flags/lowargs.rs
+  truth:
+  - crates/core/flags/hiargs.rs
+  - crates/core/flags/mod.rs
+  - crates/core/main.rs
+  - crates/globset/src/lib.rs
+  - crates/printer/src/util.rs
+  - crates/searcher/src/searcher/mod.rs
+  - tests/regression.rs
+- number: 3248
+  merged_at: '2025-12-17T16:38:12Z'
+  merge_sha: 0a88cccd5188074de96f54a4b6b44a63971ac157
+  parent_sha: cd1f981beafaeb9b61537e47e91314cea125400b
+  seed: tests/misc.rs
+  truth:
+  - tests/util.rs
+- number: 3195
+  merged_at: '2025-10-19T15:06:40Z'
+  merge_sha: d47663b1b4548e4fa02d6e4b575718d0f5f5e7d6
+  parent_sha: 38d630261aded3a8e535fe85761e68af35bc462d
+  seed: crates/searcher/src/line_buffer.rs
+  truth:
+  - crates/searcher/src/searcher/glue.rs

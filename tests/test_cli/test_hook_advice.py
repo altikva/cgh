@@ -332,7 +332,7 @@ def test_full_read_of_a_large_unindexed_file_gets_a_hint(
     (indexed_repo / "data.json").write_text('{"k": 1},\n' * 5000)
     hint = _context(_read(monkeypatch, capsys, indexed_repo, "data.json"))
     assert "data.json" in hint and "48 KB" in hint and "5,000 lines" in hint
-    assert "offset/limit" in hint and "Grep" in hint and "head" in hint
+    assert "read_lines" in hint and "Grep" in hint and "head" in hint
     assert len(hint.encode()) < 300
 
 
@@ -421,7 +421,7 @@ def test_full_read_of_a_large_indexed_file_gets_its_ranges(
 ):
     hint = _context(_read(monkeypatch, capsys, indexed_repo, "billing.py"))
     assert hint.startswith("[cgh hook] billing.py (46 KB): fn_0 1-5, fn_1 11-15")
-    assert "fn_5 51-55" in hint and "offset/limit" in hint
+    assert "fn_5 51-55" in hint and "read_lines" in hint
     assert "\n" not in hint and len(hint.encode()) < 300
 
 
@@ -460,7 +460,7 @@ def test_ranges_hint_is_silent_for_ranged_and_small_reads(
         indexed_repo, small, [(f"f{i}", i * 10 + 1, i * 10 + 5) for i in range(6)]
     )
     out = _read(monkeypatch, capsys, indexed_repo, "small.py")
-    assert "Read a range with offset/limit." not in out
+    assert "read_lines(path, start_line, end_line)" not in out
 
 
 def test_answer_mode_outline_is_not_doubled_by_the_ranges_hint(
@@ -469,7 +469,7 @@ def test_answer_mode_outline_is_not_doubled_by_the_ranges_hint(
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
     hint = _context(_read(monkeypatch, capsys, indexed_repo, "billing.py"))
     assert hint.startswith("[cgh] Outline of billing.py")
-    assert "Read a range with offset/limit." not in hint
+    assert "read_lines(path, start_line, end_line)" not in hint
 
 
 def test_answer_mode_without_an_outline_gets_the_ranges_hint(
@@ -483,14 +483,14 @@ def test_answer_mode_without_an_outline_gets_the_ranges_hint(
     hint = _context(_read(monkeypatch, capsys, indexed_repo, "GUIDE.md"))
     assert hint == (
         "[cgh hook] GUIDE.md (19 KB): Install 3-900, Usage 901-4000. "
-        "Read a range with offset/limit."
+        "read_lines(path, start_line, end_line) serves one range, counted as cgh."
     )
 
 
 def test_ranges_hint_opt_out(monkeypatch, capsys, indexed_repo):
     monkeypatch.setenv("CGH_HOOK_READ_ADVICE", "0")
     out = _read(monkeypatch, capsys, indexed_repo, "billing.py")
-    assert "Read a range with offset/limit." not in out
+    assert "read_lines(path, start_line, end_line)" not in out
     assert "indexed by cgh (6 symbols)" in _context(out)
 
 

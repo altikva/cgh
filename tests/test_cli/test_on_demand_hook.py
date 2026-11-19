@@ -49,6 +49,13 @@ def repo(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setenv("CGH_HOOK_ANSWERS", "1")
+    # The on-demand hook gives up once its wall-clock budget is spent, so on a
+    # loaded machine the small parses here can miss the default 0.3 s budget and
+    # the outcome (a deny plus outline, or an in-memory parse) flips to "answer
+    # as before", failing a test that asserts the outcome. Give the outcome
+    # tests a budget wide enough that only a real hang would exceed it; the
+    # tests that exercise the budget itself set their own value, which wins.
+    monkeypatch.setenv("CGH_ON_DEMAND_BUDGET_MS", "5000")
     monkeypatch.setattr("cgh.core.config.GLOBAL_DIR", tmp_path / "home-cg")
     monkeypatch.setattr(owner_client, "live_owner_port", lambda root: None)
     return root

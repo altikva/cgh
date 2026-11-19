@@ -8,6 +8,8 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-19
+
 ### Added
 - **Search a diagnosis by symptom across the fleet.** Paste an error or log
   line and recall the diagnoses already posted for a look-alike error, so a
@@ -3082,7 +3084,8 @@ Highlights from this line:
 
 First tagged release on PyPI.
 
-[Unreleased]: https://github.com/altikva/cgh/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/altikva/cgh/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/altikva/cgh/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/altikva/cgh/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/altikva/cgh/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/altikva/cgh/compare/v0.19.0...v0.19.1

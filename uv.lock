@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
@@ -263,7 +263,7 @@ wheels = [
 
 [[package]]
 name = "cgh"
-version = "0.20.1"
+version = "0.21.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },

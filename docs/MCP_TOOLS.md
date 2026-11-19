@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), cgh exposes 63 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 66 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -42,6 +42,7 @@ tests/test_server/test_wire_caps.py
 | `indexed_files(pattern?, limit?, path?)` | Indexed file paths containing `pattern` (`total` plus the first `limit`), or with `path` whether that one file is indexed. Sees files that define no symbol, unlike the FTS index |
 | `pattern_search(pattern, glob?, max_results?, regex?, case_sensitive?, repo?, ref?)` | Regex or literal search returning hits grouped by file (`files: [{file, hits: [[line, text]]}]`, about 2.5 KB at most), instead of Grep. `ref` searches the tree at a branch, tag or commit straight from git; `repo` targets a sibling repo declared under `[cgh] siblings` (global or project config) or a subrepo this workspace federates |
 | `file_at_ref(path, ref, repo?, start_line?, end_line?)` | A file's lines as they are at a branch, tag or commit, from git, without a checkout (this repo or a declared sibling; at most 400 lines per call) |
+| `read_lines(path, start_line?, end_line?, symbol?)` | cgh's canonical bounded read of a working-tree file, server-side, instead of Read or `sed`/`head`/`tail` once you know the file and range: a 1-based inclusive line range (`end_line` 0 = to the end, capped at 400 lines), or a `symbol` (function/class/`Class.method`) read in place of a range, or neither for a small file whole, a larger one as its `outline`, or `head` for a language cgh does not parse. Returns `{path, total_lines, start_line, end_line, truncated, lines: [{line, text}]}` with `next_start_line` to resume; `path` must resolve inside the indexed repo (use `file_at_ref` for another branch or sibling) |
 | `subgraph(file_path, depth?, max_tokens?)` | Find files related within N import hops (blast radius); `max_tokens` (about 4 characters per token of JSON) trims the farthest files first and reports `truncated` and `dropped` |
 | `graph_stats()` | Node and edge counts per type |
 

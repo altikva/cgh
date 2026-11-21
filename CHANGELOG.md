@@ -22,6 +22,14 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   error), and `knowledge_record` echoes the parsed `rules` and `rule_errors`.
   Existing standing instructions carry no rule line, so nothing changes until
   one is added. See `check` in docs/CLI_REFERENCE.md.
+- **`decide`: a recommendation from earlier decisions, with its evidence.** The
+  new `decide(question)` MCP tool and `cgh decide "<question>"` answer a
+  question with the best precedent in the knowledge store, quoted, instead of a
+  list of notes to sort through. A standing instruction comes first, then the
+  entries whose outcomes held; dead ends and corrected entries are shown
+  against it and never recommended, and shared-store hits are listed apart as
+  untrusted. A confidence (`high`, `medium`, `low`, `none`) says how far to
+  rely on it, and nothing is recommended below `medium`. No model is called.
 
 ### Fixed
 - **Knowledge recorded before the 0.20 rename is readable again.** In repos

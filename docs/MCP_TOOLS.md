@@ -1,6 +1,6 @@
 # MCP Tools
 
-When running as an MCP server (`cgh serve`), cgh exposes 66 tools, plus whatever installed plugins register.
+When running as an MCP server (`cgh serve`), cgh exposes 67 tools, plus whatever installed plugins register.
 
 In a federated project (`subrepos` in `config.toml`), the tools that fan out tag each row with its `scope` and add a `scopes` map to the response: for each scope, the `head` commit and `branch` checked out, the `indexed_commit` graph answers come from, and `index_at_head`. An answer can then cite the exact commit it was read at.
 
@@ -130,7 +130,7 @@ queried name keeps the most certain one.
 
 | Tool | Description |
 |------|-------------|
-| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?, contradicts?, namespace?, ticket?, author?, origin_repo?, symptom?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions. `namespace` picks the store (`repo` by default; a shared name routes the write to that fleet store, where `standing_instruction` and `glossary` are refused). `ticket`, `author` and `origin_repo` record where the learning came from (`author`/`origin_repo` fill in from git when blank); `symptom` stores an error signature so a look-alike error recalls the entry. `contradicts` an id auto-retires the old entry on tag overlap, and a strong supersede is auto-applied while a weak look-alike is only suggested |
+| `knowledge_record(title, body, kind?, tags?, file_refs?, session_id?, supersedes?, contradicts?, namespace?, ticket?, author?, origin_repo?, symptom?)` | Save a decision, gotcha, pattern, style rule, glossary term or note for later sessions. `namespace` picks the store (`repo` by default; a shared name routes the write to that fleet store, where `standing_instruction` and `glossary` are refused). `ticket`, `author` and `origin_repo` record where the learning came from (`author`/`origin_repo` fill in from git when blank); `symptom` stores an error signature so a look-alike error recalls the entry. `contradicts` an id auto-retires the old entry on tag overlap, and a strong supersede is auto-applied while a weak look-alike is only suggested. For a `standing_instruction` whose body carries `cgh-rule:` lines, the answer echoes the parsed `rules` and, for a line that does not parse, `rule_errors` |
 | `knowledge_search(query, kind?, limit?, scope?, namespace?, symptom?)` | Search saved notes (not the code), ranked by relevance and by recorded outcomes. Reads this repo's store AND the subscribed shared stores (the fleet) by default; shared hits are tagged with their `namespace` and `scope` and marked `untrusted`. `namespace` narrows to one store or local facet (`repo`, `ticket:<id>`). `symptom` recalls diagnoses for a look-alike error, false trails included. `scope="all"` is legacy: the shared stores are already read, so it only adds federated subrepos' knowledge |
 | `knowledge_diagnose(symptom, namespace?, limit?)` | Paste an error or log line and recall the diagnoses already posted for a look-alike error across the fleet, split into `confirmed` (diagnoses that held or are unrated, fix in the body) and `dead_ends` (false trails already paid for, kept on purpose). Each hit carries `verdict`, `author`, `origin_repo`, `ticket`, `date` and an `already_paid` line; shared-store hits are `untrusted`. The line is normalised before matching, so a resembling error recalls it |
 | `knowledge_promote(entry_id?, since?, tags?, to?, dry_run?)` | Promote matured learnings from this repo's store into a shared fleet store, so a decision taken here is visible from every subscribed repo without `scope="all"`. Select by `entry_id`/`since`/`tags` (empty = the durable kinds plus plain notes); `to` is the target namespace (defaults to `[cgh] knowledge_promote_default`, itself `org-platform`); `dry_run` reports without writing. Each promoted row keeps its origin and is idempotent on re-run; `standing_instruction` and `glossary` are never shared |
@@ -144,6 +144,12 @@ queried name keeps the most certain one.
 - the **`scope` parameter** of `knowledge_search` selects federation reach. `scope="all"` fans the query out to federated subrepos read-only. It is legacy: the subscribed shared stores are read without it, so it is only for the subrepo case.
 - the **`scope` field on a hit** names the store it came from, the shared namespace or the subrepo name, so a result says where it was read.
 - the **`scope` stored on an entry** is its promotion flag, `repo` (promotable) or `branch` (an unmerged branch's note, not promoted). Read it as the entry's *promotion scope*; the physical column keeps the short name. The store an entry *belongs to* is its `namespace` (`repo`, `ticket:<id>`, or a shared name), a separate axis from this flag.
+
+### Decisions
+
+| Tool | Description |
+|------|-------------|
+| `check_action(action, session_id?)` | Check an action (a shell command or a short phrase such as "merge PR 12") against the `cgh-rule:` lines of this repo's standing instructions, before doing it. `verdict` is `allowed` (an `allow` rule matches; never a default), `refused`, `ask`, or `no_rule` when nothing rules or the input could not be read (`recognised` false). `rule` is the deciding rule with its `entry_id`, `title`, `line`, `reason` and `recorded`; `actions` shows how the input was read (`verb`, `fields`, `raw`, `verdict`, `rule_entry_id`); `others` lists the other matching rules; `ignored` the `allow` rules the calling session recorded itself, which do not count for it; `related` (with `no_rule` only) up to three standing instructions that mention the subject without ruling on it; `next` says what to do. Reads this repo's store only, never a shared store, calls no model and records nothing. Part of the core set. The rule syntax and the verbs are in [CLI_REFERENCE.md](CLI_REFERENCE.md), under `check` |
 
 ### Usage log
 

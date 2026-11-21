@@ -442,7 +442,11 @@ def register(mcp) -> None:
 
         kind: pattern | decision | gotcha | style | glossary | note |
               standing_instruction (durable rules and corrections from the
-              user; these lead every resume bundle)
+              user; these lead every resume bundle). A line
+              `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]` in its
+              body makes it a rule check_action applies, for instance
+              `cgh-rule: refuse git.push branch=main|develop`; the answer
+              echoes the parsed `rules` and any `rule_errors`.
         tags: comma-separated, short. These ARE the glossary index.
         file_refs: comma-separated canonical file paths involved.
         session_id: optional, stamps the entry with the current session.
@@ -541,6 +545,16 @@ def register(mcp) -> None:
                 + ", ".join(f"#{c['id']}" for c in cand["weak"])
                 + "; to retire one, record again with supersedes=<id>."
             )
+        if kind == "standing_instruction":
+            # Rule lines are parsed at record time so a typo is seen now, not
+            # the day the rule should have applied. A line that does not
+            # parse never rules.
+            from cgh.state.action_rules import parse_rule_lines
+
+            rules, rule_errors = parse_rule_lines(body)
+            if rules or rule_errors:
+                out["rules"] = [r.as_dict() for r in rules]
+                out["rule_errors"] = rule_errors
         return dumps_answer(out)
 
     @mcp.tool()

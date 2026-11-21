@@ -29,7 +29,8 @@ from typing import Any
 # semantic_search, fts_search, file_summary, find_callers, find_callees,
 # endpoints, domain_map), docs (search_docs, doc_outline), task kickoff
 # (context_for_task), knowledge (knowledge_record, knowledge_search,
-# knowledge_list), session continuity (checkpoint, compact_session, resume;
+# knowledge_list), the check before acting (check_action: a tool that must be
+# called before an action is useless once deferred), session continuity (checkpoint, compact_session, resume;
 # the SessionStart hook tells agents to call them after /clear and compaction),
 # and freshness (scan_status, file_at_ref, read_lines, tests_for). The index-mutating
 # tools (incremental_reindex, index_changed_files, indexed_files) are hook- and
@@ -53,6 +54,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "knowledge_record",
         "knowledge_search",
         "knowledge_list",
+        "check_action",
         "checkpoint",
         "compact_session",
         "resume",

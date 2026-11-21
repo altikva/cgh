@@ -152,7 +152,10 @@ turns it into a list of actions, each `{verb, fields, raw}`.
    Fields read from the repository (`on_branch`, the implicit `branch` of a
    bare `git push`) come from one `git rev-parse --abbrev-ref HEAD`, with a
    short timeout; on failure the field is absent, and a rule constraining it
-   does not match.
+   does not match. The timeout is two seconds for the tool and the CLI, and a
+   parameter of the check (`git_timeout`), so the hook passes its own budget.
+   A field that could not be determined is not the same as a field that does
+   not apply: see "Verdict" for what an `allow` rule may do with it.
 3. A segment no recogniser claims becomes `shell.<argv0>` (`shell.rm`,
    `shell.curl`) with one field, `args`, the rest of the command line. Rules
    can still target it: `cgh-rule: refuse shell.rm args=*-rf*`.
@@ -188,6 +191,17 @@ An `allow` rule never overrides a `refuse` or an `ask`, whatever its
 specificity or age. To carve an exception out of a refusal, the user narrows
 or supersedes the refusing rule. This keeps the precedence readable and keeps
 an agent from allowing itself past a refusal by recording a note.
+
+An `allow` rule does not decide an action one of whose fields could not be
+determined, when a `refuse` or `ask` rule constrains that field and matches
+the rest of the action. The branch of `git push --all`, of a matching refspec,
+of a push or commit from a directory outside the checkout, or of a git that
+does not answer in time is undetermined. With `refuse git.push
+branch=main|develop` and a broad `allow git.push`, such a push answers
+`no_rule`, not `allowed`: the refusal does not match, since the field is
+absent, but the allow rule cannot clear what the refusal might have covered.
+A field that simply does not apply (no `force` on a plain push) is not
+undetermined and withholds nothing.
 
 An `allow` rule recorded with the `session_id` of the calling session does not
 count for that session: its match is reported in `ignored` and the verdict

@@ -8,6 +8,21 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Check an action against the standing instructions before doing it.** A
+  rule stated once ("never push to develop", "no tag without a go") used to be
+  prose an agent had to remember. A standing instruction can now carry rule
+  lines, `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]`, and the new
+  `check_action` tool and `cgh check "<action>"` command answer `allowed`,
+  `refused`, `ask` or `no_rule` for a shell command or a short phrase, with
+  the instruction that decided. Nothing is allowed by default: `allowed` needs
+  a matching `allow` line, and a store with no rule answers `no_rule`. Only
+  this repo's store rules, never a shared one, and no model is called.
+  `cgh check` exits 0 for `allowed` only (2 refused, 3 ask, 4 no rule, 1
+  error), and `knowledge_record` echoes the parsed `rules` and `rule_errors`.
+  Existing standing instructions carry no rule line, so nothing changes until
+  one is added. See `check` in docs/CLI_REFERENCE.md.
+
 ### Fixed
 - **Knowledge recorded before the 0.20 rename is readable again.** In repos
   where a `.cgh/` was created next to the old `.codegraph/` instead of by

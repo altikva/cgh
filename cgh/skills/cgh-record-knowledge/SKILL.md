@@ -47,6 +47,27 @@ knowledge_record(
 per entry. Reuse existing tags when possible: call `knowledge_terms()`
 first to see what's already in use.
 
+**A standing instruction that should rule carries a rule line.** Prose
+alone is only shown at resume. To make `check_action` (and `cgh check`)
+apply it, add one line per rule to the body, each alone on its line:
+
+```
+knowledge_record(
+    kind="standing_instruction",
+    title="No direct push to an integration branch",
+    body="""Every change goes through a pull request.
+
+cgh-rule: refuse git.push branch=main|master|develop
+cgh-rule: ask git.tag tag=v*""",
+)
+```
+
+The syntax is `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]`; the
+verbs and their fields are listed under `check` in the CLI reference.
+Read the answer: `rules` echoes what was parsed and `rule_errors` names
+a line that will never rule. Write `allow` lines only when the user
+asked for one: an allow your own session recorded does not count for it.
+
 **Record outcomes**: when a knowledge entry helped or misled you, say so
 with `knowledge_outcome(verdict="useful"|"dead_end"|"corrected", entry_id=...,
 note="<task>")`, so later searches rank it and resume warns about dead ends.

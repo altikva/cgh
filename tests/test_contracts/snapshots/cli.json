@@ -21,6 +21,7 @@
     "backend",
     "callees",
     "callers",
+    "check",
     "communities",
     "compact",
     "diff",
@@ -255,6 +256,18 @@
         ],
         "positionals": [
           "fn_name"
+        ]
+      },
+      "check": {
+        "options": [
+          "--help",
+          "--json",
+          "--root",
+          "--session-id",
+          "-h"
+        ],
+        "positionals": [
+          "action"
         ]
       },
       "communities": {

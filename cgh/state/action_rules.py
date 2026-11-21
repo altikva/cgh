@@ -191,7 +191,18 @@ class _Context:
     def branch(self, subdir: str | None = None) -> str | None:
         if self.cwd is None:
             return None
-        target = self.cwd / subdir if subdir else self.cwd
+        target = self.cwd
+        if subdir:
+            # `git -C <dir>` comes from the string being checked: git is only
+            # run inside the checkout, never in a directory the action names
+            # outside it. Elsewhere the field is absent.
+            try:
+                root = self.cwd.resolve()
+                target = (self.cwd / subdir).resolve()
+            except (OSError, RuntimeError):
+                return None
+            if not target.is_relative_to(root):
+                return None
         key = str(target)
         if key not in self._cache:
             try:
@@ -205,13 +216,20 @@ class _Context:
 # Splitting a command line
 # ---------------------------------------------------------------------------
 
-_SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "(", ")", ";;", "|&"})
 _PUNCT = frozenset("();<>|&")
-_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "time", "nohup"})
+# Only these are redirections, whose target is a file and not a command. Any
+# other run of shell punctuation (`|`, `&&`, `(`, `<(`, `;`...) starts a new
+# segment, so a command inside a subshell or a process substitution is read.
+_REDIRECT_RE = re.compile(r"^(?:[<>]{1,3}|[<>]&|&>{1,2}|>\|)$")
+_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "time", "nohup", "xargs"})
+# A token holding a command substitution: bash runs what is inside.
+_SUBST_RE = re.compile(r"\$\((.*)\)|`([^`]*)`", re.DOTALL)
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # sudo and env options that take a value.
-_WRAPPER_VALUE_FLAGS = frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-S"})
+_WRAPPER_VALUE_FLAGS = frozenset(
+    {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-n", "-I", "-P", "-L", "-d", "-E"}
+)
 
 
 def _newlines_to_separators(text: str) -> str:
@@ -260,14 +278,14 @@ def split_segments(command: str) -> list[list[str]] | None:
         if skip_next:
             skip_next = False
             continue
-        if tok in _SEPARATORS:
+        if tok and all(c in _PUNCT for c in tok):
+            if _REDIRECT_RE.match(tok):
+                # A redirection: drop the operator and its target file.
+                skip_next = True
+                continue
             if current:
                 segments.append(current)
             current = []
-            continue
-        if tok and all(c in _PUNCT for c in tok):
-            # A redirection: drop the operator and its target.
-            skip_next = True
             continue
         current.append(tok)
     if current:
@@ -275,8 +293,11 @@ def split_segments(command: str) -> list[list[str]] | None:
     return segments
 
 
-def _strip_wrappers(argv: list[str]) -> list[str]:
-    """Drop leading ``VAR=value`` assignments and wrapper commands."""
+def _strip_wrappers(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Drop leading ``VAR=value`` assignments and wrapper commands. Returns
+    ``(argv, scripts)``: ``scripts`` are command strings a wrapper carries
+    itself (``env -S "<command>"``), to be read like a shell script."""
+    scripts: list[str] = []
     i = 0
     while i < len(argv):
         tok = argv[i]
@@ -288,13 +309,29 @@ def _strip_wrappers(argv: list[str]) -> list[str]:
             while i < len(argv) and (
                 argv[i].startswith("-") or _ASSIGN_RE.match(argv[i])
             ):
-                takes_value = argv[i] in _WRAPPER_VALUE_FLAGS
+                flag = argv[i]
                 i += 1
-                if takes_value and i < len(argv):
+                if flag in ("-S", "--split-string") and i < len(argv):
+                    scripts.append(argv[i])
+                    i += 1
+                elif flag.startswith("--split-string="):
+                    scripts.append(flag.partition("=")[2])
+                elif flag in _WRAPPER_VALUE_FLAGS and i < len(argv):
                     i += 1
             continue
         break
-    return argv[i:]
+    return argv[i:], scripts
+
+
+def _script_of(argv: list[str]) -> str | None:
+    """The script of ``bash -c '<script>'``, with ``-c`` alone or inside a
+    cluster of short flags (``-lc``)."""
+    for idx, tok in enumerate(argv[1:], start=1):
+        if tok == "--":
+            return None
+        if tok.startswith("-") and not tok.startswith("--") and "c" in tok[1:]:
+            return argv[idx + 1] if idx + 1 < len(argv) else None
+    return None
 
 
 def _parse_args(
@@ -734,22 +771,48 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
     compound = len(segments) > 1
     out: list[Action] = []
     for seg in segments:
-        argv = _strip_wrappers(seg)
+        # What bash would run from inside this segment: a command substitution
+        # in an argument, a command string handed to a wrapper. Each is read
+        # as a script; one that cannot be read still counts as an action, so
+        # it is never dropped and the command cannot come out allowed on the
+        # strength of its other parts.
+        hidden = [
+            m.group(1) if m.group(1) is not None else m.group(2)
+            for m in _SUBST_RE.finditer(" ".join(seg))
+        ]
+        argv, scripts = _strip_wrappers(seg)
+        for script in (*hidden, *scripts):
+            inner = (
+                _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
+            )
+            out.extend(inner or [Action("shell.script", {"args": script}, script)])
         if not argv:
+            if not hidden and not scripts:
+                # Only wrappers and assignments: still something that runs.
+                out.append(
+                    Action(
+                        f"shell.{seg[0]}", {"args": " ".join(seg[1:])}, shlex.join(seg)
+                    )
+                )
             continue
         raw = shlex.join(argv)
         head = Path(argv[0]).name if "/" in argv[0] else argv[0]
-        if head in _SHELLS and "-c" in argv[1:] and depth < _MAX_SCRIPT_DEPTH:
-            idx = argv.index("-c")
-            if idx + 1 < len(argv):
-                out.extend(_normalise(argv[idx + 1], ctx, depth + 1))
+        if head in _SHELLS or head == "eval":
+            script = " ".join(argv[1:]) if head == "eval" else _script_of(argv)
+            if script is not None:
+                inner = (
+                    _normalise(script, ctx, depth + 1)
+                    if depth < _MAX_SCRIPT_DEPTH
+                    else []
+                )
+                out.extend(inner or [Action("shell.script", {"args": script}, script)])
                 continue
         recogniser = RECOGNISERS.get(head)
         claimed = recogniser([head, *argv[1:]], raw, ctx) if recogniser else None
         if claimed:
             out.extend(claimed)
             continue
-        if compound or depth or recogniser or _looks_like_command(argv, ctx):
+        if compound or depth or out or recogniser or _looks_like_command(argv, ctx):
             out.append(
                 Action(f"shell.{head}", {"args": " ".join(argv[1:])}, raw),
             )

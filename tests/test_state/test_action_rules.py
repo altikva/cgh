@@ -265,16 +265,79 @@ def test_a_shell_script_argument_is_read_through():
     assert _norm('sh -c "cd x && git tag v1"')[-1] == ("git.tag", {"tag": "v1"})
 
 
-def test_git_dash_c_reads_the_branch_of_that_directory():
+_PUSH = ("git.push", {"remote": "origin", "branch": "main", "force": "yes"})
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "echo $(git push -f origin main)",
+        'echo "$(git push -f origin main)"',
+        "echo `git push -f origin main`",
+        "diff <(git push -f origin main) x",
+        "(git push -f origin main)",
+        "bash -lc 'git push -f origin main'",
+        "eval git push -f origin main",
+        "eval 'git push -f origin main'",
+        'env -S "git push -f origin main"',
+        "xargs -n 1 git push -f origin main",
+        "sudo -i git push -f origin main",
+        "ls | xargs git push -f origin main",
+    ],
+)
+def test_a_command_inside_another_is_still_read(action):
+    assert _PUSH in _norm(action), _norm(action)
+    refuse = _entry(1, "cgh-rule: refuse git.push force=yes")
+    allow_rest = _entry(2, "cgh-rule: allow shell.*")
+    assert _check(action, [refuse, allow_rest])["verdict"] == "refused"
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["sudo -u bob", "env -S ''", 'echo "$(  )"', "FOO=1", "bash -c ''"],
+)
+def test_a_segment_is_never_dropped_into_an_allowed_command(action):
+    allow_ls = _entry(1, "cgh-rule: allow shell.ls")
+    alone = _check(action, [allow_ls])
+    assert alone["verdict"] == "no_rule"
+    both = _check(f"ls && {action}", [allow_ls])
+    assert both["verdict"] == "no_rule", both["actions"]
+    assert _check("ls", [allow_ls])["verdict"] == "allowed"
+
+
+def test_a_redirection_target_is_not_a_command():
+    assert _norm("ls > git 2>&1") == [("shell.ls", {"args": "2"})]
+    assert _norm("ls >> out.log < in.txt") == [("shell.ls", {"args": ""})]
+
+
+def test_git_dash_c_reads_the_branch_of_that_directory(tmp_path):
+    (tmp_path / "sub").mkdir()
     seen: list[Path] = []
 
     def reader(path: Path) -> str:
         seen.append(path)
         return "develop" if path.name == "sub" else "feature/x"
 
-    got = ar.normalise("git -C sub commit -m x", cwd="/repo", branch_reader=reader)
+    got = ar.normalise("git -C sub commit -m x", cwd=tmp_path, branch_reader=reader)
     assert got[0].fields == {"on_branch": "develop"}
-    assert seen == [Path("/repo/sub")]
+    assert seen == [(tmp_path / "sub").resolve()]
+
+
+@pytest.mark.parametrize("where", ["..", "../other", "/", "sub/../.."])
+def test_git_is_never_run_in_a_directory_outside_the_checkout(tmp_path, where):
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (tmp_path / "other").mkdir()
+    seen: list[Path] = []
+
+    def reader(path: Path) -> str:
+        seen.append(path)
+        return "develop"
+
+    got = ar.normalise(f"git -C {where} commit -m x", cwd=repo, branch_reader=reader)
+    assert seen == []
+    assert got[0].verb == "git.commit"
+    assert got[0].fields == {}
 
 
 def test_the_branch_is_read_once_per_check():

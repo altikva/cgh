@@ -15,6 +15,11 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   before the switch stopped being read. Init, index and serve now merge the
   legacy knowledge store into `.cgh/` once (duplicates skipped, the old dir
   left in place). `cgh knowledge merge-legacy --root <repo>` runs it on demand.
+- **The knowledge tools take `entry_id` as a number.** `knowledge_list`,
+  `knowledge_outcome`, `knowledge_forget` and `knowledge_promote` refused an
+  integer `entry_id`, although search and list answers show ids as integers, so
+  an id copied from a result was rejected. They now accept `1371` and `"1371"`
+  alike; a value that is not a number answers an error saying what to pass.
 
 ## [0.21.0] - 2026-11-19
 

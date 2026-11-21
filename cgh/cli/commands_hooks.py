@@ -17,7 +17,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from cgh.cli import hook_advice, hook_answers
+from cgh.cli import hook_advice, hook_answers, hook_check
 from cgh.core.config import state_dir_for
 
 # Bare identifier: starts with a letter or underscore, followed by 2+ word
@@ -331,7 +331,12 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     PreToolUse hook for Bash. When the command searches or reads code through
     the shell (git grep, grep -r, rg, find -name, sed or cat on a source file)
     inside a cgh repo, points at the cgh tool that answers it. Always exits 0,
-    advisory, never blocking: the command still runs.
+    and those hints are advisory: the command still runs.
+
+    Before the hints, the command goes through check_action (see
+    hook_check): a rule line of a standing instruction that refuses it, or
+    says to ask, is the one thing that can deny the command or prompt the
+    user, and only in enforce mode. A check that fails says nothing.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -344,6 +349,16 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     cwd = payload.get("cwd") or os.getcwd()
     if not _in_cgh_repo(Path(cwd)):
         sys.exit(0)
+
+    # First, before any hint: what the user's rules say about this command.
+    verdict = hook_check.decision(payload, command, Path(cwd))
+    if verdict is not None:
+        if verdict.kind == "deny":
+            _emit_deny(verdict.message)
+        elif verdict.kind == "ask":
+            _emit_ask(verdict.message)
+        else:
+            _emit_nudge(verdict.message)
 
     if hook_answers.enabled(Path(cwd)):
         answer = _shell_answer(command, Path(cwd))
@@ -628,6 +643,22 @@ def _emit_deny(reason: str) -> None:
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        },
+        sys.stdout,
+    )
+    sys.exit(0)
+
+
+def _emit_ask(reason: str) -> None:
+    """Hand the decision to the user: Claude Code shows its permission prompt
+    with ``reason``, whatever its own rules would have allowed, then exit 0."""
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
                 "permissionDecisionReason": reason,
             }
         },

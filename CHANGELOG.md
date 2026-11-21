@@ -30,6 +30,16 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   against it and never recommended, and shared-store hits are listed apart as
   untrusted. A confidence (`high`, `medium`, `low`, `none`) says how far to
   rely on it, and nothing is recommended below `medium`. No model is called.
+- **The Claude Code hook checks a Bash command before it runs.** `check_action`
+  only helped when the agent thought of calling it. The Bash hook that
+  `cgh init` already installs now runs it on every command: with
+  `[hooks] check_action = "enforce"` a `refused` verdict denies the command
+  and `ask` has Claude Code prompt the user, each citing the rule; with
+  `"advise"` the model is told and nothing is blocked; `"off"` skips it. The
+  default is provisional, `advise` for now. The hook never answers "allow"
+  and never blocks by failing: an unreadable store, a slow git or more than
+  200 ms lets the command run. No new `cgh init` is needed, and a store
+  without rule lines behaves as before. See docs/INTEGRATIONS.md.
 
 ### Fixed
 - **Knowledge recorded before the 0.20 rename is readable again.** In repos

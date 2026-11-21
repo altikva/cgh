@@ -29,6 +29,34 @@ recap of that previous session, and the model can continue it through the
 `/cgh-checkpoint` before clearing: the skill has the model write the goal,
 what is done, the decisions, what is open and the next step.
 
+**Before a Bash command runs.** The `PreToolUse` hook on Bash that `cgh init`
+installs first puts the command through `check_action`: the rule lines
+(`cgh-rule: <refuse|ask|allow> <verb> ...`) of this repo's standing
+instructions. Every command is checked, so a rule on `git push`, `git tag`,
+`gh pr merge`, `gh release create` or any other verb applies; a store with
+no rule line costs one query. What the hook does with the verdict depends on
+`[hooks] check_action`:
+
+| Verdict | `enforce` | `advise` |
+|---|---|---|
+| `refused` | the command is denied, and the model is given the rule line, the id of its instruction and its reason | the same text goes to the model as a note; the command is not blocked |
+| `ask` | Claude Code asks the user, showing the same text | a note telling the model to ask the user first |
+| `allowed`, `no_rule` | nothing | nothing |
+
+`off` skips the check. The default is provisional: `advise` for now. The hook
+never answers "allow", so it cannot bypass a permission prompt of Claude
+Code: it only restricts.
+
+It never blocks by failing either. The check reads the knowledge store file
+itself, read-only, and asks no owner, so a stopped or wedged owner changes
+nothing. It has 200 ms in all (50 ms to wait on a locked store, 100 ms for
+the one `git` call that reads the branch). A missing, locked or corrupt
+store, an error, a missed deadline or a mode value cgh does not know: the
+command runs as if there were no check, and one line on the hook's stderr
+(visible with `claude --debug`) says the check was skipped and why. A `git`
+that is only slow drops the branch from what the rules see, so a rule that
+needs the branch does not match, and the others still apply.
+
 **What cgh adds to every session.** cgh writes one file Claude Code loads at
 session start, `.claude/rules/cgh-usage.md` (about 2.3 KB; older versions
 wrote 6 to 10 KB, and before the rules directory a block inside `CLAUDE.md`).

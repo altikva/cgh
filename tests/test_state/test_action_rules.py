@@ -283,6 +283,15 @@ _PUSH = ("git.push", {"remote": "origin", "branch": "main", "force": "yes"})
         "xargs -n 1 git push -f origin main",
         "sudo -i git push -f origin main",
         "ls | xargs git push -f origin main",
+        "sudo -n git push -f origin main",
+        "sudo -E -n git push -f origin main",
+        "env -u HOME git push -f origin main",
+        "time -o t.log git push -f origin main",
+        'ls > "$(git push -f origin main)"',
+        "ls > `git push -f origin main`",
+        "ls > >(git push -f origin main)",
+        "ls 2> >(git push -f origin main)",
+        "ls < <(git push -f origin main)",
     ],
 )
 def test_a_command_inside_another_is_still_read(action):
@@ -303,6 +312,13 @@ def test_a_segment_is_never_dropped_into_an_allowed_command(action):
     both = _check(f"ls && {action}", [allow_ls])
     assert both["verdict"] == "no_rule", both["actions"]
     assert _check("ls", [allow_ls])["verdict"] == "allowed"
+
+
+def test_a_flag_that_takes_a_value_for_one_wrapper_is_plain_for_another():
+    # -n takes a value for xargs and none for sudo; -S is a script for env only.
+    assert _norm("xargs -n 1 rm") == [("shell.rm", {"args": ""})]
+    assert _norm("sudo -n rm x") == [("shell.rm", {"args": "x"})]
+    assert _norm("sudo -S rm x") == [("shell.rm", {"args": "x"})]
 
 
 def test_a_redirection_target_is_not_a_command():

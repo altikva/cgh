@@ -226,10 +226,15 @@ _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "time", "nohup", "xargs
 _SUBST_RE = re.compile(r"\$\((.*)\)|`([^`]*)`", re.DOTALL)
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-# sudo and env options that take a value.
-_WRAPPER_VALUE_FLAGS = frozenset(
-    {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-n", "-I", "-P", "-L", "-d", "-E"}
-)
+# The options of each wrapper that take a value. One table per wrapper: an
+# option that takes a value for one (`xargs -n 1`) is a plain flag for another
+# (`sudo -n`), and skipping a word too many would hide the command.
+_WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"}),
+    "env": frozenset({"-u", "-C", "-P"}),
+    "xargs": frozenset({"-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"}),
+    "time": frozenset({"-o", "-f"}),
+}
 
 
 def _newlines_to_separators(text: str) -> str:
@@ -275,10 +280,14 @@ def split_segments(command: str) -> list[list[str]] | None:
     current: list[str] = []
     skip_next = False
     for tok in tokens:
+        is_punct = bool(tok) and all(c in _PUNCT for c in tok)
         if skip_next:
             skip_next = False
-            continue
-        if tok and all(c in _PUNCT for c in tok):
+            if not is_punct:
+                # The target file of a redirection. A target that is itself
+                # punctuation (`> >(cmd)`) is not skipped: it starts a segment.
+                continue
+        if is_punct:
             if _REDIRECT_RE.match(tok):
                 # A redirection: drop the operator and its target file.
                 skip_next = True
@@ -305,18 +314,20 @@ def _strip_wrappers(argv: list[str]) -> tuple[list[str], list[str]]:
             i += 1
             continue
         if tok in _WRAPPERS:
+            value_flags = _WRAPPER_VALUE_FLAGS.get(tok, frozenset())
+            is_env = tok == "env"
             i += 1
             while i < len(argv) and (
                 argv[i].startswith("-") or _ASSIGN_RE.match(argv[i])
             ):
                 flag = argv[i]
                 i += 1
-                if flag in ("-S", "--split-string") and i < len(argv):
+                if is_env and flag in ("-S", "--split-string") and i < len(argv):
                     scripts.append(argv[i])
                     i += 1
-                elif flag.startswith("--split-string="):
+                elif is_env and flag.startswith("--split-string="):
                     scripts.append(flag.partition("=")[2])
-                elif flag in _WRAPPER_VALUE_FLAGS and i < len(argv):
+                elif flag in value_flags and i < len(argv):
                     i += 1
             continue
         break
@@ -770,24 +781,27 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
         return []
     compound = len(segments) > 1
     out: list[Action] = []
+    # Command substitutions are looked for in the whole text, not per segment:
+    # one can sit in an argument, between double quotes, or in the target of a
+    # redirection, which the segments no longer hold.
+    for m in _SUBST_RE.finditer(text):
+        script = m.group(1) if m.group(1) is not None else m.group(2)
+        inner = _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
+        out.extend(inner or [Action("shell.script", {"args": script}, script)])
     for seg in segments:
         # What bash would run from inside this segment: a command substitution
         # in an argument, a command string handed to a wrapper. Each is read
         # as a script; one that cannot be read still counts as an action, so
         # it is never dropped and the command cannot come out allowed on the
         # strength of its other parts.
-        hidden = [
-            m.group(1) if m.group(1) is not None else m.group(2)
-            for m in _SUBST_RE.finditer(" ".join(seg))
-        ]
         argv, scripts = _strip_wrappers(seg)
-        for script in (*hidden, *scripts):
+        for script in scripts:
             inner = (
                 _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
             )
             out.extend(inner or [Action("shell.script", {"args": script}, script)])
         if not argv:
-            if not hidden and not scripts:
+            if not scripts:
                 # Only wrappers and assignments: still something that runs.
                 out.append(
                     Action(

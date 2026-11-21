@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -326,17 +327,24 @@ def merge_legacy_knowledge(
     Returns the import counts, or None when there is nothing to merge: no
     ``.cgh/``, no legacy store, or the merge already ran (unless ``force``).
     A legacy store without a knowledge table counts as merged.
+
+    Only a store this machine wrote is merged: knowledge leads every resume
+    (standing instructions included), so a ``.codegraph/`` that arrived with
+    a clone must not be folded in. The merge refuses a legacy dir tracked by
+    git, a store owned by another user, and any symlink on either side.
     """
     from cgh.core.config import CGH_DIR, LEGACY_CGH_DIR
 
-    root = Path(repo_root)
+    root = Path(repo_root).resolve()
     current = root / CGH_DIR
-    legacy_db = root / LEGACY_CGH_DIR / "call_log.db"
+    legacy_dir = root / LEGACY_CGH_DIR
+    legacy_db = legacy_dir / "call_log.db"
     marker = current / LEGACY_MERGE_MARKER
     if not current.is_dir() or not legacy_db.is_file():
         return None
     if marker.exists() and not force:
         return None
+    _check_legacy_store_is_local(root, current, legacy_dir, legacy_db, marker)
     try:
         records = export_records(root, store=legacy_db)
     except sqlite3.Error as exc:
@@ -351,10 +359,48 @@ def merge_legacy_knowledge(
             "outcomes_skipped": 0,
         }
     )
-    marker.write_text(
-        json.dumps(
-            {**counts, "source": str(legacy_db), "ts": datetime.now(UTC).isoformat()}
-        ),
-        encoding="utf-8",
+    payload = json.dumps(
+        {**counts, "source": str(legacy_db), "ts": datetime.now(UTC).isoformat()}
     )
+    # O_NOFOLLOW: a marker planted as a symlink is refused, never written through.
+    fd = os.open(
+        marker,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(payload)
     return counts
+
+
+def _check_legacy_store_is_local(
+    root: Path, current: Path, legacy_dir: Path, legacy_db: Path, marker: Path
+) -> None:
+    """Raise KnowledgeTransferError unless the legacy store is one this
+    machine wrote for this repo (see merge_legacy_knowledge)."""
+    for p in (current, legacy_dir, legacy_db, marker):
+        if p.is_symlink():
+            raise KnowledgeTransferError(f"refusing to merge: {p} is a symlink")
+    if not legacy_db.resolve().is_relative_to(root):
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_db} is outside {root}"
+        )
+    if hasattr(os, "getuid") and legacy_db.stat().st_uid != os.getuid():
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_db} belongs to another user"
+        )
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--", legacy_dir.name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise KnowledgeTransferError(f"cannot check git tracking: {exc}") from exc
+    if tracked.returncode == 0 and tracked.stdout.strip():
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_dir.name}/ is tracked by git, so it came "
+            "with the clone, not from this machine"
+        )

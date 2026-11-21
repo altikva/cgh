@@ -95,3 +95,36 @@ def test_cli_merge_legacy_reports_json(repo, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["merged"] is True
     assert out["imported"] == 1
+
+
+def test_refuses_a_legacy_store_tracked_by_git(repo):
+    """A .codegraph/ committed to the repo came with the clone: its notes
+    (standing instructions included) must not be folded into this machine's
+    knowledge."""
+    import subprocess
+
+    from cgh.state.knowledge_transfer import KnowledgeTransferError
+
+    git = ["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*git, "init", "-q"], check=True, timeout=30)
+    subprocess.run(
+        [*git, "add", "-f", ".codegraph/call_log.db"], check=True, timeout=30
+    )
+
+    with pytest.raises(KnowledgeTransferError, match="tracked by git"):
+        merge_legacy_knowledge(repo)
+    # The automatic path logs and carries on: no marker, serve not blocked.
+    assert config.migrate_state_dir(repo) is False
+    assert not (repo / ".cgh" / LEGACY_MERGE_MARKER).exists()
+
+
+def test_refuses_a_symlinked_marker(repo, tmp_path):
+    from cgh.state.knowledge_transfer import KnowledgeTransferError
+
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("keep", encoding="utf-8")
+    (repo / ".cgh" / LEGACY_MERGE_MARKER).symlink_to(target)
+
+    with pytest.raises(KnowledgeTransferError, match="symlink"):
+        merge_legacy_knowledge(repo, force=True)
+    assert target.read_text() == "keep"

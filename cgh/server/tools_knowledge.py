@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+from pydantic import StrictInt
+
 from cgh.core.config import state_dir_for
 from cgh.server._budget import dumps_answer
 
@@ -160,6 +162,11 @@ def _read_shared_namespaces(
             rows.append(row)
     return rows
 
+
+# An entry id as a tool argument: the integer search and list answers show, or
+# its decimal string. The integer is strict so a boolean is refused by the
+# argument validation instead of being read as entry 1 or 0.
+EntryId = StrictInt | str
 
 _INVALID_ENTRY_ID = (
     "invalid entry_id: {value!r}; pass the integer id of an entry, as shown by "
@@ -773,7 +780,7 @@ def register(mcp) -> None:
         session_id: str = "",
         limit: int = 10,
         offset: int = 0,
-        entry_id: int | str = "",
+        entry_id: EntryId = "",
         namespace: str = "",
     ) -> str:
         """
@@ -927,7 +934,7 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def knowledge_forget(entry_id: int | str) -> str:
+    def knowledge_forget(entry_id: EntryId) -> str:
         """Delete a single knowledge entry by id (obtained from search/list).
 
         Acts on this repo's store only; a namespaced shared-store id is refused.
@@ -947,7 +954,7 @@ def register(mcp) -> None:
     @_logged_tool
     def knowledge_outcome(
         verdict: str,
-        entry_id: int | str = "",
+        entry_id: EntryId = "",
         query: str = "",
         note: str = "",
         file_refs: str = "",
@@ -1062,7 +1069,7 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def knowledge_promote(
-        entry_id: int | str = "",
+        entry_id: EntryId = "",
         since: str = "",
         tags: str = "",
         to: str = "",

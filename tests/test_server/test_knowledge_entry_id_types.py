@@ -17,6 +17,7 @@ import json
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 
 import cgh.server as _srv
 from cgh.server.tools_knowledge import _repo_entry_id, register
@@ -145,6 +146,32 @@ def test_forget_deletes_nothing_for_a_value_that_is_not_a_number(store, server):
     out = _call(server, "knowledge_forget", {"entry_id": "all"})
     assert "invalid entry_id: 'all'" in out["error"]
     assert knowledge_get(a, repo_root=store) is not None
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["knowledge_forget", "knowledge_list", "knowledge_outcome", "knowledge_promote"],
+)
+@pytest.mark.parametrize("value", [True, False, 1.0])
+def test_a_boolean_or_a_float_is_refused_before_the_tool_runs(
+    store, server, tool, value
+):
+    # A lax integer would read true as entry 1: on knowledge_forget that
+    # deletes a row nobody named.
+    first = _note(store, 0)
+    assert first == 1
+    args = (
+        {"entry_id": value, "dry_run": True}
+        if tool == "knowledge_promote"
+        else {"entry_id": value}
+    )
+    if tool == "knowledge_outcome":
+        args["verdict"] = "dead_end"
+    with pytest.raises(ToolError):
+        _call(server, tool, args)
+    assert knowledge_get(first, repo_root=store) is not None
+    entries, _files = knowledge_outcome_scores(repo_root=store)
+    assert not entries
 
 
 def test_promote_selects_the_same_entry_from_an_integer_and_a_string(store, server):

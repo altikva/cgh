@@ -1087,6 +1087,93 @@ cgh papercut <query>                           # search them
 cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override the scope)
 ```
 
+### `check`
+
+Check an action against the rules of this repo's standing instructions, before
+doing it. The action is a shell command or a short phrase, French or English.
+
+```
+cgh check "git push origin develop"            # a shell command, compound ones included
+cgh check "merge PR 12"                        # a short phrase
+cgh check "$cmd" --json                        # the check_action payload
+cgh check "$cmd" --session-id <id>             # an allow rule that session recorded does not count
+cgh check "$cmd" --root <repo>                 # another checkout (default: cwd)
+```
+
+A rule is a line in the body of a standing instruction
+(`knowledge_record(kind="standing_instruction", ...)`):
+
+```
+cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]
+```
+
+for instance
+
+```
+Never push to an integration branch: every change goes through a pull request.
+
+cgh-rule: refuse git.push branch=main|master|develop
+cgh-rule: refuse git.commit on_branch=main|master|develop
+cgh-rule: ask git.tag tag=v*
+cgh-rule: ask *.publish
+cgh-rule: allow git.push branch=feature/*
+```
+
+The verb is dotted and may be a glob (`git.*`). Each `key=glob` constrains one
+field of the action, with `|` between alternatives; a key the action does not
+carry never matches. The rest of the body is the reason, printed with the
+verdict. A line that does not parse never rules: `knowledge_record` reports it
+in `rule_errors`.
+
+| Verb | Read from | Fields |
+|---|---|---|
+| `git.push` | `git push ...` | `remote`, `branch` (the destination of each refspec; the current branch when none is named), `force`, `tags`, `delete`, `all` |
+| `git.commit` | `git commit ...` | `on_branch`, `amend` |
+| `git.tag` | `git tag <name>` (not `-l`, not `-d`) | `tag` |
+| `git.branch.delete` | `git branch -d/-D`, `git push --delete` | `branch` |
+| `git.reset` | `git reset --hard` | `hard` |
+| `git.rebase`, `git.merge`, `git.checkout`, `git.stash` | the matching subcommand | `branch` where one is named |
+| `gh.pr.merge` | `gh pr merge ...` | `pr`, `method`, `admin` |
+| `gh.pr.create`, `gh.pr.close` | the matching subcommand | `base`, `pr` |
+| `gh.release.create` | `gh release create ...` | `tag` |
+| `gh.issue.create` | `gh issue create ...` | `repo` |
+| `pkg.publish` | `uv publish`, `twine upload`, `npm publish`, `pnpm publish`, `cargo publish` | `tool` |
+| `tool.install` | `uv tool install/upgrade`, `pipx install/upgrade` | `tool`, `package` |
+| `proc.kill` | `pkill`, `killall` | `pattern` |
+| `shell.<program>` | any other command | `args` |
+
+Flags read as `yes` when present (`force=yes`). A compound command (`&&`, `||`,
+`;`, `|`, newlines, `bash -c '...'`) is checked segment by segment and the
+strictest verdict wins. Commands inside a substitution (`$(...)`, backticks,
+`<(...)`), after `eval`, or behind `sudo`, `env`, `xargs`, `timeout`, `nice` and
+the like are read too. The phrases understood are "merge PR 12" / "fusionner la
+PR 12", "tag v0.22.0", "push to develop" / "pousser sur develop", "release
+v0.22.0" and "commit on main". The branch is read with one
+`git rev-parse --abbrev-ref HEAD`, given two seconds; when it cannot be read the
+field is absent and a rule constraining it does not match. An `allow` rule does
+not clear such an action either when a `refuse` or `ask` rule constrains the
+field that could not be read (the branch of `git push --all`, of a push from a
+directory outside the checkout): the answer is then "no rule", not `allowed`.
+
+| Exit code | Verdict |
+|---|---|
+| 0 | `allowed`: an `allow` rule matches, and nothing refuses or asks |
+| 2 | `refused`: a `refuse` rule matches |
+| 3 | `ask`: an `ask` rule matches |
+| 4 | no rule covers the action, or cgh could not read it (`--json` carries `recognised`) |
+| 1 | error: no cgh store here, or the store cannot be read |
+
+Exit 0 is reserved for a matching `allow` rule, so `cgh check "$cmd" && $cmd`
+never runs a command the store was silent about. A `refuse` beats an `ask`,
+which beats an `allow`: to carve an exception out of a refusal, narrow or
+supersede the refusing rule. Rules come from this checkout's own store only,
+never from a shared store or a federated subrepo, and a superseded instruction
+no longer rules. No model is called.
+
+This is a reminder for an agent acting in good faith, not a sandbox: a command
+phrased in a way cgh does not recognise is not covered, and the agent's own
+permission rules remain the enforcement layer.
+
 ### `artifact`
 
 A read-through cache for files cgh cannot parse into the graph: images, and
@@ -1108,6 +1195,48 @@ cgh artifact note <path> --summary "<what it holds>"   # save one (hashes the fi
 Connected agents record and read through the knowledge MCP tools
 (`knowledge_record(..., kind="note", tags="artifact", file_refs=[path])`),
 guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
+
+### `decide`
+
+Ask the knowledge store what was decided before on a question. The answer is
+the best earlier decision, quoted, with the evidence for and against it. No
+model is called: the recommendation is a recorded entry, not a generated text.
+
+```
+cgh decide "<question>" [--root PATH] [--namespace NAME] [--limit N] [--json]
+```
+
+The text output gives the recommendation (or `No recommendation.`), the
+confidence and its basis, then three lists:
+
+- **Supporting**: the local precedents in rank order. A standing instruction
+  comes first, then entries whose outcome is `preferred`, `useful`, unrated,
+  and `contested` last. An entry that barely matches the question never heads
+  the list.
+- **Against**: dead ends and corrected entries, with the note of the last
+  verdict. They are never recommended and always shown.
+- **Untrusted**: hits from the shared stores, written by another repo or
+  session. They are never recommended and never raise the confidence.
+
+Confidence is `high` when the best precedent matches the question well and is
+a standing instruction or has a `preferred` or `useful` outcome, with no rival
+of equal standing; `medium` when it has a rival, was never rated, or matches
+less well but proved useful; `low` otherwise, and `none` when nothing was
+found. A recommendation is given only at `high` or `medium`. Below that the
+command says what to record once the question is settled.
+
+Only decisions, standing instructions, patterns, gotchas and style rules count
+as precedents; notes, glossary entries and session digests do not.
+
+`--namespace` reads one store only: a local facet (`repo`, `ticket:<id>`) or a
+shared store name. `--limit` caps each evidence list (5 by default). `--json`
+prints the payload of the `decide` MCP tool. The command opens the store
+directly, so no server needs to run. Exit code 0 whenever the lookup ran,
+whatever the confidence; 1 on error.
+
+After acting on a recommendation, record whether it held with
+`cgh knowledge outcome useful|dead_end|corrected --id N`: the next `decide`
+ranks on it.
 
 ### `knowledge`
 

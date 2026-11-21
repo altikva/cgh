@@ -18,6 +18,15 @@ that connects:
   `knowledge_record(kind="standing_instruction", ...)` lead every
   bundle. Entries can supersede older ones, and `cgh memory review`
   lists stale entries for pruning.
+- **Rules an agent can check**: a standing instruction is prose, and a
+  line `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]` in its body
+  makes it checkable, for instance
+  `cgh-rule: refuse git.push branch=main|develop`. `check_action` (MCP)
+  and `cgh check "<action>"` answer `allowed`, `refused`, `ask` or
+  `no_rule` for a command or a short phrase, with the instruction that
+  decided. Nothing is allowed by default: without a matching `allow`
+  line the answer is `no_rule`. Only this repo's store rules; a shared
+  store never does. See `check` in [CLI_REFERENCE.md](CLI_REFERENCE.md).
 - What Claude learns in the morning, Gemini knows in the afternoon:
   writes go through cgh, agent-native memories are indexed read-only.
 
@@ -40,6 +49,18 @@ diagnosis with `knowledge_record(symptom="<line>", namespace="org-platform")` so
 the fleet keeps it. See the knowledge tools in [MCP_TOOLS.md](MCP_TOOLS.md), which
 also explains the three senses of `scope` (a search parameter, a tag on a hit,
 and an entry's promotion flag `repo`/`branch`).
+
+## Deciding from precedents
+
+`decide(question)` (and `cgh decide "<question>"`) answers a question with the
+best earlier decision on the subject instead of a list of notes. The
+recommendation is a recorded entry, quoted: a standing instruction first, then
+the entries whose outcomes held. Dead ends and corrected entries are listed
+against it so the same wrong turn is not taken twice, shared-store hits are
+listed apart as untrusted, and a confidence says how far to rely on the
+answer. When nothing holds it recommends nothing and says what to record once
+the question is settled. Rate the precedent after acting
+(`knowledge_outcome`): the next `decide` ranks on that verdict.
 
 ## Worktrees: promote at merge
 

@@ -28,6 +28,11 @@ from cgh.cli.commands_bob import (
     cmd_bob_stop,
     cmd_bob_tool_log,
 )
+from cgh.cli.commands_decision import (
+    cmd_check,
+    cmd_decide,
+    register_decision_parser,
+)
 from cgh.cli.commands_ensurepath import cmd_ensurepath
 from cgh.cli.commands_export import cmd_export, register_export_parser
 from cgh.cli.commands_federate import cmd_federate
@@ -205,8 +210,10 @@ def _print_help():
                     "Deprecated: cleans up what older cgh wrote (--remove-rules)",
                 ),
                 ("papercut", "Read this repo's papercuts (agents log via knowledge)"),
+                ("check", "Check an action against the standing instructions"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("knowledge", "Promote, export or import a store's learnings"),
+                ("decide", "Recommend from earlier decisions, with the evidence"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -822,6 +829,7 @@ def _register_analysis(sub) -> None:
     register_graph_parser(sub)
     register_backend_parser(sub)
     register_papercut_parser(sub)
+    register_decision_parser(sub)
     register_artifact_parser(sub)
     register_knowledge_parser(sub)
 
@@ -1076,8 +1084,10 @@ def main() -> None:
         "status": cmd_status,
         "backend": cmd_backend,
         "papercut": cmd_papercut,
+        "check": cmd_check,
         "artifact": cmd_artifact,
         "knowledge": cmd_knowledge,
+        "decide": cmd_decide,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

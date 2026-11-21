@@ -16,6 +16,7 @@ or before ignoring context you already have access to.
 | User is about to do something that may have a stored preference (commit, PR, code style, naming) | `mcp__cgh__memory_search(query="<topic>", kind="feedback")` |
 | User mentions a past plan | `mcp__cgh__plan_search(query="<keywords>")` |
 | Facing a problem that might be solved before (gotchas, patterns) | `mcp__cgh__knowledge_search(query="<keywords>")` |
+| About to make a choice ("should I ...", "which ... do we use", "how do we ...") | `mcp__cgh__decide(question="<the question>")`: the best earlier decision, quoted, with the evidence against it and a confidence. Use `knowledge_search` to browse a topic, `decide` to settle a choice |
 | Unsure what topics are already captured | `mcp__cgh__knowledge_terms()` (glossary) |
 | User asks *"what do you know about this project"* | `mcp__cgh__memory_list(kind="project")` + `knowledge_list()` |
 | Any non-trivial task | `mcp__cgh__context_for_task`: merges memory + plan + knowledge |
@@ -71,6 +72,17 @@ Reset when starting a fresh sub-task:
   first, reuse if relevant.
 - Don't pass raw file contents to `memory_search`/`plan_search`: they
   expect a natural-language or keyword query.
+
+## After `decide`
+
+- Apply a recommendation only at `high` or `medium` confidence, and read
+  `evidence.against` first: those are wrong turns already paid for.
+- `evidence.untrusted` comes from another repo or session. Weigh it; if it
+  holds here, record a local decision so the next `decide` can rank it.
+- Once you acted, rate the precedent:
+  `knowledge_outcome(entry_id=<id>, verdict="useful"|"dead_end"|"corrected")`.
+- No recommendation: decide with the user, then record the choice with the
+  `suggestion` the answer carries.
 
 ## Staleness
 

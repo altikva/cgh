@@ -21,8 +21,10 @@
     "backend",
     "callees",
     "callers",
+    "check",
     "communities",
     "compact",
+    "decide",
     "diff",
     "doctor",
     "endpoints",
@@ -257,6 +259,18 @@
           "fn_name"
         ]
       },
+      "check": {
+        "options": [
+          "--help",
+          "--json",
+          "--root",
+          "--session-id",
+          "-h"
+        ],
+        "positionals": [
+          "action"
+        ]
+      },
       "communities": {
         "options": [
           "--help",
@@ -275,6 +289,19 @@
           "--help",
           "--root",
           "-h"
+        ]
+      },
+      "decide": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--namespace",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "question"
         ]
       },
       "diff": {

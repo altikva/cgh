@@ -8,6 +8,39 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Added
+- **Check an action against the standing instructions before doing it.** A
+  rule stated once ("never push to develop", "no tag without a go") used to be
+  prose an agent had to remember. A standing instruction can now carry rule
+  lines, `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]`, and the new
+  `check_action` tool and `cgh check "<action>"` command answer `allowed`,
+  `refused`, `ask` or `no_rule` for a shell command or a short phrase, with
+  the instruction that decided. Nothing is allowed by default: `allowed` needs
+  a matching `allow` line, and a store with no rule answers `no_rule`. Only
+  this repo's store rules, never a shared one, and no model is called.
+  `cgh check` exits 0 for `allowed` only (2 refused, 3 ask, 4 no rule, 1
+  error), and `knowledge_record` echoes the parsed `rules` and `rule_errors`.
+  Existing standing instructions carry no rule line, so nothing changes until
+  one is added. See `check` in docs/CLI_REFERENCE.md.
+- **`decide`: a recommendation from earlier decisions, with its evidence.** The
+  new `decide(question)` MCP tool and `cgh decide "<question>"` answer a
+  question with the best precedent in the knowledge store, quoted, instead of a
+  list of notes to sort through. A standing instruction comes first, then the
+  entries whose outcomes held; dead ends and corrected entries are shown
+  against it and never recommended, and shared-store hits are listed apart as
+  untrusted. A confidence (`high`, `medium`, `low`, `none`) says how far to
+  rely on it, and nothing is recommended below `medium`. No model is called.
+- **The Claude Code hook checks a Bash command before it runs.** `check_action`
+  only helped when the agent thought of calling it. The Bash hook that
+  `cgh init` already installs now runs it on every command: with
+  `[hooks] check_action = "enforce"` a `refused` verdict denies the command
+  and `ask` has Claude Code prompt the user, each citing the rule; with
+  `"advise"` the model is told and nothing is blocked; `"off"` skips it. The
+  default is provisional, `advise` for now. The hook never answers "allow"
+  and never blocks by failing: an unreadable store, a slow git or more than
+  200 ms lets the command run. No new `cgh init` is needed, and a store
+  without rule lines behaves as before. See docs/INTEGRATIONS.md.
+
 ### Fixed
 - **Knowledge recorded before the 0.20 rename is readable again.** In repos
   where a `.cgh/` was created next to the old `.codegraph/` instead of by
@@ -15,6 +48,11 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   before the switch stopped being read. Init, index and serve now merge the
   legacy knowledge store into `.cgh/` once (duplicates skipped, the old dir
   left in place). `cgh knowledge merge-legacy --root <repo>` runs it on demand.
+- **The knowledge tools take `entry_id` as a number.** `knowledge_list`,
+  `knowledge_outcome`, `knowledge_forget` and `knowledge_promote` refused an
+  integer `entry_id`, although search and list answers show ids as integers, so
+  an id copied from a result was rejected. They now accept `1371` and `"1371"`
+  alike; a value that is not a number answers an error saying what to pass.
 
 ## [0.21.0] - 2026-11-19
 

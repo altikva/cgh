@@ -429,6 +429,7 @@ mcp.tool = _tool_marking_core
 
 # Register tools from sub-modules (must be after mcp = FastMCP)
 from cgh.server.tools_arch import register as _register_arch
+from cgh.server.tools_decision import register as _register_decision
 from cgh.server.tools_docs import register as _register_docs
 from cgh.server.tools_fetch import register as _register_fetch
 from cgh.server.tools_findings import register as _register_findings
@@ -460,6 +461,7 @@ _register_meta(mcp)
 _register_memory(mcp)
 _register_plans(mcp)
 _register_knowledge(mcp)
+_register_decision(mcp)  # check_action, decide
 _register_history(mcp)  # hotspots, who_knows
 _register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
 _register_fetch(mcp)  # fetch_and_index, search_fetched

@@ -35,6 +35,20 @@
     "properties": {},
     "required": []
   },
+  "check_action": {
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
   "checkpoint": {
     "properties": {
       "digest": {
@@ -116,6 +130,28 @@
     },
     "required": [
       "task"
+    ]
+  },
+  "decide": {
+    "properties": {
+      "limit": {
+        "default": 5,
+        "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
+      "question": {
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "question"
     ]
   },
   "doc_outline": {
@@ -436,7 +472,10 @@
   "knowledge_forget": {
     "properties": {
       "entry_id": {
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       }
     },
     "required": [
@@ -447,7 +486,10 @@
     "properties": {
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "kind": {
         "default": "",
@@ -484,7 +526,10 @@
       },
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "file_refs": {
         "default": "",
@@ -518,7 +563,10 @@
       },
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "since": {
         "default": "",

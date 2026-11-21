@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+from pydantic import StrictInt
+
 from cgh.core.config import state_dir_for
 from cgh.server._budget import dumps_answer
 
@@ -161,12 +163,27 @@ def _read_shared_namespaces(
     return rows
 
 
-def _repo_entry_id(value) -> int:
-    """Resolve an entry_id argument to a repo-store row id. A namespaced id
-    (``"<namespace>:<id>"``, how a shared-store hit is shown) is refused with a
-    clear message: entry_id tools act on the repo store only, never on a shared
-    store, so a shared id must never be treated as a repo id. Returns 0 for an
-    empty value; raises ValueError on a shared or malformed id."""
+# An entry id as a tool argument: the integer search and list answers show, or
+# its decimal string. The integer is strict so a boolean is refused by the
+# argument validation instead of being read as entry 1 or 0.
+EntryId = StrictInt | str
+
+_INVALID_ENTRY_ID = (
+    "invalid entry_id: {value!r}; pass the integer id of an entry, as shown by "
+    'knowledge_search or knowledge_list (12 or "12")'
+)
+
+
+def _repo_entry_id(value: int | str) -> int:
+    """Resolve an entry_id argument to a repo-store row id. The id is accepted
+    as an integer (how search and list answers show it) or as its decimal
+    string. A namespaced id (``"<namespace>:<id>"``, how a shared-store hit is
+    shown) is refused with a clear message: entry_id tools act on the repo
+    store only, never on a shared store, so a shared id must never be treated
+    as a repo id. Returns 0 for an empty value; raises ValueError on a shared
+    or malformed id."""
+    if isinstance(value, bool):
+        raise ValueError(_INVALID_ENTRY_ID.format(value=value))
     s = str(value).strip()
     if not s or s == "0":
         return 0
@@ -179,7 +196,7 @@ def _repo_entry_id(value) -> int:
     try:
         return int(s)
     except ValueError:
-        raise ValueError(f"invalid entry_id: {value!r}") from None
+        raise ValueError(_INVALID_ENTRY_ID.format(value=value)) from None
 
 
 def _dedup_by_origin(hits: list[dict]) -> list[dict]:
@@ -425,7 +442,11 @@ def register(mcp) -> None:
 
         kind: pattern | decision | gotcha | style | glossary | note |
               standing_instruction (durable rules and corrections from the
-              user; these lead every resume bundle)
+              user; these lead every resume bundle). A line
+              `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]` in its
+              body makes it a rule check_action applies, for instance
+              `cgh-rule: refuse git.push branch=main|develop`; the answer
+              echoes the parsed `rules` and any `rule_errors`.
         tags: comma-separated, short. These ARE the glossary index.
         file_refs: comma-separated canonical file paths involved.
         session_id: optional, stamps the entry with the current session.
@@ -524,6 +545,16 @@ def register(mcp) -> None:
                 + ", ".join(f"#{c['id']}" for c in cand["weak"])
                 + "; to retire one, record again with supersedes=<id>."
             )
+        if kind == "standing_instruction":
+            # Rule lines are parsed at record time so a typo is seen now, not
+            # the day the rule should have applied. A line that does not
+            # parse never rules.
+            from cgh.state.action_rules import parse_rule_lines
+
+            rules, rule_errors = parse_rule_lines(body)
+            if rules or rule_errors:
+                out["rules"] = [r.as_dict() for r in rules]
+                out["rule_errors"] = rule_errors
         return dumps_answer(out)
 
     @mcp.tool()
@@ -763,7 +794,7 @@ def register(mcp) -> None:
         session_id: str = "",
         limit: int = 10,
         offset: int = 0,
-        entry_id: str = "",
+        entry_id: EntryId = "",
         namespace: str = "",
     ) -> str:
         """
@@ -917,7 +948,7 @@ def register(mcp) -> None:
 
     @mcp.tool()
     @_logged_tool
-    def knowledge_forget(entry_id: str) -> str:
+    def knowledge_forget(entry_id: EntryId) -> str:
         """Delete a single knowledge entry by id (obtained from search/list).
 
         Acts on this repo's store only; a namespaced shared-store id is refused.
@@ -937,7 +968,7 @@ def register(mcp) -> None:
     @_logged_tool
     def knowledge_outcome(
         verdict: str,
-        entry_id: str = "",
+        entry_id: EntryId = "",
         query: str = "",
         note: str = "",
         file_refs: str = "",
@@ -1052,7 +1083,7 @@ def register(mcp) -> None:
     @mcp.tool()
     @_logged_tool
     def knowledge_promote(
-        entry_id: str = "",
+        entry_id: EntryId = "",
         since: str = "",
         tags: str = "",
         to: str = "",
@@ -1065,7 +1096,8 @@ def register(mcp) -> None:
         org step: promote once the learning has settled, not a draft.
 
         Selection (combine freely; empty = the durable kinds plus plain notes):
-          entry_id: comma-separated source entry ids to promote, e.g. "12,15".
+          entry_id: source entry ids to promote, comma-separated ("12,15"),
+              or a single id as a number.
           since: only entries at or after this time (epoch, or an ISO date).
           tags: comma-separated; keep entries carrying at least one of them.
 
@@ -1094,7 +1126,7 @@ def register(mcp) -> None:
                 target = "org-platform"
             target = target or "org-platform"
 
-        id_tokens = (entry_id or "").replace(" ", ",").split(",")
+        id_tokens = str(entry_id or "").replace(" ", ",").split(",")
         ids = [int(x) for x in id_tokens if x.strip().isdigit()]
         tag_list = [
             t.strip() for t in (tags or "").replace(" ", ",").split(",") if t.strip()

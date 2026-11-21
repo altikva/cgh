@@ -287,6 +287,12 @@ _PUSH = ("git.push", {"remote": "origin", "branch": "main", "force": "yes"})
         "sudo -i git push -f origin main",
         "ls | xargs git push -f origin main",
         "sudo -n git push -f origin main",
+        "sudo --user bob git push -f origin main",
+        "sudo -r role git push -f origin main",
+        "timeout --signal KILL 30 git push -f origin main",
+        "nice --adjustment 5 git push -f origin main",
+        "xargs -J % git push -f origin main",
+        "sudo /usr/bin/git push -f origin main",
         "timeout -k 2 30 git push -f origin main",
         "nice -n 10 git push -f origin main",
         "doas -u bob git push -f origin main",
@@ -327,6 +333,79 @@ def test_a_flag_that_takes_a_value_for_one_wrapper_is_plain_for_another():
     assert _norm("xargs -n 1 rm") == [("shell.rm", {"args": ""})]
     assert _norm("sudo -n rm x") == [("shell.rm", {"args": "x"})]
     assert _norm("sudo -S rm x") == [("shell.rm", {"args": "x"})]
+
+
+def test_a_newline_after_an_escaped_backslash_separates_two_commands():
+    got = _norm("ls x\\\\\ngit push -f origin main")
+    assert [verb for verb, _f in got] == ["shell.ls", "git.push"]
+    # Inside single quotes a backslash is literal: the newline is not a
+    # continuation and the quoted text stays one argument.
+    assert _norm("ls 'a\\\nb'") == [("shell.ls", {"args": "a\\\nb"})]
+
+
+def test_push_of_a_tag_by_name_is_a_tag():
+    assert _norm("git push origin tag v1.0") == [
+        ("git.push", {"remote": "origin", "tag": "v1.0"})
+    ]
+    rule = _entry(1, "cgh-rule: ask git.push tag=v*")
+    assert _check("git push origin tag v1.0", [rule])["verdict"] == "ask"
+
+
+_BROAD_ALLOW = _entry(
+    40,
+    "cgh-rule: refuse git.push branch=main|develop\n"
+    "cgh-rule: refuse git.commit on_branch=main\n"
+    "cgh-rule: allow git.push\n"
+    "cgh-rule: allow git.commit\n",
+)
+
+
+@pytest.mark.parametrize(
+    ("action", "branch"),
+    [
+        ("git push --all origin", "main"),
+        ("git push --mirror origin", "main"),
+        ("git push origin :", "main"),
+        ("git push", None),
+        ("git push origin HEAD", None),
+        ("git -C /somewhere/else push", "main"),
+        ("git --git-dir=.git push", "main"),
+        ("git commit -m x", None),
+        ("git -C /somewhere/else commit -m x", "main"),
+    ],
+)
+def test_an_allow_does_not_clear_a_push_whose_branch_is_unknown(action, branch):
+    out = _check(action, [_BROAD_ALLOW], branch=branch)
+    assert out["verdict"] == "no_rule", out["actions"]
+    assert out["rule"] is None
+    assert out["actions"][0]["rule_entry_id"] is None
+    # The allow rule matched and is shown, it just did not decide.
+    assert {"entry_id": 40, "verdict": "allowed"} in [
+        {"entry_id": o["entry_id"], "verdict": o["verdict"]} for o in out["others"]
+    ]
+
+
+def test_a_known_branch_is_still_allowed_by_the_broad_allow():
+    for action in ("git push", "git push origin feature/x", "git commit -m x"):
+        assert _check(action, [_BROAD_ALLOW], branch="feature/x")["verdict"] == (
+            "allowed"
+        ), action
+    assert _check("git push", [_BROAD_ALLOW], branch="main")["verdict"] == "refused"
+
+
+def test_a_field_that_does_not_apply_never_withholds_an_allow():
+    # A plain push has no `force` field: that is not an unknown, so the
+    # refusal of forced pushes does not hold back the allow.
+    rules = _entry(1, "cgh-rule: refuse git.push force=yes\ncgh-rule: allow git.push")
+    assert _check("git push origin feature/x", [rules])["verdict"] == "allowed"
+    assert _check("git push -f origin feature/x", [rules])["verdict"] == "refused"
+    # An unknown branch with no rule constraining it: the allow decides.
+    assert _check("git push", [rules], branch=None)["verdict"] == "allowed"
+
+
+def test_an_unreadable_dash_c_argument_is_an_absent_field(tmp_path):
+    got = ar.normalise("git -C 'a\x00b' commit -m x", cwd=tmp_path, which=_which)
+    assert got[0].verb == "git.commit" and got[0].fields == {}
 
 
 def test_a_redirection_target_is_not_a_command():

@@ -1144,11 +1144,16 @@ in `rule_errors`.
 
 Flags read as `yes` when present (`force=yes`). A compound command (`&&`, `||`,
 `;`, `|`, newlines, `bash -c '...'`) is checked segment by segment and the
-strictest verdict wins. The phrases understood are "merge PR 12" / "fusionner la
+strictest verdict wins. Commands inside a substitution (`$(...)`, backticks,
+`<(...)`), after `eval`, or behind `sudo`, `env`, `xargs`, `timeout`, `nice` and
+the like are read too. The phrases understood are "merge PR 12" / "fusionner la
 PR 12", "tag v0.22.0", "push to develop" / "pousser sur develop", "release
 v0.22.0" and "commit on main". The branch is read with one
 `git rev-parse --abbrev-ref HEAD`, given two seconds; when it cannot be read the
-field is absent and a rule constraining it does not match.
+field is absent and a rule constraining it does not match. An `allow` rule does
+not clear such an action either when a `refuse` or `ask` rule constrains the
+field that could not be read (the branch of `git push --all`, of a push from a
+directory outside the checkout): the answer is then "no rule", not `allowed`.
 
 | Exit code | Verdict |
 |---|---|

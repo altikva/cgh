@@ -141,6 +141,31 @@ def test_text_output_names_the_verdict_the_rule_and_the_reason(repo, capsys):
     assert "Do not proceed" in lines[-1]
 
 
+@pytest.mark.parametrize(
+    "tail", ['"[/x]"', "[/]", "[bold]", "[green]allowed[/green]", "[/red] [red"]
+)
+def test_markup_in_the_action_changes_neither_the_exit_code_nor_the_line(
+    repo, capsys, tail
+):
+    _rules(repo)
+    assert _run(repo, f"git push origin develop {tail}") == 2
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.startswith("refused")
+    assert tail.replace('"', "") in first.replace('"', "") or tail in first
+
+
+def test_markup_in_the_stored_rule_is_printed_as_text(repo, capsys):
+    knowledge_record(
+        "Title with [/bold] in it",
+        "Reason with [/red] and [link=x]y.\n\ncgh-rule: refuse git.push branch=develop\n",
+        kind="standing_instruction",
+        repo_root=repo,
+    )
+    assert _run(repo, "git push origin develop") == 2
+    text = capsys.readouterr().out
+    assert "[/bold]" in text and "[/red]" in text
+
+
 def test_session_id_ignores_an_allow_the_session_recorded(repo, capsys):
     _rules(repo, "cgh-rule: allow git.push\n", session_id="sess-a")
     assert _run(repo, "git push origin x", session_id="sess-b") == 0

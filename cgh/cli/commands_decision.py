@@ -19,6 +19,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from rich.markup import escape
+
 from cgh.cli import console
 
 EXIT_ALLOWED = 0
@@ -84,26 +86,31 @@ def cmd_check(args: argparse.Namespace) -> None:
         raise SystemExit(_EXIT.get(verdict, EXIT_ERROR))
 
     style = _STYLE.get(verdict, "dim")
-    console.print(f"[{style}]{verdict}[/{style}]  {args.action}", highlight=False)
+    # The action and the stored text are data, not markup: a stray tag in
+    # them must neither restyle the line nor fail the print and the exit code.
+    console.print(
+        f"[{style}]{verdict}[/{style}]  {escape(args.action)}", highlight=False
+    )
     rule = out.get("rule")
     if rule:
         console.print(
-            f"  {rule['line']}  [dim](standing instruction #{rule['entry_id']}: "
-            f"{rule['title']})[/dim]",
+            f"  {escape(str(rule['line']))}  [dim](standing instruction "
+            f"#{rule['entry_id']}: {escape(str(rule['title']))})[/dim]",
             highlight=False,
         )
         if rule.get("reason"):
             for line in str(rule["reason"]).splitlines():
-                console.print(f"  [dim]{line}[/dim]", highlight=False)
+                console.print(f"  [dim]{escape(line)}[/dim]", highlight=False)
     for item in out.get("ignored") or []:
         console.print(
-            f"  [dim]ignored (recorded by this session): {item['line']} "
+            f"  [dim]ignored (recorded by this session): {escape(str(item['line']))} "
             f"(#{item['entry_id']})[/dim]",
             highlight=False,
         )
     for hit in out.get("related") or []:
         console.print(
-            f"  [dim]related: #{hit['id']} {hit['title']}[/dim]", highlight=False
+            f"  [dim]related: #{hit['id']} {escape(str(hit['title']))}[/dim]",
+            highlight=False,
         )
-    console.print(f"  {out['next']}", highlight=False)
+    console.print(f"  {escape(str(out['next']))}", highlight=False)
     raise SystemExit(_EXIT.get(verdict, EXIT_ERROR))

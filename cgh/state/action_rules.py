@@ -71,6 +71,10 @@ class Action:
     verb: str
     fields: dict[str, str] = field(default_factory=dict)
     raw: str = ""
+    # Fields the action has but cgh could not determine (the branch of a bare
+    # push when git cannot be read). Different from a field that does not
+    # apply: an allow rule must not clear what a refusal might have covered.
+    unknown: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +151,25 @@ def rule_matches(rule: Rule, action: Action) -> bool:
     return True
 
 
+def _withheld_by_unknown(rule: Rule, action: Action) -> bool:
+    """A refuse or ask rule that would match if a field cgh could not
+    determine had a matching value: every constraint on a known field matches
+    and at least one constraint is on an undetermined field."""
+    if rule.verdict == "allow" or not action.unknown:
+        return False
+    if not fnmatchcase(action.verb, rule.verb):
+        return False
+    on_unknown = False
+    for key, alts in rule.constraints:
+        if key in action.unknown and key not in action.fields:
+            on_unknown = True
+            continue
+        value = action.fields.get(key)
+        if value is None or not any(fnmatchcase(value, a) for a in alts):
+            return False
+    return on_unknown
+
+
 # ---------------------------------------------------------------------------
 # Reading the current branch
 # ---------------------------------------------------------------------------
@@ -199,7 +222,7 @@ class _Context:
             try:
                 root = self.cwd.resolve()
                 target = (self.cwd / subdir).resolve()
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, ValueError):
                 return None
             if not target.is_relative_to(root):
                 return None
@@ -260,14 +283,19 @@ _WRAPPER_LEADING_ARGS: dict[str, int] = {"timeout": 1}
 
 
 def _newlines_to_separators(text: str) -> str:
-    """Turn each unquoted newline into ``;`` so a quoted one stays in its token."""
+    """Turn each unquoted newline into ``;`` so a quoted one stays in its token.
+    A newline right after an unescaped backslash continues the line, as in a
+    shell: both are dropped. After an escaped backslash it is a separator."""
     out: list[str] = []
     quote = ""
     escaped = False
-    for ch in text:
+    for ch in text.replace("\r\n", "\n"):
         if escaped:
-            out.append(ch)
             escaped = False
+            if ch == "\n":
+                out.pop()  # the backslash: a line continuation
+            else:
+                out.append(ch)
             continue
         if ch == "\\" and quote != "'":
             out.append(ch)
@@ -289,8 +317,6 @@ def _newlines_to_separators(text: str) -> str:
 def split_segments(command: str) -> list[list[str]] | None:
     """Split a command line into argv segments on ``&&``, ``||``, ``;``, ``|``
     and newlines. None when the string cannot be tokenised (an open quote)."""
-    # A backslash before a newline continues the line, as in a shell.
-    command = command.replace("\\\r\n", "").replace("\\\n", "")
     lexer = shlex.shlex(
         _newlines_to_separators(command), posix=True, punctuation_chars=True
     )
@@ -488,7 +514,8 @@ def _git(argv: list[str], raw: str, ctx: _Context) -> list[Action] | None:
             fields["on_branch"] = on_branch
         if _has(flags, "--amend"):
             fields["amend"] = "yes"
-        return [Action("git.commit", fields, raw)]
+        unknown = () if on_branch else ("on_branch",)
+        return [Action("git.commit", fields, raw, unknown)]
     if sub == "tag":
         flags, pos = _parse_args(args, _TAG_VALUE_FLAGS)
         if _has(flags, "--list", "--delete", "--verify") or any(
@@ -548,14 +575,24 @@ def _git_push(
         base["remote"] = pos[0]
     refspecs = pos[1:]
 
-    targets: list[dict[str, str]] = []
+    # Each target is (fields, branch_unknown): the destination of one refspec.
+    targets: list[tuple[dict[str, str], bool]] = []
+    is_tag_name = False
     for spec in refspecs:
         one: dict[str, str] = {}
+        if is_tag_name:
+            # `git push <remote> tag <name>`
+            is_tag_name = False
+            targets.append(({"tag": spec}, False))
+            continue
+        if spec == "tag":
+            is_tag_name = True
+            continue
         if spec.startswith("+"):
             one["force"] = "yes"
             spec = spec[1:]
         src, sep, dst = spec.partition(":")
-        if sep and not src:
+        if sep and not src and dst:
             one["delete"] = "yes"
         name = dst if sep else src
         if name in ("HEAD", "@"):
@@ -564,23 +601,25 @@ def _git_push(
             one["tag"] = name[len("refs/tags/") :]
         elif name:
             one["branch"] = _strip_ref(name)
-        targets.append(one)
+        # No name: HEAD that could not be read, or the matching refspec `:`.
+        targets.append((one, not name))
     if not targets:
         one = {}
-        if "all" not in base:
-            implicit = branch_now()
-            if implicit:
-                one["branch"] = implicit
-        targets.append(one)
+        implicit = None if "all" in base else branch_now()
+        if implicit:
+            one["branch"] = implicit
+        # --all, --mirror and --branches push branches cgh does not list.
+        targets.append((one, not implicit))
 
     actions: list[Action] = []
-    for one in targets:
+    for one, branch_unknown in targets:
         fields = {**base, **one}
         if force:
             fields["force"] = "yes"
         if delete:
             fields["delete"] = "yes"
-        actions.append(Action("git.push", fields, raw))
+        unknown = ("branch",) if branch_unknown else ()
+        actions.append(Action("git.push", fields, raw, unknown))
         if fields.get("delete") == "yes" and "branch" in fields:
             actions.append(
                 Action("git.branch.delete", {"branch": fields["branch"]}, raw)
@@ -834,6 +873,17 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
                     )
                 )
             continue
+        if len(argv) < len(seg) and any(t in _WRAPPERS for t in seg):
+            # Behind a wrapper, where the command starts is a guess: an option
+            # this table does not know may take a value. So every later word
+            # that names a recognised command is read as one too.
+            for j in range(1, len(argv)):
+                name = Path(argv[j]).name if "/" in argv[j] else argv[j]
+                late = RECOGNISERS.get(name)
+                if late is None:
+                    continue
+                found = late([name, *argv[j + 1 :]], shlex.join(argv[j:]), ctx)
+                out.extend(a for a in found or [] if a not in out)
         raw = shlex.join(argv)
         head = Path(argv[0]).name if "/" in argv[0] else argv[0]
         if head in _SHELLS or head == "eval":
@@ -937,6 +987,13 @@ def evaluate(
             if decider is not None:
                 verdict = _ANSWER[wanted]
                 break
+        if verdict == "allowed" and any(
+            _withheld_by_unknown(rule, act) for _entry, rule in rules
+        ):
+            # A refusal constrains a field cgh could not determine here: the
+            # allow rule does not clear the action. It stays listed in others.
+            verdict = "no_rule"
+            decider = None
         matched_all.extend((idx, e, r) for e, r in matching)
         action_views.append(
             {

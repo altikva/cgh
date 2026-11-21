@@ -132,6 +132,28 @@
       "task"
     ]
   },
+  "decide": {
+    "properties": {
+      "limit": {
+        "default": 5,
+        "type": "integer"
+      },
+      "namespace": {
+        "default": "",
+        "type": "string"
+      },
+      "question": {
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "question"
+    ]
+  },
   "doc_outline": {
     "properties": {
       "file_path": {

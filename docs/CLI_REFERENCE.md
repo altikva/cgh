@@ -1196,6 +1196,48 @@ Connected agents record and read through the knowledge MCP tools
 (`knowledge_record(..., kind="note", tags="artifact", file_refs=[path])`),
 guided by the bundled `cgh-artifacts` skill that `cgh init` installs.
 
+### `decide`
+
+Ask the knowledge store what was decided before on a question. The answer is
+the best earlier decision, quoted, with the evidence for and against it. No
+model is called: the recommendation is a recorded entry, not a generated text.
+
+```
+cgh decide "<question>" [--root PATH] [--namespace NAME] [--limit N] [--json]
+```
+
+The text output gives the recommendation (or `No recommendation.`), the
+confidence and its basis, then three lists:
+
+- **Supporting**: the local precedents in rank order. A standing instruction
+  comes first, then entries whose outcome is `preferred`, `useful`, unrated,
+  and `contested` last. An entry that barely matches the question never heads
+  the list.
+- **Against**: dead ends and corrected entries, with the note of the last
+  verdict. They are never recommended and always shown.
+- **Untrusted**: hits from the shared stores, written by another repo or
+  session. They are never recommended and never raise the confidence.
+
+Confidence is `high` when the best precedent matches the question well and is
+a standing instruction or has a `preferred` or `useful` outcome, with no rival
+of equal standing; `medium` when it has a rival, was never rated, or matches
+less well but proved useful; `low` otherwise, and `none` when nothing was
+found. A recommendation is given only at `high` or `medium`. Below that the
+command says what to record once the question is settled.
+
+Only decisions, standing instructions, patterns, gotchas and style rules count
+as precedents; notes, glossary entries and session digests do not.
+
+`--namespace` reads one store only: a local facet (`repo`, `ticket:<id>`) or a
+shared store name. `--limit` caps each evidence list (5 by default). `--json`
+prints the payload of the `decide` MCP tool. The command opens the store
+directly, so no server needs to run. Exit code 0 whenever the lookup ran,
+whatever the confidence; 1 on error.
+
+After acting on a recommendation, record whether it held with
+`cgh knowledge outcome useful|dead_end|corrected --id N`: the next `decide`
+ranks on it.
+
 ### `knowledge`
 
 Carries a per-ticket worktree's learnings into its main checkout, so they

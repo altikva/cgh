@@ -28,7 +28,11 @@ from cgh.cli.commands_bob import (
     cmd_bob_stop,
     cmd_bob_tool_log,
 )
-from cgh.cli.commands_decision import cmd_check, register_decision_parser
+from cgh.cli.commands_decision import (
+    cmd_check,
+    cmd_decide,
+    register_decision_parser,
+)
 from cgh.cli.commands_ensurepath import cmd_ensurepath
 from cgh.cli.commands_export import cmd_export, register_export_parser
 from cgh.cli.commands_federate import cmd_federate
@@ -209,6 +213,7 @@ def _print_help():
                 ("check", "Check an action against the standing instructions"),
                 ("artifact", "Recall/record summaries of files cgh can't parse"),
                 ("knowledge", "Promote, export or import a store's learnings"),
+                ("decide", "Recommend from earlier decisions, with the evidence"),
                 ("examples", "List / install bundled examples (no git needed)"),
             ],
         ),
@@ -1082,6 +1087,7 @@ def main() -> None:
         "check": cmd_check,
         "artifact": cmd_artifact,
         "knowledge": cmd_knowledge,
+        "decide": cmd_decide,
         "tail": cmd_tail,
         "reset": cmd_reset,
         "memory-index": cmd_memory_index,

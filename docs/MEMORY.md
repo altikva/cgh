@@ -50,6 +50,18 @@ the fleet keeps it. See the knowledge tools in [MCP_TOOLS.md](MCP_TOOLS.md), whi
 also explains the three senses of `scope` (a search parameter, a tag on a hit,
 and an entry's promotion flag `repo`/`branch`).
 
+## Deciding from precedents
+
+`decide(question)` (and `cgh decide "<question>"`) answers a question with the
+best earlier decision on the subject instead of a list of notes. The
+recommendation is a recorded entry, quoted: a standing instruction first, then
+the entries whose outcomes held. Dead ends and corrected entries are listed
+against it so the same wrong turn is not taken twice, shared-store hits are
+listed apart as untrusted, and a confidence says how far to rely on the
+answer. When nothing holds it recommends nothing and says what to record once
+the question is settled. Rate the precedent after acting
+(`knowledge_outcome`): the next `decide` ranks on that verdict.
+
 ## Worktrees: promote at merge
 
 Each checkout has its own store, so a per-ticket worktree's learnings go

@@ -461,7 +461,7 @@ _register_meta(mcp)
 _register_memory(mcp)
 _register_plans(mcp)
 _register_knowledge(mcp)
-_register_decision(mcp)  # check_action
+_register_decision(mcp)  # check_action, decide
 _register_history(mcp)  # hotspots, who_knows
 _register_findings(mcp)  # scanner findings (pii, secrets, summaries, ...)
 _register_fetch(mcp)  # fetch_and_index, search_fetched

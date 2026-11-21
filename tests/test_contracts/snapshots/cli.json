@@ -24,6 +24,7 @@
     "check",
     "communities",
     "compact",
+    "decide",
     "diff",
     "doctor",
     "endpoints",
@@ -288,6 +289,19 @@
           "--help",
           "--root",
           "-h"
+        ]
+      },
+      "decide": {
+        "options": [
+          "--help",
+          "--json",
+          "--limit",
+          "--namespace",
+          "--root",
+          "-h"
+        ],
+        "positionals": [
+          "question"
         ]
       },
       "diff": {

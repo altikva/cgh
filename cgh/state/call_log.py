@@ -1674,10 +1674,13 @@ def check_action(
     action: str,
     session_id: str = "",
     repo_root: str | Path | None = None,
+    git_timeout: float | None = None,
 ) -> dict:
     """Check an action against the rule lines of this repo's standing
     instructions. Read-only. The answer shape is the one of the check_action
-    MCP tool; see cgh/state/action_rules.py for the matching."""
+    MCP tool; see cgh/state/action_rules.py for the matching. ``git_timeout``
+    is the budget in seconds of the git call that reads the branch (two
+    seconds by default); a caller on a tighter deadline passes its own."""
     from cgh.state import action_rules
 
     root = Path(repo_root) if repo_root else Path.cwd()
@@ -1686,6 +1689,7 @@ def check_action(
         standing_rule_entries(root),
         session_id=session_id or "",
         cwd=root,
+        git_timeout=git_timeout,
     )
     if out["verdict"] == "no_rule" and out["recognised"]:
         words = action_rules.search_words(out["actions"])

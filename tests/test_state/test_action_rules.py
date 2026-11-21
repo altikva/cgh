@@ -730,6 +730,46 @@ def test_a_slow_git_gives_an_absent_field_not_an_error(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(("given", "used"), [(None, 2.0), (0.1, 0.1), (0.05, 0.05)])
+def test_the_caller_sets_the_git_budget(tmp_path, monkeypatch, given, used):
+    seen: list[float] = []
+
+    def fake(argv, **kwargs):
+        seen.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(ar.subprocess, "run", fake)
+    out = ar.evaluate("git commit -m x", [], cwd=tmp_path, git_timeout=given)
+    assert seen == [used]
+    assert out["actions"][0]["fields"] == {}
+    seen.clear()
+    ar.normalise("git push", cwd=tmp_path, git_timeout=given)
+    assert seen == [used]
+
+
+def test_check_action_passes_the_git_budget_through(tmp_path, monkeypatch):
+    import cgh.state.call_log as cl
+
+    (tmp_path / ".cgh").mkdir()
+    cl.reset_for_tests()
+    seen: list[float] = []
+
+    def fake(argv, **kwargs):
+        seen.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(ar.subprocess, "run", fake)
+    try:
+        out = cl.check_action("git commit -m x", "", tmp_path, git_timeout=0.1)
+        assert seen == [0.1]
+        assert out["verdict"] == "no_rule" and out["actions"][0]["fields"] == {}
+        seen.clear()
+        cl.check_action("git commit -m x", "", tmp_path)
+        assert seen == [2.0]
+    finally:
+        cl.reset_for_tests()
+
+
 def test_the_timeout_really_cuts_a_hanging_process(tmp_path, monkeypatch):
     real_run = subprocess.run
 

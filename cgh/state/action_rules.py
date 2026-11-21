@@ -205,9 +205,13 @@ class _Context:
         cwd: str | Path | None,
         branch_reader: Callable[[Path], str | None] | None,
         which: Callable[[str], str | None] | None,
+        git_timeout: float | None = None,
     ) -> None:
         self.cwd = Path(cwd) if cwd else None
-        self._reader = branch_reader or current_branch
+        budget = GIT_BRANCH_TIMEOUT_S if git_timeout is None else git_timeout
+        self._reader = branch_reader or (
+            lambda path: current_branch(path, timeout=budget)
+        )
         self.which = which or shutil.which
         self._cache: dict[str, str | None] = {}
 
@@ -825,11 +829,14 @@ def normalise(
     cwd: str | Path | None = None,
     branch_reader: Callable[[Path], str | None] | None = None,
     which: Callable[[str], str | None] | None = None,
+    git_timeout: float | None = None,
 ) -> list[Action]:
     """Turn an action string into its actions. An empty list means the input
     was not recognised: an empty or unparseable string, or a phrase no alias
-    matches."""
-    ctx = _Context(cwd, branch_reader, which)
+    matches. ``git_timeout`` is the budget, in seconds, of the one git call
+    that reads the branch (GIT_BRANCH_TIMEOUT_S by default): a caller with a
+    tighter deadline passes its own."""
+    ctx = _Context(cwd, branch_reader, which, git_timeout)
     return _normalise(action or "", ctx, 0)
 
 
@@ -951,6 +958,7 @@ def evaluate(
     cwd: str | Path | None = None,
     branch_reader: Callable[[Path], str | None] | None = None,
     which: Callable[[str], str | None] | None = None,
+    git_timeout: float | None = None,
 ) -> dict[str, Any]:
     """Check ``action`` against the rule lines of ``entries``.
 
@@ -959,7 +967,7 @@ def evaluate(
     recorded by the calling session does not count for it: a session does not
     write its own permission slip.
     """
-    actions = normalise(action, cwd, branch_reader, which)
+    actions = normalise(action, cwd, branch_reader, which, git_timeout)
     rules: list[tuple[dict[str, Any], Rule]] = []
     for entry in entries:
         parsed, _errors = parse_rule_lines(str(entry.get("body") or ""))

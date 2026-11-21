@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import fnmatch
+import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -106,10 +108,11 @@ def commit_time(root: str | Path, rev: str) -> float:
     return float(out.stdout.strip())
 
 
-def _ro_connect(repo_root: str | Path) -> sqlite3.Connection:
+def _ro_connect(repo_root: str | Path, store: Path | None = None) -> sqlite3.Connection:
     """A read-only connection: export must not write, nor wait on, a store a
-    running owner holds."""
-    path = state_dir_for(repo_root) / "call_log.db"
+    running owner holds. ``store`` names a call_log.db other than the repo's
+    resolved one (the legacy .codegraph/ store a merge reads)."""
+    path = store if store is not None else state_dir_for(repo_root) / "call_log.db"
     if not path.is_file():
         raise KnowledgeTransferError(f"no knowledge store at {path}")
     return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
@@ -136,6 +139,7 @@ def export_records(
     exclude_tags: Iterable[str] = (),
     kinds: Iterable[str] | None = None,
     include_digests: bool = True,
+    store: Path | None = None,
 ) -> list[dict]:
     """Knowledge rows, then outcome rows, each tagged with a ``record`` field.
 
@@ -149,7 +153,7 @@ def export_records(
     """
     globs = [g for g in exclude_tags if g]
     wanted = {k for k in kinds} if kinds else None
-    conn = _ro_connect(repo_root)
+    conn = _ro_connect(repo_root, store)
     try:
         knowledge = _rows(conn, "knowledge")
         outcomes = _rows(conn, "knowledge_outcome")
@@ -301,3 +305,117 @@ def import_records(repo_root: str | Path, records: Iterable[dict]) -> dict:
             conn.rollback()
             raise
     return counts
+
+
+# Written in .cgh/ once a legacy store has been merged, so serve and index do
+# not re-read the old store on every start. Deleting it re-runs the merge,
+# which is safe: import_records skips the rows already present.
+LEGACY_MERGE_MARKER = "legacy_knowledge_merged.json"
+
+
+def merge_legacy_knowledge(
+    repo_root: str | Path, *, force: bool = False
+) -> dict | None:
+    """Fold a leftover ``.codegraph/`` knowledge store into ``.cgh/``.
+
+    A repo whose ``.cgh/`` came into being next to its old ``.codegraph/``
+    (instead of by renaming it) never had the rename run, so every note,
+    decision and outcome recorded before the switch sat unread in the old
+    store. This copies them across with ``import_records`` (new ids, links
+    remapped, exact duplicates skipped) and leaves the legacy dir untouched.
+
+    Returns the import counts, or None when there is nothing to merge: no
+    ``.cgh/``, no legacy store, or the merge already ran (unless ``force``).
+    A legacy store without a knowledge table counts as merged.
+
+    Only a store this machine wrote is merged: knowledge leads every resume
+    (standing instructions included), so a ``.codegraph/`` that arrived with
+    a clone must not be folded in. The merge refuses a legacy dir tracked by
+    git, a store owned by another user, and any symlink on either side.
+    """
+    from cgh.core.config import CGH_DIR, LEGACY_CGH_DIR
+
+    root = Path(repo_root).resolve()
+    current = root / CGH_DIR
+    legacy_dir = root / LEGACY_CGH_DIR
+    legacy_db = legacy_dir / "call_log.db"
+    marker = current / LEGACY_MERGE_MARKER
+    if not current.is_dir() or not legacy_db.is_file():
+        return None
+    if marker.exists() and not force:
+        return None
+    _check_legacy_store_is_local(root, current, legacy_dir, legacy_db, marker)
+    try:
+        records = export_records(root, store=legacy_db)
+    except sqlite3.Error as exc:
+        raise KnowledgeTransferError(f"cannot read {legacy_db}: {exc}") from exc
+    counts = (
+        import_records(root, records)
+        if records
+        else {
+            "imported": 0,
+            "skipped_duplicate": 0,
+            "outcomes_imported": 0,
+            "outcomes_skipped": 0,
+        }
+    )
+    payload = json.dumps(
+        {**counts, "source": str(legacy_db), "ts": datetime.now(UTC).isoformat()}
+    )
+    # O_NOFOLLOW: a marker planted as a symlink is refused, never written through.
+    fd = os.open(
+        marker,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(payload)
+    return counts
+
+
+def _check_legacy_store_is_local(
+    root: Path, current: Path, legacy_dir: Path, legacy_db: Path, marker: Path
+) -> None:
+    """Raise KnowledgeTransferError unless the legacy store is one this
+    machine wrote for this repo (see merge_legacy_knowledge)."""
+    for p in (current, legacy_dir, legacy_db, marker):
+        if p.is_symlink():
+            raise KnowledgeTransferError(f"refusing to merge: {p} is a symlink")
+    if not legacy_db.resolve().is_relative_to(root):
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_db} is outside {root}"
+        )
+    if hasattr(os, "getuid") and legacy_db.stat().st_uid != os.getuid():
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_db} belongs to another user"
+        )
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KnowledgeTransferError(f"cannot check git tracking: {exc}") from exc
+
+    # Outside any work tree nothing can be tracked (sprint dirs are plain
+    # dirs). Inside one, a failing ls-files means "cannot verify": refuse.
+    if _git("rev-parse", "--is-inside-work-tree").stdout.strip() != "true":
+        return
+    # icase: on a case-insensitive filesystem a committed .CodeGraph/ is the
+    # same directory as .codegraph/.
+    tracked = _git("ls-files", "--", f":(icase){legacy_dir.name}")
+    if tracked.returncode != 0:
+        raise KnowledgeTransferError(
+            f"refusing to merge: cannot tell whether {legacy_dir.name}/ is tracked "
+            f"by git: {tracked.stderr.strip()}"
+        )
+    if tracked.stdout.strip():
+        raise KnowledgeTransferError(
+            f"refusing to merge: {legacy_dir.name}/ is tracked by git, so it came "
+            "with the clone, not from this machine"
+        )

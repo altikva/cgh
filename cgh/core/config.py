@@ -108,15 +108,48 @@ def _owner_alive_in(state_dir: Path) -> bool:
     return process_alive(pid)
 
 
+def _merge_legacy_knowledge_once(root: Path) -> None:
+    """Best effort: a failed merge must not stop init, index or serve, but it
+    is logged, and the marker is only written on success so the next start
+    retries."""
+    import sqlite3
+
+    from cgh.state.knowledge_transfer import (
+        KnowledgeTransferError,
+        merge_legacy_knowledge,
+    )
+
+    try:
+        counts = merge_legacy_knowledge(root)
+    except (KnowledgeTransferError, OSError, sqlite3.Error) as exc:
+        logging.getLogger(__name__).warning(
+            "legacy knowledge merge failed for %s: %s", root, exc
+        )
+        return
+    if counts and counts.get("imported"):
+        logging.getLogger(__name__).info(
+            "merged %s legacy knowledge entries into %s",
+            counts["imported"],
+            root / CGH_DIR,
+        )
+
+
 def migrate_state_dir(project_root: str | Path) -> bool:
     """Rename a legacy ``.codegraph/`` state dir to ``.cgh/`` in place, once,
     when safe. Called at init/index/serve. No-op when ``.cgh/`` already
     exists, when there is no ``.codegraph/``, or when an owner still runs
     against the legacy dir (renaming it would pull the DB out from under live
-    handles). Returns True only when it renamed."""
+    handles). Returns True only when it renamed.
+
+    When both dirs exist (a ``.cgh/`` was created beside the old one, so the
+    rename never ran), the legacy knowledge store is merged into ``.cgh/``
+    once instead, so notes recorded before the switch stay readable."""
     root = Path(project_root)
     legacy = root / LEGACY_CGH_DIR
     current = root / CGH_DIR
+    if current.is_dir() and legacy.is_dir():
+        _merge_legacy_knowledge_once(root)
+        return False
     if current.exists() or not legacy.is_dir() or _owner_alive_in(legacy):
         return False
     try:

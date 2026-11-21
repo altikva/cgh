@@ -182,6 +182,50 @@ def register_knowledge_parser(sub) -> None:
     )
     im.add_argument("--json", action="store_true", help="Machine-readable output")
 
+    ml = ksub.add_parser(
+        "merge-legacy",
+        help="Fold a leftover .codegraph/ knowledge store into .cgh/ (idempotent)",
+    )
+    ml.add_argument("--root", default=os.getcwd(), help="Repo holding both dirs")
+    ml.add_argument(
+        "--force",
+        action="store_true",
+        help="Merge again even if it already ran (duplicates are still skipped)",
+    )
+    ml.add_argument("--json", action="store_true", help="Machine-readable output")
+
+
+def _cmd_merge_legacy(args: argparse.Namespace) -> None:
+    from cgh.state.knowledge_transfer import (
+        KnowledgeTransferError,
+        merge_legacy_knowledge,
+    )
+
+    root = Path(os.path.abspath(args.root)).resolve()
+    try:
+        counts = merge_legacy_knowledge(root, force=args.force)
+    except (KnowledgeTransferError, OSError) as exc:
+        _err(f"cgh knowledge merge-legacy: {exc}")
+        return
+    if args.json:
+        print(
+            json.dumps(
+                {"merged": counts is not None, **(counts or {}), "root": str(root)}
+            )
+        )
+        return
+    if counts is None:
+        console.print(
+            f"Nothing to merge in {root.name} (no .cgh/ and .codegraph/ pair, "
+            "or already merged; --force to redo)."
+        )
+        return
+    console.print(
+        f"[green]Merged[/green] {counts['imported']} legacy entr(y/ies) into {root.name}, "
+        f"{counts['skipped_duplicate']} already present; "
+        f"{counts['outcomes_imported']} outcome(s) imported."
+    )
+
 
 def _git(root: Path, *args: str) -> str:
     """Best-effort git read against ``root``; empty string on any failure."""
@@ -430,12 +474,16 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
     if sub == "outcomes":
         _cmd_outcomes(args)
         return
+    if sub == "merge-legacy":
+        _cmd_merge_legacy(args)
+        return
     if sub != "promote":
         console.print(
             "[yellow]Usage:[/yellow] cgh knowledge promote [--to <namespace|checkout>] "
             "[--since T] [--tags ...] [--dry-run] | "
             "outcome <verdict> [--id N | --query Q] [--file F] | outcomes | "
-            "export [--before-commit REV] [--exclude-tag GLOB] | import [FILE]"
+            "export [--before-commit REV] [--exclude-tag GLOB] | import [FILE] | "
+            "merge-legacy [--root R]"
         )
         raise SystemExit(2)
 

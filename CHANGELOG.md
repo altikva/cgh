@@ -8,6 +8,14 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
 
 ## [Unreleased]
 
+### Fixed
+- **Knowledge recorded before the 0.20 rename is readable again.** In repos
+  where a `.cgh/` was created next to the old `.codegraph/` instead of by
+  renaming it, the rename never ran and every note, decision and outcome from
+  before the switch stopped being read. Init, index and serve now merge the
+  legacy knowledge store into `.cgh/` once (duplicates skipped, the old dir
+  left in place). `cgh knowledge merge-legacy --root <repo>` runs it on demand.
+
 ## [0.21.0] - 2026-11-19
 
 ### Added

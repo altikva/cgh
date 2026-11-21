@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import sqlite3
 import subprocess
@@ -106,10 +107,11 @@ def commit_time(root: str | Path, rev: str) -> float:
     return float(out.stdout.strip())
 
 
-def _ro_connect(repo_root: str | Path) -> sqlite3.Connection:
+def _ro_connect(repo_root: str | Path, store: Path | None = None) -> sqlite3.Connection:
     """A read-only connection: export must not write, nor wait on, a store a
-    running owner holds."""
-    path = state_dir_for(repo_root) / "call_log.db"
+    running owner holds. ``store`` names a call_log.db other than the repo's
+    resolved one (the legacy .codegraph/ store a merge reads)."""
+    path = store if store is not None else state_dir_for(repo_root) / "call_log.db"
     if not path.is_file():
         raise KnowledgeTransferError(f"no knowledge store at {path}")
     return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
@@ -136,6 +138,7 @@ def export_records(
     exclude_tags: Iterable[str] = (),
     kinds: Iterable[str] | None = None,
     include_digests: bool = True,
+    store: Path | None = None,
 ) -> list[dict]:
     """Knowledge rows, then outcome rows, each tagged with a ``record`` field.
 
@@ -149,7 +152,7 @@ def export_records(
     """
     globs = [g for g in exclude_tags if g]
     wanted = {k for k in kinds} if kinds else None
-    conn = _ro_connect(repo_root)
+    conn = _ro_connect(repo_root, store)
     try:
         knowledge = _rows(conn, "knowledge")
         outcomes = _rows(conn, "knowledge_outcome")
@@ -300,4 +303,58 @@ def import_records(repo_root: str | Path, records: Iterable[dict]) -> dict:
         except Exception:
             conn.rollback()
             raise
+    return counts
+
+
+# Written in .cgh/ once a legacy store has been merged, so serve and index do
+# not re-read the old store on every start. Deleting it re-runs the merge,
+# which is safe: import_records skips the rows already present.
+LEGACY_MERGE_MARKER = "legacy_knowledge_merged.json"
+
+
+def merge_legacy_knowledge(
+    repo_root: str | Path, *, force: bool = False
+) -> dict | None:
+    """Fold a leftover ``.codegraph/`` knowledge store into ``.cgh/``.
+
+    A repo whose ``.cgh/`` came into being next to its old ``.codegraph/``
+    (instead of by renaming it) never had the rename run, so every note,
+    decision and outcome recorded before the switch sat unread in the old
+    store. This copies them across with ``import_records`` (new ids, links
+    remapped, exact duplicates skipped) and leaves the legacy dir untouched.
+
+    Returns the import counts, or None when there is nothing to merge: no
+    ``.cgh/``, no legacy store, or the merge already ran (unless ``force``).
+    A legacy store without a knowledge table counts as merged.
+    """
+    from cgh.core.config import CGH_DIR, LEGACY_CGH_DIR
+
+    root = Path(repo_root)
+    current = root / CGH_DIR
+    legacy_db = root / LEGACY_CGH_DIR / "call_log.db"
+    marker = current / LEGACY_MERGE_MARKER
+    if not current.is_dir() or not legacy_db.is_file():
+        return None
+    if marker.exists() and not force:
+        return None
+    try:
+        records = export_records(root, store=legacy_db)
+    except sqlite3.Error as exc:
+        raise KnowledgeTransferError(f"cannot read {legacy_db}: {exc}") from exc
+    counts = (
+        import_records(root, records)
+        if records
+        else {
+            "imported": 0,
+            "skipped_duplicate": 0,
+            "outcomes_imported": 0,
+            "outcomes_skipped": 0,
+        }
+    )
+    marker.write_text(
+        json.dumps(
+            {**counts, "source": str(legacy_db), "ts": datetime.now(UTC).isoformat()}
+        ),
+        encoding="utf-8",
+    )
     return counts

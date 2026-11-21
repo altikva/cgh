@@ -1643,6 +1643,75 @@ def knowledge_get(entry_id: int, repo_root: str | Path | None = None) -> dict | 
 
 
 @_locked
+def standing_rule_entries(repo_root: str | Path | None = None) -> list[dict]:
+    """Live standing instructions of the repo store whose body carries a rule
+    line (``cgh-rule``), newest first, as ``{id, title, body, session_id, ts}``.
+
+    The only source of rules for check_action: the store of this checkout.
+    Shared stores are not opened, a row filed under a shared namespace is
+    dropped, and a superseded entry is how a rule is withdrawn, so it is out.
+    """
+    conn = _get_conn(repo_root)
+    rows = conn.execute(
+        "SELECT id, title, body, session_id, ts, namespace FROM knowledge "
+        "WHERE kind = 'standing_instruction' AND superseded_by IS NULL "
+        "AND body LIKE '%cgh-rule%' ORDER BY ts DESC, id DESC"
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "title": row[1] or "",
+            "body": row[2] or "",
+            "session_id": row[3] or "",
+            "ts": row[4],
+        }
+        for row in rows
+        if not is_shared_namespace(row[5] or "")
+    ]
+
+
+def check_action(
+    action: str,
+    session_id: str = "",
+    repo_root: str | Path | None = None,
+) -> dict:
+    """Check an action against the rule lines of this repo's standing
+    instructions. Read-only. The answer shape is the one of the check_action
+    MCP tool; see cgh/state/action_rules.py for the matching."""
+    from cgh.state import action_rules
+
+    root = Path(repo_root) if repo_root else Path.cwd()
+    out = action_rules.evaluate(
+        action,
+        standing_rule_entries(root),
+        session_id=session_id or "",
+        cwd=root,
+    )
+    if out["verdict"] == "no_rule" and out["recognised"]:
+        words = action_rules.search_words(out["actions"])
+        if words:
+            try:
+                hits = knowledge_search(
+                    words,
+                    kind="standing_instruction",
+                    limit=3,
+                    repo_root=root,
+                    recall=True,
+                )
+            except sqlite3.Error:
+                hits = []
+            out["related"] = [
+                {
+                    "id": h.get("id"),
+                    "title": h.get("title") or "",
+                    "confidence": h.get("confidence") or "low",
+                }
+                for h in hits[:3]
+            ]
+    return out
+
+
+@_locked
 def knowledge_list(
     kind: str | None = None,
     tag: str | None = None,

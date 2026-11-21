@@ -1087,6 +1087,88 @@ cgh papercut <query>                           # search them
 cgh papercut add "<symptom>" --fix "<fix>"     # log one (--project to override the scope)
 ```
 
+### `check`
+
+Check an action against the rules of this repo's standing instructions, before
+doing it. The action is a shell command or a short phrase, French or English.
+
+```
+cgh check "git push origin develop"            # a shell command, compound ones included
+cgh check "merge PR 12"                        # a short phrase
+cgh check "$cmd" --json                        # the check_action payload
+cgh check "$cmd" --session-id <id>             # an allow rule that session recorded does not count
+cgh check "$cmd" --root <repo>                 # another checkout (default: cwd)
+```
+
+A rule is a line in the body of a standing instruction
+(`knowledge_record(kind="standing_instruction", ...)`):
+
+```
+cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]
+```
+
+for instance
+
+```
+Never push to an integration branch: every change goes through a pull request.
+
+cgh-rule: refuse git.push branch=main|master|develop
+cgh-rule: refuse git.commit on_branch=main|master|develop
+cgh-rule: ask git.tag tag=v*
+cgh-rule: ask *.publish
+cgh-rule: allow git.push branch=feature/*
+```
+
+The verb is dotted and may be a glob (`git.*`). Each `key=glob` constrains one
+field of the action, with `|` between alternatives; a key the action does not
+carry never matches. The rest of the body is the reason, printed with the
+verdict. A line that does not parse never rules: `knowledge_record` reports it
+in `rule_errors`.
+
+| Verb | Read from | Fields |
+|---|---|---|
+| `git.push` | `git push ...` | `remote`, `branch` (the destination of each refspec; the current branch when none is named), `force`, `tags`, `delete`, `all` |
+| `git.commit` | `git commit ...` | `on_branch`, `amend` |
+| `git.tag` | `git tag <name>` (not `-l`, not `-d`) | `tag` |
+| `git.branch.delete` | `git branch -d/-D`, `git push --delete` | `branch` |
+| `git.reset` | `git reset --hard` | `hard` |
+| `git.rebase`, `git.merge`, `git.checkout`, `git.stash` | the matching subcommand | `branch` where one is named |
+| `gh.pr.merge` | `gh pr merge ...` | `pr`, `method`, `admin` |
+| `gh.pr.create`, `gh.pr.close` | the matching subcommand | `base`, `pr` |
+| `gh.release.create` | `gh release create ...` | `tag` |
+| `gh.issue.create` | `gh issue create ...` | `repo` |
+| `pkg.publish` | `uv publish`, `twine upload`, `npm publish`, `pnpm publish`, `cargo publish` | `tool` |
+| `tool.install` | `uv tool install/upgrade`, `pipx install/upgrade` | `tool`, `package` |
+| `proc.kill` | `pkill`, `killall` | `pattern` |
+| `shell.<program>` | any other command | `args` |
+
+Flags read as `yes` when present (`force=yes`). A compound command (`&&`, `||`,
+`;`, `|`, newlines, `bash -c '...'`) is checked segment by segment and the
+strictest verdict wins. The phrases understood are "merge PR 12" / "fusionner la
+PR 12", "tag v0.22.0", "push to develop" / "pousser sur develop", "release
+v0.22.0" and "commit on main". The branch is read with one
+`git rev-parse --abbrev-ref HEAD`, given two seconds; when it cannot be read the
+field is absent and a rule constraining it does not match.
+
+| Exit code | Verdict |
+|---|---|
+| 0 | `allowed`: an `allow` rule matches, and nothing refuses or asks |
+| 2 | `refused`: a `refuse` rule matches |
+| 3 | `ask`: an `ask` rule matches |
+| 4 | no rule covers the action, or cgh could not read it (`--json` carries `recognised`) |
+| 1 | error: no cgh store here, or the store cannot be read |
+
+Exit 0 is reserved for a matching `allow` rule, so `cgh check "$cmd" && $cmd`
+never runs a command the store was silent about. A `refuse` beats an `ask`,
+which beats an `allow`: to carve an exception out of a refusal, narrow or
+supersede the refusing rule. Rules come from this checkout's own store only,
+never from a shared store or a federated subrepo, and a superseded instruction
+no longer rules. No model is called.
+
+This is a reminder for an agent acting in good faith, not a sandbox: a command
+phrased in a way cgh does not recognise is not covered, and the agent's own
+permission rules remain the enforcement layer.
+
 ### `artifact`
 
 A read-through cache for files cgh cannot parse into the graph: images, and

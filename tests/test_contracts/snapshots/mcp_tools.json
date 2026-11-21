@@ -35,6 +35,20 @@
     "properties": {},
     "required": []
   },
+  "check_action": {
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "session_id": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
   "checkpoint": {
     "properties": {
       "digest": {

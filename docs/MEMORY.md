@@ -18,6 +18,15 @@ that connects:
   `knowledge_record(kind="standing_instruction", ...)` lead every
   bundle. Entries can supersede older ones, and `cgh memory review`
   lists stale entries for pruning.
+- **Rules an agent can check**: a standing instruction is prose, and a
+  line `cgh-rule: <refuse|ask|allow> <verb> [key=glob ...]` in its body
+  makes it checkable, for instance
+  `cgh-rule: refuse git.push branch=main|develop`. `check_action` (MCP)
+  and `cgh check "<action>"` answer `allowed`, `refused`, `ask` or
+  `no_rule` for a command or a short phrase, with the instruction that
+  decided. Nothing is allowed by default: without a matching `allow`
+  line the answer is `no_rule`. Only this repo's store rules; a shared
+  store never does. See `check` in [CLI_REFERENCE.md](CLI_REFERENCE.md).
 - What Claude learns in the morning, Gemini knows in the afternoon:
   writes go through cgh, agent-native memories are indexed read-only.
 

@@ -221,7 +221,22 @@ _PUNCT = frozenset("();<>|&")
 # other run of shell punctuation (`|`, `&&`, `(`, `<(`, `;`...) starts a new
 # segment, so a command inside a subshell or a process substitution is read.
 _REDIRECT_RE = re.compile(r"^(?:[<>]{1,3}|[<>]&|&>{1,2}|>\|)$")
-_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "time", "nohup", "xargs"})
+_WRAPPERS = frozenset(
+    {
+        "sudo",
+        "doas",
+        "env",
+        "command",
+        "exec",
+        "time",
+        "nohup",
+        "xargs",
+        "nice",
+        "ionice",
+        "stdbuf",
+        "timeout",
+    }
+)
 # A token holding a command substitution: bash runs what is inside.
 _SUBST_RE = re.compile(r"\$\((.*)\)|`([^`]*)`", re.DOTALL)
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
@@ -234,7 +249,14 @@ _WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
     "env": frozenset({"-u", "-C", "-P"}),
     "xargs": frozenset({"-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"}),
     "time": frozenset({"-o", "-f"}),
+    "doas": frozenset({"-u", "-C"}),
+    "nice": frozenset({"-n"}),
+    "ionice": frozenset({"-c", "-n", "-p"}),
+    "stdbuf": frozenset({"-i", "-o", "-e"}),
+    "timeout": frozenset({"-s", "-k"}),
 }
+# Wrappers whose first argument is not the command: `timeout 5 <cmd>`.
+_WRAPPER_LEADING_ARGS: dict[str, int] = {"timeout": 1}
 
 
 def _newlines_to_separators(text: str) -> str:
@@ -267,6 +289,8 @@ def _newlines_to_separators(text: str) -> str:
 def split_segments(command: str) -> list[list[str]] | None:
     """Split a command line into argv segments on ``&&``, ``||``, ``;``, ``|``
     and newlines. None when the string cannot be tokenised (an open quote)."""
+    # A backslash before a newline continues the line, as in a shell.
+    command = command.replace("\\\r\n", "").replace("\\\n", "")
     lexer = shlex.shlex(
         _newlines_to_separators(command), posix=True, punctuation_chars=True
     )
@@ -329,6 +353,7 @@ def _strip_wrappers(argv: list[str]) -> tuple[list[str], list[str]]:
                     scripts.append(flag.partition("=")[2])
                 elif flag in value_flags and i < len(argv):
                     i += 1
+            i += _WRAPPER_LEADING_ARGS.get(tok, 0)
             continue
         break
     return argv[i:], scripts
@@ -533,7 +558,7 @@ def _git_push(
         if sep and not src:
             one["delete"] = "yes"
         name = dst if sep else src
-        if name == "HEAD":
+        if name in ("HEAD", "@"):
             name = branch_now() or ""
         if name.startswith("refs/tags/"):
             one["tag"] = name[len("refs/tags/") :]

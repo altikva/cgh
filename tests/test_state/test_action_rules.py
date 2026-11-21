@@ -203,6 +203,9 @@ def test_push_names_the_destination_of_each_refspec():
 
 def test_bare_push_takes_the_current_branch():
     assert _norm("git push", branch="develop") == [("git.push", {"branch": "develop"})]
+    assert _norm("git push origin @", branch="develop") == [
+        ("git.push", {"remote": "origin", "branch": "develop"})
+    ]
     assert _norm("git push origin HEAD", branch="develop") == [
         ("git.push", {"remote": "origin", "branch": "develop"})
     ]
@@ -284,6 +287,11 @@ _PUSH = ("git.push", {"remote": "origin", "branch": "main", "force": "yes"})
         "sudo -i git push -f origin main",
         "ls | xargs git push -f origin main",
         "sudo -n git push -f origin main",
+        "timeout -k 2 30 git push -f origin main",
+        "nice -n 10 git push -f origin main",
+        "doas -u bob git push -f origin main",
+        "stdbuf -oL git push -f origin main",
+        "git push -f \\\n  origin main",
         "sudo -E -n git push -f origin main",
         "env -u HOME git push -f origin main",
         "time -o t.log git push -f origin main",

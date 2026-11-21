@@ -436,7 +436,10 @@
   "knowledge_forget": {
     "properties": {
       "entry_id": {
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       }
     },
     "required": [
@@ -447,7 +450,10 @@
     "properties": {
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "kind": {
         "default": "",
@@ -484,7 +490,10 @@
       },
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "file_refs": {
         "default": "",
@@ -518,7 +527,10 @@
       },
       "entry_id": {
         "default": "",
-        "type": "string"
+        "type": [
+          "integer",
+          "string"
+        ]
       },
       "since": {
         "default": "",

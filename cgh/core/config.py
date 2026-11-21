@@ -796,6 +796,14 @@ reindex_on_start = true
 # expose = "auto"
 # extra = ["find_callees", "impact_of"]
 
+[hooks]
+# Before a Bash command runs, the Claude Code hook checks it against the rule
+# lines (cgh-rule) of this repo's standing instructions. "enforce": a refuse
+# rule denies the command and an ask rule prompts the user. "advise": the
+# verdict goes to the model as a note and nothing is blocked. "off": no check.
+# The default is provisional. Env override: CGH_HOOK_CHECK_ACTION
+# check_action = "advise"
+
 [plugins]
 # Installed plugins (pip install "cgh[plugins]") register themselves;
 # these lists narrow or bar them without uninstalling anything.

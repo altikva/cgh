@@ -1651,7 +1651,32 @@ def standing_rule_entries(repo_root: str | Path | None = None) -> list[dict]:
     Shared stores are not opened, a row filed under a shared namespace is
     dropped, and a superseded entry is how a rule is withdrawn, so it is out.
     """
-    conn = _get_conn(repo_root)
+    return _rule_entries(_get_conn(repo_root))
+
+
+def standing_rule_entries_readonly(
+    repo_root: str | Path, busy_timeout: float = 0.05
+) -> list[dict] | None:
+    """``standing_rule_entries`` for a caller on a deadline that must not
+    write: the store file is opened read-only on a connection of its own,
+    waiting at most ``busy_timeout`` seconds on a lock, and no directory,
+    file or schema is created. None when the repo has no store yet. A locked,
+    corrupt or older store raises ``sqlite3.Error``: the caller decides what
+    a store it cannot read means.
+    """
+    db_path = Path(repo_root) / _DB_DIR / _LOG_FILE
+    if not db_path.is_file():
+        return None
+    conn = sqlite3.connect(
+        f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=busy_timeout
+    )
+    try:
+        return _rule_entries(conn)
+    finally:
+        conn.close()
+
+
+def _rule_entries(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         "SELECT id, title, body, session_id, ts, namespace FROM knowledge "
         "WHERE kind = 'standing_instruction' AND superseded_by IS NULL "

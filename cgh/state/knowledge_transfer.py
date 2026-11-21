@@ -389,17 +389,32 @@ def _check_legacy_store_is_local(
         raise KnowledgeTransferError(
             f"refusing to merge: {legacy_db} belongs to another user"
         )
-    try:
-        tracked = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "--", legacy_dir.name],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KnowledgeTransferError(f"cannot check git tracking: {exc}") from exc
+
+    # Outside any work tree nothing can be tracked (sprint dirs are plain
+    # dirs). Inside one, a failing ls-files means "cannot verify": refuse.
+    if _git("rev-parse", "--is-inside-work-tree").stdout.strip() != "true":
+        return
+    # icase: on a case-insensitive filesystem a committed .CodeGraph/ is the
+    # same directory as .codegraph/.
+    tracked = _git("ls-files", "--", f":(icase){legacy_dir.name}")
+    if tracked.returncode != 0:
+        raise KnowledgeTransferError(
+            f"refusing to merge: cannot tell whether {legacy_dir.name}/ is tracked "
+            f"by git: {tracked.stderr.strip()}"
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise KnowledgeTransferError(f"cannot check git tracking: {exc}") from exc
-    if tracked.returncode == 0 and tracked.stdout.strip():
+    if tracked.stdout.strip():
         raise KnowledgeTransferError(
             f"refusing to merge: {legacy_dir.name}/ is tracked by git, so it came "
             "with the clone, not from this machine"

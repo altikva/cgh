@@ -20,7 +20,7 @@
       },
       "homepage": "https://github.com/altikva/cgh",
       "license": "Apache-2.0",
-      "keywords": ["context-graph", "code-graph", "mcp", "memory", "agent-memory", "navigation"]
+      "keywords": ["context-graph", "code-graph", "mcp", "optimization", "memory", "agent-memory", "navigation"]
     }
   ]
 }

@@ -232,4 +232,5 @@ format bounds its own work (see [docs/PARSERS.md](docs/PARSERS.md)).
 
 Licensed under the [Apache License, Version 2.0](./LICENSE), from version 0.19 on. That covers cgh itself, the first-party plugins under `plugins/`, the SDK and the npx wrapper. Copyright 2026 ALTIKVA; see [NOTICE](./NOTICE).
 
+
 Versions 0.18.x and earlier were published under MIT and CC BY-NC-SA 4.0 and keep that license.

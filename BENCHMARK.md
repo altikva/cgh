@@ -54,24 +54,24 @@ By language (ratios pooled over every correct question of every repo):
 
 | language | repos | questions (correct) | median ratio (naive) | p25-p75 (naive) | median ratio (tight) | p25-p75 (tight) | worst tight |
 |---|---|---|---|---|---|---|---|
-| python | 4 | 35 (35) | 0.001 | 0.000-0.004 | 0.004 | 0.001-0.020 | 0.630 |
-| javascript | 1 | 8 (7) | 0.001 | 0.000-0.015 | 0.006 | 0.003-0.039 | 0.045 |
-| typescript | 1 | 9 (9) | 0.000 | 0.000-0.000 | 0.000 | 0.000-0.001 | 0.144 |
-| go | 1 | 8 (8) | 0.001 | 0.000-0.015 | 0.003 | 0.001-0.043 | 0.096 |
-| rust | 1 | 8 (8) | 0.001 | 0.001-0.002 | 0.005 | 0.003-0.010 | 0.055 |
+| python | 4 | 35 (35) | 0.001 | 0.000-0.004 | 0.004 | 0.001-0.020 | 0.538 |
+| javascript | 1 | 8 (7) | 0.001 | 0.000-0.013 | 0.006 | 0.003-0.033 | 0.043 |
+| typescript | 1 | 9 (9) | 0.000 | 0.000-0.000 | 0.000 | 0.000-0.001 | 0.119 |
+| go | 1 | 8 (8) | 0.001 | 0.000-0.013 | 0.003 | 0.001-0.038 | 0.079 |
+| rust | 1 | 8 (8) | 0.001 | 0.001-0.002 | 0.005 | 0.003-0.009 | 0.046 |
 
 Per repo:
 
 | repo | language | questions | correct | median ratio (naive) | p25-p75 (naive) | median ratio (tight) | p25-p75 (tight) | worst tight |
 |---|---|---|---|---|---|---|---|---|
-| flask | python | 9 | 9 | 0.000 | 0.000-0.005 | 0.001 | 0.001-0.014 | 0.630 |
-| requests | python | 9 | 9 | 0.001 | 0.000-0.002 | 0.004 | 0.001-0.021 | 0.205 |
-| fastapi | python | 8 | 8 | 0.003 | 0.002-0.007 | 0.007 | 0.006-0.020 | 0.327 |
-| django | python | 9 | 9 | 0.000 | 0.000-0.001 | 0.002 | 0.000-0.004 | 0.464 |
-| express | javascript | 8 | 7 | 0.001 | 0.000-0.015 | 0.006 | 0.003-0.039 | 0.045 |
-| vue-core | typescript | 9 | 9 | 0.000 | 0.000-0.000 | 0.000 | 0.000-0.001 | 0.144 |
-| gin | go | 8 | 8 | 0.001 | 0.000-0.015 | 0.003 | 0.001-0.043 | 0.096 |
-| ripgrep | rust | 8 | 8 | 0.001 | 0.001-0.002 | 0.005 | 0.003-0.010 | 0.055 |
+| flask | python | 9 | 9 | 0.000 | 0.000-0.005 | 0.001 | 0.001-0.014 | 0.538 |
+| requests | python | 9 | 9 | 0.001 | 0.000-0.002 | 0.004 | 0.001-0.021 | 0.171 |
+| fastapi | python | 8 | 8 | 0.003 | 0.002-0.007 | 0.007 | 0.006-0.020 | 0.292 |
+| django | python | 9 | 9 | 0.000 | 0.000-0.001 | 0.002 | 0.000-0.003 | 0.390 |
+| express | javascript | 8 | 7 | 0.001 | 0.000-0.013 | 0.006 | 0.003-0.033 | 0.043 |
+| vue-core | typescript | 9 | 9 | 0.000 | 0.000-0.000 | 0.000 | 0.000-0.001 | 0.119 |
+| gin | go | 8 | 8 | 0.001 | 0.000-0.013 | 0.003 | 0.001-0.038 | 0.079 |
+| ripgrep | rust | 8 | 8 | 0.001 | 0.001-0.002 | 0.005 | 0.003-0.009 | 0.046 |
 
 Per-question detail (losses included):
 
@@ -84,8 +84,8 @@ Per-question detail (losses included):
 | flask-locate-config | locate | yes | 15 | 45010 | 12672 | 0.0003 | 0.0012 |
 | flask-callers-url-for | callers | yes | 681 | 138516 | 47658 | 0.0049 | 0.0143 |
 | flask-callers-get-flashed-messages | callers | yes | 52 | 68546 | 9906 | 0.0008 | 0.0052 |
-| flask-fts-session-serializer | fts | yes | 2310 | 6018 | 3664 | 0.3838 | 0.6305 |
-| flask-fts-send-attachment | fts | yes | 2135 | 27008 | 7251 | 0.0791 | 0.2944 |
+| flask-fts-session-serializer | fts | yes | 1972 | 6018 | 3664 | 0.3277 | 0.5382 |
+| flask-fts-send-attachment | fts | yes | 1799 | 27008 | 7251 | 0.0666 | 0.2481 |
 | requests-locate-session | locate | yes | 16 | 80149 | 36793 | 0.0002 | 0.0004 |
 | requests-locate-httpadapter | locate | yes | 17 | 75731 | 14475 | 0.0002 | 0.0012 |
 | requests-locate-preparedrequest | locate | yes | 16 | 95814 | 27653 | 0.0002 | 0.0006 |
@@ -93,8 +93,8 @@ Per-question detail (losses included):
 | requests-locate-extract-cookies | locate | yes | 20 | 21039 | 4987 | 0.0010 | 0.0040 |
 | requests-callers-resolve-redirects | callers | yes | 131 | 58172 | 6141 | 0.0023 | 0.0213 |
 | requests-callers-to-key-val-list | callers | yes | 79 | 33010 | 4119 | 0.0024 | 0.0192 |
-| requests-fts-transport-adapter | fts | yes | 2084 | 75731 | 19438 | 0.0275 | 0.1072 |
-| requests-fts-encode-multipart | fts | yes | 1997 | 85232 | 9758 | 0.0234 | 0.2047 |
+| requests-fts-transport-adapter | fts | yes | 1743 | 75731 | 19438 | 0.0230 | 0.0897 |
+| requests-fts-encode-multipart | fts | yes | 1670 | 85232 | 9758 | 0.0196 | 0.1711 |
 | fastapi-locate-fastapi | locate | yes | 23093 | 5847790 | 3793058 | 0.0039 | 0.0061 |
 | fastapi-locate-apirouter | locate | yes | 5389 | 765491 | 267925 | 0.0070 | 0.0201 |
 | fastapi-locate-depends | locate | yes | 1541 | 968037 | 382185 | 0.0016 | 0.0040 |
@@ -102,7 +102,7 @@ Per-question detail (losses included):
 | fastapi-locate-jsonable-encoder | locate | yes | 1080 | 446360 | 158067 | 0.0024 | 0.0068 |
 | fastapi-callers-get-openapi | callers | yes | 95 | 65348 | 18162 | 0.0015 | 0.0052 |
 | fastapi-callers-solve-dependencies | callers | yes | 68 | 283457 | 9684 | 0.0002 | 0.0070 |
-| fastapi-fts-solve-dependencies | fts | yes | 3170 | 283457 | 9684 | 0.0112 | 0.3273 |
+| fastapi-fts-solve-dependencies | fts | yes | 2830 | 283457 | 9684 | 0.0100 | 0.2922 |
 | django-locate-queryset | locate | yes | 17 | 1236862 | 345125 | 0.0000 | 0.0000 |
 | django-locate-manager | locate | yes | 83 | 636864 | 81090 | 0.0001 | 0.0010 |
 | django-locate-httpresponse | locate | yes | 14 | 756862 | 169060 | 0.0000 | 0.0001 |
@@ -110,15 +110,15 @@ Per-question detail (losses included):
 | django-locate-urlresolver | locate | yes | 17 | 35942 | 9126 | 0.0005 | 0.0019 |
 | django-locate-basecommand | locate | yes | 17 | 313515 | 44557 | 0.0001 | 0.0004 |
 | django-callers-get-object-or-404 | callers | yes | 105 | 60375 | 11653 | 0.0017 | 0.0090 |
-| django-fts-compile-sql | fts | yes | 1993 | 1864608 | 526467 | 0.0011 | 0.0038 |
-| django-fts-model-field-column | fts | yes | 2128 | 23492 | 4589 | 0.0906 | 0.4637 |
+| django-fts-compile-sql | fts | yes | 1653 | 1864608 | 526467 | 0.0009 | 0.0031 |
+| django-fts-model-field-column | fts | yes | 1788 | 23492 | 4589 | 0.0761 | 0.3896 |
 | express-locate-createapplication | locate | yes | 15 | 376 | 345 | 0.0399 | 0.0435 |
 | express-locate-view | locate | yes | 27 | 51007 | 8459 | 0.0005 | 0.0032 |
 | express-locate-sendfile | locate | yes | 15 | 45821 | 14739 | 0.0003 | 0.0010 |
 | express-locate-acceptparams | locate | yes | 14 | 41692 | 2511 | 0.0003 | 0.0056 |
 | express-locate-stringify | locate | yes | 15 | 17176 | 4873 | 0.0009 | 0.0031 |
-| express-fts-etag | fts | yes | 893 | 74226 | 25867 | 0.0120 | 0.0345 |
-| express-fts-view-engine | fts | yes | 1152 | 64443 | 25687 | 0.0179 | 0.0448 |
+| express-fts-etag | fts | yes | 757 | 74226 | 25867 | 0.0102 | 0.0293 |
+| express-fts-view-engine | fts | yes | 965 | 64443 | 25687 | 0.0150 | 0.0376 |
 | express-callers-createapplication | callers | NO | 9 | 376 | 345 | 0.0239 | 0.0261 |
 | vue-locate-reactive | locate | yes | 17 | 571124 | 241254 | 0.0000 | 0.0001 |
 | vue-locate-ref | locate | yes | 16 | 894492 | 483191 | 0.0000 | 0.0000 |
@@ -127,24 +127,24 @@ Per-question detail (losses included):
 | vue-locate-definecomponent | locate | yes | 19 | 616154 | 195278 | 0.0000 | 0.0001 |
 | vue-locate-watch | locate | yes | 54 | 584642 | 227093 | 0.0001 | 0.0002 |
 | vue-callers-trigger | callers | yes | 323 | 655328 | 223497 | 0.0005 | 0.0014 |
-| vue-fts-reactive-effect | fts | yes | 1982 | 89241 | 13764 | 0.0222 | 0.1440 |
-| vue-fts-template-ast | fts | yes | 1951 | 1160860 | 480934 | 0.0017 | 0.0041 |
+| vue-fts-reactive-effect | fts | yes | 1642 | 89241 | 13764 | 0.0184 | 0.1193 |
+| vue-fts-template-ast | fts | yes | 1611 | 1160860 | 480934 | 0.0014 | 0.0033 |
 | gin-locate-new | locate | yes | 12 | 177276 | 71273 | 0.0001 | 0.0002 |
 | gin-locate-context | locate | yes | 12 | 166777 | 99052 | 0.0001 | 0.0001 |
 | gin-locate-routergroup | locate | yes | 15 | 46503 | 11314 | 0.0003 | 0.0013 |
 | gin-locate-loggerwithconfig | locate | yes | 14 | 25020 | 3742 | 0.0006 | 0.0037 |
 | gin-locate-recovery | locate | yes | 27 | 49590 | 8377 | 0.0005 | 0.0032 |
 | gin-callers-new | callers | yes | 3270 | 177276 | 71273 | 0.0184 | 0.0459 |
-| gin-fts-response-writer | fts | yes | 1866 | 84161 | 19400 | 0.0222 | 0.0962 |
-| gin-fts-binding | fts | yes | 1887 | 130110 | 44338 | 0.0145 | 0.0426 |
+| gin-fts-response-writer | fts | yes | 1526 | 84161 | 19400 | 0.0181 | 0.0787 |
+| gin-fts-binding | fts | yes | 1547 | 130110 | 44338 | 0.0119 | 0.0349 |
 | ripgrep-locate-run | locate | yes | 109 | 273214 | 52454 | 0.0004 | 0.0021 |
 | ripgrep-locate-printer | locate | yes | 14 | 16089 | 4689 | 0.0009 | 0.0030 |
 | ripgrep-locate-searcher | locate | yes | 19 | 164408 | 35517 | 0.0001 | 0.0005 |
 | ripgrep-locate-searchworker | locate | yes | 15 | 16089 | 2573 | 0.0009 | 0.0058 |
 | ripgrep-locate-globmatcher | locate | yes | 19 | 27738 | 2351 | 0.0007 | 0.0081 |
 | ripgrep-callers-run | callers | yes | 222 | 273214 | 52454 | 0.0008 | 0.0042 |
-| ripgrep-fts-glob-matcher | fts | yes | 1964 | 360398 | 135800 | 0.0054 | 0.0145 |
-| ripgrep-fts-searcher | fts | yes | 1967 | 164408 | 35517 | 0.0120 | 0.0554 |
+| ripgrep-fts-glob-matcher | fts | yes | 1624 | 360398 | 135800 | 0.0045 | 0.0120 |
+| ripgrep-fts-searcher | fts | yes | 1627 | 164408 | 35517 | 0.0099 | 0.0458 |
 
 The `tight` column is where the honesty lives: on a rare-keyword concept query a
 +/-40-line grep is already small, so cgh's structured answer saves less and can
@@ -191,7 +191,7 @@ All PRs, per repo (recall first):
 | flask | python | 10 | 0.382 | 0.575 | 0.031 | 0.019 | 0.058 | 0.036 |
 | requests | python | 10 | 0.500 | 0.467 | 0.070 | 0.036 | 0.123 | 0.066 |
 | fastapi | python | 10 | 0.091 | 0.150 | 0.001 | 0.005 | 0.003 | 0.010 |
-| django | python | 10 | 0.091 | 0.100 | 0.009 | 0.003 | 0.017 | 0.005 |
+| django | python | 10 | 0.091 | 0.100 | 0.009 | 0.002 | 0.017 | 0.004 |
 | express | javascript | 10 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
 | vue-core | typescript | 10 | 0.080 | 0.100 | 0.006 | 0.001 | 0.011 | 0.001 |
 | gin | go | 10 | 0.150 | 0.158 | 0.022 | 0.020 | 0.039 | 0.030 |
@@ -224,7 +224,7 @@ where the import graph is sparse.
 | fastapi | python | seeds with dependents | 7 | 0.105 | 0.214 | 0.001 | 0.007 | 0.003 | 0.014 |
 | fastapi | python | leaf/test seeds (selection artifact) | 3 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
 | django | python | seeds with dependents | 0 | n/a | n/a | n/a | n/a | n/a | n/a |
-| django | python | leaf/test seeds (selection artifact) | 10 | 0.091 | 0.100 | 0.009 | 0.003 | 0.017 | 0.005 |
+| django | python | leaf/test seeds (selection artifact) | 10 | 0.091 | 0.100 | 0.009 | 0.002 | 0.017 | 0.004 |
 | express | javascript | seeds with dependents | 0 | n/a | n/a | n/a | n/a | n/a | n/a |
 | express | javascript | leaf/test seeds (selection artifact) | 10 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
 | vue-core | typescript | seeds with dependents | 1 | 1.000 | 1.000 | 0.007 | 0.007 | 0.013 | 0.013 |
@@ -274,7 +274,7 @@ Full per-PR detail (every PR, nothing dropped):
 | django | python | 22244 | `tests/serializers/test_jsonl.py` | 0 | 1 | 0.00 | 0.00 | 0.00 | n/a |
 | django | python | 22280 | `tests/gis_tests/gdal_tests/test_raster.py` | 0 | 2 | 0.00 | 0.00 | 0.00 | n/a |
 | django | python | 22235 | `tests/admin_widgets/tests.py` | 33 | 1 | 0.00 | 0.00 | 0.00 | n/a |
-| django | python | 22255 | `django/core/management/commands/createcachetable.py` | 40 | 1 | 0.03 | 1.00 | 0.05 | n/a |
+| django | python | 22255 | `django/core/management/commands/createcachetable.py` | 44 | 1 | 0.02 | 1.00 | 0.04 | n/a |
 | django | python | 22250 | `tests/invalid_models_tests/test_models.py` | 0 | 1 | 0.00 | 0.00 | 0.00 | n/a |
 | django | python | 21534 | `tests/template_tests/syntax_tests/test_firstof.py` | 0 | 1 | 0.00 | 0.00 | 0.00 | n/a |
 | django | python | 21857 | `tests/forms_tests/widget_tests/test_textarea.py` | 0 | 1 | 0.00 | 0.00 | 0.00 | n/a |

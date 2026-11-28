@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 # Extensions to try when a JS/TS import has no explicit extension.
@@ -154,6 +156,47 @@ def _resolve_python_under(base: Path, parts: list[str]) -> Path | None:
             target_dir / leaf / "__init__.py",
         ]
     )
+
+
+def python_local_names(paths: Iterable[Path], repo_root: Path) -> frozenset[str]:
+    """Top-level names a Python import may use to reach code of this repo.
+
+    Every Python file gives its own module name and the name of each directory
+    above it, up to the repo root. The set is deliberately wider than the
+    source roots the resolver tries: a script that extends `sys.path` at run
+    time imports a module by a name no layout rule predicts, and that import
+    is still about this repo.
+    """
+    root = repo_root.resolve()
+    names: set[str] = set()
+    for path in paths:
+        if path.suffix not in (".py", ".pyi"):
+            continue
+        try:
+            rel = path.resolve().relative_to(root)
+        except ValueError:
+            continue
+        names.update(rel.parts[:-1])
+        if rel.stem != "__init__":
+            names.add(rel.stem)
+    return frozenset(names)
+
+
+def python_import_is_external(source_module: str, local_names: frozenset[str]) -> bool:
+    """Whether an unresolved Python import points outside the repo.
+
+    A relative import is always about the repo. The standard library wins over
+    a local file of the same name, so one `logging.py` somewhere does not turn
+    every `import logging` into a broken internal import. Anything else is
+    internal only when its first segment names a module or a directory of the
+    repo: that is an import the resolver should have found a file for.
+    """
+    if source_module.startswith("."):
+        return False
+    top = source_module.split(".", 1)[0]
+    if top in sys.stdlib_module_names:
+        return True
+    return top not in local_names
 
 
 # Project roots per importer directory, for the `~/` and `@/` conventions.

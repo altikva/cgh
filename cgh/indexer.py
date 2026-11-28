@@ -806,12 +806,34 @@ _IMPORT_COVERAGE: dict[str, dict[str, int]] = {}
 # lets a partial run be told apart from a full one, which `indexed` cannot do
 # (an unchanged file still counts as indexed).
 _IMPORT_COVERAGE_SKIPPED = 0
+# Unresolved Python imports of the current scan, by module name. Most of them
+# are the standard library and third-party packages, which have no file in the
+# repo to resolve to; telling those apart from a broken internal import needs
+# the full file list, known only once the scan has discovered it.
+_IMPORT_UNRESOLVED_PYTHON: dict[str, int] = {}
 
 
-def take_import_coverage() -> dict[str, dict[str, int]]:
-    """Return the coverage gathered since the last call, and clear it."""
+def take_import_coverage(
+    python_local_names: frozenset[str] | None = None,
+) -> dict[str, dict[str, int]]:
+    """Return the coverage gathered since the last call, and clear it.
+
+    With the repo's Python module names, the Python bucket also says how many
+    of its unresolved imports are `external` (standard library, third-party):
+    the rest of the unresolved ones are imports of this repo's own code that
+    found no file.
+    """
     snapshot = {lang: dict(counts) for lang, counts in _IMPORT_COVERAGE.items()}
+    if python_local_names is not None and "python" in snapshot:
+        from cgh.imports.resolver import python_import_is_external
+
+        snapshot["python"]["external"] = sum(
+            count
+            for module, count in _IMPORT_UNRESOLVED_PYTHON.items()
+            if python_import_is_external(module, python_local_names)
+        )
     _IMPORT_COVERAGE.clear()
+    _IMPORT_UNRESOLVED_PYTHON.clear()
     return snapshot
 
 
@@ -823,17 +845,40 @@ def take_import_coverage_partial() -> bool:
     return partial
 
 
+def _python_local_names(
+    repo_root: Path, candidates: list[Path], method: str
+) -> frozenset[str]:
+    """Python module names of the repo, to classify the unresolved imports.
+
+    A `git_diff` scan discovers only the files that changed, which says
+    nothing about the modules the others define: list the whole repo then.
+    """
+    from cgh.imports.resolver import python_local_names
+
+    paths = candidates
+    if method == "git_diff":
+        try:
+            paths = _discover_candidates(repo_root, "auto")[0]
+        except Exception:
+            paths = candidates
+    return python_local_names(paths, repo_root)
+
+
 def _note_unparsed_file() -> None:
     """Record that a file was skipped before reaching its parser."""
     global _IMPORT_COVERAGE_SKIPPED
     _IMPORT_COVERAGE_SKIPPED += 1
 
 
-def _count_import(lang: str, resolved: bool) -> None:
+def _count_import(lang: str, resolved: bool, source_module: str = "") -> None:
     bucket = _IMPORT_COVERAGE.setdefault(lang or "unknown", {"seen": 0, "resolved": 0})
     bucket["seen"] += 1
     if resolved:
         bucket["resolved"] += 1
+    elif lang == "python":
+        _IMPORT_UNRESOLVED_PYTHON[source_module] = (
+            _IMPORT_UNRESOLVED_PYTHON.get(source_module, 0) + 1
+        )
 
 
 def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> None:
@@ -859,7 +904,7 @@ def _ingest_imports(conn: GraphDB, idx: FileIndex, repo_root: Path | None) -> No
     rank = {IMPORT_REEXPORT: 0, "": 1, IMPORT_DYNAMIC: 2}
     for imp in sorted(idx.imports, key=lambda i: rank.get(i.kind, 1)):
         target = resolve_import(idx.lang, imp.source_module, idx.path, repo_root)
-        _count_import(idx.lang, target is not None)
+        _count_import(idx.lang, target is not None, imp.source_module)
         if target is None:
             continue
         target_str = str(target)
@@ -2465,7 +2510,9 @@ def _index_repo(
         stats["fts_orphans_purged"] = purged
 
     stats["elapsed_s"] = round(time.time() - t0, 2)
-    stats["imports"] = take_import_coverage()
+    stats["imports"] = take_import_coverage(
+        _python_local_names(repo_root, candidates, actual_method)
+    )
     stats["imports_partial"] = take_import_coverage_partial()
     stats["method"] = actual_method
     stats["method_requested"] = method_requested

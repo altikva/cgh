@@ -55,6 +55,20 @@ GLOBAL_DIR = Path.home() / ".cgh"
 CLAUDE_HOME = Path.home() / ".claude"
 
 
+def _exists(path: str | Path) -> bool:
+    """Whether ``path`` exists, False when it cannot be told. ``Path.exists()``
+    raises PermissionError up to Python 3.13 when a parent directory denies the
+    lookup (EACCES from a mode, EPERM from a sandbox); a state dir cgh may not
+    look into is read as an absent one, so the defaults apply."""
+    return os.path.exists(path)
+
+
+def _is_dir(path: str | Path) -> bool:
+    """Whether ``path`` is a directory, False when it cannot be told (see
+    ``_exists``)."""
+    return os.path.isdir(path)
+
+
 def state_dir_for(project_root: str | Path) -> Path:
     """The per-repo state dir to read: ``.cgh/`` when it exists, else a legacy
     ``.codegraph/`` when it exists, else ``.cgh/`` (the default for a fresh
@@ -62,10 +76,10 @@ def state_dir_for(project_root: str | Path) -> Path:
     init/index/serve migrates it."""
     root = Path(project_root)
     primary = root / CGH_DIR
-    if primary.exists():
+    if _exists(primary):
         return primary
     legacy = root / LEGACY_CGH_DIR
-    if legacy.is_dir():
+    if _is_dir(legacy):
         return legacy
     return primary
 
@@ -81,10 +95,10 @@ def global_state_dir() -> Path:
     The legacy dir is resolved as ``GLOBAL_DIR``'s sibling (not a hardcoded
     home path) so a test that redirects ``GLOBAL_DIR`` stays isolated from any
     real ``~/.codegraph/`` on the machine."""
-    if GLOBAL_DIR.exists():
+    if _exists(GLOBAL_DIR):
         return GLOBAL_DIR
     legacy = GLOBAL_DIR.parent / LEGACY_CGH_DIR
-    if legacy.is_dir():
+    if _is_dir(legacy):
         return legacy
     return GLOBAL_DIR
 
@@ -246,7 +260,7 @@ def find_cgh_root(start: str | Path) -> Path | None:
     """
     p = Path(start).resolve()
     for d in [p, *p.parents]:
-        if (d / CGH_DIR).is_dir() or (d / LEGACY_CGH_DIR).is_dir():
+        if _is_dir(d / CGH_DIR) or _is_dir(d / LEGACY_CGH_DIR):
             return d
     return None
 
@@ -479,7 +493,7 @@ class CghConfig:
 
     @property
     def is_initialized(self) -> bool:
-        return self.cgh_dir.exists()
+        return _exists(self.cgh_dir)
 
     def resolved_knowledge_namespaces(self) -> list[str]:
         """The shared knowledge stores this repo reads by default: the
@@ -500,7 +514,7 @@ class CghConfig:
 
 def _read_toml(path: Path) -> dict:
     """Read a TOML file. Returns empty dict if missing or unreadable."""
-    if not path.exists() or tomllib is None:
+    if not _exists(path) or tomllib is None:
         return {}
     try:
         with open(path, "rb") as f:

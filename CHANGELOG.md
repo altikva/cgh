@@ -48,7 +48,10 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   met no rule at all, `enforce` included. The rules of each cgh repo the
   command aims at (`git -C`, `cd <dir> &&`, `gh --repo` of a declared
   sibling) now apply too, on top of the session's own, within the same 200 ms;
-  a repo that cannot be read is skipped. One rule stops matching: after a
+  a repo that cannot be read is skipped. For such a repo the hook names the
+  instruction by its id and never quotes its text, since a directory with a
+  `.cgh/` is not one the session chose; `cgh check --root <repo>` shows the
+  rule. One rule stops matching: after a
   literal `cd <dir> &&` or `git -C <dir>` that leaves the session's repo, an
   `on_branch=` (or bare-push `branch=`) rule of the session's repo no longer
   sees the session's branch, which was the wrong repo's; put the rule in the

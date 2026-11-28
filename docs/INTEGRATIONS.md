@@ -71,6 +71,12 @@ outside any repo does not load a repo's `.claude/settings.json`.
   to the session's own: aiming elsewhere never lifts a rule. The strictest
   answer wins, and each repo's `[hooks] check_action` sets its own mode, so
   `off` in the aimed repo only turns off the rules of that repo.
+- For an aimed repo the hook's message is written by cgh alone: the repo, the
+  id of the instruction, the verb, and the `cgh check "<command>" --root
+  <repo>` to run for the rule and its reason. The title, the rule line and
+  the reason stored there are never quoted, because the model reads what a
+  hook says as an instruction and any directory can carry a `.cgh/`. The
+  session's own repo keeps the full message of the table above.
 - A branch is read where the command runs. After a literal `cd <dir> &&` or
   `git -C <dir>` that leaves the session's repo, a rule of the session's repo
   on `on_branch`, or on the branch of a push without a refspec, no longer

@@ -275,10 +275,54 @@ def _decide_one(
         return
     advisory = chosen == "advise"
     kind = "advise" if advisory else "deny" if out["verdict"] == "refused" else "ask"
-    found.append(Decision(kind, _message(out, advisory, scope)))
+    message = (
+        _message(out, advisory)
+        if scope is None
+        else _aimed_message(out, advisory, scope)
+    )
+    found.append(Decision(kind, message))
 
 
-def _message(out: dict, advisory: bool, repo: Path | None = None) -> str:
+def _aimed_message(out: dict, advisory: bool, repo: Path) -> str:
+    """The message for a rule of a repository the command aims at. Every
+    word of it is written here: the title, the rule line and the reason are
+    free text of a store the session did not choose (any directory that
+    carries a `.cgh/` and that a command names), and what a hook says is read
+    by the model as an instruction. Only the entry id, as a number, the verb
+    cgh gave the action and the path the command named are passed on."""
+    rule = out["rule"]
+    refused = out["verdict"] == "refused"
+    try:
+        entry = f"#{int(rule['entry_id'])}"
+    except (TypeError, ValueError):
+        entry = "(no id)"
+    verb = next(
+        (
+            str(a.get("verb") or "")
+            for a in out.get("actions", [])
+            if a.get("verdict") == out["verdict"]
+            and a.get("rule_entry_id") == rule["entry_id"]
+        ),
+        "",
+    )
+    parts = [
+        f"[cgh check_action] Standing instruction {entry} of {repo} "
+        + ("refuses" if refused else "says to ask the user before")
+        + (f" `{verb}`" if verb else " this command")
+        + " in that repository.",
+        f'For the rule and its reason, run `cgh check "<the command>" --root {repo}`.',
+    ]
+    if advisory:
+        parts.append(
+            "The hook is advisory and does not block the command: "
+            + ("do not run it." if refused else "ask the user before running it.")
+        )
+    elif refused:
+        parts.append("Only the user changes that rule, by superseding the instruction.")
+    return " ".join(parts)
+
+
+def _message(out: dict, advisory: bool) -> str:
     rule = out["rule"]
     refused = out["verdict"] == "refused"
     segment = next(
@@ -293,8 +337,6 @@ def _message(out: dict, advisory: bool, repo: Path | None = None) -> str:
     head = (
         f"[cgh check_action] Standing instruction #{rule['entry_id']} "
         f"({rule['title']}) "
-        # Entry ids are per store: say whose, when it is not the session's.
-        + (f"of {repo} " if repo is not None else "")
         + ("refuses this command" if refused else "says to ask the user first")
         + f": `{rule['line']}`"
     )

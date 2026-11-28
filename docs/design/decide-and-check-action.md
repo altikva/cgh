@@ -513,6 +513,17 @@ that nothing is loosened on a guess:
   set on the line, the action is checked with the session's branch as
   before, and also by the aimed repository when the guess points into one.
 
+What the hook says about an aimed repository is fixed text. The output of a
+hook is read by the model with the weight of an instruction, and the store of
+an aimed repository is not one the session chose: a downloaded archive or a
+clone that tracks its `.cgh/` would otherwise speak through the hook as soon
+as a command named it. So for a store that is not the session's, the message
+carries the path the command named, the id of the instruction as a number,
+the verb cgh gave the action, and the `cgh check "<command>" --root <repo>`
+to run for the detail. The title, the rule line and the reason are never
+copied into it. The session's own store keeps the full message. Quoting the
+text of a repository the user declared as trusted is left open.
+
 Failures stay silent and stay local. Each repository is read on its own: a
 store that is missing, locked or corrupt, a config that cannot be read, an
 exception, adds no decision and removes none from the other repositories. The

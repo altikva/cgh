@@ -505,10 +505,13 @@ that nothing is loosened on a guess:
   checkout, and only inside a cgh root;
 - for the session's rules, the session's branch stops being used only when
   the action certainly runs elsewhere: a literal `git -C <dir>`, or a literal
-  `cd <dir>` that every later segment follows through `&&`. After `;`, `||`,
-  a pipe or a parenthesis, after `cd -` or `popd`, or with a path the shell
-  would expand, the action is checked with the session's branch as before,
-  and also by the aimed repository when the guess points into one.
+  `cd <dir>` that is certain to run (it opens the line, a `;` list or a
+  subshell, or follows through `&&`) and that every later segment follows
+  through `&&`. After `;`, `||`, a pipe or a parenthesis, after `cd -` or
+  `popd`, with a path the shell would expand, with a `cd` another process
+  runs (`env cd`, `/usr/bin/cd`), or once `GIT_DIR` or `GIT_WORK_TREE` is
+  set on the line, the action is checked with the session's branch as
+  before, and also by the aimed repository when the guess points into one.
 
 Failures stay silent and stay local. Each repository is read on its own: a
 store that is missing, locked or corrupt, a config that cannot be read, an

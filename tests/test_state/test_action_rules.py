@@ -890,12 +890,18 @@ def _where(action: str, cwd: Path) -> list[str | None]:
         ("sudo -u me git -C {there} push", "there"),
         # A guess, kept for the rules of the repo it points at.
         ("cd {there}; git push", "there"),
+        ("true || cd {there} && git push", "there"),
+        # Not the shell's own cd: the line did not move.
+        ("env cd {there} && git push", "here"),
+        ("/usr/bin/cd {there} && git push", "here"),
         ("( cd {there} ) ; git push", "there"),
         # Nowhere cgh can name.
         ('cd "$DIR" && git push', ""),
         ("cd - && git push", ""),
         ("cd {there} && popd && git push", ""),
         ("git -C $DIR push", ""),
+        ("GIT_DIR={here}/.git git -C {there} push", ""),
+        ("export GIT_DIR={here}/.git; cd {there} && git push", ""),
         ("git --git-dir={there}/.git push", ""),
     ],
 )
@@ -936,6 +942,9 @@ def test_a_certain_cd_elsewhere_drops_the_branch_of_the_caller(two):
         "cd {there} && make && git commit -m x",
         "(cd {there} && git commit -m x)",
         "git -C {there} commit -m x",
+        "make ; cd {there} && git commit -m x",
+        "cd /nowhere ; cd {there} && git commit -m x",
+        "X=1 cd {there} && git commit -m x",
     ):
         assert _commit_verdict(command, *two) == "no_rule", command
     assert _commit_verdict("cd sub && git commit -m x", *two) == "refused"
@@ -955,6 +964,28 @@ def test_a_certain_cd_elsewhere_drops_the_branch_of_the_caller(two):
         "cd {there}/$SUB && git commit -m x",
         "cd {there} && true ; git commit -m x",
         "bash -c 'cd {there}' && git commit -m x",
+        # A cd that may never run.
+        "true || cd {there} && git commit -m x",
+        "test -d /nowhere || cd {there} && git commit -m x",
+        "cd sub || cd {there} && git commit -m x",
+        "echo x | cd {there} && git commit -m x",
+        "true & cd {there} && git commit -m x",
+        "( true ) && true || cd {there} && git commit -m x",
+        # Behind a closing parenthesis cgh does not say what is certain.
+        "( cd /nowhere ) ; cd {there} && git commit -m x",
+        # A cd that another process runs: the shell stays where it was.
+        "env cd {there} && git commit -m x",
+        "/usr/bin/cd {there} && git commit -m x",
+        "nohup cd {there} && git commit -m x",
+        "sudo cd {there} && git commit -m x",
+        "xargs cd {there} && git commit -m x",
+        "command cd {there} && git commit -m x",
+        "pushd -n {there} && git commit -m x",
+        "pushd +1 && git commit -m x",
+        # git is pointed back at the caller's repository from elsewhere.
+        "cd {there} && GIT_DIR={here}/.git git commit -m x",
+        "cd {there} && env GIT_DIR={here}/.git GIT_WORK_TREE={here} git commit -m x",
+        "export GIT_DIR={here}/.git && cd {there} && git commit -m x",
     ],
 )
 def test_in_doubt_the_branch_of_the_caller_still_rules(two, command):
@@ -985,6 +1016,8 @@ def test_a_scope_judges_only_the_actions_that_run_in_it(two):
     assert verdict("git commit -m x") == "no_rule"
     assert verdict("git -C {there} status && git commit -m x") == "no_rule"
     assert verdict('cd "$DIR" && git commit -m x') == "no_rule"
+    # GIT_DIR may name any repository: this one's branch is not read for it.
+    assert verdict("GIT_DIR=/x/.git git -C {there} commit -m x") == "no_rule"
 
 
 def test_a_scope_that_cannot_be_resolved_judges_nothing(two, monkeypatch):

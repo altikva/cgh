@@ -75,8 +75,10 @@ outside any repo does not load a repo's `.claude/settings.json`.
   `git -C <dir>` that leaves the session's repo, a rule of the session's repo
   on `on_branch`, or on the branch of a push without a refspec, no longer
   matches: that branch was the wrong repo's. When the directory is not certain
-  (`cd` followed by `;`, `||` or a pipe, a subshell, `cd -`, `popd`, a path
-  with a variable), the session's branch is still the one checked.
+  (`cd` followed by `;`, `||` or a pipe, a `cd` that is itself behind `||`
+  or a pipe, a subshell, `cd -`, `popd`, a path with a variable, a `cd` run
+  by another process such as `env cd`, or `GIT_DIR` / `GIT_WORK_TREE` set on
+  the line), the session's branch is still the one checked.
 - A directory cgh cannot read (`cd "$DIR"`, `git --git-dir=...`) aims at no
   repo. Up to three aimed repos are read, inside the same 200 ms: one that is
   not reached in time, or whose store cannot be read, is skipped with a line

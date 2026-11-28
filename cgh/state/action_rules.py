@@ -206,6 +206,8 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or path.is_relative_to(root)
 
 
+# An assignment that points git at a repository whatever the directory is.
+_GIT_ENV_RE = re.compile(r"^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)=")
 # What a path must not hold for cgh to follow it: the shell would expand it.
 _UNREADABLE_PATH_RE = re.compile(r"[$`*?\[\]{}]")
 
@@ -248,14 +250,26 @@ class _Context:
         self.here: Path | None = None
         self.lost = False
         self.sure = True
+        # Whether the segment being read certainly runs once its line is
+        # reached: it opens the line, a `;` list or a subshell, or follows
+        # through `&&`. A `cd` behind `||` or a pipe may never run.
+        self.reached = True
+        # GIT_DIR or GIT_WORK_TREE was set somewhere on the line: the
+        # directory no longer says which repository a git command acts on.
+        self.git_env = False
 
     def moved(self) -> bool:
         return self.lost or self.here is not None
 
     def after(self, operator: str) -> None:
         """Note the operator that leads to the next segment."""
-        if operator != "&&" and self.moved():
+        if operator in ("", "&&"):
+            return
+        if self.moved():
             self.sure = False
+        # `;` and `(` start a list of their own; behind anything else
+        # (`||`, a pipe, `&`, a closing parenthesis) nothing is certain.
+        self.reached = operator in (";", "(")
 
     def _dir(self, subdir: str | None = None) -> Path | None:
         """The directory a command of this segment runs in, resolved; None
@@ -290,10 +304,15 @@ class _Context:
         if target is None:
             self.lost, self.sure = True, False
             return
-        # An absolute target does not depend on where the line stood before.
+        # An absolute target does not depend on where the line stood before,
+        # but the `cd` itself must be certain to run.
         absolute = Path(names[0]).expanduser().is_absolute()
-        self.sure = absolute or self.sure
+        self.sure = self.reached and (absolute or self.sure)
         self.here, self.lost = target, False
+
+    def unfollow(self) -> None:
+        """The line moved somewhere cgh does not follow."""
+        self.lost, self.sure = True, False
 
     def branch(self, subdir: str | None = None) -> str | None:
         if self.cwd is None:
@@ -308,9 +327,9 @@ class _Context:
         named = self._dir(subdir)
         if self.scope is not None:
             target = named
-            if target is None or not _inside(target, self.scope):
+            if self.git_env or target is None or not _inside(target, self.scope):
                 return None
-        elif named is not None and self.sure:
+        elif named is not None and self.sure and not self.git_env:
             target = named
             if not _inside(target, root):
                 return None
@@ -986,8 +1005,8 @@ def _place(head: str, argv: list[str], ctx: _Context) -> str:
     stands, unless the command names its own directory."""
     if head == "git":
         _i, subdir, foreign_repo = _git_globals(argv)
-        # A repository named by --git-dir is not one cgh places.
-        return "" if foreign_repo else ctx.place(subdir)
+        # A repository named by --git-dir or GIT_DIR is not one cgh places.
+        return "" if foreign_repo or ctx.git_env else ctx.place(subdir)
     if head == "gh" and ctx.repo_dir is not None:
         slug = _gh_repo(argv)
         try:
@@ -1019,6 +1038,10 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
         out.extend(_nested(script, ctx, depth))
     for operator, seg in segments:
         ctx.after(operator)
+        if any(_GIT_ENV_RE.match(tok) for tok in seg):
+            # Set for one command or exported for the rest of the line: from
+            # here on the directory is not trusted to name the repository.
+            ctx.git_env = True
         start = len(out)
         head, argv = _segment(seg, ctx, depth, compound, out)
         # Where this segment's own actions run; a nested script placed its.
@@ -1026,11 +1049,32 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
         for act in out[start:]:
             if act.where is None:
                 act.where = place
-        if head in ("cd", "pushd"):
-            ctx.chdir(argv[1:])
-        elif head == "popd":
-            ctx.lost, ctx.sure = True, False
+        _move(seg, ctx)
     return out
+
+
+def _move(seg: list[str], ctx: _Context) -> None:
+    """Follow a segment that moves the shell. Only the builtin itself does:
+    `cd` as the first word, after assignments at most. Behind a wrapper
+    (`env cd`, `sudo cd`) or as a path (`/usr/bin/cd`) another process
+    changes directory and the line stays where it was."""
+    words = list(seg)
+    while words and _ASSIGN_RE.match(words[0]):
+        words.pop(0)
+    if not words:
+        return
+    builtin, args = words[0], words[1:]
+    if builtin == "cd":
+        ctx.chdir(args)
+    elif builtin == "pushd":
+        # `pushd -n` does not move, `pushd +1` rotates a stack cgh does not
+        # keep: only a plain directory is followed.
+        if any(a.startswith(("-", "+")) for a in args):
+            ctx.unfollow()
+        else:
+            ctx.chdir(args)
+    elif builtin == "popd":
+        ctx.unfollow()
 
 
 def _segment(

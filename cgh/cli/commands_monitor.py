@@ -496,6 +496,11 @@ def _imports_coverage_line(imports: dict, partial: bool = False) -> str:
 
     An empty import graph used to be indistinguishable from a language with no
     resolver behind it. Now the language says which one it is.
+
+    When the scan classified the unresolved imports (`external` recorded), the
+    ratio is over the internal ones only, and only an internal import left
+    unresolved is highlighted: a repo whose scripts import nothing but the
+    standard library and third-party packages has nothing to resolve.
     """
     from cgh.imports.resolver import RESOLVABLE_LANGS
 
@@ -508,6 +513,20 @@ def _imports_coverage_line(imports: dict, partial: bool = False) -> str:
         resolved = counts.get("resolved", 0)
         if lang not in RESOLVABLE_LANGS:
             parts.append(f"[dim]{lang} {seen:,} seen, no resolver[/dim]")
+        elif "external" in counts:
+            external = counts["external"]
+            internal = max(seen - external, 0)
+            if not internal:
+                parts.append(f"[dim]{lang} {external:,} external, none internal[/dim]")
+            elif not resolved:
+                parts.append(
+                    f"[yellow]{lang} 0/{internal:,} internal[/yellow], "
+                    f"{external:,} external"
+                )
+            else:
+                parts.append(
+                    f"{lang} {resolved:,}/{internal:,} internal, {external:,} external"
+                )
         elif seen and not resolved:
             parts.append(f"[yellow]{lang} 0/{seen:,}[/yellow]")
         else:

@@ -546,6 +546,12 @@ def _other_repo(tmp_path, name: str = "other"):
         "cd {repo} && uv run pytest -q && git push origin develop",
         "pushd {repo} && git push origin develop",
         "bash -c 'cd {repo} && git push origin develop'",
+        "command cd {repo} && git push origin develop",
+        "builtin cd {repo} && git push origin develop",
+        # A word shaped like an assignment does not disarm the aimed repo.
+        "echo GIT_DIR=1 ; git -C {repo} push origin develop",
+        "git -C {repo} push origin develop GIT_DIR=x",
+        "GIT_WORK_TREE=/x git -C {repo} push origin develop",
     ],
 )
 def test_the_rules_of_the_aimed_repo_apply_from_outside_any_repo(

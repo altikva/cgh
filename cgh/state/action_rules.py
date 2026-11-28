@@ -254,8 +254,10 @@ class _Context:
         # reached: it opens the line, a `;` list or a subshell, or follows
         # through `&&`. A `cd` behind `||` or a pipe may never run.
         self.reached = True
-        # GIT_DIR or GIT_WORK_TREE was set somewhere on the line: the
-        # directory no longer says which repository a git command acts on.
+        # GIT_DIR or GIT_WORK_TREE appears somewhere on the line: the
+        # directory may no longer say which repository a git command acts
+        # on. Like any doubt, this only keeps the caller's branch in play;
+        # it never takes an action away from the repository it points at.
         self.git_env = False
 
     def moved(self) -> bool:
@@ -327,7 +329,7 @@ class _Context:
         named = self._dir(subdir)
         if self.scope is not None:
             target = named
-            if self.git_env or target is None or not _inside(target, self.scope):
+            if target is None or not _inside(target, self.scope):
                 return None
         elif named is not None and self.sure and not self.git_env:
             target = named
@@ -1005,8 +1007,8 @@ def _place(head: str, argv: list[str], ctx: _Context) -> str:
     stands, unless the command names its own directory."""
     if head == "git":
         _i, subdir, foreign_repo = _git_globals(argv)
-        # A repository named by --git-dir or GIT_DIR is not one cgh places.
-        return "" if foreign_repo or ctx.git_env else ctx.place(subdir)
+        # A repository named by --git-dir is not one cgh places.
+        return "" if foreign_repo else ctx.place(subdir)
     if head == "gh" and ctx.repo_dir is not None:
         slug = _gh_repo(argv)
         try:
@@ -1039,8 +1041,9 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
     for operator, seg in segments:
         ctx.after(operator)
         if any(_GIT_ENV_RE.match(tok) for tok in seg):
-            # Set for one command or exported for the rest of the line: from
-            # here on the directory is not trusted to name the repository.
+            # Set for one command or exported for the rest of the line. Any
+            # word of that shape counts: telling an assignment from an
+            # argument is not worth a wrong guess here.
             ctx.git_env = True
         start = len(out)
         head, argv = _segment(seg, ctx, depth, compound, out)
@@ -1057,13 +1060,31 @@ def _move(seg: list[str], ctx: _Context) -> None:
     """Follow a segment that moves the shell. Only the builtin itself does:
     `cd` as the first word, after assignments at most. Behind a wrapper
     (`env cd`, `sudo cd`) or as a path (`/usr/bin/cd`) another process
-    changes directory and the line stays where it was."""
+    changes directory and the line stays where it was. `command cd`,
+    `builtin cd` and `time cd` do move the shell: they are followed as a
+    guess, so the repository they point at judges what comes next while the
+    caller's branch stays in play."""
     words = list(seg)
     while words and _ASSIGN_RE.match(words[0]):
         words.pop(0)
+    prefixed = False
+    while words and words[0] in ("command", "builtin", "time"):
+        prefixed = True
+        words.pop(0)
+        while words and words[0].startswith("-"):
+            words.pop(0)
     if not words:
         return
     builtin, args = words[0], words[1:]
+    if prefixed:
+        if builtin in ("cd", "pushd") and not any(
+            a.startswith(("-", "+")) for a in args
+        ):
+            ctx.chdir(args)
+            ctx.sure = False
+        elif builtin in ("cd", "pushd", "popd"):
+            ctx.unfollow()
+        return
     if builtin == "cd":
         ctx.chdir(args)
     elif builtin == "pushd":

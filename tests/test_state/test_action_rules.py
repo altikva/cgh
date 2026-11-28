@@ -900,8 +900,13 @@ def _where(action: str, cwd: Path) -> list[str | None]:
         ("cd - && git push", ""),
         ("cd {there} && popd && git push", ""),
         ("git -C $DIR push", ""),
-        ("GIT_DIR={here}/.git git -C {there} push", ""),
-        ("export GIT_DIR={here}/.git; cd {there} && git push", ""),
+        ("command cd {there} && git push", "there"),
+        ("builtin cd {there} && git push", "there"),
+        ("time -p cd {there} && git push", "there"),
+        # GIT_DIR on the line changes what is certain, not where it points.
+        ("GIT_DIR={here}/.git git -C {there} push", "there"),
+        ("export GIT_DIR={here}/.git; cd {there} && git push", "there"),
+        ("command cd - && git push", ""),
         ("git --git-dir={there}/.git push", ""),
     ],
 )
@@ -980,6 +985,9 @@ def test_a_certain_cd_elsewhere_drops_the_branch_of_the_caller(two):
         "sudo cd {there} && git commit -m x",
         "xargs cd {there} && git commit -m x",
         "command cd {there} && git commit -m x",
+        "builtin cd {there} && git commit -m x",
+        "time cd {there} && git commit -m x",
+        "command -p cd {there} && git commit -m x",
         "pushd -n {there} && git commit -m x",
         "pushd +1 && git commit -m x",
         # git is pointed back at the caller's repository from elsewhere.
@@ -1016,8 +1024,10 @@ def test_a_scope_judges_only_the_actions_that_run_in_it(two):
     assert verdict("git commit -m x") == "no_rule"
     assert verdict("git -C {there} status && git commit -m x") == "no_rule"
     assert verdict('cd "$DIR" && git commit -m x') == "no_rule"
-    # GIT_DIR may name any repository: this one's branch is not read for it.
-    assert verdict("GIT_DIR=/x/.git git -C {there} commit -m x") == "no_rule"
+    # A word shaped like GIT_DIR=... does not take the action out of here.
+    assert verdict("GIT_DIR=/x/.git git -C {there} commit -m x") == "refused"
+    assert verdict("echo GIT_DIR=1 ; git -C {there} commit -m x") == "refused"
+    assert verdict("command cd {there} && git commit -m x") == "refused"
 
 
 def test_a_scope_that_cannot_be_resolved_judges_nothing(two, monkeypatch):

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -1577,7 +1578,9 @@ def knowledge_search_ro(
     With with_provenance, each hit also carries origin_repo, origin_id and
     namespace when the store has those columns, for cross-store de-duplication;
     a store predating them (an old child) silently reads back without."""
-    if not db_path.exists():
+    # os.path.exists, not Path.exists: a store under a directory that denies
+    # the lookup reads as absent on every Python version.
+    if not os.path.exists(db_path):
         return []
     from cgh.core.utils import ro_sqlite_uri
 
@@ -2259,7 +2262,9 @@ def knowledge_symptom_search_ro(
     from cgh.state.knowledge_outcomes import DEFAULT_HALF_LIFE_DAYS
 
     db_path = Path(db_path)
-    if not db_path.exists():
+    # os.path.exists, not Path.exists: a store under a directory that denies
+    # the lookup reads as absent on every Python version.
+    if not os.path.exists(db_path):
         return []
     from cgh.core.utils import ro_sqlite_uri
 

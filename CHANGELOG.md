@@ -53,6 +53,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   integer `entry_id`, although search and list answers show ids as integers, so
   an id copied from a result was rejected. They now accept `1371` and `"1371"`
   alike; a value that is not a number answers an error saying what to pass.
+- **An unreadable `~/.cgh/` no longer crashes the CLI on Python 3.11 to 3.13.**
+  When cgh was not allowed to look into its global directory (a mode, or a
+  sandbox that denies it), loading the config raised `PermissionError` on
+  those versions, while Python 3.14 carried on. On every version it is now
+  read as absent: default settings, no siblings, no shared knowledge hits, and
+  no message. The same holds for a repo's `.cgh/`, which then reads as not
+  initialized.
 
 ## [0.21.0] - 2026-11-19
 

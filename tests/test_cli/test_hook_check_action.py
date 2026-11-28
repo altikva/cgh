@@ -9,6 +9,9 @@
 #              that say nothing, and the failures: a locked store, a slow git,
 #              a dead owner, a corrupt store, a matcher that raises, a missed
 #              deadline. A failure never blocks: exit 0 and an empty stdout.
+#              Then the repository a command aims at from elsewhere
+#              (`git -C`, `cd <dir> &&`, `gh --repo`): its rules apply on top
+#              of the session's, and its failures take nothing away.
 
 from __future__ import annotations
 
@@ -515,3 +518,381 @@ def test_the_git_budget_reaches_the_branch_read(monkeypatch, capsys, repo):
     out, _, _ = _hook(monkeypatch, capsys, repo, "git commit -m x")
     assert out["permissionDecision"] == "deny"
     assert seen == [hc.GIT_TIMEOUT_S]
+
+
+# --- the repository the command aims at ----------------------------------------
+# The session runs in `elsewhere`, a plain directory, or in another cgh repo;
+# the command names the checkout it acts on.
+
+
+@pytest.fixture
+def elsewhere(tmp_path):
+    path = (tmp_path / "elsewhere").resolve()
+    path.mkdir()
+    return path
+
+
+def _other_repo(tmp_path, name: str = "other"):
+    root = (tmp_path / name).resolve()
+    (root / ".cgh").mkdir(parents=True)
+    return root
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C {repo} push origin develop",
+        "cd {repo} && git push origin develop",
+        "cd {repo} && uv run pytest -q && git push origin develop",
+        "pushd {repo} && git push origin develop",
+        "bash -c 'cd {repo} && git push origin develop'",
+    ],
+)
+def test_the_rules_of_the_aimed_repo_apply_from_outside_any_repo(
+    monkeypatch, capsys, repo, elsewhere, command
+):
+    entry = _rules(repo)
+    _enforce(monkeypatch)
+    out, _, err = _hook(monkeypatch, capsys, elsewhere, command.format(repo=repo))
+    assert out["permissionDecision"] == "deny"
+    reason = out["permissionDecisionReason"]
+    assert f"#{entry}" in reason and f"of {repo} " in reason
+    assert "cgh-rule: refuse git.push branch=main|master|develop" in reason
+    assert err == ""
+
+
+def test_the_branch_of_the_aimed_repo_is_read_there(
+    monkeypatch, capsys, repo, elsewhere
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+    asked: list[str] = []
+
+    def reader(path, timeout=0.0):
+        asked.append(str(path))
+        return "develop"
+
+    monkeypatch.setattr(ar, "current_branch", reader)
+    # No refspec: the branch pushed is the one checked out in the aimed repo.
+    out, _, _ = _hook(monkeypatch, capsys, elsewhere, f"git -C {repo} push")
+    assert out["permissionDecision"] == "deny"
+    assert asked == [str(repo)]
+
+
+def test_an_aimed_repo_without_rule_or_store_never_blocks(
+    monkeypatch, capsys, repo, elsewhere
+):
+    _enforce(monkeypatch)
+    command = f"git -C {repo} push origin develop"
+    _, stdout, err = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == "" and err == ""
+    assert not (repo / ".cgh" / "call_log.db").exists()  # and none is created
+    _rules(repo, body="Never push to an integration branch.")
+    _, stdout, err = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == "" and err == ""
+
+
+def test_a_dead_owner_of_the_aimed_repo_changes_nothing(
+    monkeypatch, capsys, repo, elsewhere
+):
+    _enforce(monkeypatch)
+    state = repo / ".cgh"
+    (state / "owner.pid").write_text("999999\n")
+    (state / "server.port").write_text("1\n")
+    (state / "owner.sock").write_text("")
+    command = f"git -C {repo} push origin develop"
+    started = time.monotonic()
+    _, stdout, err = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == "" and err == ""  # no rule: nothing, owner or not
+    _rules(repo)
+    out, _, err = _hook(monkeypatch, capsys, elsewhere, command)
+    assert time.monotonic() - started < 1.0
+    assert out["permissionDecision"] == "deny" and err == ""
+
+
+def test_only_the_actions_that_run_in_the_aimed_repo_are_judged_by_it(
+    monkeypatch, capsys, repo, elsewhere
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+    # The push runs in `elsewhere`: the rules of `repo` are not about it.
+    command = f"git -C {repo} status && git push origin develop"
+    _, stdout, _ = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "$WORKTREE" && git push origin develop',
+        "cd - && git push origin develop",
+        "cd {repo} && popd && git push origin develop",
+        "git --git-dir={repo}/.git push origin develop",
+    ],
+)
+def test_a_directory_cgh_cannot_follow_aims_at_no_repo(
+    monkeypatch, capsys, repo, elsewhere, command
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+    _, stdout, _ = _hook(monkeypatch, capsys, elsewhere, command.format(repo=repo))
+    assert stdout == ""
+
+
+def test_outside_a_cgh_repo_only_the_check_speaks(monkeypatch, capsys, repo, elsewhere):
+    _rules(repo)
+    _enforce(monkeypatch)
+    # A search hint is for a session inside an indexed repo.
+    _, stdout, _ = _hook(monkeypatch, capsys, elsewhere, "git grep some_name")
+    assert stdout == ""
+    out, _, _ = _hook(
+        monkeypatch, capsys, elsewhere, f"cd {repo} && git grep x; {_PUSH}"
+    )
+    assert out["permissionDecision"] == "deny"
+    assert "additionalContext" not in out
+
+
+def test_the_aimed_repo_adds_to_the_rules_of_the_session(
+    monkeypatch, capsys, repo, tmp_path
+):
+    other = _other_repo(tmp_path)
+    _rules(repo)  # the session's repo refuses a push to develop
+    _enforce(monkeypatch)
+    # Aiming at a repo without rules does not lift the session's own.
+    out, _, _ = _hook(monkeypatch, capsys, repo, f"git -C {other} push origin develop")
+    assert out["permissionDecision"] == "deny"
+    assert " of " not in out["permissionDecisionReason"].split("refuses")[0]
+    # And the aimed repo's rules bind a session whose own repo has none.
+    out, _, _ = _hook(monkeypatch, capsys, other, f"cd {repo} && {_PUSH}")
+    assert out["permissionDecision"] == "deny"
+    assert f"of {repo} " in out["permissionDecisionReason"]
+
+
+def test_the_strictest_repo_decides(monkeypatch, capsys, repo, tmp_path):
+    other = _other_repo(tmp_path)
+    _rules(repo)
+    _rules(other)
+    (repo / ".cgh" / "config.toml").write_text('[hooks]\ncheck_action = "advise"\n')
+    (other / ".cgh" / "config.toml").write_text('[hooks]\ncheck_action = "enforce"\n')
+    out, _, _ = _hook(monkeypatch, capsys, repo, f"git -C {other} push origin develop")
+    assert out["permissionDecision"] == "deny"
+    assert f"of {other} " in out["permissionDecisionReason"]
+
+
+def test_an_aimed_repo_turned_off_only_disarms_its_own_rules(
+    monkeypatch, capsys, repo, tmp_path, elsewhere
+):
+    other = _other_repo(tmp_path)
+    _rules(repo)
+    _rules(other)
+    (repo / ".cgh" / "config.toml").write_text('[hooks]\ncheck_action = "enforce"\n')
+    (other / ".cgh" / "config.toml").write_text('[hooks]\ncheck_action = "off"\n')
+    command = f"git -C {other} push origin develop"
+    out, _, _ = _hook(monkeypatch, capsys, repo, command)
+    assert out["permissionDecision"] == "deny"  # the session's rules still rule
+    assert f"of {other}" not in out["permissionDecisionReason"]
+    _, stdout, _ = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == ""  # its own rules are off
+
+
+# A failure of the aimed repo adds no decision and removes none.
+
+
+def _break_store(root, how: str):
+    """Make the store of ``root`` unreadable; returns what to close after."""
+    db = root / ".cgh" / "call_log.db"
+    if how == "corrupt":
+        for leftover in ("call_log.db-wal", "call_log.db-shm"):
+            (root / ".cgh" / leftover).unlink(missing_ok=True)
+        db.write_bytes(b"not a database, " * 64)
+        return None
+    holder = sqlite3.connect(str(db))
+    holder.execute("PRAGMA locking_mode=EXCLUSIVE")
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("UPDATE knowledge SET title = title")
+    return holder
+
+
+@pytest.mark.parametrize("how", ["corrupt", "locked"])
+def test_failure_of_the_aimed_store_never_blocks_and_leaves_the_session_rules(
+    monkeypatch, capsys, repo, tmp_path, elsewhere, how
+):
+    other = _other_repo(tmp_path)
+    _rules(repo)
+    _rules(other)
+    _enforce(monkeypatch)
+    holder = _break_store(other, how)
+    try:
+        command = f"git -C {other} push origin develop"
+        # From outside any repo: the only rules are unreadable, so nothing.
+        err = _silent_within(monkeypatch, capsys, elsewhere, command)
+        assert "store" in err and f"rules of {other} not applied" in err
+        # From the session's repo: its own decision is what it was.
+        alone, _, _ = _hook(monkeypatch, capsys, repo, _PUSH)
+        started = time.monotonic()
+        out, _, err = _hook(monkeypatch, capsys, repo, command)
+        assert time.monotonic() - started < 1.0
+        assert out["permissionDecision"] == "deny"
+        assert (
+            out["permissionDecisionReason"].split(":")[0]
+            == (alone["permissionDecisionReason"].split(":")[0])
+        )
+        assert f"rules of {other} not applied" in err
+    finally:
+        if holder is not None:
+            holder.rollback()
+            holder.close()
+
+
+def test_failure_of_the_session_store_leaves_the_aimed_repo_rules(
+    monkeypatch, capsys, repo, tmp_path
+):
+    other = _other_repo(tmp_path)
+    _rules(repo)
+    _rules(other)
+    _enforce(monkeypatch)
+    _break_store(repo, "corrupt")
+    out, _, err = _hook(
+        monkeypatch, capsys, repo, f"git -C {other} push origin develop"
+    )
+    assert out["permissionDecision"] == "deny"
+    assert f"of {other} " in out["permissionDecisionReason"]
+    assert "skipped" in err and "store" in err
+
+
+def test_failure_looking_for_aimed_repos_leaves_the_session_decision(
+    monkeypatch, capsys, repo
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("cannot place the actions")
+
+    monkeypatch.setattr(hc, "_aimed_roots", boom)
+    out, _, err = _hook(monkeypatch, capsys, repo, _PUSH)
+    assert out["permissionDecision"] == "deny"
+    assert "cannot place the actions" in err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake git is a shell script")
+def test_failure_a_slow_git_in_the_aimed_repo(
+    monkeypatch, capsys, repo, elsewhere, tmp_path
+):
+    _rules(repo, body=_ON_BRANCH)
+    _enforce(monkeypatch)
+    command = f"git -C {repo} commit -m x"
+    _fake_git(tmp_path, monkeypatch, "echo develop")
+    out, _, _ = _hook(monkeypatch, capsys, elsewhere, command)
+    assert out["permissionDecision"] == "deny"  # a git that answers: denied
+    _fake_git(tmp_path, monkeypatch, "exec sleep 5")
+    _silent_within(monkeypatch, capsys, elsewhere, command)
+
+
+# One budget for the whole check, however many repositories are aimed at.
+
+
+def test_the_budget_covers_every_aimed_repo(monkeypatch, capsys, elsewhere, tmp_path):
+    repos = [_other_repo(tmp_path, f"r{i}") for i in range(3)]
+    for root in repos:
+        _rules(root)
+    _enforce(monkeypatch)
+    real = hc._verdict
+    seen: list[tuple[str, float]] = []
+
+    def slow(command, root, cwd, session_id, scope=None, git_timeout=0.0):
+        seen.append((str(root), git_timeout))
+        time.sleep(0.12)
+        return real(command, root, cwd, session_id, scope, git_timeout)
+
+    monkeypatch.setattr(hc, "_verdict", slow)
+    command = " && ".join(f"git -C {root} push origin develop" for root in repos)
+    started = time.monotonic()
+    out, _, err = _hook(monkeypatch, capsys, elsewhere, command)
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.5  # not three times the cost of one
+    # What was read in time still rules; the rest is said to be skipped.
+    assert out["permissionDecision"] == "deny"
+    assert f"of {repos[0]} " in out["permissionDecisionReason"]
+    assert "200 ms" in err
+    assert [root for root, _ in seen][:1] == [str(repos[0])]
+    assert len(seen) < 3
+    # The git call of a later repo gets what is left, never a fresh 100 ms.
+    assert all(timeout <= hc.GIT_TIMEOUT_S for _, timeout in seen)
+    assert seen[-1][1] < hc.GIT_TIMEOUT_S
+
+
+def test_at_most_a_few_aimed_repos_are_read(monkeypatch, capsys, elsewhere, tmp_path):
+    repos = [_other_repo(tmp_path, f"r{i}") for i in range(hc.MAX_AIMED_REPOS + 2)]
+    _enforce(monkeypatch)
+    read: list[str] = []
+    monkeypatch.setattr(
+        hc, "_verdict", lambda _c, root, *_a, **_k: read.append(str(root)) or None
+    )
+    command = "; ".join(f"git -C {root} status" for root in repos)
+    _, stdout, _ = _hook(monkeypatch, capsys, elsewhere, command)
+    assert stdout == ""
+    assert read == [str(root) for root in repos[: hc.MAX_AIMED_REPOS]]
+
+
+# gh --repo: a checkout the user declared, found by its remote.
+
+
+def _declare_sibling(tmp_path, checkout, url: str) -> None:
+    (checkout / ".git").mkdir()
+    (checkout / ".git" / "config").write_text(
+        f'[remote "origin"]\n\turl = {url}\n\tfetch = +refs/heads/*\n'
+    )
+    home = tmp_path / "home" / ".cgh"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.toml").write_text(f'[cgh]\nsiblings = ["{checkout}"]\n')
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.com:acme/widgets.git",
+        "https://github.com/Acme/widgets",
+        "ssh://git@github.com/acme/widgets.git",
+    ],
+)
+def test_gh_repo_aims_at_a_declared_checkout(
+    monkeypatch, capsys, repo, elsewhere, tmp_path, url
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+    _declare_sibling(tmp_path, repo, url)
+    out, _, _ = _hook(
+        monkeypatch, capsys, elsewhere, "gh pr merge 12 --merge --repo acme/widgets"
+    )
+    assert out["permissionDecision"] == "deny"
+    assert f"of {repo} " in out["permissionDecisionReason"]
+    out, _, _ = _hook(monkeypatch, capsys, elsewhere, "gh pr merge 12 -R acme/widgets")
+    assert out["permissionDecision"] == "deny"
+
+
+def test_gh_repo_of_an_undeclared_checkout_aims_at_nothing(
+    monkeypatch, capsys, repo, elsewhere, tmp_path
+):
+    _rules(repo)
+    _enforce(monkeypatch)
+    _declare_sibling(tmp_path, repo, "git@github.com:acme/widgets.git")
+    for slug in ("acme/gadgets", "other/widgets", "widgets"):
+        _, stdout, _ = _hook(
+            monkeypatch, capsys, elsewhere, f"gh pr merge 12 --repo {slug}"
+        )
+        assert stdout == ""
+
+
+def test_gh_repo_reads_the_remote_of_a_linked_worktree(tmp_path):
+    main = tmp_path / "main"
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    (main / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = git@github.com:acme/widgets.git\n'
+    )
+    (main / ".git" / "worktrees" / "wt" / "commondir").write_text("../..\n")
+    linked = tmp_path / "wt"
+    linked.mkdir()
+    (linked / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    assert hc._git_config_of(linked) == (main / ".git" / "config").resolve()
+    assert hc._git_config_of(tmp_path / "missing") is None

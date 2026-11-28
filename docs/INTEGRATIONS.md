@@ -57,6 +57,31 @@ command runs as if there were no check, and one line on the hook's stderr
 that is only slow drops the branch from what the rules see, so a rule that
 needs the branch does not match, and the others still apply.
 
+**A command that acts on another checkout.** The rules checked are those of
+the repo the session runs in, plus those of each other cgh repo the command
+aims at: `git -C <dir> ...`, `cd <dir> && ...` (or `pushd`), and `gh --repo
+owner/name` when an absolute `[cgh] siblings` entry of `~/.cgh/config.toml`
+has that repository as a remote. So a session started in a directory that is
+not a repo is still held by the rules of the worktree it pushes from. For
+that, the hook has to run there: put the same `PreToolUse` entry on `Bash`
+(`cgh _hook_precheck_bash`) in `~/.claude/settings.json`, since a session
+outside any repo does not load a repo's `.claude/settings.json`.
+
+- The aimed repo's rules judge only the actions that run in it, and are added
+  to the session's own: aiming elsewhere never lifts a rule. The strictest
+  answer wins, and each repo's `[hooks] check_action` sets its own mode, so
+  `off` in the aimed repo only turns off the rules of that repo.
+- A branch is read where the command runs. After a literal `cd <dir> &&` or
+  `git -C <dir>` that leaves the session's repo, a rule of the session's repo
+  on `on_branch`, or on the branch of a push without a refspec, no longer
+  matches: that branch was the wrong repo's. When the directory is not certain
+  (`cd` followed by `;`, `||` or a pipe, a subshell, `cd -`, `popd`, a path
+  with a variable), the session's branch is still the one checked.
+- A directory cgh cannot read (`cd "$DIR"`, `git --git-dir=...`) aims at no
+  repo. Up to three aimed repos are read, inside the same 200 ms: one that is
+  not reached in time, or whose store cannot be read, is skipped with a line
+  on stderr, and what the other repos said stands.
+
 **What cgh adds to every session.** cgh writes one file Claude Code loads at
 session start, `.claude/rules/cgh-usage.md` (about 2.3 KB; older versions
 wrote 6 to 10 KB, and before the rules directory a block inside `CLAUDE.md`).

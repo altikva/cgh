@@ -53,6 +53,13 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   integer `entry_id`, although search and list answers show ids as integers, so
   an id copied from a result was rejected. They now accept `1371` and `"1371"`
   alike; a value that is not a number answers an error saying what to pass.
+- **`cgh status` no longer flags Python imports that have nothing to resolve.**
+  A repo whose scripts import only the standard library and third-party
+  packages showed `python 0/30` in yellow, which read as a broken index. The
+  Imports line now counts those apart (`python 46/52 internal, 165 external`)
+  and is highlighted only when the repo's own imports exist and none resolved.
+  `cgh status --json` and `scan_status` carry the count as `external`, after
+  the next full `cgh index`. Other languages are unchanged.
 
 ## [0.21.0] - 2026-11-19
 

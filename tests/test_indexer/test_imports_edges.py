@@ -535,3 +535,100 @@ class TestImportCoverage:
             "a src/ layout resolved nothing: every absolute import was anchored "
             "on the repo root alone"
         )
+
+
+class TestExternalImportsAreToldApart:
+    """Unresolved does not mean broken: most unresolved Python imports are the
+    standard library and third-party packages. The scan says how many, so only
+    an import of the repo's own code that found no file reads as a problem."""
+
+    def _index(self, root):
+        import subprocess
+
+        from cgh.indexer import index_repo
+        from cgh.state.scan_meta import scan_status
+
+        for args in (["init", "-q"], ["add", "-A"]):
+            subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+        index_repo(str(root))
+        return scan_status(root)["imports"]["python"]
+
+    def test_scripts_importing_only_outside_the_repo(self, tmp_path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "check.py").write_text(
+            "import json\nimport os\nfrom pathlib import Path\nimport yaml\n"
+            "from google.cloud import storage\n"
+        )
+        (tmp_path / "main.tf").write_text('resource "null_resource" "a" {}\n')
+
+        python = self._index(tmp_path)
+
+        assert python == {"seen": 5, "resolved": 0, "external": 5}
+
+    def test_internal_imports_that_find_no_file_are_not_external(self, tmp_path):
+        lib = tmp_path / "scripts" / "lib"
+        lib.mkdir(parents=True)
+        (lib / "helpers.py").write_text("def h():\n    return 1\n")
+        tools = tmp_path / "tools"
+        tools.mkdir()
+        # `helpers` is only importable through the sys.path edit: no layout
+        # rule finds it, and it is still this repo's code.
+        (tools / "run.py").write_text(
+            "import sys\nsys.path.insert(0, 'scripts/lib')\nimport helpers\n"
+        )
+        (tmp_path / "scripts" / "a.py").write_text(
+            "import json\nfrom scripts.lib.missing import x\nfrom .nothere import y\n"
+        )
+
+        python = self._index(tmp_path)
+
+        assert python["seen"] == 5
+        assert python["resolved"] == 0
+        assert python["external"] == 2  # sys and json
+
+    def test_resolved_and_external_add_up_when_nothing_is_broken(self, tmp_path):
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text("def a():\n    return 1\n")
+        (pkg / "b.py").write_text("from pkg.a import a\nimport fastapi\n")
+
+        python = self._index(tmp_path)
+
+        assert python == {"seen": 2, "resolved": 1, "external": 1}
+
+
+class TestPythonImportClassification:
+    def test_local_names_are_modules_and_their_directories(self, tmp_path):
+        from cgh.imports.resolver import python_local_names
+
+        paths = [
+            tmp_path / "scripts" / "lib" / "helpers.py",
+            tmp_path / "pkg" / "__init__.py",
+            tmp_path / "docs" / "guide.md",
+            tmp_path.parent / "elsewhere" / "other.py",
+        ]
+
+        names = python_local_names(paths, tmp_path)
+
+        assert names == {"scripts", "lib", "helpers", "pkg"}
+
+    def test_a_relative_import_is_never_external(self):
+        from cgh.imports.resolver import python_import_is_external
+
+        assert python_import_is_external(".nothere", frozenset()) is False
+        assert python_import_is_external("..", frozenset()) is False
+
+    def test_the_standard_library_wins_over_a_local_file_of_the_same_name(self):
+        from cgh.imports.resolver import python_import_is_external
+
+        assert python_import_is_external("logging.handlers", frozenset({"logging"}))
+
+    def test_a_name_of_the_repo_is_internal_and_any_other_is_external(self):
+        from cgh.imports.resolver import python_import_is_external
+
+        local = frozenset({"scripts", "helpers"})
+        assert python_import_is_external("scripts.lib.missing", local) is False
+        assert python_import_is_external("helpers", local) is False
+        assert python_import_is_external("requests.adapters", local) is True

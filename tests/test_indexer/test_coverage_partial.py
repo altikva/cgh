@@ -85,3 +85,41 @@ class TestStatusLine:
 
         assert "partial" not in line
         assert "46/217" in line
+
+
+class TestExternalImportsDoNotAlert:
+    """A repo whose scripts import only the standard library and third-party
+    packages has nothing to resolve: 0 resolved is the right answer there, and
+    highlighting it reads as a broken index."""
+
+    def test_only_external_imports_is_not_highlighted(self):
+        line = _imports_coverage_line(
+            {"python": {"seen": 30, "resolved": 0, "external": 30}}
+        )
+
+        assert "30 external, none internal" in line
+        assert "yellow" not in line
+        assert "0/30" not in line
+
+    def test_internal_imports_all_unresolved_are_highlighted(self):
+        line = _imports_coverage_line(
+            {"python": {"seen": 7, "resolved": 0, "external": 3}}
+        )
+
+        assert "[yellow]python 0/4 internal[/yellow]" in line
+        assert "3 external" in line
+
+    def test_the_ratio_is_over_internal_imports_only(self):
+        line = _imports_coverage_line(
+            {"python": {"seen": 217, "resolved": 46, "external": 165}}
+        )
+
+        assert "python 46/52 internal, 165 external" in line
+        assert "yellow" not in line
+
+    def test_a_measurement_taken_before_the_classification_reads_as_before(self):
+        """An index written by an older cgh has no `external` count: nothing
+        says which unresolved imports are internal, so the old alert stays."""
+        line = _imports_coverage_line({"python": {"seen": 30, "resolved": 0}})
+
+        assert "[yellow]python 0/30[/yellow]" in line

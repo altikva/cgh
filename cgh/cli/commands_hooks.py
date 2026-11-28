@@ -336,7 +336,8 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     Before the hints, the command goes through check_action (see
     hook_check): a rule line of a standing instruction that refuses it, or
     says to ask, is the one thing that can deny the command or prompt the
-    user, and only in enforce mode. A check that fails says nothing.
+    user, and only in enforce mode. A check that fails says nothing. That
+    check also runs outside a cgh repo, for the repo the command aims at.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -347,10 +348,10 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
     if not isinstance(command, str) or not command.strip():
         sys.exit(0)
     cwd = payload.get("cwd") or os.getcwd()
-    if not _in_cgh_repo(Path(cwd)):
-        sys.exit(0)
 
     # First, before any hint: what the user's rules say about this command.
+    # Asked even outside a cgh repo: the command may aim at one (`git -C
+    # <checkout>`, `cd <checkout> &&`), whose rules then apply.
     verdict = hook_check.decision(payload, command, Path(cwd))
     if verdict is not None:
         if verdict.kind == "deny":
@@ -359,6 +360,9 @@ def cmd_hook_precheck_bash(args: argparse.Namespace) -> None:
             _emit_ask(verdict.message)
         else:
             _emit_nudge(verdict.message)
+
+    if not _in_cgh_repo(Path(cwd)):
+        sys.exit(0)
 
     if hook_answers.enabled(Path(cwd)):
         answer = _shell_answer(command, Path(cwd))

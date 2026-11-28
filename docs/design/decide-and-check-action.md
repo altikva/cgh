@@ -473,6 +473,66 @@ runs:
 - No store, a locked or corrupt store, an unparseable payload, an unknown mode
   value, any exception in the normaliser or the matcher: silence.
 
+### The repository a command aims at
+
+The store read is not only the one of the session's directory. A session
+started outside any repository, or in a coordination checkout, acts on a
+worktree with `git -C <dir> push` or `cd <dir> && git push`: the rules that
+matter are the worktree's. So the hook reads:
+
+1. the store of the cgh root of the session's directory, when there is one,
+   and checks the whole command against it, as before;
+2. the store of each other cgh root the command aims at, and checks against
+   it only the actions that run inside that root.
+
+The normaliser gives each action the directory it runs in: where the line
+stands after `cd` or `pushd`, or the `-C` directory of `git`. `gh --repo
+owner/name` is placed in a checkout only when the user declared one: an
+absolute `[cgh] siblings` entry of the global config whose git config has
+that repository as a remote. Files are read; git is not run and the disk is
+not searched.
+
+The two sets of rules add up, and the strictest decision wins (deny, then
+ask, then advise). Replacing the session's rules by the aimed repository's
+was rejected: `cd <another repo> &&` would then be a way out of them.
+
+Which branch a rule sees follows the same directory, with one asymmetry, so
+that nothing is loosened on a guess:
+
+- for the aimed repository's rules, the branch is read in the directory the
+  action points at, when it is inside that repository. This is the one place
+  where git runs in a directory the command names outside the session's
+  checkout, and only inside a cgh root;
+- for the session's rules, the session's branch stops being used only when
+  the action certainly runs elsewhere: a literal `git -C <dir>`, or a literal
+  `cd <dir>` that is certain to run (it opens the line, a `;` list or a
+  subshell, or follows through `&&`) and that every later segment follows
+  through `&&`. After `;`, `||`, a pipe or a parenthesis, after `cd -` or
+  `popd`, with a path the shell would expand, with a `cd` another process
+  runs (`env cd`, `/usr/bin/cd`), or once `GIT_DIR` or `GIT_WORK_TREE` is
+  set on the line, the action is checked with the session's branch as
+  before, and also by the aimed repository when the guess points into one.
+
+What the hook says about an aimed repository is fixed text. The output of a
+hook is read by the model with the weight of an instruction, and the store of
+an aimed repository is not one the session chose: a downloaded archive or a
+clone that tracks its `.cgh/` would otherwise speak through the hook as soon
+as a command named it. So for a store that is not the session's, the message
+carries the path the command named, the id of the instruction as a number,
+the verb cgh gave the action, and the `cgh check "<command>" --root <repo>`
+to run for the detail. The title, the rule line and the reason are never
+copied into it. The session's own store keeps the full message. Quoting the
+text of a repository the user declared as trusted is left open.
+
+Failures stay silent and stay local. Each repository is read on its own: a
+store that is missing, locked or corrupt, a config that cannot be read, an
+exception, adds no decision and removes none from the other repositories. The
+200 ms budget covers all of them: the session's repository is read first, at
+most three aimed repositories follow, each git call gets what is left of the
+budget and never more than 100 ms, and a repository not reached in time is
+skipped. A mode of `off` in one repository turns off that repository's rules
+only.
+
 The hook ticket proves it with tests that each assert exit 0 and an empty
 stdout, on a store that holds a `refuse` rule matching the command (so a
 working check would have denied):

@@ -7,7 +7,9 @@
 # Description: Tests for cgh/state/action_rules.py: parsing rule lines, each
 #              recogniser, refspecs, compound commands, phrase aliases, the
 #              verdict precedence, the allow rule a session recorded itself,
-#              and the branch read that gives up instead of failing.
+#              the branch read that gives up instead of failing, and the
+#              directory each action runs in (`cd`, `git -C`), with the cases
+#              where it is certain enough to change which branch is read.
 
 from __future__ import annotations
 
@@ -838,3 +840,240 @@ def test_a_check_opens_no_socket(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", refuse)
     out = _check("git push origin develop && uv publish", [_INTEGRATION])
     assert out["verdict"] == "refused"
+
+
+# ---------------------------------------------------------------------------
+# Where an action runs
+# ---------------------------------------------------------------------------
+
+_COMMIT_ON_DEVELOP = "cgh-rule: refuse git.commit on_branch=develop\n"
+
+
+@pytest.fixture
+def two(tmp_path):
+    """Two directories: the caller's, on develop, and another, on feature/x."""
+    here = (tmp_path / "here").resolve()
+    there = (tmp_path / "there").resolve()
+    (here / "sub").mkdir(parents=True)
+    there.mkdir()
+    return here, there
+
+
+def _reader(here: Path, there: Path):
+    def read(path: Path) -> str | None:
+        if path == there or there in path.parents:
+            return "feature/x"
+        if path == here or here in path.parents:
+            return "develop"
+        return None
+
+    return read
+
+
+def _where(action: str, cwd: Path) -> list[str | None]:
+    acts = ar.normalise(action, cwd=cwd, branch_reader=lambda _p: None, which=_which)
+    return [a.where for a in acts if not a.verb.startswith("shell.")]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git push", "here"),
+        ("git -C {there} push", "there"),
+        ("git -C sub push", "here/sub"),
+        ("cd {there} && git push", "there"),
+        ("cd sub && git push", "here/sub"),
+        ("cd sub && cd .. && git push", "here"),
+        ("pushd {there} && git push", "there"),
+        ("cd {there} && git -C {here} push", "here"),
+        ("bash -c 'cd {there} && git push'", "there"),
+        ("sudo -u me git -C {there} push", "there"),
+        # A guess, kept for the rules of the repo it points at.
+        ("cd {there}; git push", "there"),
+        ("true || cd {there} && git push", "there"),
+        # Not the shell's own cd: the line did not move.
+        ("env cd {there} && git push", "here"),
+        ("/usr/bin/cd {there} && git push", "here"),
+        ("( cd {there} ) ; git push", "there"),
+        # Nowhere cgh can name.
+        ('cd "$DIR" && git push', ""),
+        ("cd - && git push", ""),
+        ("cd {there} && popd && git push", ""),
+        ("git -C $DIR push", ""),
+        ("command cd {there} && git push", "there"),
+        ("builtin cd {there} && git push", "there"),
+        ("time -p cd {there} && git push", "there"),
+        # GIT_DIR on the line changes what is certain, not where it points.
+        ("GIT_DIR={here}/.git git -C {there} push", "there"),
+        ("export GIT_DIR={here}/.git; cd {there} && git push", "there"),
+        ("command cd - && git push", ""),
+        ("git --git-dir={there}/.git push", ""),
+    ],
+)
+def test_each_action_carries_the_directory_it_runs_in(two, command, expected):
+    here, there = two
+    names = {"here": str(here), "there": str(there), "here/sub": str(here / "sub")}
+    got = _where(command.format(here=here, there=there), here)
+    assert got == [names.get(expected, expected)]
+
+
+def test_a_cd_inside_a_script_does_not_move_the_line_outside(two):
+    here, there = two
+    command = f"bash -c 'cd {there} && git status' && git push"
+    assert _where(command, here) == [str(here)]
+
+
+def test_an_action_not_read_from_a_command_has_no_directory():
+    assert ar.Action("git.push").where is None
+    assert [a.where for a in ar.normalise("push to develop", cwd="/repo")] == [None]
+
+
+def _commit_verdict(command: str, here: Path, there: Path, **kwargs) -> str:
+    out = ar.evaluate(
+        command.format(here=here, there=there),
+        [_entry(1, _COMMIT_ON_DEVELOP)],
+        cwd=here,
+        branch_reader=_reader(here, there),
+        which=_which,
+        **kwargs,
+    )
+    return out["verdict"]
+
+
+def test_a_certain_cd_elsewhere_drops_the_branch_of_the_caller(two):
+    # The commit is made in `there`: the branch of `here` says nothing of it.
+    for command in (
+        "cd {there} && git commit -m x",
+        "cd {there} && make && git commit -m x",
+        "(cd {there} && git commit -m x)",
+        "git -C {there} commit -m x",
+        "make ; cd {there} && git commit -m x",
+        "cd /nowhere ; cd {there} && git commit -m x",
+        "X=1 cd {there} && git commit -m x",
+    ):
+        assert _commit_verdict(command, *two) == "no_rule", command
+    assert _commit_verdict("cd sub && git commit -m x", *two) == "refused"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m x",
+        "( cd {there} ) ; git commit -m x",
+        "cd {there} ; git commit -m x",
+        "cd {there} || git commit -m x",
+        "cd {there} | git commit -m x",
+        "cd {there} && cd - && git commit -m x",
+        "pushd {there} && popd && git commit -m x",
+        'cd "$DIR" && git commit -m x',
+        "cd {there}/$SUB && git commit -m x",
+        "cd {there} && true ; git commit -m x",
+        "bash -c 'cd {there}' && git commit -m x",
+        # A cd that may never run.
+        "true || cd {there} && git commit -m x",
+        "test -d /nowhere || cd {there} && git commit -m x",
+        "cd sub || cd {there} && git commit -m x",
+        "echo x | cd {there} && git commit -m x",
+        "true & cd {there} && git commit -m x",
+        "( true ) && true || cd {there} && git commit -m x",
+        # Behind a closing parenthesis cgh does not say what is certain.
+        "( cd /nowhere ) ; cd {there} && git commit -m x",
+        # A cd that another process runs: the shell stays where it was.
+        "env cd {there} && git commit -m x",
+        "/usr/bin/cd {there} && git commit -m x",
+        "nohup cd {there} && git commit -m x",
+        "sudo cd {there} && git commit -m x",
+        "xargs cd {there} && git commit -m x",
+        "command cd {there} && git commit -m x",
+        "builtin cd {there} && git commit -m x",
+        "time cd {there} && git commit -m x",
+        "command -p cd {there} && git commit -m x",
+        "pushd -n {there} && git commit -m x",
+        "pushd +1 && git commit -m x",
+        # git is pointed back at the caller's repository from elsewhere.
+        "cd {there} && GIT_DIR={here}/.git git commit -m x",
+        "cd {there} && env GIT_DIR={here}/.git GIT_WORK_TREE={here} git commit -m x",
+        "export GIT_DIR={here}/.git && cd {there} && git commit -m x",
+    ],
+)
+def test_in_doubt_the_branch_of_the_caller_still_rules(two, command):
+    # The commit may well run where the caller stands: nothing is loosened.
+    assert _commit_verdict(command, *two) == "refused"
+
+
+def test_a_scope_judges_only_the_actions_that_run_in_it(two):
+    here, there = two
+    rule = [_entry(7, "cgh-rule: refuse git.commit on_branch=feature/*\n")]
+
+    def verdict(command: str) -> str:
+        out = ar.evaluate(
+            command.format(there=there),
+            rule,
+            cwd=here,
+            branch_reader=_reader(here, there),
+            which=_which,
+            scope=there,
+        )
+        return out["verdict"]
+
+    assert verdict("git -C {there} commit -m x") == "refused"
+    assert verdict("cd {there} && git commit -m x") == "refused"
+    # A guess is enough to be judged where it points.
+    assert verdict("cd {there} ; git commit -m x") == "refused"
+    # The caller's own commit is not this repository's business.
+    assert verdict("git commit -m x") == "no_rule"
+    assert verdict("git -C {there} status && git commit -m x") == "no_rule"
+    assert verdict('cd "$DIR" && git commit -m x') == "no_rule"
+    # A word shaped like GIT_DIR=... does not take the action out of here.
+    assert verdict("GIT_DIR=/x/.git git -C {there} commit -m x") == "refused"
+    assert verdict("echo GIT_DIR=1 ; git -C {there} commit -m x") == "refused"
+    assert verdict("command cd {there} && git commit -m x") == "refused"
+
+
+def test_a_scope_that_cannot_be_resolved_judges_nothing(two, monkeypatch):
+    _here, there = two
+    monkeypatch.setattr(ar, "_resolved", lambda _p: None)
+    out = ar.evaluate(
+        "git commit -m x", [_entry(1, "cgh-rule: refuse git.commit\n")], scope=there
+    )
+    assert out["verdict"] == "no_rule"
+
+
+def test_git_is_not_run_outside_the_caller_and_the_scope(two, tmp_path):
+    here, there = two
+    third = (tmp_path / "third").resolve()
+    third.mkdir()
+    asked: list[Path] = []
+
+    def read(path: Path) -> str | None:
+        asked.append(path)
+        return "develop"
+
+    for scope in (None, there):
+        ar.normalise(
+            f"git -C {third} commit -m x",
+            cwd=here,
+            branch_reader=read,
+            which=_which,
+            scope=scope,
+        )
+    assert asked == []
+    ar.normalise(
+        f"git -C {there} commit -m x", cwd=here, branch_reader=read, scope=there
+    )
+    assert asked == [there]
+
+
+def test_segments_keep_the_operator_that_leads_to_them():
+    linked = ar._linked_segments("a && b ; c || d | e\nf && ( g ) && h > out && i")
+    assert [(op, argv[0]) for op, argv in linked] == [
+        ("", "a"),
+        ("&&", "b"),
+        (";", "c"),
+        ("||", "d"),
+        ("|", "e"),
+        (";", "f"),
+        ("(", "g"),
+        (")", "h"),
+        ("&&", "i"),
+    ]

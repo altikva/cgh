@@ -42,6 +42,21 @@ The Python import name is `cgh`; the PyPI package and CLI are `cgh`.
   without rule lines behaves as before. See docs/INTEGRATIONS.md.
 
 ### Fixed
+- **The Bash hook applies the rules of the repo a command acts on.** The check
+  only read the store of the session's directory, so a session started outside
+  any repo that ran `git -C <worktree> push` or `cd <worktree> && git push`
+  met no rule at all, `enforce` included. The rules of each cgh repo the
+  command aims at (`git -C`, `cd <dir> &&`, `gh --repo` of a declared
+  sibling) now apply too, on top of the session's own, within the same 200 ms;
+  a repo that cannot be read is skipped. For such a repo the hook names the
+  instruction by its id and never quotes its text, since a directory with a
+  `.cgh/` is not one the session chose; `cgh check --root <repo>` shows the
+  rule. One rule stops matching: after a
+  literal `cd <dir> &&` or `git -C <dir>` that leaves the session's repo, an
+  `on_branch=` (or bare-push `branch=`) rule of the session's repo no longer
+  sees the session's branch, which was the wrong repo's; put the rule in the
+  repo it is about. For a session outside any repo, install the hook in
+  `~/.claude/settings.json`. See docs/INTEGRATIONS.md.
 - **Knowledge recorded before the 0.20 rename is readable again.** In repos
   where a `.cgh/` was created next to the old `.codegraph/` instead of by
   renaming it, the rename never ran and every note, decision and outcome from

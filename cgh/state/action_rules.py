@@ -75,6 +75,11 @@ class Action:
     # push when git cannot be read). Different from a field that does not
     # apply: an allow rule must not clear what a refusal might have covered.
     unknown: tuple[str, ...] = ()
+    # The directory the action runs in, absolute, once a command line was
+    # read: the caller's, or the one the command names (`cd <dir> &&`,
+    # `git -C <dir>`). "" when the command went somewhere cgh cannot follow
+    # (`cd "$DIR"`), None for an action that was not read from a command.
+    where: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +202,26 @@ def current_branch(
     return name
 
 
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+# An assignment that points git at a repository whatever the directory is.
+_GIT_ENV_RE = re.compile(r"^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)=")
+# What a path must not hold for cgh to follow it: the shell would expand it.
+_UNREADABLE_PATH_RE = re.compile(r"[$`*?\[\]{}]")
+
+
+def _resolved(path: str | Path) -> Path | None:
+    try:
+        return Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
 class _Context:
-    """What a recogniser may read: the branch of a directory, read once."""
+    """What a recogniser may read: the branch of a directory, read once, and
+    the directory the command line has moved to (``cd``, ``pushd``)."""
 
     def __init__(
         self,
@@ -206,6 +229,8 @@ class _Context:
         branch_reader: Callable[[Path], str | None] | None,
         which: Callable[[str], str | None] | None,
         git_timeout: float | None = None,
+        scope: str | Path | None = None,
+        repo_dir: Callable[[str], str | Path | None] | None = None,
     ) -> None:
         self.cwd = Path(cwd) if cwd else None
         budget = GIT_BRANCH_TIMEOUT_S if git_timeout is None else git_timeout
@@ -214,21 +239,107 @@ class _Context:
         )
         self.which = which or shutil.which
         self._cache: dict[str, str | None] = {}
+        self.scope = _resolved(scope) if scope else None
+        self.repo_dir = repo_dir
+        # Where the command line stands: None is the caller's directory, a
+        # path is where a `cd` went, and `lost` says a `cd` could not be read.
+        # `sure` holds while that directory is certain: a literal `cd` that
+        # every later segment follows through `&&`. After `;`, `||`, a pipe
+        # or a parenthesis the `cd` may not have run, or not for this
+        # segment, and `here` is only the best guess.
+        self.here: Path | None = None
+        self.lost = False
+        self.sure = True
+        # Whether the segment being read certainly runs once its line is
+        # reached: it opens the line, a `;` list or a subshell, or follows
+        # through `&&`. A `cd` behind `||` or a pipe may never run.
+        self.reached = True
+        # GIT_DIR or GIT_WORK_TREE appears somewhere on the line: the
+        # directory may no longer say which repository a git command acts
+        # on. Like any doubt, this only keeps the caller's branch in play;
+        # it never takes an action away from the repository it points at.
+        self.git_env = False
+
+    def moved(self) -> bool:
+        return self.lost or self.here is not None
+
+    def after(self, operator: str) -> None:
+        """Note the operator that leads to the next segment."""
+        if operator in ("", "&&"):
+            return
+        if self.moved():
+            self.sure = False
+        # `;` and `(` start a list of their own; behind anything else
+        # (`||`, a pipe, `&`, a closing parenthesis) nothing is certain.
+        self.reached = operator in (";", "(")
+
+    def _dir(self, subdir: str | None = None) -> Path | None:
+        """The directory a command of this segment runs in, resolved; None
+        when it cannot be told."""
+        if self.lost:
+            return None
+        base = self.here if self.here is not None else self.cwd
+        if subdir:
+            if _UNREADABLE_PATH_RE.search(subdir):
+                return None
+            named = Path(subdir).expanduser()
+            if named.is_absolute():
+                base = named
+            elif base is not None:
+                base = base / named
+            else:
+                return None
+        return _resolved(base) if base is not None else None
+
+    def place(self, subdir: str | None = None) -> str:
+        """``_dir`` as the string an Action carries, "" when unknown."""
+        target = self._dir(subdir)
+        return str(target) if target is not None else ""
+
+    def chdir(self, args: Sequence[str]) -> None:
+        """Follow ``cd <dir>`` or ``pushd <dir>``. A target the shell would
+        expand, ``cd -`` and ``popd`` lose the directory: nothing is guessed."""
+        names = [a for a in args if not a.startswith("-") or a == "-"]
+        if not names:
+            names = ["~"]
+        target = None if names[0] == "-" else self._dir(names[0])
+        if target is None:
+            self.lost, self.sure = True, False
+            return
+        # An absolute target does not depend on where the line stood before,
+        # but the `cd` itself must be certain to run.
+        absolute = Path(names[0]).expanduser().is_absolute()
+        self.sure = self.reached and (absolute or self.sure)
+        self.here, self.lost = target, False
+
+    def unfollow(self) -> None:
+        """The line moved somewhere cgh does not follow."""
+        self.lost, self.sure = True, False
 
     def branch(self, subdir: str | None = None) -> str | None:
         if self.cwd is None:
             return None
-        target = self.cwd
-        if subdir:
-            # `git -C <dir>` comes from the string being checked: git is only
-            # run inside the checkout, never in a directory the action names
-            # outside it. Elsewhere the field is absent.
-            try:
-                root = self.cwd.resolve()
-                target = (self.cwd / subdir).resolve()
-            except (OSError, RuntimeError, ValueError):
+        # The directory comes from the string being checked: git is only run
+        # inside the caller's checkout, or inside the repository whose rules
+        # are being applied (`scope`), never in another directory the action
+        # names. Elsewhere the field is absent.
+        root = _resolved(self.cwd)
+        if root is None:
+            return None
+        named = self._dir(subdir)
+        if self.scope is not None:
+            target = named
+            if target is None or not _inside(target, self.scope):
                 return None
-            if not target.is_relative_to(root):
+        elif named is not None and self.sure and not self.git_env:
+            target = named
+            if not _inside(target, root):
+                return None
+        else:
+            # The line may have moved, or not: the caller's directory is
+            # still what a rule on the branch is checked against.
+            target = _resolved(self.cwd / subdir) if subdir else root
+            if target is None or not _inside(target, root):
                 return None
         key = str(target)
         if key not in self._cache:
@@ -321,6 +432,15 @@ def _newlines_to_separators(text: str) -> str:
 def split_segments(command: str) -> list[list[str]] | None:
     """Split a command line into argv segments on ``&&``, ``||``, ``;``, ``|``
     and newlines. None when the string cannot be tokenised (an open quote)."""
+    linked = _linked_segments(command)
+    return None if linked is None else [argv for _operator, argv in linked]
+
+
+def _linked_segments(command: str) -> list[tuple[str, list[str]]] | None:
+    """``split_segments`` with, for each segment, the shell punctuation that
+    leads to it: "" for the first, then ``&&``, ``;``, ``|``, ``(``... When
+    several runs of punctuation precede a segment, any that is not ``&&``
+    wins, since only ``&&`` says the previous command succeeded."""
     lexer = shlex.shlex(
         _newlines_to_separators(command), posix=True, punctuation_chars=True
     )
@@ -330,8 +450,10 @@ def split_segments(command: str) -> list[list[str]] | None:
         tokens = list(lexer)
     except ValueError:
         return None
-    segments: list[list[str]] = []
+    segments: list[tuple[str, list[str]]] = []
     current: list[str] = []
+    operator = ""
+    pending = ""
     skip_next = False
     for tok in tokens:
         is_punct = bool(tok) and all(c in _PUNCT for c in tok)
@@ -347,12 +469,17 @@ def split_segments(command: str) -> list[list[str]] | None:
                 skip_next = True
                 continue
             if current:
-                segments.append(current)
+                segments.append((operator, current))
+                pending = ""
             current = []
+            if pending in ("", "&&"):
+                pending = tok
             continue
+        if not current:
+            operator = pending
         current.append(tok)
     if current:
-        segments.append(current)
+        segments.append((operator, current))
     return segments
 
 
@@ -483,8 +610,10 @@ def _strip_ref(ref: str) -> str:
     return ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
 
 
-def _git(argv: list[str], raw: str, ctx: _Context) -> list[Action] | None:
-    # Global options sit between `git` and the subcommand.
+def _git_globals(argv: list[str]) -> tuple[int, str | None, bool]:
+    """The global options that sit between ``git`` and the subcommand:
+    ``(index of the subcommand, the -C directory, another repository named
+    by --git-dir or --work-tree)``."""
     i = 1
     subdir: str | None = None
     foreign_repo = False
@@ -500,6 +629,11 @@ def _git(argv: list[str], raw: str, ctx: _Context) -> list[Action] | None:
         if tok.startswith(("--git-dir=", "--work-tree=")):
             foreign_repo = True
         i += 1
+    return i, subdir, foreign_repo
+
+
+def _git(argv: list[str], raw: str, ctx: _Context) -> list[Action] | None:
+    i, subdir, foreign_repo = _git_globals(argv)
     if i >= len(argv):
         return None
     sub, args = argv[i], argv[i + 1 :]
@@ -830,14 +964,60 @@ def normalise(
     branch_reader: Callable[[Path], str | None] | None = None,
     which: Callable[[str], str | None] | None = None,
     git_timeout: float | None = None,
+    scope: str | Path | None = None,
+    repo_dir: Callable[[str], str | Path | None] | None = None,
 ) -> list[Action]:
     """Turn an action string into its actions. An empty list means the input
     was not recognised: an empty or unparseable string, or a phrase no alias
     matches. ``git_timeout`` is the budget, in seconds, of the one git call
     that reads the branch (GIT_BRANCH_TIMEOUT_S by default): a caller with a
-    tighter deadline passes its own."""
-    ctx = _Context(cwd, branch_reader, which, git_timeout)
+    tighter deadline passes its own.
+
+    Each action carries ``where``, the directory it runs in. ``scope`` is the
+    repository whose rules the caller applies when it is not the one of
+    ``cwd``: the branch is then read there, for the actions that run there.
+    ``repo_dir`` turns the ``owner/name`` of ``gh --repo`` into a checkout
+    the caller knows, or None."""
+    ctx = _Context(cwd, branch_reader, which, git_timeout, scope, repo_dir)
     return _normalise(action or "", ctx, 0)
+
+
+def _nested(script: str, ctx: _Context, depth: int) -> list[Action]:
+    """The actions of a script the command runs from inside (a command
+    substitution, ``bash -c``, ``env -S``). One that cannot be read still
+    counts as an action. A ``cd`` inside it does not move the line outside."""
+    saved = (ctx.here, ctx.lost, ctx.sure)
+    try:
+        inner = _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
+    finally:
+        ctx.here, ctx.lost, ctx.sure = saved
+    return inner or [
+        Action("shell.script", {"args": script}, script, where=ctx.place())
+    ]
+
+
+def _gh_repo(argv: list[str]) -> str:
+    """The repository ``gh --repo`` (or ``-R``) names, "" when it names none."""
+    flags, _pos = _parse_args(argv[1:], _GH_VALUE_FLAGS)
+    return flags.get("--repo") or flags.get("-R") or ""
+
+
+def _place(head: str, argv: list[str], ctx: _Context) -> str:
+    """Where the command ``head`` of this segment runs: where the line
+    stands, unless the command names its own directory."""
+    if head == "git":
+        _i, subdir, foreign_repo = _git_globals(argv)
+        # A repository named by --git-dir is not one cgh places.
+        return "" if foreign_repo else ctx.place(subdir)
+    if head == "gh" and ctx.repo_dir is not None:
+        slug = _gh_repo(argv)
+        try:
+            known = ctx.repo_dir(slug) if slug else None
+        except Exception:
+            known = None
+        if known:
+            return str(known)
+    return ctx.place()
 
 
 def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
@@ -847,7 +1027,7 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
     alias = _match_alias(text)
     if alias is not None:
         return [alias]
-    segments = split_segments(text)
+    segments = _linked_segments(text)
     if not segments:
         return []
     compound = len(segments) > 1
@@ -857,62 +1037,118 @@ def _normalise(text: str, ctx: _Context, depth: int) -> list[Action]:
     # redirection, which the segments no longer hold.
     for m in _SUBST_RE.finditer(text):
         script = m.group(1) if m.group(1) is not None else m.group(2)
-        inner = _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
-        out.extend(inner or [Action("shell.script", {"args": script}, script)])
-    for seg in segments:
-        # What bash would run from inside this segment: a command substitution
-        # in an argument, a command string handed to a wrapper. Each is read
-        # as a script; one that cannot be read still counts as an action, so
-        # it is never dropped and the command cannot come out allowed on the
-        # strength of its other parts.
-        argv, scripts = _strip_wrappers(seg)
-        for script in scripts:
-            inner = (
-                _normalise(script, ctx, depth + 1) if depth < _MAX_SCRIPT_DEPTH else []
-            )
-            out.extend(inner or [Action("shell.script", {"args": script}, script)])
-        if not argv:
-            if not scripts:
-                # Only wrappers and assignments: still something that runs.
-                out.append(
-                    Action(
-                        f"shell.{seg[0]}", {"args": " ".join(seg[1:])}, shlex.join(seg)
-                    )
-                )
-            continue
-        if len(argv) < len(seg) and any(t in _WRAPPERS for t in seg):
-            # Behind a wrapper, where the command starts is a guess: an option
-            # this table does not know may take a value. So every later word
-            # that names a recognised command is read as one too.
-            for j in range(1, len(argv)):
-                name = Path(argv[j]).name if "/" in argv[j] else argv[j]
-                late = RECOGNISERS.get(name)
-                if late is None:
-                    continue
-                found = late([name, *argv[j + 1 :]], shlex.join(argv[j:]), ctx)
-                out.extend(a for a in found or [] if a not in out)
-        raw = shlex.join(argv)
-        head = Path(argv[0]).name if "/" in argv[0] else argv[0]
-        if head in _SHELLS or head == "eval":
-            script = " ".join(argv[1:]) if head == "eval" else _script_of(argv)
-            if script is not None:
-                inner = (
-                    _normalise(script, ctx, depth + 1)
-                    if depth < _MAX_SCRIPT_DEPTH
-                    else []
-                )
-                out.extend(inner or [Action("shell.script", {"args": script}, script)])
-                continue
-        recogniser = RECOGNISERS.get(head)
-        claimed = recogniser([head, *argv[1:]], raw, ctx) if recogniser else None
-        if claimed:
-            out.extend(claimed)
-            continue
-        if compound or depth or out or recogniser or _looks_like_command(argv, ctx):
-            out.append(
-                Action(f"shell.{head}", {"args": " ".join(argv[1:])}, raw),
-            )
+        out.extend(_nested(script, ctx, depth))
+    for operator, seg in segments:
+        ctx.after(operator)
+        if any(_GIT_ENV_RE.match(tok) for tok in seg):
+            # Set for one command or exported for the rest of the line. Any
+            # word of that shape counts: telling an assignment from an
+            # argument is not worth a wrong guess here.
+            ctx.git_env = True
+        start = len(out)
+        head, argv = _segment(seg, ctx, depth, compound, out)
+        # Where this segment's own actions run; a nested script placed its.
+        place = _place(head, argv, ctx)
+        for act in out[start:]:
+            if act.where is None:
+                act.where = place
+        _move(seg, ctx)
     return out
+
+
+def _move(seg: list[str], ctx: _Context) -> None:
+    """Follow a segment that moves the shell. Only the builtin itself does:
+    `cd` as the first word, after assignments at most. Behind a wrapper
+    (`env cd`, `sudo cd`) or as a path (`/usr/bin/cd`) another process
+    changes directory and the line stays where it was. `command cd`,
+    `builtin cd` and `time cd` do move the shell: they are followed as a
+    guess, so the repository they point at judges what comes next while the
+    caller's branch stays in play."""
+    words = list(seg)
+    while words and _ASSIGN_RE.match(words[0]):
+        words.pop(0)
+    prefixed = False
+    while words and words[0] in ("command", "builtin", "time"):
+        prefixed = True
+        words.pop(0)
+        while words and words[0].startswith("-"):
+            words.pop(0)
+    if not words:
+        return
+    builtin, args = words[0], words[1:]
+    if prefixed:
+        if builtin in ("cd", "pushd") and not any(
+            a.startswith(("-", "+")) for a in args
+        ):
+            ctx.chdir(args)
+            ctx.sure = False
+        elif builtin in ("cd", "pushd", "popd"):
+            ctx.unfollow()
+        return
+    if builtin == "cd":
+        ctx.chdir(args)
+    elif builtin == "pushd":
+        # `pushd -n` does not move, `pushd +1` rotates a stack cgh does not
+        # keep: only a plain directory is followed.
+        if any(a.startswith(("-", "+")) for a in args):
+            ctx.unfollow()
+        else:
+            ctx.chdir(args)
+    elif builtin == "popd":
+        ctx.unfollow()
+
+
+def _segment(
+    seg: list[str], ctx: _Context, depth: int, compound: bool, out: list[Action]
+) -> tuple[str, list[str]]:
+    """Append the actions of one segment to ``out``. Returns the command of
+    the segment and its argv, once wrappers and assignments are dropped."""
+    # What bash would run from inside this segment: a command substitution
+    # in an argument, a command string handed to a wrapper. Each is read
+    # as a script; one that cannot be read still counts as an action, so
+    # it is never dropped and the command cannot come out allowed on the
+    # strength of its other parts.
+    argv, scripts = _strip_wrappers(seg)
+    for script in scripts:
+        out.extend(_nested(script, ctx, depth))
+    if not argv:
+        if not scripts:
+            # Only wrappers and assignments: still something that runs.
+            out.append(
+                Action(f"shell.{seg[0]}", {"args": " ".join(seg[1:])}, shlex.join(seg))
+            )
+        return "", argv
+    if len(argv) < len(seg) and any(t in _WRAPPERS for t in seg):
+        # Behind a wrapper, where the command starts is a guess: an option
+        # this table does not know may take a value. So every later word
+        # that names a recognised command is read as one too.
+        for j in range(1, len(argv)):
+            name = Path(argv[j]).name if "/" in argv[j] else argv[j]
+            late = RECOGNISERS.get(name)
+            if late is None:
+                continue
+            late_argv = [name, *argv[j + 1 :]]
+            found = late(late_argv, shlex.join(argv[j:]), ctx) or []
+            for act in found:
+                act.where = _place(name, late_argv, ctx)
+            out.extend(a for a in found if a not in out)
+    raw = shlex.join(argv)
+    head = Path(argv[0]).name if "/" in argv[0] else argv[0]
+    if head in _SHELLS or head == "eval":
+        script = " ".join(argv[1:]) if head == "eval" else _script_of(argv)
+        if script is not None:
+            out.extend(_nested(script, ctx, depth))
+            return head, argv
+    recogniser = RECOGNISERS.get(head)
+    claimed = recogniser([head, *argv[1:]], raw, ctx) if recogniser else None
+    if claimed:
+        out.extend(claimed)
+        return head, argv
+    if compound or depth or out or recogniser or _looks_like_command(argv, ctx):
+        out.append(
+            Action(f"shell.{head}", {"args": " ".join(argv[1:])}, raw),
+        )
+    return head, argv
 
 
 # ---------------------------------------------------------------------------
@@ -959,6 +1195,8 @@ def evaluate(
     branch_reader: Callable[[Path], str | None] | None = None,
     which: Callable[[str], str | None] | None = None,
     git_timeout: float | None = None,
+    scope: str | Path | None = None,
+    repo_dir: Callable[[str], str | Path | None] | None = None,
 ) -> dict[str, Any]:
     """Check ``action`` against the rule lines of ``entries``.
 
@@ -966,8 +1204,15 @@ def evaluate(
     ``id``, ``title``, ``body``, ``session_id`` and ``ts``. An allow rule
     recorded by the calling session does not count for it: a session does not
     write its own permission slip.
+
+    Without ``scope`` the entries are those of the caller's repository and
+    every action is checked. With ``scope``, they are the rules of another
+    repository the command aims at (``cd <scope> &&``, ``git -C <scope>``):
+    only the actions that run inside it are checked, the others get
+    ``no_rule``.
     """
-    actions = normalise(action, cwd, branch_reader, which, git_timeout)
+    actions = normalise(action, cwd, branch_reader, which, git_timeout, scope, repo_dir)
+    scope_root = _resolved(scope) if scope else None
     rules: list[tuple[dict[str, Any], Rule]] = []
     for entry in entries:
         parsed, _errors = parse_rule_lines(str(entry.get("body") or ""))
@@ -978,7 +1223,14 @@ def evaluate(
     action_views: list[dict[str, Any]] = []
     for idx, act in enumerate(actions):
         matching: list[tuple[dict[str, Any], Rule]] = []
-        for entry, rule in rules:
+        # A scope that cannot be resolved aims at nothing: it never widens
+        # into a check of every action.
+        aimed = not scope or (
+            scope_root is not None
+            and bool(act.where)
+            and _inside(Path(str(act.where)), scope_root)
+        )
+        for entry, rule in rules if aimed else ():
             if not rule_matches(rule, act):
                 continue
             own = bool(session_id) and str(entry.get("session_id") or "") == session_id
